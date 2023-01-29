@@ -227,7 +227,7 @@ class Iter():
 	@classmethod
 	def filterList(cls, lst, inc=[], exc=[]):
 		'''Filter the given list.
-		An 'operator' value of 'None' filters without wildcards.
+
 		:Parameters:
 			lst (list) = The components(s) to filter.
 			inc (str)(int)(obj)(list) = The objects(s) to include.
@@ -239,8 +239,8 @@ class Iter():
 					exlude take precidence over include.
 		:Return:
 			(list)
-		ex. call:
-		filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
+
+		ex. call: filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
 		'''
 		exc = cls.makeList(exc)
 		inc = cls.makeList(inc)
