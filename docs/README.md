@@ -15,7 +15,7 @@ python -m pip install pythontk
 
 ### Example use-case:
 ###### Import the class `Iter` from the package.
-###### As the name suggests the class `Iter` holds the package's iterable related functions.
+###### As the name suggests, the class `Iter` holds the package's iterable related functions.
 ```
 from pythontk import Iter
 Iter.filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
