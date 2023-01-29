@@ -1,4 +1,4 @@
-### A collection of backend utilities for Python.
+#### A collection of backend utilities for Python.
 
 ---
 
@@ -13,7 +13,7 @@ install via pip in a command line window using:
 python -m pip install pythontk
 ```
 
-##### Example use-case:
+### Example use-case:
 ###### Import the class `Iter` from the package.
 ###### As the name suggests the class `Iter` holds the package's iterable related functions.
 ```
