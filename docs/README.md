@@ -10,7 +10,7 @@ To install:
 Add the tentacle folder to a directory on your python path, or
 install via pip in a command line window using:
 ```
-python -m pip install tentacletk
+python -m pip install pythontk
 ```
 
 example use-case:
