@@ -23,5 +23,5 @@ Iter.filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
 ```
 # or you can import the function directly.
 from pythontk.itertk import filterDict
-Iter.filterDict(dct, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
+Iter.filterDict({1:'1', 'two':2, 3:'three'}, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
 ```
