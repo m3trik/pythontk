@@ -7,7 +7,7 @@
 ###### 
 
 To install:
-Add the pythontk folder to a directory on your python path, or
+Add the `pythontk` folder to a directory on your python path, or
 install via pip in a command line window using:
 ```
 python -m pip install pythontk
