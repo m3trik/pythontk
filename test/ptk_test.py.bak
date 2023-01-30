@@ -102,9 +102,9 @@ class Str_test(Main, Str):
 			"self.setCase('xxX', 'swapcase')":'XXx',
 			"self.setCase('xxx XXX', 'title')":'Xxx Xxx',
 			"self.setCase('xXx', 'pascal')":'XXx',
-			"self.setCase('xXx', 'camel')":'xXx',
-			"self.setCase(['xXx'], 'camel')":['xXx'],
-			"self.setCase(None, 'camel')":None,
+			"self.setCase('xXx', 'camelCase')":'xXx',
+			"self.setCase(['xXx'], 'camelCase')":['xXx'],
+			"self.setCase(None, 'camelCase')":None,
 		})
 
 	def test_splitAtChars(self):

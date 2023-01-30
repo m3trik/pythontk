@@ -7,13 +7,13 @@ class Str():
 	'''
 	'''
 	@staticmethod
-	def setCase(strings, case='camel'):
+	def setCase(strings, case='camelCase'):
 		'''Format the given string(s) in the given case.
 		
 		:Parameters:
 			strings (str)(list) = The string(s) to format.
 			case (str) = The desired return case. Accepts all python case operators. 
-				valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
+				valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camelCase', None.
 
 		:Return:
 			(str)(list) List if 'string' given as list.
@@ -24,7 +24,7 @@ class Str():
 		if case=='pascal':
 			result = [s[:1].capitalize()+s[1:] for s in Iter.makeList(strings)] #capitalize the first letter.
 
-		elif case=='camel':
+		elif case=='camelCase':
 			result = [s[0].lower()+s[1:] for s in Iter.makeList(strings)] #lowercase the first letter.
 
 		else:
