@@ -6,7 +6,9 @@ fltmc >nul 2>nul || set _=^"set _ELEV=1^& cd /d """%cd%"""^& "%~f0" %* ^"&&((if 
 
 
 ::wheel directory
-set "dir=%CLOUD%\Code\_scripts\pythontk"
+set "name=pythontk"
+::
+set "dir=%CLOUD%\Code\_scripts\%name%"
 
 
 ::delete previous build directories:
@@ -16,6 +18,10 @@ rmdir /s /q "%dir%/build"
 echo Attempting to remove "%dir%/dist" ..
 rmdir /s /q "%dir%/dist"
 ECHO/
+
+
+python -c "from pythontk import File; File.increment_version('%dir%\%name%\__init__.py')"
+echo %name% package version number incremented.
 
 
 :: upload the package wheel to pipy

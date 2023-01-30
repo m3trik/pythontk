@@ -106,36 +106,37 @@ class File():
 
 
 	@staticmethod
-	def isValidPath(path):
+	def isValidPath(filepath: str) -> list:
 		'''Determine if the given filepath is valid.
 
 		:Parameters:
-			path (str) = A filepath.
+			filepath (str) = The path to a file.
 
 		:Return:
-			(list)
+			(str) The path type (ie. 'file' or 'dir') or None.
 		'''
-		path = os.path.expandvars(path) #convert any env variables to their values.
+		fp = os.path.expandvars(filepath) #convert any env variables to their values.
 
-		if os.path.isfile(path):
+		if os.path.isfile(fp):
 			return 'file'
-		elif os.path.isdir(path):
+		elif os.path.isdir(fp):
 			return 'dir'
 		return None
 
 
 	@staticmethod
-	def createDir(path):
+	def createDir(filepath: str) -> None:
 		'''Create a directory if one doesn't already exist.
 
 		:Parameters:
-			path (str) = The desired filepath.
+			filepath (str) = The path to where the file will be created.
 		'''
+		fp = os.path.expandvars(filepath) #convert any env variables to their values.
 		try:
-			if not os.path.exists(path):
-				os.makedirs(path)
+			if not os.path.exists(fp):
+				os.makedirs(fp)
 		except OSError as error:
-			print ('{} in createDir\n\t# Error: {}.\n\tConfirm that the following path is correct: #\n\t{}'.format(__file__, error, path))
+			print ('{} in createDir\n\t# Error: {}.\n\tConfirm that the following path is correct: #\n\t{}'.format(__file__, error, fp))
 
 
 	@classmethod
@@ -295,7 +296,7 @@ class File():
 
 
 	@staticmethod
-	def getFileContents(filepath):
+	def getFileContents(filepath: str) -> None:
 		'''Get each line of a text file as indices of a list.
 
 		:Parameters:
@@ -307,6 +308,47 @@ class File():
 		with open(filepath) as f:
 			return f.readlines()
 
+
+	@staticmethod
+	def increment_version(filepath: str) -> None:
+		"""This function increments the version number in a text file.
+		The verson number is defined as a line in the following format: __version__ = "0.0.0"
+
+		The version number is represented as a string in the format 'x.y.z', where x, y, and z are integers. 
+		When the value of z reaches 9, it becomes 0 and the value of y is incremented by 1. 
+		When the value of y reaches 10, it becomes 0 and the value of x is incremented by 1. 
+		
+		:Parameters:
+			filepath (str): The path to the text file containing the version number.
+
+		:Return:
+			(None) The version number in the file is updated.
+		"""
+		import re
+
+		with open(filepath, "r") as f:
+			lines = f.readlines()
+
+		for i, line in enumerate(lines):
+			if line.startswith("__version__"):
+				_, version = line.strip().split(" = ")
+				version = version.strip("'")
+				major, minor, patch = map(int, version.split("."))
+				if patch == 9:
+					if minor == 9:
+						minor = 0
+						major += 1
+					else:
+						minor += 1
+					patch = 0
+				else:
+					patch += 1
+				version = f"{major}.{minor}.{patch}"
+				lines[i] = f"__version__ = '{version}'\n"
+				break
+
+		with open(filepath, "w") as f:
+			f.writelines(lines)
 
 # --------------------------------------------------------------------------------------------
 
