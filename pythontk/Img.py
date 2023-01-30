@@ -15,8 +15,8 @@ try:
 except ImportError as error:
 	print ('{}\n	# Error: {} #'.format(__file__, error))
 
-from pythontk.filetk import File
-from pythontk.itertk import Iter
+from pythontk.File import formatPath, getDirContents
+from pythontk.Iter import makeList, formatReturn
 
 
 class Img():
@@ -184,7 +184,7 @@ class Img():
 			(dict) {<full file path>:<image object>}
 		'''
 		images={}
-		for f in File.getDirContents(directory, 'filepaths', incFiles=inc.split('|'), excFiles=exc.split('|')):
+		for f in getDirContents(directory, 'filepaths', incFiles=inc.split('|'), excFiles=exc.split('|')):
 
 			im = Image.open(f) #closing will destroy the image core and release its memory. The image data will be unusable afterward.
 			images[f] = im
@@ -232,7 +232,7 @@ class Img():
 		:Return:
 			(str)
 		'''
-		name = File.formatPath(file, 'name')
+		name = formatPath(file, 'name')
 
 		if key:
 			result = next((k for k, v in cls.mapTypes.items() for i in v if name.lower().endswith(i.lower())), None)
@@ -255,7 +255,7 @@ class Img():
 		:Return:
 			(dict)
 		'''
-		types = Iter.makeList(types.split('|'))
+		types = makeList(types.split('|'))
 		return [f for f in files if cls.getImageTypeFromFilename(f) in types]
 
 
@@ -368,9 +368,9 @@ class Img():
 		'''
 		inverted_image = cls.invertChannels(file, 'g')
 
-		output_dir = File.formatPath(file, 'path')
-		name = File.formatPath(file, 'name')
-		ext = File.formatPath(file, 'ext')
+		output_dir = formatPath(file, 'path')
+		name = formatPath(file, 'name')
+		ext = formatPath(file, 'ext')
 
 		typ = cls.getImageTypeFromFilename(file, key=False)
 		try:
@@ -400,9 +400,9 @@ class Img():
 		'''
 		inverted_image = cls.invertChannels(file, 'g')
 
-		output_dir = File.formatPath(file, 'path')
-		name = File.formatPath(file, 'name')
-		ext = File.formatPath(file, 'ext')
+		output_dir = formatPath(file, 'path')
+		name = formatPath(file, 'name')
+		ext = formatPath(file, 'ext')
 
 		typ = cls.getImageTypeFromFilename(file, key=False)
 		try:
@@ -437,7 +437,7 @@ class Img():
 			mask = cls.getBackground(mask)
 
 		result=[]
-		for image in Iter.makeList(images):
+		for image in makeList(images):
 			im = Image.open(image) if isinstance(image, str) else image
 			mode = im.mode
 			im = im.convert('RGBA')
@@ -462,7 +462,7 @@ class Img():
 			m = Image.fromarray(data).convert('L')
 			result.append(m)
 
-		return Iter.formatReturn(result, images)
+		return formatReturn(result, images)
 
 
 	@classmethod
@@ -765,7 +765,7 @@ if __name__=='__main__':
 	# 	files = cls.getImageFiles()
 	# 	for file, image in files.items():
 	# 		inverted_image = cls.invertChannels(image, 'g')
-	# 		# name = File.formatPath(file, remove='_DirectX', append='_OpenGL')
+	# 		# name = formatPath(file, remove='_DirectX', append='_OpenGL')
 	# 		# cls.saveImageFile(inverted_image, name)
 
 
@@ -775,7 +775,7 @@ if __name__=='__main__':
 	# 	files = cls.getImageFiles()
 	# 	for file, image in files.items():
 	# 		inverted_image = cls.invertChannels(image, 'g')
-	# 		# name = File.formatPath(file, remove='_OpenGL', append='_DirectX')
+	# 		# name = formatPath(file, remove='_OpenGL', append='_DirectX')
 	# 		# cls.saveImageFile(inverted_image, name)
 
 

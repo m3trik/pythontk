@@ -2,7 +2,7 @@
 # coding=utf-8
 import json
 
-from pythontk.filetk import File
+from pythontk.File import getFile
 
 
 class Json():
@@ -16,7 +16,7 @@ class Json():
 			file (str) = The filepath to a json file. If a file doesn't exist, it will be created.
 		'''
 		cls._jsonFile = file
-		File.getFile(cls._jsonFile) #will create the file if it does not exist.
+		getFile(cls._jsonFile) #will create the file if it does not exist.
 
 
 	@classmethod

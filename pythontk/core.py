@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from pythontk.itertk import Iter
+from pythontk.Iter import makeList, filterList
 
 
 def setAttributes(obj, **attributes):
@@ -25,7 +25,7 @@ def getAttributes(obj, inc=[], exc=[]):
 	:Return:
 		(dict) {'string attribute': current value}
 	'''
-	filtered = Iter.filterList(obj.__dict__, inc, exc)
+	filtered = filterList(obj.__dict__, inc, exc)
 	return {attr:getattr(obj, attr) for attr in filtered}
 
 
@@ -73,7 +73,7 @@ def areSimilar(a, b, tol=0.0):
 	ex. call: areSimilar(1, 10, 8)" #returns: False
 	'''
 	func = lambda a, b: abs(a-b)<=tol if isinstance(a, (int, float)) else True if isinstance(a, (list, set, tuple)) and areSimilar(a, b, tol) else a==b
-	return all(map(func, Iter.makeList(a), Iter.makeList(b)))
+	return all(map(func, makeList(a), makeList(b)))
 
 
 def randomize(lst, ratio=1.0):

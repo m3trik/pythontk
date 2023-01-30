@@ -1,19 +1,19 @@
 # !/usr/bin/python
 # coding=utf-8
-from pythontk.itertk import Iter
+from pythontk.Iter import makeList, formatReturn
 
 
 class Str():
 	'''
 	'''
 	@staticmethod
-	def setCase(strings, case='camelCase'):
+	def setCase(strings, case='camel'):
 		'''Format the given string(s) in the given case.
 		
 		:Parameters:
 			strings (str)(list) = The string(s) to format.
 			case (str) = The desired return case. Accepts all python case operators. 
-				valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camelCase', None.
+				valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
 
 		:Return:
 			(str)(list) List if 'string' given as list.
@@ -22,19 +22,19 @@ class Str():
 			return strings
 
 		if case=='pascal':
-			result = [s[:1].capitalize()+s[1:] for s in Iter.makeList(strings)] #capitalize the first letter.
+			result = [s[:1].capitalize()+s[1:] for s in makeList(strings)] #capitalize the first letter.
 
-		elif case=='camelCase':
-			result = [s[0].lower()+s[1:] for s in Iter.makeList(strings)] #lowercase the first letter.
+		elif case=='camel':
+			result = [s[0].lower()+s[1:] for s in makeList(strings)] #lowercase the first letter.
 
 		else:
 			try:
-				result = [getattr(s, case)() for s in Iter.makeList(strings)]
+				result = [getattr(s, case)() for s in makeList(strings)]
 
 			except AttributeError as error: #return the original string(s).
 				return strings
 
-		return Iter.formatReturn(result, strings) #if 'strings' is given as a list; return a list.
+		return formatReturn(result, strings) #if 'strings' is given as a list; return a list.
 
 
 	@staticmethod
@@ -55,7 +55,7 @@ class Str():
 		ex. call: splitAtChars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
 		'''
 		result = []
-		for s in Iter.makeList(strings):
+		for s in makeList(strings):
 			split = s.split(chars)
 
 			try:
@@ -69,7 +69,7 @@ class Str():
 
 			result.append((s1, s2))
 
-		return Iter.formatReturn(result, strings) #if 'strings' is given as a list; return a list.
+		return formatReturn(result, strings) #if 'strings' is given as a list; return a list.
 
 
 	@classmethod
@@ -363,7 +363,7 @@ class Str():
 
 		# strip each set of chars in 'strip' from end of string.
 		if strip:
-			strip = tuple([i for i in Iter.makeList(strip) if not i=='']) #assure 'strip' is a tuple and does not contain any empty strings.
+			strip = tuple([i for i in makeList(strip) if not i=='']) #assure 'strip' is a tuple and does not contain any empty strings.
 			while s.endswith(strip):
 				for chars in strip:
 					s = s.rstrip(chars)

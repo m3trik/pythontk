@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from pythontk.itertk import Iter
+from pythontk.Iter import makeList, formatReturn
 
 
 class Math():

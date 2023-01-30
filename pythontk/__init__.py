@@ -1,12 +1,12 @@
 # !/usr/bin/python
 # coding=utf-8
 from pythontk.core import *
-from pythontk.filetk import File
-from pythontk.imgtk import Img
-from pythontk.itertk import Iter
-from pythontk.jsontk import Json
-from pythontk.mathtk import Math
-from pythontk.strtk import Str
+from pythontk.File import File
+from pythontk.Img import Img
+from pythontk.Iter import Iter
+from pythontk.Json import Json
+from pythontk.Math import Math
+from pythontk.Str import Str
 
 
 name = 'pythontk'

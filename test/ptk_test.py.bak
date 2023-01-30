@@ -35,7 +35,7 @@ class Core_test(Main):
 	'''	
 	import pythontk as ptk
 	from pythontk import Iter
-	from pythontk.itertk import makeList
+	from pythontk.Iter import makeList
 	import pythontk.core
 
 	def test_imports(self):
@@ -102,9 +102,9 @@ class Str_test(Main, Str):
 			"self.setCase('xxX', 'swapcase')":'XXx',
 			"self.setCase('xxx XXX', 'title')":'Xxx Xxx',
 			"self.setCase('xXx', 'pascal')":'XXx',
-			"self.setCase('xXx', 'camelCase')":'xXx',
-			"self.setCase(['xXx'], 'camelCase')":['xXx'],
-			"self.setCase(None, 'camelCase')":None,
+			"self.setCase('xXx', 'camel')":'xXx',
+			"self.setCase(['xXx'], 'camel')":['xXx'],
+			"self.setCase(None, 'camel')":None,
 		})
 
 	def test_splitAtChars(self):

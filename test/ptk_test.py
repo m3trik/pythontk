@@ -35,7 +35,7 @@ class Core_test(Main):
 	'''	
 	import pythontk as ptk
 	from pythontk import Iter
-	from pythontk.itertk import makeList
+	from pythontk.Iter import makeList
 	import pythontk.core
 
 	def test_imports(self):
@@ -540,7 +540,7 @@ class Img_test(Main, Img):
 		'''
 		'''
 		self.perform_test({
-			"self.filterImagesByType(filetk.getDirContents('test_files/imgtk_test'), 'Height')": ['im_h.png', 'im_Height.png'],
+			"self.filterImagesByType(File.getDirContents('test_files/imgtk_test'), 'Height')": ['im_h.png', 'im_Height.png'],
 		})
 
 	def test_sortImagesByType(self):

@@ -2,7 +2,7 @@
 # coding=utf-8
 import sys, os
 
-from pythontk.itertk import Iter
+from pythontk.Iter import makeList, formatReturn, filterList
 
 
 class File():
@@ -27,7 +27,7 @@ class File():
 			(str)(list) List if 'strings' given as list.
 		'''
 		result=[]
-		for s in Iter.makeList(strings):
+		for s in makeList(strings):
 			if not isinstance(s, (str)):
 				continue
 			s = os.path.expandvars(s) #convert any env variables to their values.
@@ -63,7 +63,7 @@ class File():
 
 			result.append(s)
 
-		return Iter.formatReturn(result, strings) #if 'strings' is given as a list; return a list.
+		return formatReturn(result, strings) #if 'strings' is given as a list; return a list.
 
 
 	@classmethod
@@ -82,7 +82,7 @@ class File():
 		from datetime import datetime
 		import os.path
 
-		files = cls.formatPath(Iter.makeList(filepaths))
+		files = cls.formatPath(makeList(filepaths))
 
 		result=[]
 		if detach:
@@ -170,7 +170,7 @@ class File():
 
 		result=[]
 		for root, dirs, files in os.walk(path, topdown=topdown):
-			dirs[:] = Iter.filterList(dirs, incDirs, excDirs) #remove any directories in 'exclude'.
+			dirs[:] = filterList(dirs, incDirs, excDirs) #remove any directories in 'exclude'.
 
 			if 'dir' in returnTypes:
 				for d in dirs:
@@ -181,7 +181,7 @@ class File():
 			if not recursive:
 				dirs[:] = [d for d in dirs if d is root] #remove all but the root dir.
 
-			files[:] = Iter.filterList(files, incFiles, excFiles) #remove any files in 'exclude'.
+			files[:] = filterList(files, incFiles, excFiles) #remove any files in 'exclude'.
 			for f in files:
 				if 'file' in returnTypes:
 					result.append(f)
