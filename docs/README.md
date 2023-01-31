@@ -1,4 +1,4 @@
-#### A collection of backend utilities for Python.
+### pythontk is a collection of backend utilities for Python.
 
 ---
 
