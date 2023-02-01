@@ -9,6 +9,64 @@ class File():
 	'''
 	'''
 	@staticmethod
+	def getFile(filepath, mode='a+'):
+		'''Return a file object with the given mode.
+
+		:Parameters:
+			filepath (str) = The path to an existing file or the desired location for one to be created.
+			mode (str) = 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
+				'a' - Append - Opens a file for appending, creates the file if it does not exist.
+				'a+' - Read+Write - Creates a new file or opens an existing file, the file pointer position at the end of the file.
+				'w' - Write - Opens a file for writing, creates the file if it does not exist.
+				'w+' - Read+Write - Opens a file for reading and writing, creates the file if it does not exist.
+				'x' - Create - Creates a new file, returns an error if the file exists.
+				't' - Text - Default value. Text mode
+				'b' - Binary - Binary mode (e.g. images)
+
+		:Return:
+			(obj) file
+		'''
+		try:
+			with open(filepath, mode) as f:
+				return f
+		except OSError as error:
+			traceback.print_exc()
+
+
+	@staticmethod
+	def getFileContents(filepath: str) -> None:
+		'''Get each line of a text file as indices of a list.
+		Will create a file if one doesn't already exist.
+
+		:Parameters:
+			filepath (str) = The path to an existing text based file.
+
+		:Return:
+			(list)
+		'''
+		try:
+			with open(filepath, 'r') as f:
+				return f.readlines()
+		except OSError as error:
+			traceback.print_exc()
+
+
+	@staticmethod
+	def writeToFile(filepath, lines):
+		'''Write the given list contents to the given file.
+
+		:Parameters:
+			filepath (str) = The path to an existing text based file.
+			lines (list) = A list of strings to write to the file.
+		'''
+		try:
+			with open(filepath, 'w') as f:
+				f.writelines(lines)
+		except OSError as error:
+			traceback.print_exc()
+
+
+	@staticmethod
 	def formatPath(strings, section='', replace=''):
 		'''Format a given filepath(s).
 		When a section arg is given, the correlating section of the string will be returned.
@@ -245,72 +303,8 @@ class File():
 			return os.path.abspath(os.path.dirname(filepath))
 
 
-	@staticmethod
-	def getFile(filepath, mode='a+', contents=False):
-		'''Create a file if one doesn't already exist.
-
-		:Parameters:
-			filepath (str) = The path to an existing file or the desired location for one to be created.
-			mode (str) = 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
-				'a' - Append - Opens a file for appending, creates the file if it does not exist.
-				'a+' - Read+Write - Creates a new file or opens an existing file, the file pointer position at the end of the file.
-				'w' - Write - Opens a file for writing, creates the file if it does not exist.
-				'w+' - Read+Write - Opens a file for reading and writing, creates the file if it does not exist.
-				'x' - Create - Creates a new file, returns an error if the file exists.
-				't' - Text - Default value. Text mode
-				'b' - Binary - Binary mode (e.g. images)
-			contents (bool) = Return the contents (of a text based file) instead of the file itself.
-
-		:Return:
-			(obj) file or file contents dependant on given parameters.
-		'''
-		with open(filepath, mode) as f:
-			if contents: # note: f has now been truncated to 0 bytes, so you'll only be able to read data that you write after this point.
-				f.seek(0)  # important: return to the top of the file before reading, otherwise you'll just read an empty string.
-				try:
-					data = f.read() # returns: 'somedata\n'
-				except OSError as error:
-					print ('{} in getFile\n\t# Error: {} #\n\tfilepath:{}\n\tmode: {}'.format(__file__, error, filepath, mode))
-				return data
-			return f
-
-
-	@staticmethod
-	def writeToFile(filepath, lines, mode='w'):
-		'''Write the given list contents to the given file.
-
-		:Parameters:
-			filepath (str) = The path to an existing text based file.
-			lines (list) = A list of strings to write to the file.
-			mode (str) = 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
-				'a' - Append - Opens a file for appending, creates the file if it does not exist.
-				'a+' - Read+Write - Creates a new file or opens an existing file, the file pointer position at the end of the file.
-				'w' - Write - Opens a file for writing, creates the file if it does not exist.
-				'w+' - Read+Write - Opens a file for reading and writing, creates the file if it does not exist.
-				'x' - Create - Creates a new file, returns an error if the file exists.
-				't' - Text - Default value. Text mode
-				'b' - Binary - Binary mode (e.g. images)
-		'''
-		with open(filepath, mode) as f:
-			f.writelines(lines)
-
-
-	@staticmethod
-	def getFileContents(filepath: str) -> None:
-		'''Get each line of a text file as indices of a list.
-
-		:Parameters:
-			filepath (str) = The path to an existing text based file.
-
-		:Return:
-			(list)
-		'''
-		with open(filepath) as f:
-			return f.readlines()
-
-
-	@staticmethod
-	def increment_version(filepath: str) -> None:
+	@classmethod
+	def incVersion(cls, filepath: str) -> None:
 		"""This function increments the version number in a text file.
 		The verson number is defined as a line in the following format: __version__ = "0.0.0"
 
@@ -326,8 +320,7 @@ class File():
 		"""
 		import re
 
-		with open(filepath, "r") as f:
-			lines = f.readlines()
+		lines = cls.getFileContents(filepath)
 
 		for i, line in enumerate(lines):
 			if line.startswith("__version__"):
@@ -347,8 +340,7 @@ class File():
 				lines[i] = f"__version__ = '{version}'\n"
 				break
 
-		with open(filepath, "w") as f:
-			f.writelines(lines)
+		cls.writeToFile(filepath, lines)
 
 # --------------------------------------------------------------------------------------------
 

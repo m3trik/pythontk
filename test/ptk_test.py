@@ -449,7 +449,6 @@ class File_test(Main, File):
 		file = path+'/file1.txt'
 
 		self.perform_test({
-			f"self.getFile(r'{file}', contents=True)": r'some text',
 			f"str(self.getFile(r'{file}'))": r"<_io.TextIOWrapper name='O:\\Cloud\\Code\\_scripts\\pythontk\\test/test_files/file1.txt' mode='a+' encoding='cp1252'>",
 		})
 
