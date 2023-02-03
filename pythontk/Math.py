@@ -40,10 +40,10 @@ class Math():
 		ex. call: clamp(range(10), 3, 7) #returns: [3, 3, 3, 3, 4, 5, 6, 7, 7, 7]
 		'''
 		result=[]
-		for n_ in Iter.makeList(n):
+		for n_ in makeList(n):
 			result.append(max(minimum, min(n_, maximum)))
 
-		return Iter.formatReturn(result, n)
+		return formatReturn(result, n)
 
 
 	@classmethod
