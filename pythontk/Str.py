@@ -11,8 +11,8 @@ class Str():
 		'''Format the given string(s) in the given case.
 		
 		:Parameters:
-			strings (str)(list) = The string(s) to format.
-			case (str) = The desired return case. Accepts all python case operators. 
+			strings (str)(list): The string(s) to format.
+			case (str): The desired return case. Accepts all python case operators. 
 				valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
 
 		:Return:
@@ -43,16 +43,16 @@ class Str():
 		a two element tuple containing both halves.
 
 		:Parameters:
-			strings (str)(list) = The string(s) to operate on.
-			chars (str) = The chars to split at.
-			occurrence (int) = The occurrence of the pipe to split at from left.
+			strings (str)(list): The string(s) to operate on.
+			chars (str): The chars to split at.
+			occurrence (int): The occurrence of the pipe to split at from left.
 				ex. -1 would split at the last occurrence. 0 would split at the first.
 					If the occurrence is out of range, the full string will be 
 					returned as: ('original string', '')
 		:Return:
 			(tuple)(list) two element tuple, or list of two element tuples if multiple strings given.
 
-		ex. call: splitAtChars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
+		:Example: splitAtChars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
 		'''
 		result = []
 		for s in makeList(strings):
@@ -77,17 +77,17 @@ class Str():
 		'''Insert character(s) into a string at a given location.
 		if the character doesn't exist, the original string will be returned.
 
-		:parameters:
-			src (str) = The source string.
-			ins (str) = The character(s) to insert.
-			at (str)(int) = The index or char(s) to insert at.
-			occurrence (int) = Specify which occurrence to insert at.
+		:Parameters:
+			src (str): The source string.
+			ins (str): The character(s) to insert.
+			at (str)(int): The index or char(s) to insert at.
+			occurrence (int): Specify which occurrence to insert at.
 							Valid only when 'at' is given as a string.
 							default: The first occurrence.
 							(A value of -1 would insert at the last occurrence)
-			before (bool) = Specify inserting before or after. default: after
+			before (bool): Specify inserting before or after. default: after
 							Valid only when 'at' is given as a string.
-		:return:
+		:Return:
 			(str)
 		'''
 		try:
@@ -106,13 +106,13 @@ class Str():
 		'''Replace occurrances in a string from right to left.
 		The number of occurrances replaced can be limited by using the 'count' argument.
 
-		:parameters:
-			string (str) = 
-			old (str) = 
-			new (str)(int) = 
-			count (int) = 	
+		:Parameters:
+			string (str): 
+			old (str): 
+			new (str)(int): 
+			count (int): 	
 
-		:return:
+		:Return:
 			(str)
 		'''
 		if not string or not isinstance(string, str):
@@ -130,14 +130,14 @@ class Str():
 		An ellipsis will be added to the section trimmed.
 
 		:Parameters:
-			length (int) = The maximum allowed length before trunicating.
-			beginning (bool) = Trim starting chars, else; ending.
-			insert (str) = Chars to add at the trimmed area. (default: ellipsis)
+			length (int): The maximum allowed length before trunicating.
+			beginning (bool): Trim starting chars, else; ending.
+			insert (str): Chars to add at the trimmed area. (default: ellipsis)
 
 		:Return:
 			(str)
 
-		ex. call: truncate('12345678', 4) #returns: '..5678'
+		:Example: truncate('12345678', 4) #returns: '..5678'
 		'''
 		if not string or not isinstance(string, str):
 			return string
@@ -155,9 +155,9 @@ class Str():
 		'''Returns any integers from the end of the given string.
 
 		:Parameters:
-			inc (int) = Increment by a step amount. (default: 0)
+			inc (int): Increment by a step amount. (default: 0)
 					0 does not increment and returns the original number.
-			asString (bool) = Return the integers as a string instead of integers.
+			asString (bool): Return the integers as a string instead of integers.
 
 		"Return:
 			(int)
@@ -182,7 +182,7 @@ class Str():
 		'''Filter for elements that containing the given string in a list of strings.
 
 		:Parameters:
-			find (str) = The search string. An asterisk denotes startswith*, *endswith, *contains*, and multiple search strings can be separated by pipe chars.
+			find (str): The search string. An asterisk denotes startswith*, *endswith, *contains*, and multiple search strings can be separated by pipe chars.
 				wildcards:
 					*chars* - string contains chars.
 					*chars - string endswith chars.
@@ -195,9 +195,9 @@ class Str():
 					(|) or. ex. re.match('1|0', '011') #returns the regex object <0>
 					(\A,\Z) beginning of a string and end of a string. ex. re.match(r'\A011\Z', '011') #
 					(\b) empty string. (\B matches the empty string anywhere else). ex. re.match(r'\b(011)\b', '011 011 011') #
-			strings (list) = The string list to search.
-			regEx (bool) = Use regular expressions instead of wildcards.
-			ignoreCase (bool) = Search case insensitive.
+			strings (list): The string list to search.
+			regEx (bool): Use regular expressions instead of wildcards.
+			ignoreCase (bool): Search case insensitive.
 
 		:Return:
 			(list)
@@ -256,18 +256,18 @@ class Str():
 		'''Expanding on the 'findStr' function: Find matches of a string in a list of strings and re-format them.
 
 		:Parameters:
-			strings (list) = A list of string objects to search.
-			to (str) = An optional asterisk modifier can be used for formatting. An empty string will attempt to remove the part of the string designated in the from argument.
+			strings (list): A list of string objects to search.
+			to (str): An optional asterisk modifier can be used for formatting. An empty string will attempt to remove the part of the string designated in the from argument.
 				"" - (empty string) - strip chars.
 				*chars* - replace only.
 				*chars - replace suffix.
 				**chars - append suffix.
 				chars* - replace prefix.
 				chars** - append prefix.
-			fltr (str) = See the 'findStr' function's 'fltr' parameter for documentation.
-			regEx (bool) = Use regular expressions instead of wildcards for the 'find' argument.
-			ignoreCase (bool) = Ignore case when searching. Applies only to the 'fltr' parameter's search.
-			returnOldNames (bool) = Return the old names as well as the new.
+			fltr (str): See the 'findStr' function's 'fltr' parameter for documentation.
+			regEx (bool): Use regular expressions instead of wildcards for the 'find' argument.
+			ignoreCase (bool): Ignore case when searching. Applies only to the 'fltr' parameter's search.
+			returnOldNames (bool): Return the old names as well as the new.
 
 		:Return:
 			(list) if returnOldNames: list of two element tuples containing the original and modified string pairs. [('frm','to')]
@@ -344,14 +344,14 @@ class Str():
 	def formatSuffix(string, suffix='', strip='', stripTrailingInts=False, stripTrailingAlpha=False):
 		'''Re-format the suffix for the given string.
 
-		:parameters:
-			string (str) = The string to format.
-			suffix (str) = Append a new suffix to the given string.
-			strip (str)(list) = Specific string(s) to strip from the end of the given string.
-			stripTrailingInts (bool) = Strip all trailing integers.
-			stripTrailingAlpha (bool) = Strip all upper-case letters preceeded by a non alphanumeric character.
+		:Parameters:
+			string (str): The string to format.
+			suffix (str): Append a new suffix to the given string.
+			strip (str)(list): Specific string(s) to strip from the end of the given string.
+			stripTrailingInts (bool): Strip all trailing integers.
+			stripTrailingAlpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
 
-		:return:
+		:Return:
 			(str)
 		'''
 		import re
@@ -380,23 +380,37 @@ class Str():
 
 # --------------------------------------------------------------------------------------------
 
-def __getattr__(attr):
-	'''Attempt to get a class attribute.
 
+
+
+
+
+
+
+
+# --------------------------------------------------------------------------------------------
+
+def __getattr__(attr:str):
+	"""Searches for an attribute in this module's classes and returns it.
+
+	:Parameters:
+		attr (str): The name of the attribute to search for.
+	
 	:Return:
-		(obj)
-	'''
-	try:
-		return getattr(Str, attr)
-	except AttributeError as error:
-		raise AttributeError(f'{__file__} in __getattr__\n\t{error} ({type(attr).__name__})')
+		(obj) The found attribute.
 
+	:Raises:
+		AttributeError: If the given attribute is not found in any of the classes in the module.
+	"""
+	import sys
+	from pythontk import searchClassesForAttr
 
+	attr = searchClassesForAttr(sys.modules[__name__], attr)
+	if not attr:
+		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
+	return attr
 
-
-
-
-
+# --------------------------------------------------------------------------------------------
 
 if __name__=='__main__':
 	pass

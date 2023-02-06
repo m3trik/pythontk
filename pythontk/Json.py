@@ -13,7 +13,7 @@ class Json():
 		'''Set the current json filepath.
 
 		:Parameters:
-			file (str) = The filepath to a json file. If a file doesn't exist, it will be created.
+			file (str): The filepath to a json file. If a file doesn't exist, it will be created.
 		'''
 		cls._jsonFile = file
 		getFile(cls._jsonFile) #will create the file if it does not exist.
@@ -38,11 +38,11 @@ class Json():
 		:Parameters:
 			key () = Set the json key.
 			value () = Set the json value for the given key.
-			file (str) = Temporarily set the filepath to a json file.
+			file (str): Temporarily set the filepath to a json file.
 				If no file is given, the previously set file will be used 
 				if one was set.
 
-		ex. call: setJson('hdr_map_visibility', state)
+		:Example: setJson('hdr_map_visibility', state)
 		'''
 		if not file:
 			file = cls.getJsonFile()
@@ -68,13 +68,13 @@ class Json():
 		:Parameters:
 			key () = Set the json key.
 			value () = Set the json value for the given key.
-			file (str) = Temporarily set the filepath to a json file.
+			file (str): Temporarily set the filepath to a json file.
 					If no file is given, the previously set file will 
 					be used if one was set.
 		:Return:
 			(str)
 
-		ex. call: getJson('hdr_map_visibility') #returns: state
+		:Example: getJson('hdr_map_visibility') #returns: state
 		'''
 		if not file:
 			file = cls.getJsonFile()
@@ -97,22 +97,37 @@ class Json():
 
 # --------------------------------------------------------------------------------------------
 
-def __getattr__(attr):
-	'''Attempt to get a class attribute.
 
+
+
+
+
+
+
+
+# --------------------------------------------------------------------------------------------
+
+def __getattr__(attr:str):
+	"""Searches for an attribute in this module's classes and returns it.
+
+	:Parameters:
+		attr (str): The name of the attribute to search for.
+	
 	:Return:
-		(obj)
-	'''
-	try:
-		return getattr(Json, attr)
-	except AttributeError as error:
-		raise AttributeError(f'{__file__} in __getattr__\n\t{error} ({type(attr).__name__})')
+		(obj) The found attribute.
 
+	:Raises:
+		AttributeError: If the given attribute is not found in any of the classes in the module.
+	"""
+	import sys
+	from pythontk import searchClassesForAttr
 
+	attr = searchClassesForAttr(sys.modules[__name__], attr)
+	if not attr:
+		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
+	return attr
 
-
-
-
+# --------------------------------------------------------------------------------------------
 
 if __name__=='__main__':
 	pass

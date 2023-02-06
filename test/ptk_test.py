@@ -4,7 +4,13 @@ import os, sys
 import unittest
 import inspect
 
-from pythontk import *
+from pythontk.Core import Core
+from pythontk.File import File
+from pythontk.Img import Img
+from pythontk.Iter import Iter
+from pythontk.Json import Json
+from pythontk.Math import Math
+from pythontk.Str import Str
 
 
 class Main(unittest.TestCase):
@@ -25,18 +31,18 @@ class Main(unittest.TestCase):
 			self.assertEqual(
 				result, 
 				expected_result, 
-				"\n\nError: {}\n  Call:     {}\n  Expected: {} {}\n  Returned: {} {}".format(path, expression.replace('self.', '', 1), type(expected_result), expected_result, type(result), result)
+				f"\n\n# Error: {path}\n#\tCall: {expression.replace('self.', '', 1)}\n#\tExpected: {type(expected_result)} {expected_result}\n#\tReturned: {type(result)} {result}"
 			)
 
 
 
-class Core_test(Main):
+class Core_test(Main, Core):
 	'''
 	'''	
+	#test imports:
 	import pythontk as ptk
 	from pythontk import Iter
 	from pythontk.Iter import makeList
-	import pythontk.core
 
 	def test_imports(self):
 		'''
@@ -51,31 +57,31 @@ class Core_test(Main):
 		'''
 		'''
 		self.perform_test({
-			"self.ptk.setAttributes(self, attr='value')": None,
+			"self.setAttributes(self, attr='value')": None,
 		})
 
 	def test_getAttributes(self):
 		'''
 		'''
 		self.perform_test({
-			"self.ptk.getAttributes(self, '_subtest')": {'_subtest': None},
+			"self.getAttributes(self, '_subtest')": {'_subtest': None},
 		})
 
 	def test_cycle(self):
 		'''
 		'''
 		self.perform_test({
-			"self.ptk.cycle([0,1], 'ID')": 0,
-			"self.ptk.cycle([0,1], 'ID')": 1,
-			"self.ptk.cycle([0,1], 'ID')": 0,
+			"self.cycle([0,1], 'ID')": 0,
+			"self.cycle([0,1], 'ID')": 1,
+			"self.cycle([0,1], 'ID')": 0,
 		})
 
 	def test_areSimilar(self):
 		'''
 		'''
 		self.perform_test({
-			"self.ptk.areSimilar(1, 10, 9)": True,
-			"self.ptk.areSimilar(1, 10, 8)": False,
+			"self.areSimilar(1, 10, 9)": True,
+			"self.areSimilar(1, 10, 8)": False,
 		})
 
 	def test_randomize(self):
@@ -83,8 +89,8 @@ class Core_test(Main):
 		'''
 		print ('\nrandomize: skipped')
 		self.perform_test({
-			# "self.ptk.randomize(range(10), 1.0)": [],
-			# "self.ptk.randomize(range(10), 0.5)": [],
+			# "self.randomize(range(10), 1.0)": [],
+			# "self.randomize(range(10), 0.5)": [],
 		})
 
 
@@ -793,15 +799,19 @@ class Math_test(Main, Math):
 
 # -----------------------------------------------------------------------------
 
+
+
+
+
+
+
+
+
+# -----------------------------------------------------------------------------
+
 if __name__=='__main__':
 
 	unittest.main(exit=False)
-
-
-
-
-
-
 
 # -----------------------------------------------------------------------------
 # Notes
@@ -816,4 +826,6 @@ def test_(self):
 		})
 """
 
-# Deprecated ---------------------
+# --------------------------------------------------------------------------------------------
+# deprecated:
+# --------------------------------------------------------------------------------------------

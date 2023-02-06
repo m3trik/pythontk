@@ -13,8 +13,8 @@ class File():
 		'''Return a file object with the given mode.
 
 		:Parameters:
-			filepath (str) = The path to an existing file or the desired location for one to be created.
-			mode (str) = 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
+			filepath (str): The path to an existing file or the desired location for one to be created.
+			mode (str): 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
 				'a' - Append - Opens a file for appending, creates the file if it does not exist.
 				'a+' - Read+Write - Creates a new file or opens an existing file, the file pointer position at the end of the file.
 				'w' - Write - Opens a file for writing, creates the file if it does not exist.
@@ -39,7 +39,7 @@ class File():
 		Will create a file if one doesn't already exist.
 
 		:Parameters:
-			filepath (str) = The path to an existing text based file.
+			filepath (str): The path to an existing text based file.
 
 		:Return:
 			(list)
@@ -56,8 +56,8 @@ class File():
 		'''Write the given list contents to the given file.
 
 		:Parameters:
-			filepath (str) = The path to an existing text based file.
-			lines (list) = A list of strings to write to the file.
+			filepath (str): The path to an existing text based file.
+			lines (list): A list of strings to write to the file.
 		'''
 		try:
 			with open(filepath, 'w') as f:
@@ -73,8 +73,8 @@ class File():
 		If a replace arg is given, the stated section will be replaced by the given value.
 
 		:Parameters:
-			strings (str)(list) = The filepath(s) to be formatted.
-			section (str) = The desired subsection of the given path. 
+			strings (str)(list): The filepath(s) to be formatted.
+			section (str): The desired subsection of the given path. 
 					'path' path - filename, 
 					'dir'  directory name, 
 					'file' filename + ext, 
@@ -129,10 +129,10 @@ class File():
 		'''Attach a modified timestamp and date to given file path(s).
 
 		:Parameters:
-			filepaths (str)(list) = The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
-			detach (bool) = Remove a previously attached time stamp.
-			stamp (str) = The time stamp format.
-			sort (bool) = Reorder the list of filepaths by time. (most recent first)
+			filepaths (str)(list): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
+			detach (bool): Remove a previously attached time stamp.
+			stamp (str): The time stamp format.
+			sort (bool): Reorder the list of filepaths by time. (most recent first)
 
 		:Return:
 			(list) ie. ['16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'] from ['C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb']
@@ -168,7 +168,7 @@ class File():
 		'''Determine if the given filepath is valid.
 
 		:Parameters:
-			filepath (str) = The path to a file.
+			filepath (str): The path to a file.
 
 		:Return:
 			(str) The path type (ie. 'file' or 'dir') or None.
@@ -187,7 +187,7 @@ class File():
 		'''Create a directory if one doesn't already exist.
 
 		:Parameters:
-			filepath (str) = The path to where the file will be created.
+			filepath (str): The path to where the file will be created.
 		'''
 		fp = os.path.expandvars(filepath) #convert any env variables to their values.
 		try:
@@ -203,17 +203,17 @@ class File():
 		'''Get the contents of a directory and any of it's children.
 
 		:Parameters:
-			path (str) = The path to the directory.
-			returnType (str) = Return files and directories. Multiple types can be given using '|' 
+			path (str): The path to the directory.
+			returnType (str): Return files and directories. Multiple types can be given using '|' 
 					ex. 'files|dirs' (valid: 'files'(default), filenames, 'filepaths', 'dirs', 'dirpaths')
 					case insensitive. singular or plural.
-			recursive (bool) = return the contents of the root dir only.
-			topDown (bool) = Scan directories from the top-down, or bottom-up.
-			reverse (bool) = When True, reverse the final result.
-			incFiles (str)(list) = Include only specific files.
-			excFiles (str)(list) = Excluded specific files.
-			incDirs (str)(list) = Include only specific child directories.
-			excDirs (str)(list) = Excluded specific child directories.
+			recursive (bool): return the contents of the root dir only.
+			topDown (bool): Scan directories from the top-down, or bottom-up.
+			reverse (bool): When True, reverse the final result.
+			incFiles (str)(list): Include only specific files.
+			excFiles (str)(list): Excluded specific files.
+			incDirs (str)(list): Include only specific child directories.
+			excDirs (str)(list): Excluded specific child directories.
 					supports using the '*' operator: startswith*, *endswith, *contains*
 					ex. *.ext will exclude all files with the given extension.
 					exclude takes precedence over include.
@@ -258,8 +258,8 @@ class File():
 		'''Get the filepath of a class or module.
 
 		:Parameters:
-			obj (obj) = A python module, class, or the built-in __file__ variable.
-			incFilename (bool) = Include the filename in the returned result.
+			obj (obj): A python module, class, or the built-in __file__ variable.
+			incFilename (bool): Include the filename in the returned result.
 
 		:Return:
 			(str)
@@ -344,22 +344,37 @@ class File():
 
 # --------------------------------------------------------------------------------------------
 
-def __getattr__(attr):
-	'''Attempt to get a class attribute.
 
+
+
+
+
+
+
+
+# --------------------------------------------------------------------------------------------
+
+def __getattr__(attr:str):
+	"""Searches for an attribute in this module's classes and returns it.
+
+	:Parameters:
+		attr (str): The name of the attribute to search for.
+	
 	:Return:
-		(obj)
-	'''
-	try:
-		return getattr(File, attr)
-	except AttributeError as error:
-		raise AttributeError(f'{__file__} in __getattr__\n\t{error} ({type(attr).__name__})')
+		(obj) The found attribute.
 
+	:Raises:
+		AttributeError: If the given attribute is not found in any of the classes in the module.
+	"""
+	import sys
+	from pythontk import searchClassesForAttr
 
+	attr = searchClassesForAttr(sys.modules[__name__], attr)
+	if not attr:
+		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
+	return attr
 
-
-
-
+# --------------------------------------------------------------------------------------------
 
 if __name__=='__main__':
 	pass

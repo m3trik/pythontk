@@ -25,8 +25,8 @@ class Iter():
 		If the 'orig' arg is a multi-element type then the original format will always be returned.
 
 		:Parameters:
-			rtn (list) = An iterable.
-			orig (obj) = Optionally; derive the return type form the original value.
+			rtn (list): An iterable.
+			orig (obj): Optionally; derive the return type form the original value.
 					ie. if it was a multi-value type; do not modify the return value.
 		:Return:
 			(obj)(list) dependant on flags.
@@ -48,8 +48,8 @@ class Iter():
 		If there is nothing nested, 0 will be returned.
 
 		:Parameters:
-			lst (list) = The list to check.
-			typ (type)(tuple) = The type(s) to include in the query.
+			lst (list): The list to check.
+			typ (type)(tuple): The type(s) to include in the query.
 
 		:Return:
 			(int) 0 if none, else the max nested depth.
@@ -66,7 +66,7 @@ class Iter():
 		'''Flatten arbitrarily nested lists.
 
 		:Parameters:
-			lst (list) = A list with potentially nested lists.
+			lst (list): A list with potentially nested lists.
 
 		:Return:
 			(generator)
@@ -85,10 +85,10 @@ class Iter():
 		ie. [19,22,23,24,25,26] to ['19', '22..26']
 
 		:Parameters:
-			lst (list) = A list of integers.
-			limit (int) = limit the maximum length of the returned elements.
-			compress (bool) = Trim redundant chars from the second half of a compressed set. ie. ['19', '22-32', '1225-6'] from ['19', '22..32', '1225..1226']
-			toString (bool) = Return a single string value instead of a list.
+			lst (list): A list of integers.
+			limit (int): limit the maximum length of the returned elements.
+			compress (bool): Trim redundant chars from the second half of a compressed set. ie. ['19', '22-32', '1225-6'] from ['19', '22..32', '1225..1226']
+			toString (bool): Return a single string value instead of a list.
 
 		:Return:
 			(list)(str) string if 'toString'.
@@ -150,7 +150,7 @@ class Iter():
 		starting from the back (right side) of the list.
 
 		:Parameters:
-			itr (iter) = An iterable.
+			itr (iter): An iterable.
 			item () = The item to get the index of.
 
 		:Return:
@@ -164,7 +164,7 @@ class Iter():
 		'''Get the index of each element of a list matching the given value.
 
 		:Parameters:
-			itr (iter) = An iterable.
+			itr (iter): An iterable.
 			value () = The search value.
 
 		:Return:
@@ -177,11 +177,11 @@ class Iter():
 	def removeDuplicates(lst, trailing=True):
 		'''Remove all duplicated occurences while keeping the either the first or last.
 
-		:parameters:
-			lst (list) = The list to remove duplicate elements of.
-			trailing (bool) = Remove all trailing occurances while keeping the first, else keep last.
+		:Parameters:
+			lst (list): The list to remove duplicate elements of.
+			trailing (bool): Remove all trailing occurances while keeping the first, else keep last.
 
-		:return:
+		:Return:
 			(list)
 		'''
 		if trailing:
@@ -196,21 +196,21 @@ class Iter():
 		Extends `filterList` to operate on either the given dict's keys or values.
 
 		:Parameters:
-			dct (dict) = The dictionary to filter.
-			inc (str)(obj)(list) = The objects(s) to include.
+			dct (dict): The dictionary to filter.
+			inc (str)(obj)(list): The objects(s) to include.
 					supports using the '*' operator: startswith*, *endswith, *contains*
 					Will include all items that satisfy ANY of the given search terms.
 					meaning: '*.png' and '*Normal*' returns all strings ending in '.png' AND all 
 					strings containing 'Normal'. NOT strings satisfying both terms.
-			exc (str)(obj)(list) = The objects(s) to exclude. Similar to include.
+			exc (str)(obj)(list): The objects(s) to exclude. Similar to include.
 					exlude take precidence over include.
-			keys (bool) = Filter the dictionary keys.
-			values (bool) = Filter the dictionary values.
+			keys (bool): Filter the dictionary keys.
+			values (bool): Filter the dictionary values.
 
 		:Return:
 			(dict)
 
-		ex. call: dct = {1:'1', 'two':2, 3:'three'}
+		:Example: dct = {1:'1', 'two':2, 3:'three'}
 		filterDict(dct, exc='*t*', values=True) #returns: {1: '1', 'two': 2}
 		filterDict(dct, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
 		filterDict(dct, exc=1, keys=True) #returns: {'two': 2, 3: 'three'}
@@ -229,18 +229,18 @@ class Iter():
 		'''Filter the given list.
 
 		:Parameters:
-			lst (list) = The components(s) to filter.
-			inc (str)(int)(obj)(list) = The objects(s) to include.
+			lst (list): The components(s) to filter.
+			inc (str)(int)(obj)(list): The objects(s) to include.
 					supports using the '*' operator: startswith*, *endswith, *contains*
 					Will include all items that satisfy ANY of the given search terms.
 					meaning: '*.png' and '*Normal*' returns all strings ending in '.png' AND all 
 					strings containing 'Normal'. NOT strings satisfying both terms.
-			exc (str)(int)(obj)(list) = The objects(s) to exclude. Similar to include.
+			exc (str)(int)(obj)(list): The objects(s) to exclude. Similar to include.
 					exlude take precidence over include.
 		:Return:
 			(list)
 
-		ex. call: filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
+		:Example: filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
 		'''
 		exc = cls.makeList(exc)
 		inc = cls.makeList(inc)
@@ -300,7 +300,7 @@ class Iter():
 		'''Split a list into parts.
 
 		:Parameters:
-			into (str) = Split the list into parts defined by the following:
+			into (str): Split the list into parts defined by the following:
 				'<n>parts' - Split the list into n parts.
 					ex. 2 returns:  [[1, 2, 3, 5], [7, 8, 9]] from [1,2,3,5,7,8,9]
 				'<n>parts+' - Split the list into n equal parts with any trailing remainder.
@@ -341,22 +341,37 @@ class Iter():
 
 # --------------------------------------------------------------------------------------------
 
-def __getattr__(attr):
-	'''Attempt to get a class attribute.
 
+
+
+
+
+
+
+
+# --------------------------------------------------------------------------------------------
+
+def __getattr__(attr:str):
+	"""Searches for an attribute in this module's classes and returns it.
+
+	:Parameters:
+		attr (str): The name of the attribute to search for.
+	
 	:Return:
-		(obj)
-	'''
-	try:
-		return getattr(Iter, attr)
-	except AttributeError as error:
-		raise AttributeError(f'{__file__} in __getattr__\n\t{error} ({type(attr).__name__})')
+		(obj) The found attribute.
 
+	:Raises:
+		AttributeError: If the given attribute is not found in any of the classes in the module.
+	"""
+	import sys
+	from pythontk import searchClassesForAttr
 
+	attr = searchClassesForAttr(sys.modules[__name__], attr)
+	if not attr:
+		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
+	return attr
 
-
-
-
+# --------------------------------------------------------------------------------------------
 
 if __name__=='__main__':
 	pass

@@ -1,7 +1,7 @@
 import os
 import setuptools
 
-from pythontk import name, __version__
+from pythontk import __package__, __version__
 from pythontk import File
 
 
@@ -9,14 +9,14 @@ with open('docs/README.md', 'r') as f:
 	long_description = f.read()
 
 setuptools.setup(
-	name=name,
+	name=__package__,
 	version=__version__,
 	author='Ryan Simpson',
 	author_email='m3trik@outlook.com',
 	description='.',
 	long_description=long_description,
 	long_description_content_type='text/markdown',
-	url=f'https://github.com/m3trik/{name}',
+	url=f'https://github.com/m3trik/{__package__}',
 	packages=setuptools.find_packages(),
 	classifiers=[
 		'Programming Language :: Python :: 3',
@@ -24,7 +24,7 @@ setuptools.setup(
 		'Operating System :: OS Independent',
 	],
 	include_package_data = True,
-	data_files=File.getDirContents(name, 'filepaths', excFiles=['*.py', '*.pyc', '*.json']), #ie. ('uitk/ui/0', ['uitk/ui/0/init.ui']),
+	data_files=File.getDirContents(__package__, 'filepaths', excFiles=['*.py', '*.pyc', '*.json']), #ie. ('uitk/ui/0', ['uitk/ui/0/init.ui']),
 )
 
 # --------------------------------------------------------------------------------------------
