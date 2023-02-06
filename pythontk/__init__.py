@@ -2,11 +2,10 @@
 # coding=utf-8
 import os, sys
 import inspect
-import importlib
 
 
 __package__ = 'pythontk'
-__version__ = '0.5.6'
+__version__ = '0.5.7'
 
 
 def __getattr__(attr):
@@ -26,17 +25,16 @@ def __getattr__(attr):
 		<package>.__getattr__('attribute1') #returns: <attribute1 value>
 	"""
 	try:
-		module_name, attribute = attr.split('.')
-		module = importlib.import_module(f"{__package__}.{module_name}")
-		setattr(sys.modules[__name__], attr, getattr(module, attribute))
-		return getattr(module, attribute)
+		module = __import__(f"{__package__}.{attr}", fromlist=[f"{attr}"])
+		setattr(sys.modules[__name__], attr, getattr(module, attr))
+		return getattr(module, attr)
 
-	except ValueError:
-		module = importlib.import_module(f"{__package__}.Core")
+	except (ValueError, ModuleNotFoundError):
+		module = __import__(f"{__package__}.Core", fromlist=["Core"])
 		return getattr(module, attr)
 
 	except AttributeError as error:
-		raise AttributeError(f"Module '{__package__}' or '{__package__}.Core' has no attribute '{attr}'") from error
+		raise AttributeError(f"Module '{__package__}' has no attribute '{attr}'") from error
 
 
 visited = set()
