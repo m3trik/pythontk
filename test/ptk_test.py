@@ -31,7 +31,7 @@ class Main(unittest.TestCase):
 			self.assertEqual(
 				result, 
 				expected_result, 
-				f"\n\n# Error: {path}\n#\tCall: {expression.replace('self.', '', 1)}\n#\tExpected: {type(expected_result)} {expected_result}\n#\tReturned: {type(result)} {result}"
+				f"\n\n# Error: {path}\n#\tCall: {expression.replace('self.', '', 1)}\n#\tExpected {type(expected_result)}: {expected_result}\n#\tReturned {type(result)}: {result}"
 			)
 
 

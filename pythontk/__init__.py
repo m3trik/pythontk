@@ -5,7 +5,7 @@ import inspect
 
 
 __package__ = 'pythontk'
-__version__ = '0.5.7'
+__version__ = '0.5.9'
 
 
 def __getattr__(attr):
@@ -42,7 +42,7 @@ def searchClassesForAttr(module, attr, breakOnMatch=True):
 	"""Searches all classes in the given module for the given attribute, excluding any classes starting with an underscore.
 
 	:Parameters:
-		module (module): The module to search for classes and attributes.
+		module (str)(module): The module to search for classes and attributes.
 		attr (str): The name of an attribute to search for.
 		breakOnMatch (bool): Return only the first found attribute.
 
@@ -69,6 +69,7 @@ def searchClassesForAttr(module, attr, breakOnMatch=True):
 	if not found_attrs:
 		raise AttributeError(f"Module '{module.__name__}' has no attribute '{attr}'")
 	return found_attrs
+
 
 def import_submodules(package, filetypes=('py', 'pyc', 'pyd'), ignoreStartingWith=('.', '_')):
 	'''Import submodules to the given package.
