@@ -10,7 +10,7 @@ class Core():
 	def setAttributes(obj, **attributes):
 		'''Set attributes for a given object.
 
-		:Parameters:
+		Parameters:
 			obj (obj): The object to set attributes for.
 			attributes (kwargs) = Attributes and their correponding values as keyword args.
 		'''
@@ -22,16 +22,38 @@ class Core():
 	def getAttributes(obj, inc=[], exc=[]):
 		'''Get attributes for a given object.
 
-		:Parameters:
+		Parameters:
 			obj (obj): The object to get the attributes of.
 			inc (list): Attributes to include. All other will be omitted. Exclude takes dominance over include. Meaning, if the same attribute is in both lists, it will be excluded.
 			exc (list): Attributes to exclude from the returned dictionay. ie. [u'Position',u'Rotation',u'Scale',u'renderable',u'isHidden',u'isFrozen',u'selected']
 
-		:Return:
+		Return:
 			(dict) {'string attribute': current value}
 		'''
 		filtered = filterList(obj.__dict__, inc, exc)
 		return {attr:getattr(obj, attr) for attr in filtered}
+
+
+	@staticmethod
+	def hasAttribute(cls, attr):
+		'''This function checks whether a class has a specific static attribute by using `inspect.getattr_static`.
+		It does not invoke the class's `__getattr__` method, so it is useful for checking if an attribute is defined
+		on the class itself, rather than on its instances.
+
+		Parameters:
+			cls (obj): The class to check for the attribute.
+			attr (str): The name of the attribute to check.
+
+		:return:
+			(bool) True if the class has the attribute, False otherwise.
+		'''
+		import inspect
+
+		try:
+			inspect.getattr_static(cls, attr)
+			return True
+		except AttributeError:
+			return False
 
 
 	cycleDict={}
@@ -42,7 +64,7 @@ class Core():
 		Each time this function is called, it returns the next number in the sequence
 		using the name string as an identifier key.
 		
-		:Parameters:
+		Parameters:
 			sequence (list): sequence to cycle through. ie. [1,2,3].
 			name (str): identifier. used as a key to get the sequence value from the dict.
 			
@@ -67,16 +89,16 @@ class Core():
 		'''Check if the two numberical values are within a given tolerance.
 		Supports nested lists.
 
-		:Parameters:
+		Parameters:
 			a (obj)(tuple): The first object(s) to compare.
 			b (obj)(tuple): The second object(s) to compare.
 			tol (float) = The maximum allowed variation between the values.
 
-		:Return:
+		Return:
 			(bool)
 
-		:Example: areSimilar(1, 10, 9)" #returns: True
-		:Example: areSimilar(1, 10, 8)" #returns: False
+		Example: areSimilar(1, 10, 9)" #returns: True
+		Example: areSimilar(1, 10, 8)" #returns: False
 		'''
 		func = lambda a, b: abs(a-b)<=tol if isinstance(a, (int, float)) else True if isinstance(a, (list, set, tuple)) and areSimilar(a, b, tol) else a==b
 		return all(map(func, makeList(a), makeList(b)))
@@ -87,15 +109,15 @@ class Core():
 		'''Random elements from the given list will be returned with a quantity determined by the given ratio.
 		A value of 0.5 will return 50% of the original elements in random order.
 
-		:Parameters:
+		Parameters:
 			lst (tuple): A list to randomize.
 			ratio (float) = A value of 0.0-1. (default: 100%) With 0 representing 0% and 
 					1 representing 100% of the given elements returned in random order.
-		:Return:
+		Return:
 			(list)
 
-		:Example: randomize(range(10), 1.0) #returns: [8, 4, 7, 6, 0, 5, 9, 1, 3, 2]
-		:Example: randomize(range(10), 0.5) #returns: [7, 6, 4, 2, 8]
+		Example: randomize(range(10), 1.0) #returns: [8, 4, 7, 6, 0, 5, 9, 1, 3, 2]
+		Example: randomize(range(10), 0.5) #returns: [7, 6, 4, 2, 8]
 		'''
 		import random
 
@@ -120,10 +142,10 @@ class Core():
 def __getattr__(attr:str):
 	"""Searches for an attribute in this module's classes and returns it.
 
-	:Parameters:
+	Parameters:
 		attr (str): The name of the attribute to search for.
 	
-	:Return:
+	Return:
 		(obj) The found attribute.
 
 	:Raises:

@@ -12,7 +12,7 @@ class Json():
 	def setJsonFile(cls, file):
 		'''Set the current json filepath.
 
-		:Parameters:
+		Parameters:
 			file (str): The filepath to a json file. If a file doesn't exist, it will be created.
 		'''
 		cls._jsonFile = file
@@ -23,7 +23,7 @@ class Json():
 	def getJsonFile(cls):
 		'''Get the current json filepath.
 
-		:Return:
+		Return:
 			(str)
 		'''
 		try:
@@ -35,14 +35,14 @@ class Json():
 	@classmethod
 	def setJson(cls, key, value, file=None):
 		'''
-		:Parameters:
+		Parameters:
 			key () = Set the json key.
 			value () = Set the json value for the given key.
 			file (str): Temporarily set the filepath to a json file.
 				If no file is given, the previously set file will be used 
 				if one was set.
 
-		:Example: setJson('hdr_map_visibility', state)
+		Example: setJson('hdr_map_visibility', state)
 		'''
 		if not file:
 			file = cls.getJsonFile()
@@ -65,16 +65,16 @@ class Json():
 	@classmethod
 	def getJson(cls, key, file=None):
 		'''
-		:Parameters:
+		Parameters:
 			key () = Set the json key.
 			value () = Set the json value for the given key.
 			file (str): Temporarily set the filepath to a json file.
 					If no file is given, the previously set file will 
 					be used if one was set.
-		:Return:
+		Return:
 			(str)
 
-		:Example: getJson('hdr_map_visibility') #returns: state
+		Example: getJson('hdr_map_visibility') #returns: state
 		'''
 		if not file:
 			file = cls.getJsonFile()
@@ -110,10 +110,10 @@ class Json():
 def __getattr__(attr:str):
 	"""Searches for an attribute in this module's classes and returns it.
 
-	:Parameters:
+	Parameters:
 		attr (str): The name of the attribute to search for.
 	
-	:Return:
+	Return:
 		(obj) The found attribute.
 
 	:Raises:

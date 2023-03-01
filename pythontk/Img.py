@@ -111,7 +111,7 @@ class Img():
 		'''Get help documentation on a specific PIL image attribute 
 		or list all available attributes.
 
-		:Parameters:
+		Parameters:
 			a (str): A specific PIL image attribute (ie. 'resize') 
 					or if None given; list all available attributes.
 		'''
@@ -132,12 +132,12 @@ class Img():
 	def createImage(mode, size=(4096, 4096), color=None):
 		'''Create a new image.
 
-		:Parameters:
+		Parameters:
 			mode (str): Image color mode. ex. 'I', 'L', 'RGBA'
 			size (tuple): Size as x and y coordinates.
 			color (int)(tuple): Color values.
 					'I' mode image color must be int or single-element tuple.
-		:Return:
+		Return:
 			(obj) image.
 		'''
 		return Image.new(mode, size, color)
@@ -147,12 +147,12 @@ class Img():
 	def resizeImage(image, x, y):
 		'''Returns a resized copy of an image. It doesn't modify the original.
 
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 			x (int): Size in the x coordinate.
 			y (int): Size in the y coordinate.
 
-		:Return:
+		Return:
 			(obj) new image of the given size.
 		'''
 		im = Image.open(image) if isinstance(image, str) else image
@@ -162,7 +162,7 @@ class Img():
 	@staticmethod
 	def saveImageFile(image, name):
 		'''
-		:Parameters:
+		Parameters:
 			image (obj): PIL image object.
 			name (str): Path + filename including extension. ie. new_image.png
 		'''
@@ -174,13 +174,13 @@ class Img():
 	def getImages(cls, directory, inc='*.png|*.jpg|*.bmp|*.tga|*.tiff|*.gif', exc=''):
 		'''Get bitmap images from a given directory as PIL images.
 
-		:Parameters:
+		Parameters:
 			directory (string) = A full path to a directory containing images with the given fileTypes.
 			inc (str): The files to include. 
 					supports using the '*' operator: startswith*, *endswith, *contains*
 			exc (str): The files to exclude.
 					(exlude take precidence over include)
-		:Return:
+		Return:
 			(dict) {<full file path>:<image object>}
 		'''
 		images={}
@@ -196,10 +196,10 @@ class Img():
 	def getImageFiles(fileTypes='*.png|*.jpg|*.bmp|*.tga|*.tiff|*.gif'):
 		'''Open a dialog prompt to choose image files of the given type(s).
 
-		:Parameters:
+		Parameters:
 			fileTypes (str): The extensions of image types to include.
 
-		:Return:
+		Return:
 			(list)
 		'''
 		files = QtWidgets.QFileDialog.getOpenFileNames(None, 
@@ -212,7 +212,7 @@ class Img():
 	def getImageDirectory():
 		'''Open a dialog prompt to choose a directory.
 
-		:Return:
+		Return:
 			(list)
 		'''
 		image_dir = QtWidgets.QFileDialog.getExistingDirectory(None, 
@@ -224,12 +224,12 @@ class Img():
 	@classmethod
 	def getImageTypeFromFilename(cls, file, key=True):
 		'''
-		:Parameters:
+		Parameters:
 			file (str): Image filename, fullpath, or map type suffix.
 			key (bool): Get the corresponding key from the type in 'mapTypes'. 
 				ie. Base_Color from <filename>_BC or BC. else: _BC from <filename>_BC.
 
-		:Return:
+		Return:
 			(str)
 		'''
 		name = formatPath(file, 'name')
@@ -245,14 +245,14 @@ class Img():
 	@classmethod
 	def filterImagesByType(cls, files, types=''):
 		'''
-		:Parameters:
+		Parameters:
 			files (list): A list of image filenames, fullpaths, or map type suffixes.
 			types (str): Any of the keys in the 'map_types' dict.
 				Multiple types can be given separated by '|' ex. 'Base_Color|Roughness'
 				ex. 'Base_Color','Roughness','Metallic','Ambient_Occlusion','Normal',
 					'Normal_DirectX','Normal_OpenGL','Height','Emissive','Diffuse','Specular',
 					'Glossiness','Displacement','Refraction','Reflection'
-		:Return:
+		Return:
 			(dict)
 		'''
 		types = makeList(types.split('|'))
@@ -263,10 +263,10 @@ class Img():
 	def sortImagesByType(cls, files):
 		'''Sort images files by map type.
 
-		:Parameters:
+		Parameters:
 			files (list)(dict): filenames, fullpaths, or map type suffixes as the first element 
 					of two element tuples or keys in a dictionary. ex. [('file', <image>)] or {'file': <image>}
-		:Return:
+		Return:
 			(dict) ex. {Height:[('img_height.png', <image>)]}
 		'''
 		if not isinstance(files, (list, tuple, set)):
@@ -290,7 +290,7 @@ class Img():
 	def containsMapTypes(cls, files, map_types):
 		'''Check if the given images contain the given map types.
 
-		:Parameters:
+		Parameters:
 			files (list)(dict): filenames, fullpaths, or map type suffixes as the first element 
 					of two element tuples or keys in a dictionary. ex. [('file', <image>)] or {'file': <image>} or {'type': ('file', <image>)}
 			map_types (str)(list): The map type(s) to query. Any of the keys in the 'map_types' dict.
@@ -298,7 +298,7 @@ class Img():
 					ex. 'Base_Color','Roughness','Metallic','Ambient_Occlusion','Normal',
 						'Normal_DirectX','Normal_OpenGL','Height','Emissive','Diffuse','Specular',
 						'Glossiness','Displacement','Refraction','Reflection'
-		:Return:
+		Return:
 			(bool)
 		'''
 		if isinstance(files, (list, set, tuple)):
@@ -317,10 +317,10 @@ class Img():
 	def isNormalMap(cls, file):
 		'''Check the map type for one of the normal values in mapTypes.
 
-		:Parameters:
+		Parameters:
 			file (str): Image filename, fullpath, or map type suffix.
 
-		:Return:
+		Return:
 			(bool)
 		'''
 		typ = cls.getImageTypeFromFilename(file)
@@ -333,11 +333,11 @@ class Img():
 	def invertChannels(image, channels='RGB'):
 		'''Invert RGB channels.
 
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 			channels (str): Specify which channels to invert.
 				valid: 'R','G','B' case insensitive.
-		:Return:
+		Return:
 			(obj) image.
 		'''
 		im = Image.open(image) if isinstance(image, str) else image
@@ -360,10 +360,10 @@ class Img():
 		'''Create and save an OpenGL map using a given DirectX image.
 		The new map will be saved next to the existing map.
 
-		:Parameters:
+		Parameters:
 			file (str): The fullpath to a DirectX normal map file.
 
-		:Return:
+		Return:
 			(str) filepath of the new image.
 		'''
 		inverted_image = cls.invertChannels(file, 'g')
@@ -392,10 +392,10 @@ class Img():
 		'''Create and save an DirectX map using a given OpenGL image.
 		The new map will be saved next to the existing map.
 
-		:Parameters:
+		Parameters:
 			file (str): The fullpath to a OpenGL normal map file.
 
-		:Return:
+		Return:
 			(str) filepath of the new image.
 		'''
 		inverted_image = cls.invertChannels(file, 'g')
@@ -423,14 +423,14 @@ class Img():
 	def createMask(cls, images, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)):
 		'''Create mask(s) from the given image(s).
 
-		:Parameters:
+		Parameters:
 			images (str)(obj)(list): Image(s) or path(s) to an image.
 			mask (tuple)(image) = The color to isolate as a mask. (RGB) or (RGBA) 
 					or an Image(s) or path(s) to an image. The image's background color will be used.
 			background (tuple): Mask background color. (RGB) or (RGBA)
 			foreground (tuple): Mask foreground color. (RGB) or (RGBA)
 
-		:Return:
+		Return:
 			(obj)(list) 'L' mode images. list if 'images' given as a list. else; single image.
 		'''
 		if not isinstance(mask, (tuple, list, set)):
@@ -468,12 +468,12 @@ class Img():
 	@classmethod
 	def fillMaskedArea(cls, image, color, mask):
 		'''
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 			color (list): RGB or RGBA color values.
 			mask () = 
 
-		:Return:
+		Return:
 			(obj) image.
 		'''
 		im = Image.open(image) if isinstance(image, str) else image
@@ -488,11 +488,11 @@ class Img():
 	@staticmethod
 	def fill(image, color=(0, 0, 0, 0)):
 		'''
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 			color (list): RGB or RGBA color values.
 
-		:Return:
+		Return:
 			(obj) image.
 		'''
 		im = Image.open(image) if isinstance(image, str) else image
@@ -507,13 +507,13 @@ class Img():
 	def getBackground(image, mode=None, average=False):
 		'''Sample the pixel values of each corner of an image and if they are uniform, return the result.
 
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 			mode (str): The returned image color mode. ex. 'RGBA'
 					If None is given, the original mode will be returned.
 			average (bool): Average the sampled pixel values.
 
-		:Return:
+		Return:
 			(int)(tuple) dependant on mode. ex. 32767 for mode 'I' or (211, 211, 211, 255) for 'RGBA' 
 		'''
 		im = Image.open(image) if isinstance(image, str) else image
@@ -541,13 +541,13 @@ class Img():
 	@staticmethod
 	def replaceColor(image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None):
 		'''
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 			from_color (tuple): The starting color. (RGB) or (RGBA)
 			to_color (tuple): The ending color. (RGB) or (RGBA)
 			mode (str): The image is converted to rgba for the operation specify the returned image mode. the original image mode will be returned if None is given. ex. 'RGBA' to return in rgba format.
 
-		:Return:
+		Return:
 			(obj) image.
 		'''
 		im = Image.open(image) if isinstance(image, str) else image
@@ -568,11 +568,11 @@ class Img():
 	@staticmethod
 	def setContrast(image, level=255):
 		'''
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 			level (int): Contrast level from 0-255.
 
-		:Return:
+		Return:
 			(obj) image.
 		'''
 		im = Image.open(image) if isinstance(image, str) else image
@@ -590,7 +590,7 @@ class Img():
 		:Paramters:
 			data (str)(obj)(array) = An image, path to an image, or 
 					Image data as numpy array.
-		:Return:
+		Return:
 			(array)
 
 		# gray_data = np.average(data, weights=[0.299, 0.587, 0.114], axis=2)
@@ -615,10 +615,10 @@ class Img():
 		PIL images can be converted usin: image.convert("HSV")
 		PNG files cannot be saved as HSV.
 
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 
-		:Return:
+		Return:
 			(obj) image.
 		'''
 		import colorsys
@@ -641,10 +641,10 @@ class Img():
 	def convert_I_to_L(image):
 		'''Convert to 8 bit 'L' grayscale.
 
-		:Parameters:
+		Parameters:
 			image (str)(obj): An image or path to an image.
 
-		:Return:
+		Return:
 			(obj) image.
 		'''
 		im = Image.open(image) if isinstance(image, str) else image
@@ -658,11 +658,11 @@ class Img():
 	def areIdentical(imageA, imageB):
 		'''Check if two images are the same.
 
-		:Parameters:
+		Parameters:
 			imageA (str)(obj): An image or path to an image.
 			imageB (str)(obj): An image or path to an image.
 
-		:Return:
+		Return:
 			(bool)
 		'''
 		imA = Image.open(imageA) if (isinstance(imageA, str)) else imageA
@@ -687,10 +687,10 @@ class Img():
 def __getattr__(attr:str):
 	"""Searches for an attribute in this module's classes and returns it.
 
-	:Parameters:
+	Parameters:
 		attr (str): The name of the attribute to search for.
 	
-	:Return:
+	Return:
 		(obj) The found attribute.
 
 	:Raises:

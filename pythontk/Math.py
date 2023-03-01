@@ -10,14 +10,14 @@ class Math():
 	def getVectorFromTwoPoints(startPoint, endPoint):
 		'''Get a directional vector from a given start and end point.
 
-		:Parameters:
+		Parameters:
 			startPoint (tuple): A start point given as (x,y,z).
 			endPoint (tuple): An end point given as (x,y,z).
 
-		:Return:
+		Return:
 			(tuple) vector.
 
-		:Example: getVectorFromTwoPoints((1, 2, 3), (1, 1, -1)) #returns: (0, -1, -4)
+		Example: getVectorFromTwoPoints((1, 2, 3), (1, 1, -1)) #returns: (0, -1, -4)
 		'''
 		ax, ay, az = startPoint
 		bx, by, bz = endPoint
@@ -29,15 +29,15 @@ class Math():
 	def clamp(n=0.0, minimum=0.0, maximum=1.0):
 		'''Clamps the value x between min and max.
 
-		:Parameters:
+		Parameters:
 			n (float)(tuple): The numeric value to clamp.
 			minimum (float) = Clamp min value.
 			maximum (float) = Clamp max value.
 
-		:Return:
+		Return:
 			(float)
 
-		:Example: clamp(range(10), 3, 7) #returns: [3, 3, 3, 3, 4, 5, 6, 7, 7, 7]
+		Example: clamp(range(10), 3, 7) #returns: [3, 3, 3, 3, 4, 5, 6, 7, 7, 7]
 		'''
 		result=[]
 		for n_ in makeList(n):
@@ -50,16 +50,16 @@ class Math():
 	def normalize(cls, vector, amount=1):
 		'''Normalize a 2 or 3 dimensional vector.
 
-		:Parameters:
+		Parameters:
 			vector (tuple): A two or three point vector. ie. (-0.03484, 0.0, -0.55195)
 			amount (float) = (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
 
-		:Return:
+		Return:
 			(tuple)
 
-		:Example: normalize((2, 3, 4)) #returns: (0.3713906763541037, 0.5570860145311556, 0.7427813527082074)
-		:Example: normalize((2, 3)) #returns: (0.5547001962252291, 0.8320502943378437)
-		:Example: normalize((2, 3, 4), 2) #returns: (0.7427813527082074, 1.1141720290623112, 1.4855627054164149)
+		Example: normalize((2, 3, 4)) #returns: (0.3713906763541037, 0.5570860145311556, 0.7427813527082074)
+		Example: normalize((2, 3)) #returns: (0.5547001962252291, 0.8320502943378437)
+		Example: normalize((2, 3, 4), 2) #returns: (0.7427813527082074, 1.1141720290623112, 1.4855627054164149)
 		'''
 		n = len(vector) #determine 2 or 3d vector.
 		length = cls.getMagnitude(vector)
@@ -70,14 +70,14 @@ class Math():
 	def getMagnitude(vector):
 		'''Get the magnatude (length) of a given vector.
 
-		:Parameters:
+		Parameters:
 			vector (tuple): A two or three point vector. ie. (-0.03484, 0.0, -0.55195)
 
-		:Return:
+		Return:
 			(float)
 
-		:Example: getMagnitude((2, 3, 4)) #returns: 5.385164807134504
-		:Example: getMagnitude((2, 3)) #returns: 3.605551275463989
+		Example: getMagnitude((2, 3, 4)) #returns: 5.385164807134504
+		Example: getMagnitude((2, 3)) #returns: 3.605551275463989
 		'''
 		from math import sqrt
 
@@ -90,16 +90,16 @@ class Math():
 		'''Returns the dot product of two 3D float arrays.  If $normalizeInputs
 		is set then the vectors are normalized before the dot product is calculated.
 
-		:Parameters:
+		Parameters:
 			v1 (tuple): The first 3 point vector. 
 			v2 (tuple): The second 3 point vector.
 			normalizeInputs (int): Normalize v1, v2 before calculating the point float list.
 
-		:Return:
+		Return:
 			(float) Dot product of the two vectors.
 
-		:Example: dotProduct((1, 2, 3), (1, 1, -1)) #returns: 0
-		:Example: dotProduct((1, 2), (1, 1)) #returns: 3
+		Example: dotProduct((1, 2, 3), (1, 1, -1)) #returns: 0
+		Example: dotProduct((1, 2), (1, 1)) #returns: 3
 		'''
 		if normalizeInputs: #normalize the input vectors
 			v1 = cls.normalize(v1)
@@ -112,18 +112,18 @@ class Math():
 	def crossProduct(cls, a, b, c=None, normalize=0):
 		'''Get the cross product of two vectors, using two 3d vectors, or 3 points.
 
-		:Parameters:
+		Parameters:
 			a (tuple): A point represented as x,y,z or a 3 point vector.
 			b (tuple): A point represented as x,y,z or a 3 point vector.
 			c (tuple): A point represented as x,y,z (used only when working with 3 point values instead of 2 vectors).
 			normalize (float) = (0) Do not normalize. (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
 
-		:Return:
+		Return:
 			(tuple)
 
-		:Example: crossProduct((1, 2, 3), (1, 1, -1)) #returns: (-5, 4, -1),
-		:Example: crossProduct((3, 1, 1), (1, 4, 2), (1, 3, 4)) #returns: (7, 4, 2),
-		:Example: crossProduct((1, 2, 3), (1, 1, -1), None, 1) #returns: (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919)
+		Example: crossProduct((1, 2, 3), (1, 1, -1)) #returns: (-5, 4, -1),
+		Example: crossProduct((3, 1, 1), (1, 4, 2), (1, 3, 4)) #returns: (7, 4, 2),
+		Example: crossProduct((1, 2, 3), (1, 1, -1), None, 1) #returns: (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919)
 		'''
 		if c is not None: #convert points to vectors and unpack.
 			a = cls.getVectorFromTwoPoints(a, b)
@@ -148,17 +148,17 @@ class Math():
 	def movePointRelative(cls, p, d, v=None):
 		'''Move a point relative to it's current position.
 
-		:Parameters:
+		Parameters:
 			p (tuple): A points x, y, z values.
 			d (tuple)(float) = The distance to move. Use a float value when moving along a vector, 
 						and a point value to move in a given distance.
 			v (tuple): Optional: A vectors x, y, z values can be given to move the point along that vector.
 
-		:Return:
+		Return:
 			(tuple) point.
 
-		:Example: movePointRelative((0, 5, 0), (0, 5, 0)) #returns: (0, 10, 0)
-		:Example: movePointRelative((0, 5, 0), 5, (0, 1, 0)) #returns: (0, 10, 0)
+		Example: movePointRelative((0, 5, 0), (0, 5, 0)) #returns: (0, 10, 0)
+		Example: movePointRelative((0, 5, 0), 5, (0, 1, 0)) #returns: (0, 10, 0)
 		'''
 		x, y, z = p
 
@@ -182,18 +182,18 @@ class Math():
 	def movePointAlongVectorRelativeToPoint(cls, p1, p2, vect, dist, toward=True):
 		'''Move a point (p1) along a given vector toward or away from a given point (p2).
 
-		:Parameters:
+		Parameters:
 			p1 (tuple): The point to move given as (x,y,z).
 			p2 (tuple): The point to move toward.
 			vect (tuple): A vector to move the point along.
 			dist (float) = The linear amount to move the point.
 			toward (bool): Move the point toward or away from.
 		
-		:Return:
+		Return:
 			(tuple) point.
 
-		:Example: movePointAlongVectorRelativeToPoint((0, 0, 0), (0, 10, 0), (0, 1, 0), 5) #returns: (0.0, 5.0, 0.0)
-		:Example: movePointAlongVectorRelativeToPoint((0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False) #returns: (0.0, -15.0, 0.0)
+		Example: movePointAlongVectorRelativeToPoint((0, 0, 0), (0, 10, 0), (0, 1, 0), 5) #returns: (0.0, 5.0, 0.0)
+		Example: movePointAlongVectorRelativeToPoint((0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False) #returns: (0.0, -15.0, 0.0)
 		'''
 		lowest=None
 		for i in [dist, -dist]: #move in pos and neg direction, and determine which is moving closer to the reference point.
@@ -209,14 +209,14 @@ class Math():
 	def getDistBetweenTwoPoints(cls, p1, p2):
 		'''Get the vector between two points, and return it's magnitude.
 
-		:Parameters:
+		Parameters:
 			p1 (tuple): A point given as (x,y,z).
 			p2 (tuple): A point given as (x,y,z).
 
-		:Return:
+		Return:
 			(float)
 
-		:Example: getDistBetweenTwoPoints((0, 10, 0), (0, 5, 0)) #returns: 5.0
+		Example: getDistBetweenTwoPoints((0, 10, 0), (0, 5, 0)) #returns: 5.0
 		'''
 		from math import sqrt
 		
@@ -237,14 +237,14 @@ class Math():
 	def getCenterPointBetweenTwoPoints(p1, p2):
 		'''Get the point in the middle of two given points.
 
-		:Parameters:
+		Parameters:
 			p1 (tuple): A point given as (x,y,z).
 			p2 (tuple): A point given as (x,y,z).
 
-		:Return:
+		Return:
 			(tuple)
 
-		:Example: getCenterPointBetweenTwoPoints((0, 10, 0), (0, 5, 0)) #returns: (0.0, 7.5, 0.0)
+		Example: getCenterPointBetweenTwoPoints((0, 10, 0), (0, 5, 0)) #returns: (0.0, 7.5, 0.0)
 		'''
 		Ax, Ay, Az = p1
 		Bx, By, Bz = p2
@@ -262,16 +262,16 @@ class Math():
 	def getAngleFrom2Vectors(cls, v1, v2, degree=False):
 		'''Get an angle from two given vectors.
 
-		:Parameters:
+		Parameters:
 			v1 (tuple): A vectors xyz values as a tuple.
 			v2 (tuple): A vectors xyz values as a tuple.
 			degree (bool): Convert the radian result to degrees.
 
-		:Return:
+		Return:
 			(float)
 
-		:Example: getAngleFrom2Vectors((1, 2, 3), (1, 1, -1)) #returns: 1.5707963267948966,
-		:Example: getAngleFrom2Vectors((1, 2, 3), (1, 1, -1), True) #returns: 90
+		Example: getAngleFrom2Vectors((1, 2, 3), (1, 1, -1)) #returns: 1.5707963267948966,
+		Example: getAngleFrom2Vectors((1, 2, 3), (1, 1, -1), True) #returns: 90
 		'''
 		from math import acos, degrees
 
@@ -289,17 +289,17 @@ class Math():
 	def getAngleFrom3Points(a, b, c, degree=False):
 		'''Get the opposing angle from 3 given points.
 
-		:Parameters:
+		Parameters:
 			a (tuple): A point given as (x,y,z).
 			b (tuple): A point given as (x,y,z).
 			c (tuple): A point given as (x,y,z).
 			degree (bool): Convert the radian result to degrees.
 
-		:Return:
+		Return:
 			(float)
 
-		:Example: getAngleFrom3Points((1, 1, 1), (-1, 2, 3), (1, 4, -3)) #returns: 0.7904487543360762,
-		:Example: getAngleFrom3Points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True) #returns: 45.29
+		Example: getAngleFrom3Points((1, 1, 1), (-1, 2, 3), (1, 4, -3)) #returns: 0.7904487543360762,
+		Example: getAngleFrom3Points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True) #returns: 45.29
 		'''
 		from math import sqrt, acos, degrees
 
@@ -325,16 +325,16 @@ class Math():
 	def getTwoSidesOfASATriangle(a1, a2, s, unit='degrees'):
 		'''Get the length of two sides of a triangle, given two angles, and the length of the side in-between.
 
-		:Parameters:
+		Parameters:
 			a1 (float) = Angle in radians or degrees. (unit flag must be set if value given in radians)
 			a2 (float) = Angle in radians or degrees. (unit flag must be set if value given in radians)
 			s (float) = The distance of the side between the two given angles.
 			unit (str): Specify whether the angle values are given in degrees or radians. (valid: 'radians', 'degrees')(default: degrees)
 
-		:Return:
+		Return:
 			(tuple)
 
-		:Example: getTwoSidesOfASATriangle(60, 60, 100) #returns: (100.00015320566493, 100.00015320566493)
+		Example: getTwoSidesOfASATriangle(60, 60, 100) #returns: (100.00015320566493, 100.00015320566493)
 		'''
 		from math import sin, radians
 
@@ -357,17 +357,17 @@ class Math():
 		an angle for rotation (in radians) and an axis about which to 
 		do the rotation.
 
-		:Parameters:
+		Parameters:
 			theta (float) = The angular position of a vector in radians.
 			axis (tuple): The rotation axis given as float values (x,y,z).
 			rotation (list): 
 			degree (bool): Convert the radian result to degrees.
 
-		:Return:
+		Return:
 			(tuple) 3 point rotation.
 
-		:Example: xyzRotation(2, (0, 1, 0)) #returns: [3.589792907376932e-09, 1.9999999964102069, 3.589792907376932e-09]
-		:Example: xyzRotation(2, (0, 1, 0), [], True) #returns: [0.0, 114.59, 0.0]
+		Example: xyzRotation(2, (0, 1, 0)) #returns: [3.589792907376932e-09, 1.9999999964102069, 3.589792907376932e-09]
+		Example: xyzRotation(2, (0, 1, 0), [], True) #returns: [0.0, 114.59, 0.0]
 		'''
 		from math import cos, sin, sqrt, atan2, degrees
 
@@ -446,10 +446,10 @@ class Math():
 def __getattr__(attr:str):
 	"""Searches for an attribute in this module's classes and returns it.
 
-	:Parameters:
+	Parameters:
 		attr (str): The name of the attribute to search for.
 	
-	:Return:
+	Return:
 		(obj) The found attribute.
 
 	:Raises:
@@ -478,11 +478,11 @@ if __name__=='__main__':
 # def normalize(cls, vector, amount=1):
 # 	'''Normalize a vector
 
-# 	:Parameters:
+# 	Parameters:
 # 		vector (vector) = The vector to normalize.
 # 		amount (float) = (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
 	
-# 	:Return:
+# 	Return:
 # 		(tuple)
 # 	'''
 # 	length = cls.getMagnitude(vector)
@@ -507,12 +507,12 @@ if __name__=='__main__':
 	# 		normalizeInputs (bool): Normalize v1, v2 before calculating the point float list.
 	# 		normalizeResult (bool): Normalize the return value.
 
-	# 	:Return:
+	# 	Return:
 	# 		(tuple) The cross product of the two vectors.
 
-	# 	:Example: crossProduct((1, 2, 3), (1, 1, -1)) #returns: (-5, 4, -1)
-	# 	:Example: crossProduct((1, 2, 3), (1, 1, -1), True) #returns: (-0.7715167498104597, 0.6172133998483678, -0.15430334996209194)
-	# 	:Example: crossProduct((1, 2, 3), (1, 1, -1), False, True) #returns: (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919)
+	# 	Example: crossProduct((1, 2, 3), (1, 1, -1)) #returns: (-5, 4, -1)
+	# 	Example: crossProduct((1, 2, 3), (1, 1, -1), True) #returns: (-0.7715167498104597, 0.6172133998483678, -0.15430334996209194)
+	# 	Example: crossProduct((1, 2, 3), (1, 1, -1), False, True) #returns: (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919)
 	# 	'''
 	# 	if normalizeInputs: #normalize the input vectors
 	# 		v1 = cls.normalize(v1)

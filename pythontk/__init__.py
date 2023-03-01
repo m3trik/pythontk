@@ -11,16 +11,16 @@ __version__ = '0.5.9'
 def __getattr__(attr):
 	"""This function dynamically imports a module and returns an attribute from the module. 
 
-	:Parameters:
+	Parameters:
 		attr (str): The name of the attribute to be imported. The name should be in the format 
 					'module_name.attribute_name' or just 'attribute_name'.
-	:Return:
+	Return:
 		(obj) The attribute specified by the `attr` argument.
 
 	:Raises:
 		AttributeError: If the specified attribute is not found in either the original module 
 						or the 'Core' module within the package.
-	:Example:
+	Example:
 		<package>.__getattr__('module1.attribute1') #returns: <attribute1 value>
 		<package>.__getattr__('attribute1') #returns: <attribute1 value>
 	"""
@@ -41,12 +41,12 @@ visited = set()
 def searchClassesForAttr(module, attr, breakOnMatch=True):
 	"""Searches all classes in the given module for the given attribute, excluding any classes starting with an underscore.
 
-	:Parameters:
+	Parameters:
 		module (str)(module): The module to search for classes and attributes.
 		attr (str): The name of an attribute to search for.
 		breakOnMatch (bool): Return only the first found attribute.
 
-	:Return:
+	Return:
 		(obj) The found attribute.
 
 	:raise AttributeError: If the given attribute is not found in any of the classes in the given module.
@@ -74,15 +74,15 @@ def searchClassesForAttr(module, attr, breakOnMatch=True):
 def import_submodules(package, filetypes=('py', 'pyc', 'pyd'), ignoreStartingWith=('.', '_')):
 	'''Import submodules to the given package.
 
-	:Parameters:
+	Parameters:
 		package (str)(obj): A python package.
 		filetypes (str)(tuple): Filetype extension(s) to include.
 		ignoreStartingWith (str)(tuple): Ignore submodules starting with given chars.
 
-	:Return:
+	Return:
 		(list) the imported modules.
 
-	:Example: import_submodules(__name__)
+	Example: import_submodules(__name__)
 	'''
 	if isinstance(package, str):
 		package = sys.modules[package]
@@ -108,11 +108,11 @@ def import_submodules(package, filetypes=('py', 'pyc', 'pyd'), ignoreStartingWit
 def addMembers(module, ignoreStartingWith='_'):
 	'''Expose class members at module level.
 
-	:Parameters:
+	Parameters:
 		module (str)(obj): A python module.
 		ignoreStartingWith (str)(tuple): Ignore class members starting with given chars.
 
-	:Example: addMembers(__name__)
+	Example: addMembers(__name__)
 	'''
 	if isinstance(module, str):
 		module = sys.modules[module]
@@ -135,10 +135,10 @@ def lazy_import(importer_name, to_import):
 				import to help facilitate resolving relative imports.
 		to_import (list): An iterable of the modules to be potentially imported (absolute
 				or relative). The 'as' form of importing is also supported. e.g. 'pkg.mod as spam'
-	:Return:
+	Return:
 		(tuple) (importer module, the callable to be set to '__getattr__')
 
-	:Example: mod, __getattr__ = lazy_import(__name__, modules_list)
+	Example: mod, __getattr__ = lazy_import(__name__, modules_list)
 	'''
 	module = importlib.import_module(importer_name)
 	import_mapping = {}
@@ -165,7 +165,7 @@ def lazy_import(importer_name, to_import):
 def appendPaths(rootDir, ignoreStartingWith=('.', '__'), verbose=False):
 	'''Append all sub-directories of the given 'rootDir' to the python path.
 
-	:Parameters:
+	Parameters:
 		rootDir (str): Sub-directories of this directory will be appended to the system path.
 		ignoreStartingWith (str)(tuple): Ignore directories starting with the given chars.
 		verbose (bool): Output the results to the console. (Debug)

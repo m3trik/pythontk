@@ -12,7 +12,7 @@ class File():
 	def getFile(filepath, mode='a+'):
 		'''Return a file object with the given mode.
 
-		:Parameters:
+		Parameters:
 			filepath (str): The path to an existing file or the desired location for one to be created.
 			mode (str): 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
 				'a' - Append - Opens a file for appending, creates the file if it does not exist.
@@ -23,7 +23,7 @@ class File():
 				't' - Text - Default value. Text mode
 				'b' - Binary - Binary mode (e.g. images)
 
-		:Return:
+		Return:
 			(obj) file
 		'''
 		try:
@@ -38,10 +38,10 @@ class File():
 		'''Get each line of a text file as indices of a list.
 		Will create a file if one doesn't already exist.
 
-		:Parameters:
+		Parameters:
 			filepath (str): The path to an existing text based file.
 
-		:Return:
+		Return:
 			(list)
 		'''
 		try:
@@ -55,7 +55,7 @@ class File():
 	def writeToFile(filepath, lines):
 		'''Write the given list contents to the given file.
 
-		:Parameters:
+		Parameters:
 			filepath (str): The path to an existing text based file.
 			lines (list): A list of strings to write to the file.
 		'''
@@ -72,7 +72,7 @@ class File():
 		When a section arg is given, the correlating section of the string will be returned.
 		If a replace arg is given, the stated section will be replaced by the given value.
 
-		:Parameters:
+		Parameters:
 			strings (str)(list): The filepath(s) to be formatted.
 			section (str): The desired subsection of the given path. 
 					'path' path - filename, 
@@ -81,7 +81,7 @@ class File():
 					'name', filename - ext,
 					'ext', file extension,
 					(if '' is given, the fullpath will be returned)
-		:Return:
+		Return:
 			(str)(list) List if 'strings' given as list.
 		'''
 		result=[]
@@ -128,13 +128,13 @@ class File():
 	def timeStamp(cls, filepaths, detach=False, stamp='%m-%d-%Y  %H:%M', sort=False):
 		'''Attach a modified timestamp and date to given file path(s).
 
-		:Parameters:
+		Parameters:
 			filepaths (str)(list): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
 			detach (bool): Remove a previously attached time stamp.
 			stamp (str): The time stamp format.
 			sort (bool): Reorder the list of filepaths by time. (most recent first)
 
-		:Return:
+		Return:
 			(list) ie. ['16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'] from ['C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb']
 		'''
 		from datetime import datetime
@@ -167,10 +167,10 @@ class File():
 	def isValidPath(filepath: str) -> list:
 		'''Determine if the given filepath is valid.
 
-		:Parameters:
+		Parameters:
 			filepath (str): The path to a file.
 
-		:Return:
+		Return:
 			(str) The path type (ie. 'file' or 'dir') or None.
 		'''
 		fp = os.path.expandvars(filepath) #convert any env variables to their values.
@@ -186,7 +186,7 @@ class File():
 	def createDir(filepath: str) -> None:
 		'''Create a directory if one doesn't already exist.
 
-		:Parameters:
+		Parameters:
 			filepath (str): The path to where the file will be created.
 		'''
 		fp = os.path.expandvars(filepath) #convert any env variables to their values.
@@ -202,7 +202,7 @@ class File():
 								incFiles=[], excFiles=[], incDirs=[], excDirs=[]):
 		'''Get the contents of a directory and any of it's children.
 
-		:Parameters:
+		Parameters:
 			path (str): The path to the directory.
 			returnType (str): Return files and directories. Multiple types can be given using '|' 
 					ex. 'files|dirs' (valid: 'files'(default), filenames, 'filepaths', 'dirs', 'dirpaths')
@@ -217,7 +217,7 @@ class File():
 					supports using the '*' operator: startswith*, *endswith, *contains*
 					ex. *.ext will exclude all files with the given extension.
 					exclude takes precedence over include.
-		:Return:
+		Return:
 			(list)
 
 		ex. getDirContents(path, returnType='filepaths')
@@ -257,11 +257,11 @@ class File():
 	def getFilepath(obj, incFilename=False):
 		'''Get the filepath of a class or module.
 
-		:Parameters:
+		Parameters:
 			obj (obj): A python module, class, or the built-in __file__ variable.
 			incFilename (bool): Include the filename in the returned result.
 
-		:Return:
+		Return:
 			(str)
 		'''
 		from types import ModuleType
@@ -312,10 +312,10 @@ class File():
 		When the value of z reaches 9, it becomes 0 and the value of y is incremented by 1. 
 		When the value of y reaches 10, it becomes 0 and the value of x is incremented by 1. 
 		
-		:Parameters:
+		Parameters:
 			filepath (str): The path to the text file containing the version number.
 
-		:Return:
+		Return:
 			(None) The version number in the file is updated.
 		"""
 		import re
@@ -357,10 +357,10 @@ class File():
 def __getattr__(attr:str):
 	"""Searches for an attribute in this module's classes and returns it.
 
-	:Parameters:
+	Parameters:
 		attr (str): The name of the attribute to search for.
 	
-	:Return:
+	Return:
 		(obj) The found attribute.
 
 	:Raises:
@@ -384,3 +384,19 @@ if __name__=='__main__':
 
 
 # Deprecated ------------------------------------
+
+
+	# def getCallingModuleDir():
+	# 	"""Get the directory path of the module that called the function.
+
+	# 	Return:
+	# 		(str) The directory path of the calling module.
+	# 	"""
+	# 	import os, inspect
+
+	# 	calling_frame = inspect.currentframe().f_back
+	# 	calling_module = inspect.getmodule(calling_frame)
+	# 	calling_module_path = os.path.abspath(calling_module.__file__)
+	# 	calling_module_dir = os.path.dirname(calling_module_path)
+
+	# 	return calling_module_dir

@@ -10,12 +10,12 @@ class Str():
 	def setCase(strings, case='camel'):
 		'''Format the given string(s) in the given case.
 		
-		:Parameters:
+		Parameters:
 			strings (str)(list): The string(s) to format.
 			case (str): The desired return case. Accepts all python case operators. 
 				valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
 
-		:Return:
+		Return:
 			(str)(list) List if 'string' given as list.
 		'''
 		if not strings or not isinstance(strings, str):
@@ -42,17 +42,17 @@ class Str():
 		'''Split a string containing the given chars at the given occurrence and return
 		a two element tuple containing both halves.
 
-		:Parameters:
+		Parameters:
 			strings (str)(list): The string(s) to operate on.
 			chars (str): The chars to split at.
 			occurrence (int): The occurrence of the pipe to split at from left.
 				ex. -1 would split at the last occurrence. 0 would split at the first.
 					If the occurrence is out of range, the full string will be 
 					returned as: ('original string', '')
-		:Return:
+		Return:
 			(tuple)(list) two element tuple, or list of two element tuples if multiple strings given.
 
-		:Example: splitAtChars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
+		Example: splitAtChars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
 		'''
 		result = []
 		for s in makeList(strings):
@@ -77,7 +77,7 @@ class Str():
 		'''Insert character(s) into a string at a given location.
 		if the character doesn't exist, the original string will be returned.
 
-		:Parameters:
+		Parameters:
 			src (str): The source string.
 			ins (str): The character(s) to insert.
 			at (str)(int): The index or char(s) to insert at.
@@ -87,7 +87,7 @@ class Str():
 							(A value of -1 would insert at the last occurrence)
 			before (bool): Specify inserting before or after. default: after
 							Valid only when 'at' is given as a string.
-		:Return:
+		Return:
 			(str)
 		'''
 		try:
@@ -106,13 +106,13 @@ class Str():
 		'''Replace occurrances in a string from right to left.
 		The number of occurrances replaced can be limited by using the 'count' argument.
 
-		:Parameters:
+		Parameters:
 			string (str): 
 			old (str): 
 			new (str)(int): 
 			count (int): 	
 
-		:Return:
+		Return:
 			(str)
 		'''
 		if not string or not isinstance(string, str):
@@ -129,15 +129,15 @@ class Str():
 		'''Shorten the given string to the given length.
 		An ellipsis will be added to the section trimmed.
 
-		:Parameters:
+		Parameters:
 			length (int): The maximum allowed length before trunicating.
 			beginning (bool): Trim starting chars, else; ending.
 			insert (str): Chars to add at the trimmed area. (default: ellipsis)
 
-		:Return:
+		Return:
 			(str)
 
-		:Example: truncate('12345678', 4) #returns: '..5678'
+		Example: truncate('12345678', 4) #returns: '..5678'
 		'''
 		if not string or not isinstance(string, str):
 			return string
@@ -154,7 +154,7 @@ class Str():
 	def getTrailingIntegers(string, inc=0, asString=False):
 		'''Returns any integers from the end of the given string.
 
-		:Parameters:
+		Parameters:
 			inc (int): Increment by a step amount. (default: 0)
 					0 does not increment and returns the original number.
 			asString (bool): Return the integers as a string instead of integers.
@@ -181,7 +181,7 @@ class Str():
 	def findStr(find, strings, regEx=False, ignoreCase=False):
 		'''Filter for elements that containing the given string in a list of strings.
 
-		:Parameters:
+		Parameters:
 			find (str): The search string. An asterisk denotes startswith*, *endswith, *contains*, and multiple search strings can be separated by pipe chars.
 				wildcards:
 					*chars* - string contains chars.
@@ -199,7 +199,7 @@ class Str():
 			regEx (bool): Use regular expressions instead of wildcards.
 			ignoreCase (bool): Search case insensitive.
 
-		:Return:
+		Return:
 			(list)
 
 		ex. lst = ['invertVertexWeights', 'keepCreaseEdgeWeight', 'keepBorder', 'keepBorderWeight', 'keepColorBorder', 'keepColorBorderWeight']
@@ -255,7 +255,7 @@ class Str():
 	def findStrAndFormat(cls, strings, to, fltr='', regEx=False, ignoreCase=False, returnOldNames=False):
 		'''Expanding on the 'findStr' function: Find matches of a string in a list of strings and re-format them.
 
-		:Parameters:
+		Parameters:
 			strings (list): A list of string objects to search.
 			to (str): An optional asterisk modifier can be used for formatting. An empty string will attempt to remove the part of the string designated in the from argument.
 				"" - (empty string) - strip chars.
@@ -269,7 +269,7 @@ class Str():
 			ignoreCase (bool): Ignore case when searching. Applies only to the 'fltr' parameter's search.
 			returnOldNames (bool): Return the old names as well as the new.
 
-		:Return:
+		Return:
 			(list) if returnOldNames: list of two element tuples containing the original and modified string pairs. [('frm','to')]
 				else: a list of just the new names.
 		'''
@@ -344,14 +344,14 @@ class Str():
 	def formatSuffix(string, suffix='', strip='', stripTrailingInts=False, stripTrailingAlpha=False):
 		'''Re-format the suffix for the given string.
 
-		:Parameters:
+		Parameters:
 			string (str): The string to format.
 			suffix (str): Append a new suffix to the given string.
 			strip (str)(list): Specific string(s) to strip from the end of the given string.
 			stripTrailingInts (bool): Strip all trailing integers.
 			stripTrailingAlpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
 
-		:Return:
+		Return:
 			(str)
 		'''
 		import re
@@ -393,10 +393,10 @@ class Str():
 def __getattr__(attr:str):
 	"""Searches for an attribute in this module's classes and returns it.
 
-	:Parameters:
+	Parameters:
 		attr (str): The name of the attribute to search for.
 	
-	:Return:
+	Return:
 		(obj) The found attribute.
 
 	:Raises:

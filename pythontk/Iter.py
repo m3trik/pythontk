@@ -9,10 +9,10 @@ class Iter():
 	def makeList(x):
 		'''Convert the given obj to a list.
 
-		:Parameters:
+		Parameters:
 			x () = The object to convert to a list if not already a list, set, or tuple.
 
-		:Return:
+		Return:
 			(list)
 		'''
 		return list(x) if isinstance(x, (list, tuple, set, dict, range)) else [x]
@@ -24,11 +24,11 @@ class Iter():
 		If the list contains multiple elements, always return the full list.
 		If the 'orig' arg is a multi-element type then the original format will always be returned.
 
-		:Parameters:
+		Parameters:
 			rtn (list): An iterable.
 			orig (obj): Optionally; derive the return type form the original value.
 					ie. if it was a multi-value type; do not modify the return value.
-		:Return:
+		Return:
 			(obj)(list) dependant on flags.
 		'''
 		orig = isinstance(orig, (list, tuple, set, dict, range))
@@ -47,11 +47,11 @@ class Iter():
 		'''Get the maximum nested depth of any sub-lists of the given list.
 		If there is nothing nested, 0 will be returned.
 
-		:Parameters:
+		Parameters:
 			lst (list): The list to check.
 			typ (type)(tuple): The type(s) to include in the query.
 
-		:Return:
+		Return:
 			(int) 0 if none, else the max nested depth.
 		'''
 		d=-1
@@ -65,10 +65,10 @@ class Iter():
 	def flatten(cls, lst):
 		'''Flatten arbitrarily nested lists.
 
-		:Parameters:
+		Parameters:
 			lst (list): A list with potentially nested lists.
 
-		:Return:
+		Return:
 			(generator)
 		'''
 		for i in lst:
@@ -84,13 +84,13 @@ class Iter():
 		'''Convert a list of integers to a collapsed sequential string format.
 		ie. [19,22,23,24,25,26] to ['19', '22..26']
 
-		:Parameters:
+		Parameters:
 			lst (list): A list of integers.
 			limit (int): limit the maximum length of the returned elements.
 			compress (bool): Trim redundant chars from the second half of a compressed set. ie. ['19', '22-32', '1225-6'] from ['19', '22..32', '1225..1226']
 			toString (bool): Return a single string value instead of a list.
 
-		:Return:
+		Return:
 			(list)(str) string if 'toString'.
 		'''
 		ranges=[]
@@ -128,10 +128,10 @@ class Iter():
 	def bitArrayToList(bitArray):
 		'''Convert a binary bitArray to a python list.
 
-		:Parameters:
+		Parameters:
 			bitArray () = A bit array or list of bit arrays.
 
-		:Return:
+		Return:
 			(list) containing values of the indices of the on (True) bits.
 		'''
 		if len(bitArray):
@@ -149,11 +149,11 @@ class Iter():
 		'''Get the index of the first item to match the given item 
 		starting from the back (right side) of the list.
 
-		:Parameters:
+		Parameters:
 			itr (iter): An iterable.
 			item () = The item to get the index of.
 
-		:Return:
+		Return:
 			(int) -1 if element not found.
 		'''
 		return next(iter(i for i in range(len(itr)-1,-1,-1) if itr[i]==item), -1)
@@ -163,11 +163,11 @@ class Iter():
 	def indices(itr, value):
 		'''Get the index of each element of a list matching the given value.
 
-		:Parameters:
+		Parameters:
 			itr (iter): An iterable.
 			value () = The search value.
 
-		:Return:
+		Return:
 			(generator)
 		'''
 		return (i for i, v in enumerate(itr) if v==value)
@@ -177,11 +177,11 @@ class Iter():
 	def removeDuplicates(lst, trailing=True):
 		'''Remove all duplicated occurences while keeping the either the first or last.
 
-		:Parameters:
+		Parameters:
 			lst (list): The list to remove duplicate elements of.
 			trailing (bool): Remove all trailing occurances while keeping the first, else keep last.
 
-		:Return:
+		Return:
 			(list)
 		'''
 		if trailing:
@@ -195,7 +195,7 @@ class Iter():
 		'''Filter the given dictionary.
 		Extends `filterList` to operate on either the given dict's keys or values.
 
-		:Parameters:
+		Parameters:
 			dct (dict): The dictionary to filter.
 			inc (str)(obj)(list): The objects(s) to include.
 					supports using the '*' operator: startswith*, *endswith, *contains*
@@ -207,10 +207,10 @@ class Iter():
 			keys (bool): Filter the dictionary keys.
 			values (bool): Filter the dictionary values.
 
-		:Return:
+		Return:
 			(dict)
 
-		:Example: dct = {1:'1', 'two':2, 3:'three'}
+		Example: dct = {1:'1', 'two':2, 3:'three'}
 		filterDict(dct, exc='*t*', values=True) #returns: {1: '1', 'two': 2}
 		filterDict(dct, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
 		filterDict(dct, exc=1, keys=True) #returns: {'two': 2, 3: 'three'}
@@ -228,7 +228,7 @@ class Iter():
 	def filterList(cls, lst, inc=[], exc=[]):
 		'''Filter the given list.
 
-		:Parameters:
+		Parameters:
 			lst (list): The components(s) to filter.
 			inc (str)(int)(obj)(list): The objects(s) to include.
 					supports using the '*' operator: startswith*, *endswith, *contains*
@@ -237,10 +237,10 @@ class Iter():
 					strings containing 'Normal'. NOT strings satisfying both terms.
 			exc (str)(int)(obj)(list): The objects(s) to exclude. Similar to include.
 					exlude take precidence over include.
-		:Return:
+		Return:
 			(list)
 
-		:Example: filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
+		Example: filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
 		'''
 		exc = cls.makeList(exc)
 		inc = cls.makeList(inc)
@@ -299,7 +299,7 @@ class Iter():
 	def splitList(lst, into):
 		'''Split a list into parts.
 
-		:Parameters:
+		Parameters:
 			into (str): Split the list into parts defined by the following:
 				'<n>parts' - Split the list into n parts.
 					ex. 2 returns:  [[1, 2, 3, 5], [7, 8, 9]] from [1,2,3,5,7,8,9]
@@ -311,7 +311,7 @@ class Iter():
 					ex. 'contiguous' returns: [[1,2,3], [5], [7,8,9]] from [1,2,3,5,7,8,9]
 				'range' - The values of 'contiguous' will be limited to the high and low end of each range.
 					ex. 'range' returns: [[1,3], [5], [7,9]] from [1,2,3,5,7,8,9]
-		:Return:
+		Return:
 			(list)
 		'''
 		from string import digits, ascii_letters, punctuation
@@ -354,10 +354,10 @@ class Iter():
 def __getattr__(attr:str):
 	"""Searches for an attribute in this module's classes and returns it.
 
-	:Parameters:
+	Parameters:
 		attr (str): The name of the attribute to search for.
 	
-	:Return:
+	Return:
 		(obj) The found attribute.
 
 	:Raises:
