@@ -6,6 +6,59 @@ from pythontk.Iter import makeList, filterList
 class Core():
 	'''
 	'''
+	def listify(func):
+		"""Decorator that allows a function to take a single value or a list of values as its first argument.
+
+		The decorated function will be called with each element of the input list as its first argument,
+		and with any additional positional or keyword arguments passed to the decorated function.
+
+		Parameters:
+			func (callable): The function to be decorated.
+
+		Returns:
+			The result of each function call will be collected in a list, and the list will be returned if the input argument
+			is a list. If the input argument is not a list, the result of the function call will be returned directly.
+
+		Example:
+			>>> @listify
+			... def square(x):
+			...     return x**2
+			...
+			>>> square(3)
+			9
+			>>> square([2, 3, 4])
+			[4, 9, 16]
+		"""
+		def wrapper(lst, *args, **kwargs):
+			result = [func(x, *args, **kwargs) for x in makeList(lst)]
+			return Core.formatReturn(result, lst)
+		return wrapper
+
+
+	@classmethod
+	def formatReturn(cls, rtn, orig=None):
+		'''Return the list element if the given iterable only contains a single element.
+		If the list contains multiple elements, always return the full list.
+		If the 'orig' arg is a multi-element type then the original format will always be returned.
+
+		Parameters:
+			rtn (list): An iterable.
+			orig (obj): Optionally; derive the return type form the original value.
+					ie. if it was a multi-value type; do not modify the return value.
+		Return:
+			(obj)(list) dependant on flags.
+		'''
+		orig = isinstance(orig, (list, tuple, set, dict, range))
+
+		try:
+			if len(rtn)==1 and not orig and not isinstance(rtn, str):
+				return rtn[0]
+
+		except Exception as e:
+			pass
+		return rtn
+
+
 	@staticmethod
 	def setAttributes(obj, **attributes):
 		'''Set attributes for a given object.

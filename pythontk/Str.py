@@ -1,44 +1,45 @@
 # !/usr/bin/python
 # coding=utf-8
-from pythontk.Iter import makeList, formatReturn
+from pythontk.Core import listify
+from pythontk.Iter import makeList
 
 
 class Str():
 	'''
 	'''
 	@staticmethod
-	def setCase(strings, case='camel'):
+	@listify
+	def setCase(string, case='camel'):
 		'''Format the given string(s) in the given case.
-		
+
 		Parameters:
-			strings (str)(list): The string(s) to format.
+			string (str)(list): The string(s) to format.
 			case (str): The desired return case. Accepts all python case operators. 
 				valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
 
 		Return:
 			(str)(list) List if 'string' given as list.
 		'''
-		if not strings or not isinstance(strings, str):
-			return strings
+		if (not string) or (not isinstance(string, str)):
+			return ''
 
 		if case=='pascal':
-			result = [s[:1].capitalize()+s[1:] for s in makeList(strings)] #capitalize the first letter.
+			return string[:1].capitalize()+string[1:] #capitalize the first letter.
 
 		elif case=='camel':
-			result = [s[0].lower()+s[1:] for s in makeList(strings)] #lowercase the first letter.
+			return string[0].lower()+string[1:] #lowercase the first letter.
 
 		else:
 			try:
-				result = [getattr(s, case)() for s in makeList(strings)]
+				return getattr(string, case)()
 
-			except AttributeError as error: #return the original string(s).
-				return strings
-
-		return formatReturn(result, strings) #if 'strings' is given as a list; return a list.
+			except AttributeError: #return the original string.
+				return string
 
 
 	@staticmethod
-	def splitAtChars(strings, chars='|', occurrence=-1):
+	@listify
+	def splitAtChars(string, chars='|', occurrence=-1):
 		'''Split a string containing the given chars at the given occurrence and return
 		a two element tuple containing both halves.
 
@@ -54,22 +55,17 @@ class Str():
 
 		Example: splitAtChars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
 		'''
-		result = []
-		for s in makeList(strings):
-			split = s.split(chars)
+		split = string.split(chars)
 
-			try:
-				s2 = ''.join(split[occurrence])
-				if chars in s:
-					s1 = chars.join(split[:occurrence])
-				else:
-					s1, s2 = (s2, '')
-			except IndexError as error:
-				s1, s2 = (s, '')
-
-			result.append((s1, s2))
-
-		return formatReturn(result, strings) #if 'strings' is given as a list; return a list.
+		try:
+			s2 = ''.join(split[occurrence])
+			if chars in string:
+				s1 = chars.join(split[:occurrence])
+				return (s1, s2)
+			else:
+				return (s2, '')
+		except IndexError as error:
+			return (string, '')
 
 
 	@classmethod
@@ -125,6 +121,7 @@ class Str():
 
 
 	@staticmethod
+	@listify
 	def truncate(string, length=75, beginning=True, insert='..'):
 		'''Shorten the given string to the given length.
 		An ellipsis will be added to the section trimmed.

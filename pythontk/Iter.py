@@ -19,30 +19,6 @@ class Iter():
 
 
 	@classmethod
-	def formatReturn(cls, rtn, orig=None):
-		'''Return the list element if the given iterable only contains a single element.
-		If the list contains multiple elements, always return the full list.
-		If the 'orig' arg is a multi-element type then the original format will always be returned.
-
-		Parameters:
-			rtn (list): An iterable.
-			orig (obj): Optionally; derive the return type form the original value.
-					ie. if it was a multi-value type; do not modify the return value.
-		Return:
-			(obj)(list) dependant on flags.
-		'''
-		orig = isinstance(orig, (list, tuple, set, dict, range))
-
-		try:
-			if len(rtn)==1 and not orig and not isinstance(rtn, str):
-				return rtn[0]
-
-		except Exception as e:
-			pass
-		return rtn
-
-
-	@classmethod
 	def nestedDepth(cls, lst, typ=(list, set, tuple)):
 		'''Get the maximum nested depth of any sub-lists of the given list.
 		If there is nothing nested, 0 will be returned.

@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from pythontk.Iter import makeList, formatReturn
+from pythontk.Core import listify
 
 
 class Math():
@@ -26,6 +26,7 @@ class Math():
 
 
 	@staticmethod
+	@listify
 	def clamp(n=0.0, minimum=0.0, maximum=1.0):
 		'''Clamps the value x between min and max.
 
@@ -39,11 +40,7 @@ class Math():
 
 		Example: clamp(range(10), 3, 7) #returns: [3, 3, 3, 3, 4, 5, 6, 7, 7, 7]
 		'''
-		result=[]
-		for n_ in makeList(n):
-			result.append(max(minimum, min(n_, maximum)))
-
-		return formatReturn(result, n)
+		return max(minimum, min(n, maximum))
 
 
 	@classmethod

@@ -15,8 +15,9 @@ try:
 except ImportError as error:
 	print ('{}\n	# Error: {} #'.format(__file__, error))
 
+from pythontk.Core import listify
 from pythontk.File import formatPath, getDirContents
-from pythontk.Iter import makeList, formatReturn
+from pythontk.Iter import makeList
 
 
 class Img():
@@ -420,7 +421,8 @@ class Img():
 
 
 	@classmethod
-	def createMask(cls, images, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)):
+	@listify
+	def createMask(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)):
 		'''Create mask(s) from the given image(s).
 
 		Parameters:
@@ -436,33 +438,29 @@ class Img():
 		if not isinstance(mask, (tuple, list, set)):
 			mask = cls.getBackground(mask)
 
-		result=[]
-		for image in makeList(images):
-			im = Image.open(image) if isinstance(image, str) else image
-			mode = im.mode
-			im = im.convert('RGBA')
-			width, height = im.size
-			data = np.array(im)
+		im = Image.open(image) if isinstance(image, str) else image
+		mode = im.mode
+		im = im.convert('RGBA')
+		width, height = im.size
+		data = np.array(im)
 
-			r1, g1, b1, a1 = mask if len(mask)==4 else mask+(None,)
+		r1, g1, b1, a1 = mask if len(mask)==4 else mask+(None,)
 
-			r, g, b, a = data[:,:,0], data[:,:,1], data[:,:,2], data[:,:,3]
+		r, g, b, a = data[:,:,0], data[:,:,1], data[:,:,2], data[:,:,3]
 
-			bool_list = ((r==r1) & (g==g1) & (b==b1) & (a==a1)) if len(mask)==4 else ((r==r1) & (g==g1) & (b==b1))
+		bool_list = ((r==r1) & (g==g1) & (b==b1) & (a==a1)) if len(mask)==4 else ((r==r1) & (g==g1) & (b==b1))
 
-			data[:,:,:4][bool_list.any()] = foreground
-			data[:,:,:4][bool_list] = background
+		data[:,:,:4][bool_list.any()] = foreground
+		data[:,:,:4][bool_list] = background
 
-			#set the border to background color:
-			data[0, 0] = background #get the pixel value at top left coordinate.
-			data[width-1, 0] = background #			""	 top right coordinate.
-			data[0, height-1] = background #			""	 bottom right coordinate.
-			data[width-1, height-1] = background #		""	 bottom left coordinate.
+		#set the border to background color:
+		data[0, 0] = background #get the pixel value at top left coordinate.
+		data[width-1, 0] = background #			""	 top right coordinate.
+		data[0, height-1] = background #			""	 bottom right coordinate.
+		data[width-1, height-1] = background #		""	 bottom left coordinate.
 
-			m = Image.fromarray(data).convert('L')
-			result.append(m)
-
-		return formatReturn(result, images)
+		mask = Image.fromarray(data).convert('L')
+		return mask
 
 
 	@classmethod

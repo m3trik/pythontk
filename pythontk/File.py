@@ -2,7 +2,8 @@
 # coding=utf-8
 import sys, os, traceback
 
-from pythontk.Iter import makeList, formatReturn, filterList
+from pythontk.Core import listify
+from pythontk.Iter import makeList, filterList
 
 
 class File():
@@ -67,13 +68,14 @@ class File():
 
 
 	@staticmethod
-	def formatPath(strings, section='', replace=''):
+	@listify
+	def formatPath(p, section='', replace=''):
 		'''Format a given filepath(s).
 		When a section arg is given, the correlating section of the string will be returned.
 		If a replace arg is given, the stated section will be replaced by the given value.
 
 		Parameters:
-			strings (str)(list): The filepath(s) to be formatted.
+			p (str)(list): The filepath(s) to be formatted.
 			section (str): The desired subsection of the given path. 
 					'path' path - filename, 
 					'dir'  directory name, 
@@ -84,44 +86,41 @@ class File():
 		Return:
 			(str)(list) List if 'strings' given as list.
 		'''
-		result=[]
-		for s in makeList(strings):
-			if not isinstance(s, (str)):
-				continue
-			s = os.path.expandvars(s) #convert any env variables to their values.
-			s = s[:2]+'/'.join(s[2:].split('\\')).rstrip('/') #convert forward slashes to back slashes.
+		if not isinstance(p, (str)):
+			return p
 
-			fullpath = s if '/' in s else ''
-			filename_ = s.split('/')[-1]
-			filename = filename_ if '.' in filename_ and not filename_.startswith('.') else ''
-			path = '/'.join(s.split('/')[:-1]) if filename else s
-			directory = s.split('/')[-2] if (filename and path) else s.split('/')[-1]
-			name = ''.join(filename.rsplit('.', 1)[:-1]) if filename else '' if fullpath else s
-			ext = filename.rsplit('.', 1)[-1]
+		p = os.path.expandvars(p) #convert any env variables to their values.
+		p = p[:2]+'/'.join(p[2:].split('\\')).rstrip('/') #convert forward slashes to back slashes.
 
-			orig_str = s #the full original string (formatted with forwardslashes)
+		fullpath = p if '/' in p else ''
+		filename_ = p.split('/')[-1]
+		filename = filename_ if '.' in filename_ and not filename_.startswith('.') else ''
+		path = '/'.join(p.split('/')[:-1]) if filename else p
+		directory = p.split('/')[-2] if (filename and path) else p.split('/')[-1]
+		name = ''.join(filename.rsplit('.', 1)[:-1]) if filename else '' if fullpath else p
+		ext = filename.rsplit('.', 1)[-1]
 
-			if section=='path':
-				s = path
+		orig_str = p #the full original string (formatted with forwardslashes)
 
-			elif section=='dir':
-				s = directory
+		if section=='path':
+			p = path
 
-			elif section=='file':
-				s = filename
+		elif section=='dir':
+			p = directory
 
-			elif section=='name':
-				s = name
+		elif section=='file':
+			p = filename
 
-			elif section=='ext':
-				s = ext
+		elif section=='name':
+			p = name
 
-			if replace:
-				s = Str_utils.rreplace(orig_str, s, replace, 1)
+		elif section=='ext':
+			p = ext
 
-			result.append(s)
+		if replace:
+			p = Str_utils.rreplace(orig_str, p, replace, 1)
 
-		return formatReturn(result, strings) #if 'strings' is given as a list; return a list.
+		return p
 
 
 	@classmethod

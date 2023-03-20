@@ -53,6 +53,15 @@ class Core_test(Main, Core):
 			"str(self.makeList).rsplit(' ', 1)[0]": '<bound method Iter.makeList of <__main__.Core_test',
 		})
 
+	def test_formatReturn(self):
+		'''
+		'''
+		self.perform_test({
+			"self.formatReturn([''])": '',
+			"self.formatReturn([''], [''])": [''],
+			"self.formatReturn(['', ''])": ['', ''],
+		})
+
 	def test_setAttributes(self):
 		'''
 		'''
@@ -110,7 +119,8 @@ class Str_test(Main, Str):
 			"self.setCase('xXx', 'pascal')":'XXx',
 			"self.setCase('xXx', 'camel')":'xXx',
 			"self.setCase(['xXx'], 'camel')":['xXx'],
-			"self.setCase(None, 'camel')":None,
+			"self.setCase(None, 'camel')":'',
+			"self.setCase('', 'camel')":'',
 		})
 
 	def test_splitAtChars(self):
@@ -215,15 +225,6 @@ class Iter_test(Main, Iter):
 			"self.makeList(1)": [1],
 			"self.makeList('')": [''],
 			"self.makeList({'x':'y'})": ['x'],
-		})
-
-	def test_formatReturn(self):
-		'''
-		'''
-		self.perform_test({
-			"self.formatReturn([''])": '',
-			"self.formatReturn([''], [''])": [''],
-			"self.formatReturn(['', ''])": ['', ''],
 		})
 
 	def test_nestedDepth(self):
