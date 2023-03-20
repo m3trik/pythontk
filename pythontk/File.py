@@ -303,43 +303,75 @@ class File():
 
 
 	@classmethod
-	def incVersion(cls, filepath: str) -> None:
-		"""This function increments the version number in a text file.
-		The verson number is defined as a line in the following format: __version__ = "0.0.0"
+	def updateVersion(cls, filepath: str, change: str='increment', version_part: str='patch', max_version_parts: tuple=(9, 9)) -> None:
+		"""This function updates the version number in a text file depending on its state.
+		The version number is defined as a line in the following format: __version__ = "0.0.0"
 
 		The version number is represented as a string in the format 'x.y.z', where x, y, and z are integers. 
-		When the value of z reaches 9, it becomes 0 and the value of y is incremented by 1. 
-		When the value of y reaches 10, it becomes 0 and the value of x is incremented by 1. 
-		
+
 		Parameters:
 			filepath (str): The path to the text file containing the version number.
+			change (str, optional): The type of change, either 'increment' or 'decrement'. Defaults to 'increment'.
+			version_part (str, optional): The part of the version number to update, either 'major', 'minor', or 'patch'. Defaults to 'patch'.
+			max_version_parts (tuple, optional): A tuple containing the maximum values for the minor and patch version parts. Defaults to (9, 9).
 
 		Return:
-			(None) The version number in the file is updated.
+			(str): The new version number.
 		"""
 		import re
 
 		lines = cls.getFileContents(filepath)
 
+		version_pattern = re.compile(r"__version__\s*=\s*['\"](\d+)\.(\d+)\.(\d+)['\"]")
+		max_minor, max_patch = max_version_parts
+
+		version = ''
 		for i, line in enumerate(lines):
-			if line.startswith("__version__"):
-				_, version = line.strip().split(" = ")
-				version = version.strip("'")
-				major, minor, patch = map(int, version.split("."))
-				if patch == 9:
-					if minor == 9:
-						minor = 0
-						major += 1
+			match = version_pattern.match(line)
+			if match:
+				major, minor, patch = map(int, match.groups())
+
+				if version_part == 'patch':
+					if change == 'increment':
+						patch = (patch + 1) % (max_patch + 1)
+						if patch == 0:
+							minor = (minor + 1) % (max_minor + 1)
+							major += minor == 0
+					elif change == 'decrement':
+						if patch == 0:
+							patch = max_patch
+							minor = (minor - 1) % (max_minor + 1) if minor > 0 else max_minor
+							major -= minor == max_minor
+						else:
+							patch -= 1
 					else:
-						minor += 1
-					patch = 0
+						raise ValueError("Invalid change parameter. Use either 'increment' or 'decrement'.")
+				elif version_part == 'minor':
+					if change == 'increment':
+						minor = (minor + 1) % (max_minor + 1)
+						major += minor == 0
+					elif change == 'decrement':
+						minor = (minor - 1) % (max_minor + 1)
+					else:
+						raise ValueError("Invalid change parameter. Use either 'increment' or 'decrement'.")
+				elif version_part == 'major':
+					if change == 'increment':
+						major += 1
+					elif change == 'decrement':
+						major = max(0, major - 1)
+					else:
+						raise ValueError("Invalid change parameter. Use either 'increment' or 'decrement'.")
 				else:
-					patch += 1
+					raise ValueError("Invalid version_part parameter. Use either 'major', 'minor', or 'patch'.")
+
 				version = f"{major}.{minor}.{patch}"
 				lines[i] = f"__version__ = '{version}'\n"
 				break
 
 		cls.writeToFile(filepath, lines)
+		if not version:
+			print (f"# Error: No version in the format: __version__ = \"0.0.0\" found in {filepath}")
+		return version
 
 # --------------------------------------------------------------------------------------------
 

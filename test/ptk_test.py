@@ -403,7 +403,7 @@ class File_test(Main, File):
 		file = path+'/file1.txt'
 
 		self.perform_test({
-			f"self.writeToFile(r'{file}', 'some text')": None,
+			f"self.writeToFile(r'{file}', '__version__ = \"0.9.0\"')": None,
 		})
 
 	def test_getFileContents(self):
@@ -413,7 +413,7 @@ class File_test(Main, File):
 		file = path+'/file1.txt'
 
 		self.perform_test({
-			f"self.getFileContents(r'{file}')": ['some text'],
+			f"self.getFileContents(r'{file}')": ['__version__ = "0.9.0"'],
 		})
 
 	def test_createDirectory(self):
@@ -457,6 +457,18 @@ class File_test(Main, File):
 
 		self.perform_test({
 			f"str(self.getFile(r'{file}'))": r"<_io.TextIOWrapper name='O:\\Cloud\\Code\\_scripts\\pythontk\\test/test_files/file1.txt' mode='a+' encoding='cp1252'>",
+		})
+
+
+	def test_updateVersion(self):
+		'''
+		'''
+		path = os.path.abspath(os.path.dirname(__file__))+'/test_files'
+		file = path+'/file1.txt'
+
+		self.perform_test({
+			f"str(self.updateVersion(r'{file}', 'increment'))": r"0.9.1",
+			f"str(self.updateVersion(r'{file}', 'decrement'))": r"0.9.0",
 		})
 
 
