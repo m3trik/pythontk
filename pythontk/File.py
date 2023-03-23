@@ -35,19 +35,20 @@ class File():
 
 
 	@staticmethod
-	def getFileContents(filepath: str) -> None:
+	def getFileContents(filepath: str, asList=False) -> None:
 		'''Get each line of a text file as indices of a list.
 		Will create a file if one doesn't already exist.
 
 		Parameters:
 			filepath (str): The path to an existing text based file.
+			asList (bool): Return as a list or a string.
 
 		Return:
 			(list)
 		'''
 		try:
 			with open(filepath, 'r') as f:
-				return f.readlines()
+				return f.readlines() if asList else f.read()
 		except OSError as error:
 			traceback.print_exc()
 
@@ -320,7 +321,7 @@ class File():
 		"""
 		import re
 
-		lines = cls.getFileContents(filepath)
+		lines = cls.getFileContents(filepath, asList=True)
 
 		version_pattern = re.compile(r"__version__\s*=\s*['\"](\d+)\.(\d+)\.(\d+)['\"]")
 		max_minor, max_patch = max_version_parts

@@ -5,7 +5,7 @@ import inspect
 
 
 __package__ = 'pythontk'
-__version__ = '0.5.9'
+__version__ = '0.6.0'
 
 
 def __getattr__(attr):

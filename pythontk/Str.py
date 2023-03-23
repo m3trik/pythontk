@@ -38,6 +38,50 @@ class Str():
 
 
 	@staticmethod
+	def getTextBetweenDelimiters(string, start_delim, end_delim, as_string=False):
+		"""Get any text between the specified start and end delimiters in the given string. The text can be returned as a
+		generator (default behavior) or as a single concatenated string if `as_string` is set to True.
+
+		Parameters:
+			string (str): The input string to search for matches.
+			start_delim (str): The starting delimiter to search for.
+			end_delim (str): The ending delimiter to search for.
+			as_string (bool, optional): If True, the function returns a single concatenated string of all matches.
+										 If False (default), the function returns a generator that yields each match.
+
+		Returns:
+			If as_string is False (default): A generator that yields all matches found in the input string.
+			If as_string is True: A single concatenated string containing all matches found in the input string.
+
+		Examples:
+			input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
+
+			# Get the matches as a generator (default behavior)
+			matches_generator = getTextBetweenDelimiters(input_string, '<!-- start -->', '<!-- end -->')
+			for match in matches_generator:
+				print(match)  # Output: first match (first iteration), second match (second iteration)
+
+			# Get the matches as a single string
+			matches_string = getTextBetweenDelimiters(input_string, '<!-- start -->', '<!-- end -->', as_string=True)
+			print(matches_string)  # Output: "first match second match"
+		"""
+		import re
+
+		def extract_matches(string, start_delim, end_delim, start_index=0):
+			pattern = re.compile(f'{re.escape(start_delim)}(.*?){re.escape(end_delim)}', re.DOTALL)
+			match = pattern.search(string, start_index)
+			if match:
+				yield match.group(1).strip()
+				yield from extract_matches(string, start_delim, end_delim, match.end())
+
+		if as_string:
+			matches = list(extract_matches(string, start_delim, end_delim))
+			return " ".join(matches)
+		else:
+			return extract_matches(string, start_delim, end_delim)
+
+
+	@staticmethod
 	@listify
 	def splitAtChars(string, chars='|', occurrence=-1):
 		'''Split a string containing the given chars at the given occurrence and return

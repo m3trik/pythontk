@@ -123,6 +123,15 @@ class Str_test(Main, Str):
 			"self.setCase('', 'camel')":'',
 		})
 
+	def test_getTextBetweenDelimiters(self):
+		'''
+		'''
+		input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
+
+		self.perform_test({
+			f"self.getTextBetweenDelimiters('{input_string}', '<!-- start -->', '<!-- end -->', as_string=True)": "first match second match",
+		})
+
 	def test_splitAtChars(self):
 		'''
 		'''
@@ -413,7 +422,8 @@ class File_test(Main, File):
 		file = path+'/file1.txt'
 
 		self.perform_test({
-			f"self.getFileContents(r'{file}')": ['__version__ = "0.9.0"'],
+			f"self.getFileContents(r'{file}', asList=True)": '__version__ = "0.9.0"',
+			f"self.getFileContents(r'{file}', asList=True)": ['__version__ = "0.9.0"'],
 		})
 
 	def test_createDirectory(self):
