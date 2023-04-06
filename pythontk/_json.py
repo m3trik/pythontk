@@ -1,8 +1,8 @@
 # !/usr/bin/python
 # coding=utf-8
 import json
-
-from pythontk.File import getFile
+#from this package:
+from pythontk._file import File
 
 
 class Json():
@@ -16,7 +16,7 @@ class Json():
 			file (str): The filepath to a json file. If a file doesn't exist, it will be created.
 		'''
 		cls._jsonFile = file
-		getFile(cls._jsonFile) #will create the file if it does not exist.
+		File.getFile(cls._jsonFile) #will create the file if it does not exist.
 
 
 	@classmethod
@@ -104,26 +104,6 @@ class Json():
 
 
 
-
-# --------------------------------------------------------------------------------------------
-
-def __getattr__(attr:str):
-	"""Searches for an attribute in this module's classes and returns it.
-
-	Parameters:
-		attr (str): The name of the attribute to search for.
-	
-	Return:
-		(obj) The found attribute.
-
-	:Raises:
-		AttributeError: If the given attribute is not found in any of the classes in the module.
-	"""
-	try:
-		return getattr(Json, attr)
-
-	except AttributeError as error:
-		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
 
 # --------------------------------------------------------------------------------------------
 

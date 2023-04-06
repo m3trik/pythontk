@@ -1,9 +1,9 @@
 # !/usr/bin/python
 # coding=utf-8
 import sys, os, traceback
-
-from pythontk.Core import listify
-from pythontk.Iter import makeList, filterList
+#from this package:
+from pythontk._core import Core
+from pythontk._iter import Iter
 
 
 class File():
@@ -69,14 +69,14 @@ class File():
 
 
 	@staticmethod
-	@listify
+	@Core.listify
 	def formatPath(p, section='', replace=''):
 		'''Format a given filepath(s).
 		When a section arg is given, the correlating section of the string will be returned.
 		If a replace arg is given, the stated section will be replaced by the given value.
 
 		Parameters:
-			p (str)(list): The filepath(s) to be formatted.
+			p (str/list): The filepath(s) to be formatted.
 			section (str): The desired subsection of the given path. 
 					'path' path - filename, 
 					'dir'  directory name, 
@@ -85,7 +85,7 @@ class File():
 					'ext', file extension,
 					(if '' is given, the fullpath will be returned)
 		Return:
-			(str)(list) List if 'strings' given as list.
+			(str/list) List if 'strings' given as list.
 		'''
 		if not isinstance(p, (str)):
 			return p
@@ -129,7 +129,7 @@ class File():
 		'''Attach a modified timestamp and date to given file path(s).
 
 		Parameters:
-			filepaths (str)(list): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
+			filepaths (str/list): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
 			detach (bool): Remove a previously attached time stamp.
 			stamp (str): The time stamp format.
 			sort (bool): Reorder the list of filepaths by time. (most recent first)
@@ -140,7 +140,7 @@ class File():
 		from datetime import datetime
 		import os.path
 
-		files = cls.formatPath(makeList(filepaths))
+		files = cls.formatPath(Iter.makeList(filepaths))
 
 		result=[]
 		if detach:
@@ -210,10 +210,10 @@ class File():
 			recursive (bool): return the contents of the root dir only.
 			topDown (bool): Scan directories from the top-down, or bottom-up.
 			reverse (bool): When True, reverse the final result.
-			incFiles (str)(list): Include only specific files.
-			excFiles (str)(list): Excluded specific files.
-			incDirs (str)(list): Include only specific child directories.
-			excDirs (str)(list): Excluded specific child directories.
+			incFiles (str/list): Include only specific files.
+			excFiles (str/list): Excluded specific files.
+			incDirs (str/list): Include only specific child directories.
+			excDirs (str/list): Excluded specific child directories.
 					supports using the '*' operator: startswith*, *endswith, *contains*
 					ex. *.ext will exclude all files with the given extension.
 					exclude takes precedence over include.
@@ -228,7 +228,7 @@ class File():
 
 		result=[]
 		for root, dirs, files in os.walk(path, topdown=topdown):
-			dirs[:] = filterList(dirs, incDirs, excDirs) #remove any directories in 'exclude'.
+			dirs[:] = Iter.filterList(dirs, incDirs, excDirs) #remove any directories in 'exclude'.
 
 			if 'dir' in returnTypes:
 				for d in dirs:
@@ -239,7 +239,7 @@ class File():
 			if not recursive:
 				dirs[:] = [d for d in dirs if d is root] #remove all but the root dir.
 
-			files[:] = filterList(files, incFiles, excFiles) #remove any files in 'exclude'.
+			files[:] = Iter.filterList(files, incFiles, excFiles) #remove any files in 'exclude'.
 			for f in files:
 				if 'file' in returnTypes:
 					result.append(f)
@@ -301,6 +301,30 @@ class File():
 			return os.path.abspath(filepath)
 		else:
 			return os.path.abspath(os.path.dirname(filepath))
+
+
+	@staticmethod
+	def appendPaths(rootDir, ignoreStartingWith=('.', '__'), verbose=False):
+		'''Append all sub-directories of the given 'rootDir' to the python path.
+
+		Parameters:
+			rootDir (str): Sub-directories of this directory will be appended to the system path.
+			ignoreStartingWith (str)(tuple): Ignore directories starting with the given chars.
+			verbose (bool): Output the results to the console. (Debug)
+		'''
+		path = os.path.dirname(os.path.abspath(rootDir))
+		sys.path.insert(0, path)
+		if verbose:
+			print (path)
+
+		# recursively append subdirectories to the system path.
+		for root, dirs, files in os.walk(path):
+			dirs[:] = [d for d in dirs if not d.startswith(ignoreStartingWith)]
+			for dir_name in dirs:
+				dir_path = os.path.join(root, dir_name)
+				sys.path.insert(0, dir_path)
+				if verbose:
+					print (dir_path)
 
 
 	@classmethod
@@ -383,26 +407,6 @@ class File():
 
 
 
-
-# --------------------------------------------------------------------------------------------
-
-def __getattr__(attr:str):
-	"""Searches for an attribute in this module's classes and returns it.
-
-	Parameters:
-		attr (str): The name of the attribute to search for.
-	
-	Return:
-		(obj) The found attribute.
-
-	:Raises:
-		AttributeError: If the given attribute is not found in any of the classes in the module.
-	"""
-	try:
-		return getattr(File, attr)
-
-	except AttributeError as error:
-		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
 
 # --------------------------------------------------------------------------------------------
 

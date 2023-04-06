@@ -1,32 +1,56 @@
 # !/usr/bin/python
 # coding=utf-8
-from pythontk.Core import listify
+from typing import List, Tuple
+#from this package:
+from pythontk._core import Core
 
 
 class Math():
 	'''
 	'''
 	@staticmethod
-	def getVectorFromTwoPoints(startPoint, endPoint):
-		'''Get a directional vector from a given start and end point.
+	@Core.listify
+	def moveDecimalPoint(num, places):
+		'''Move the decimal place in a given number.
 
 		Parameters:
-			startPoint (tuple): A start point given as (x,y,z).
-			endPoint (tuple): An end point given as (x,y,z).
-
-		Return:
-			(tuple) vector.
-
-		Example: getVectorFromTwoPoints((1, 2, 3), (1, 1, -1)) #returns: (0, -1, -4)
+			num (int/float): The number in which you are modifying.
+			places (int): The number of decimal places to move.
+		
+		Returns:
+			(float)
+		
+		Example:
+			moveDecimalPoint(11.05, -2) #returns: 0.1105
 		'''
-		ax, ay, az = startPoint
-		bx, by, bz = endPoint
+		from decimal import Decimal
 
-		return (bx - ax, by - ay, bz - az)
+		num_decimal = Decimal(str(num))  # Convert the input number to a Decimal object
+		scaling_factor = Decimal(10 ** places)  # Create a scaling factor as a Decimal object
+
+		result = num_decimal * scaling_factor  # Perform the operation using Decimal objects
+		return float(result)  # Convert the result back to a float
 
 
 	@staticmethod
-	@listify
+	def getVectorFromTwoPoints(a: List[float], b: List[float]) -> Tuple[float, float, float]:
+		"""Get a directional vector from a given start and end point.
+
+		Args:
+			a (List[float]): A start point given as [x, y, z].
+			b (List[float]): An end point given as [x, y, z].
+
+		Returns:
+			Tuple[float, float, float]: The directional vector from the start point to the end point.
+
+		Example:
+			getVectorFromTwoPoints([1, 2, 3], [1, 1, -1]) #returns: (0, -1, -4)
+		"""
+		return (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+
+
+	@staticmethod
+	@Core.listify
 	def clamp(n=0.0, minimum=0.0, maximum=1.0):
 		'''Clamps the value x between min and max.
 
@@ -176,12 +200,12 @@ class Math():
 
 
 	@classmethod
-	def movePointAlongVectorRelativeToPoint(cls, p1, p2, vect, dist, toward=True):
-		'''Move a point (p1) along a given vector toward or away from a given point (p2).
+	def movePointAlongVectorRelativeToPoint(cls, a, b, vect, dist, toward=True):
+		'''Move a point (a) along a given vector toward or away from a given point (b).
 
 		Parameters:
-			p1 (tuple): The point to move given as (x,y,z).
-			p2 (tuple): The point to move toward.
+			a (tuple): The point to move given as (x,y,z).
+			b (tuple): The point to move toward.
 			vect (tuple): A vector to move the point along.
 			dist (float) = The linear amount to move the point.
 			toward (bool): Move the point toward or away from.
@@ -194,65 +218,44 @@ class Math():
 		'''
 		lowest=None
 		for i in [dist, -dist]: #move in pos and neg direction, and determine which is moving closer to the reference point.
-			p = cls.movePointRelative(p1, i, vect)
-			d = cls.getDistBetweenTwoPoints(p, p2)
+			p = cls.movePointRelative(a, i, vect)
+			d = cls.getDistBetweenTwoPoints(p, b)
 			if lowest is None or (d<lowest if toward else d>lowest):
 				result, lowest = (p, d)
 
 		return result
 
 
-	@classmethod
-	def getDistBetweenTwoPoints(cls, p1, p2):
-		'''Get the vector between two points, and return it's magnitude.
+	@staticmethod
+	def getDistBetweenTwoPoints(a: List[float], b: List[float]) -> float:
+		"""
+		Calculate the distance between two points.
 
 		Parameters:
-			p1 (tuple): A point given as (x,y,z).
-			p2 (tuple): A point given as (x,y,z).
+			a (List[float]): A list of the first point's coordinates [x, y, z].
+			b (List[float]): A list of the second point's coordinates [x, y, z].
 
-		Return:
-			(float)
-
-		Example: getDistBetweenTwoPoints((0, 10, 0), (0, 5, 0)) #returns: 5.0
-		'''
-		from math import sqrt
-		
-		p1x, p1y, p1z = p1
-		p2x, p2y, p2z = p2
-
-		vX = p1x - p2x
-		vY = p1y - p2y
-		vZ = p1z - p2z
-
-		vector = (vX, vY, vZ)
-		length = cls.getMagnitude(vector)
-
-		return length
+		Returns:
+			float: The distance between the two points.
+		"""
+		return ((b[0] - a[0])**2 + (b[1] - a[1])**2 + (b[2] - a[2])**2)**0.5
 
 
 	@staticmethod
-	def getCenterPointBetweenTwoPoints(p1, p2):
-		'''Get the point in the middle of two given points.
+	def getCenterPointBetweenTwoPoints(a: List[float], b: List[float]) -> Tuple[float, float, float]:
+		"""Get the point in the middle of two given points.
 
 		Parameters:
-			p1 (tuple): A point given as (x,y,z).
-			p2 (tuple): A point given as (x,y,z).
+			a (List[float]): A point given as [x, y, z].
+			b (List[float]): A point given as [x, y, z].
 
-		Return:
-			(tuple)
+		Returns:
+			Tuple[float, float, float]: The center point between the two input points.
 
-		Example: getCenterPointBetweenTwoPoints((0, 10, 0), (0, 5, 0)) #returns: (0.0, 7.5, 0.0)
-		'''
-		Ax, Ay, Az = p1
-		Bx, By, Bz = p2
-
-		result = (
-			(Ax+Bx) /2,
-			(Ay+By) /2,
-			(Az+Bz) /2
-		)
-
-		return result
+		Example:
+			getCenterPointBetweenTwoPoints([0, 10, 0], [0, 5, 0]) #returns: (0.0, 7.5, 0.0)
+		"""
+		return ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2)
 
 
 	@classmethod
@@ -437,26 +440,6 @@ class Math():
 
 
 
-
-# --------------------------------------------------------------------------------------------
-
-def __getattr__(attr:str):
-	"""Searches for an attribute in this module's classes and returns it.
-
-	Parameters:
-		attr (str): The name of the attribute to search for.
-	
-	Return:
-		(obj) The found attribute.
-
-	:Raises:
-		AttributeError: If the given attribute is not found in any of the classes in the module.
-	"""
-	try:
-		return getattr(Math, attr)
-
-	except AttributeError as error:
-		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
 
 # --------------------------------------------------------------------------------------------
 

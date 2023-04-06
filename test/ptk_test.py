@@ -4,13 +4,7 @@ import os, sys
 import unittest
 import inspect
 
-from pythontk.Core import Core
-from pythontk.File import File
-from pythontk.Img import Img
-from pythontk.Iter import Iter
-from pythontk.Json import Json
-from pythontk.Math import Math
-from pythontk.Str import Str
+from pythontk import Core, File, Img, Iter, Json, Math, Str
 
 
 class Main(unittest.TestCase):
@@ -42,7 +36,7 @@ class Core_test(Main, Core):
 	#test imports:
 	import pythontk as ptk
 	from pythontk import Iter
-	from pythontk.Iter import makeList
+	from pythontk import makeList
 
 	def test_imports(self):
 		'''

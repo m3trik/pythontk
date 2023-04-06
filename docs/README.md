@@ -23,8 +23,8 @@ python -m pip install pythontk
 from pythontk import Iter
 Iter.filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
 ```
-###### You can also import a function directly.
+###### You can also import any function directly.
 ```python
-from pythontk.Iter import filterDict
+from pythontk import filterDict
 filterDict({1:'1', 'two':2, 3:'three'}, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
 ```

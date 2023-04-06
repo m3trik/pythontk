@@ -173,12 +173,12 @@ class Iter():
 
 		Parameters:
 			dct (dict): The dictionary to filter.
-			inc (str)(obj)(list): The objects(s) to include.
+			inc (str/obj/list): The objects(s) to include.
 					supports using the '*' operator: startswith*, *endswith, *contains*
 					Will include all items that satisfy ANY of the given search terms.
 					meaning: '*.png' and '*Normal*' returns all strings ending in '.png' AND all 
 					strings containing 'Normal'. NOT strings satisfying both terms.
-			exc (str)(obj)(list): The objects(s) to exclude. Similar to include.
+			exc (str/obj/list): The objects(s) to exclude. Similar to include.
 					exlude take precidence over include.
 			keys (bool): Filter the dictionary keys.
 			values (bool): Filter the dictionary values.
@@ -206,12 +206,12 @@ class Iter():
 
 		Parameters:
 			lst (list): The components(s) to filter.
-			inc (str)(int)(obj)(list): The objects(s) to include.
+			inc (str)(int)(obj/list): The objects(s) to include.
 					supports using the '*' operator: startswith*, *endswith, *contains*
 					Will include all items that satisfy ANY of the given search terms.
 					meaning: '*.png' and '*Normal*' returns all strings ending in '.png' AND all 
 					strings containing 'Normal'. NOT strings satisfying both terms.
-			exc (str)(int)(obj)(list): The objects(s) to exclude. Similar to include.
+			exc (str)(int)(obj/list): The objects(s) to exclude. Similar to include.
 					exlude take precidence over include.
 		Return:
 			(list)
@@ -324,26 +324,6 @@ class Iter():
 
 
 
-
-# --------------------------------------------------------------------------------------------
-
-def __getattr__(attr:str):
-	"""Searches for an attribute in this module's classes and returns it.
-
-	Parameters:
-		attr (str): The name of the attribute to search for.
-	
-	Return:
-		(obj) The found attribute.
-
-	:Raises:
-		AttributeError: If the given attribute is not found in any of the classes in the module.
-	"""
-	try:
-		return getattr(Iter, attr)
-
-	except AttributeError as error:
-		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
 
 # --------------------------------------------------------------------------------------------
 

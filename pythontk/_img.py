@@ -15,9 +15,10 @@ try:
 except ImportError as error:
 	print ('{}\n	# Error: {} #'.format(__file__, error))
 
-from pythontk.Core import listify
-from pythontk.File import formatPath, getDirContents
-from pythontk.Iter import makeList
+#from this package:
+from pythontk._core import Core
+from pythontk._file import File
+from pythontk._iter import Iter
 
 
 class Img():
@@ -149,7 +150,7 @@ class Img():
 		'''Returns a resized copy of an image. It doesn't modify the original.
 
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 			x (int): Size in the x coordinate.
 			y (int): Size in the y coordinate.
 
@@ -185,7 +186,7 @@ class Img():
 			(dict) {<full file path>:<image object>}
 		'''
 		images={}
-		for f in getDirContents(directory, 'filepaths', incFiles=inc.split('|'), excFiles=exc.split('|')):
+		for f in File.getDirContents(directory, 'filepaths', incFiles=inc.split('|'), excFiles=exc.split('|')):
 
 			im = Image.open(f) #closing will destroy the image core and release its memory. The image data will be unusable afterward.
 			images[f] = im
@@ -233,7 +234,7 @@ class Img():
 		Return:
 			(str)
 		'''
-		name = formatPath(file, 'name')
+		name = File.formatPath(file, 'name')
 
 		if key:
 			result = next((k for k, v in cls.mapTypes.items() for i in v if name.lower().endswith(i.lower())), None)
@@ -256,7 +257,7 @@ class Img():
 		Return:
 			(dict)
 		'''
-		types = makeList(types.split('|'))
+		types = Iter.makeList(types.split('|'))
 		return [f for f in files if cls.getImageTypeFromFilename(f) in types]
 
 
@@ -294,7 +295,7 @@ class Img():
 		Parameters:
 			files (list)(dict): filenames, fullpaths, or map type suffixes as the first element 
 					of two element tuples or keys in a dictionary. ex. [('file', <image>)] or {'file': <image>} or {'type': ('file', <image>)}
-			map_types (str)(list): The map type(s) to query. Any of the keys in the 'map_types' dict.
+			map_types (str/list): The map type(s) to query. Any of the keys in the 'map_types' dict.
 					Multiple types can be given separated by '|' ex. 'Base_Color|Roughness'
 					ex. 'Base_Color','Roughness','Metallic','Ambient_Occlusion','Normal',
 						'Normal_DirectX','Normal_OpenGL','Height','Emissive','Diffuse','Specular',
@@ -335,7 +336,7 @@ class Img():
 		'''Invert RGB channels.
 
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 			channels (str): Specify which channels to invert.
 				valid: 'R','G','B' case insensitive.
 		Return:
@@ -369,9 +370,9 @@ class Img():
 		'''
 		inverted_image = cls.invertChannels(file, 'g')
 
-		output_dir = formatPath(file, 'path')
-		name = formatPath(file, 'name')
-		ext = formatPath(file, 'ext')
+		output_dir = File.formatPath(file, 'path')
+		name = File.formatPath(file, 'name')
+		ext = File.formatPath(file, 'ext')
 
 		typ = cls.getImageTypeFromFilename(file, key=False)
 		try:
@@ -401,9 +402,9 @@ class Img():
 		'''
 		inverted_image = cls.invertChannels(file, 'g')
 
-		output_dir = formatPath(file, 'path')
-		name = formatPath(file, 'name')
-		ext = formatPath(file, 'ext')
+		output_dir = File.formatPath(file, 'path')
+		name = File.formatPath(file, 'name')
+		ext = File.formatPath(file, 'ext')
 
 		typ = cls.getImageTypeFromFilename(file, key=False)
 		try:
@@ -421,19 +422,19 @@ class Img():
 
 
 	@classmethod
-	@listify
+	@Core.listify
 	def createMask(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)):
 		'''Create mask(s) from the given image(s).
 
 		Parameters:
-			images (str)(obj)(list): Image(s) or path(s) to an image.
+			images (str/obj/list): Image(s) or path(s) to an image.
 			mask (tuple)(image) = The color to isolate as a mask. (RGB) or (RGBA) 
 					or an Image(s) or path(s) to an image. The image's background color will be used.
 			background (tuple): Mask background color. (RGB) or (RGBA)
 			foreground (tuple): Mask foreground color. (RGB) or (RGBA)
 
 		Return:
-			(obj)(list) 'L' mode images. list if 'images' given as a list. else; single image.
+			(obj/list) 'L' mode images. list if 'images' given as a list. else; single image.
 		'''
 		if not isinstance(mask, (tuple, list, set)):
 			mask = cls.getBackground(mask)
@@ -467,7 +468,7 @@ class Img():
 	def fillMaskedArea(cls, image, color, mask):
 		'''
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 			color (list): RGB or RGBA color values.
 			mask () = 
 
@@ -487,7 +488,7 @@ class Img():
 	def fill(image, color=(0, 0, 0, 0)):
 		'''
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 			color (list): RGB or RGBA color values.
 
 		Return:
@@ -506,7 +507,7 @@ class Img():
 		'''Sample the pixel values of each corner of an image and if they are uniform, return the result.
 
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 			mode (str): The returned image color mode. ex. 'RGBA'
 					If None is given, the original mode will be returned.
 			average (bool): Average the sampled pixel values.
@@ -540,7 +541,7 @@ class Img():
 	def replaceColor(image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None):
 		'''
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 			from_color (tuple): The starting color. (RGB) or (RGBA)
 			to_color (tuple): The ending color. (RGB) or (RGBA)
 			mode (str): The image is converted to rgba for the operation specify the returned image mode. the original image mode will be returned if None is given. ex. 'RGBA' to return in rgba format.
@@ -567,7 +568,7 @@ class Img():
 	def setContrast(image, level=255):
 		'''
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 			level (int): Contrast level from 0-255.
 
 		Return:
@@ -586,7 +587,7 @@ class Img():
 		'''Convert an RGB Image data array to grayscale.
 
 		:Paramters:
-			data (str)(obj)(array) = An image, path to an image, or 
+			data (str/obj)(array) = An image, path to an image, or 
 					Image data as numpy array.
 		Return:
 			(array)
@@ -614,7 +615,7 @@ class Img():
 		PNG files cannot be saved as HSV.
 
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 
 		Return:
 			(obj) image.
@@ -640,7 +641,7 @@ class Img():
 		'''Convert to 8 bit 'L' grayscale.
 
 		Parameters:
-			image (str)(obj): An image or path to an image.
+			image (str/obj): An image or path to an image.
 
 		Return:
 			(obj) image.
@@ -657,8 +658,8 @@ class Img():
 		'''Check if two images are the same.
 
 		Parameters:
-			imageA (str)(obj): An image or path to an image.
-			imageB (str)(obj): An image or path to an image.
+			imageA (str/obj): An image or path to an image.
+			imageB (str/obj): An image or path to an image.
 
 		Return:
 			(bool)
@@ -679,26 +680,6 @@ class Img():
 
 
 
-
-# --------------------------------------------------------------------------------------------
-
-def __getattr__(attr:str):
-	"""Searches for an attribute in this module's classes and returns it.
-
-	Parameters:
-		attr (str): The name of the attribute to search for.
-	
-	Return:
-		(obj) The found attribute.
-
-	:Raises:
-		AttributeError: If the given attribute is not found in any of the classes in the module.
-	"""
-	try:
-		return getattr(Img, attr)
-
-	except AttributeError as error:
-		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
 
 # --------------------------------------------------------------------------------------------
 
@@ -776,7 +757,7 @@ if __name__=='__main__':
 	# 	files = cls.getImageFiles()
 	# 	for file, image in files.items():
 	# 		inverted_image = cls.invertChannels(image, 'g')
-	# 		# name = formatPath(file, remove='_DirectX', append='_OpenGL')
+	# 		# name = File.formatPath(file, remove='_DirectX', append='_OpenGL')
 	# 		# cls.saveImageFile(inverted_image, name)
 
 
@@ -786,7 +767,7 @@ if __name__=='__main__':
 	# 	files = cls.getImageFiles()
 	# 	for file, image in files.items():
 	# 		inverted_image = cls.invertChannels(image, 'g')
-	# 		# name = formatPath(file, remove='_OpenGL', append='_DirectX')
+	# 		# name = File.formatPath(file, remove='_OpenGL', append='_DirectX')
 	# 		# cls.saveImageFile(inverted_image, name)
 
 

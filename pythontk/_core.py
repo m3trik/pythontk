@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
-from pythontk.Iter import makeList, filterList
+#from this package:
+from pythontk._iter import Iter
 
 
 class Core():
@@ -30,7 +31,7 @@ class Core():
 			[4, 9, 16]
 		"""
 		def wrapper(lst, *args, **kwargs):
-			result = [func(x, *args, **kwargs) for x in makeList(lst)]
+			result = [func(x, *args, **kwargs) for x in Iter.makeList(lst)]
 			return Core.formatReturn(result, lst)
 		return wrapper
 
@@ -46,7 +47,7 @@ class Core():
 			orig (obj): Optionally; derive the return type form the original value.
 					ie. if it was a multi-value type; do not modify the return value.
 		Return:
-			(obj)(list) dependant on flags.
+			(obj/list) dependant on flags.
 		'''
 		orig = isinstance(orig, (list, tuple, set, dict, range))
 
@@ -83,7 +84,7 @@ class Core():
 		Return:
 			(dict) {'string attribute': current value}
 		'''
-		filtered = filterList(obj.__dict__, inc, exc)
+		filtered = Iter.filterList(obj.__dict__, inc, exc)
 		return {attr:getattr(obj, attr) for attr in filtered}
 
 
@@ -154,7 +155,7 @@ class Core():
 		Example: areSimilar(1, 10, 8)" #returns: False
 		'''
 		func = lambda a, b: abs(a-b)<=tol if isinstance(a, (int, float)) else True if isinstance(a, (list, set, tuple)) and areSimilar(a, b, tol) else a==b
-		return all(map(func, makeList(a), makeList(b)))
+		return all(map(func, Iter.makeList(a), Iter.makeList(b)))
 
 
 	@staticmethod
@@ -189,26 +190,6 @@ class Core():
 
 
 
-
-# --------------------------------------------------------------------------------------------
-
-def __getattr__(attr:str):
-	"""Searches for an attribute in this module's classes and returns it.
-
-	Parameters:
-		attr (str): The name of the attribute to search for.
-	
-	Return:
-		(obj) The found attribute.
-
-	:Raises:
-		AttributeError: If the given attribute is not found in any of the classes in the module.
-	"""
-	try:
-		return getattr(Core, attr)
-
-	except AttributeError as error:
-		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
 
 # --------------------------------------------------------------------------------------------
 

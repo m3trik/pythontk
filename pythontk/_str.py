@@ -1,24 +1,25 @@
 # !/usr/bin/python
 # coding=utf-8
-from pythontk.Core import listify
-from pythontk.Iter import makeList
+#from this package:
+from pythontk._core import Core
+from pythontk._iter import Iter
 
 
 class Str():
 	'''
 	'''
 	@staticmethod
-	@listify
-	def setCase(string, case='camel'):
+	@Core.listify
+	def setCase(string, case='title'):
 		'''Format the given string(s) in the given case.
 
 		Parameters:
-			string (str)(list): The string(s) to format.
+			string (str/list): The string(s) to format.
 			case (str): The desired return case. Accepts all python case operators. 
 				valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
 
 		Return:
-			(str)(list) List if 'string' given as list.
+			(str/list) List if 'string' given as list.
 		'''
 		if (not string) or (not isinstance(string, str)):
 			return ''
@@ -82,13 +83,13 @@ class Str():
 
 
 	@staticmethod
-	@listify
+	@Core.listify
 	def splitAtChars(string, chars='|', occurrence=-1):
 		'''Split a string containing the given chars at the given occurrence and return
 		a two element tuple containing both halves.
 
 		Parameters:
-			strings (str)(list): The string(s) to operate on.
+			strings (str/list): The string(s) to operate on.
 			chars (str): The chars to split at.
 			occurrence (int): The occurrence of the pipe to split at from left.
 				ex. -1 would split at the last occurrence. 0 would split at the first.
@@ -165,7 +166,7 @@ class Str():
 
 
 	@staticmethod
-	@listify
+	@Core.listify
 	def truncate(string, length=75, beginning=True, insert='..'):
 		'''Shorten the given string to the given length.
 		An ellipsis will be added to the section trimmed.
@@ -388,7 +389,7 @@ class Str():
 		Parameters:
 			string (str): The string to format.
 			suffix (str): Append a new suffix to the given string.
-			strip (str)(list): Specific string(s) to strip from the end of the given string.
+			strip (str/list): Specific string(s) to strip from the end of the given string.
 			stripTrailingInts (bool): Strip all trailing integers.
 			stripTrailingAlpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
 
@@ -404,7 +405,7 @@ class Str():
 
 		# strip each set of chars in 'strip' from end of string.
 		if strip:
-			strip = tuple([i for i in makeList(strip) if not i=='']) #assure 'strip' is a tuple and does not contain any empty strings.
+			strip = tuple([i for i in Iter.makeList(strip) if not i=='']) #assure 'strip' is a tuple and does not contain any empty strings.
 			while s.endswith(strip):
 				for chars in strip:
 					s = s.rstrip(chars)
@@ -428,26 +429,6 @@ class Str():
 
 
 
-
-# --------------------------------------------------------------------------------------------
-
-def __getattr__(attr:str):
-	"""Searches for an attribute in this module's classes and returns it.
-
-	Parameters:
-		attr (str): The name of the attribute to search for.
-	
-	Return:
-		(obj) The found attribute.
-
-	:Raises:
-		AttributeError: If the given attribute is not found in any of the classes in the module.
-	"""
-	try:
-		return getattr(Str, attr)
-
-	except AttributeError as error:
-		raise AttributeError(f"Module '{__name__}' has no attribute '{attr}'")
 
 # --------------------------------------------------------------------------------------------
 
