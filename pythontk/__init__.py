@@ -5,8 +5,8 @@ import importlib
 import pkgutil
 
 
-__package__ = 'pythontk'
-__version__ = '0.6.2'
+__package__ = "pythontk"
+__version__ = "0.6.2"
 
 
 # Define dictionaries to map class names, method names, and class method names to their respective modules
@@ -15,18 +15,23 @@ METHOD_TO_MODULE = {}
 CLASS_METHOD_TO_MODULE = {}
 
 # Build the dictionaries by iterating over all submodules of the package
-for importer, modname, ispkg in pkgutil.walk_packages(__path__, __name__ + '.'):
+for importer, modname, ispkg in pkgutil.walk_packages(__path__, __name__ + "."):
     module = importlib.import_module(modname)
     for name, obj in module.__dict__.items():
         if inspect.isclass(obj):
             CLASS_TO_MODULE[obj.__name__] = modname
-            for method_name, method_obj in inspect.getmembers(obj, predicate=inspect.isfunction):
+            for method_name, method_obj in inspect.getmembers(
+                obj, predicate=inspect.isfunction
+            ):
                 METHOD_TO_MODULE[method_name] = (modname, obj.__name__)
-            for method_name, method_obj in inspect.getmembers(obj, predicate=inspect.ismethod):
+            for method_name, method_obj in inspect.getmembers(
+                obj, predicate=inspect.ismethod
+            ):
                 CLASS_METHOD_TO_MODULE[method_name] = (modname, obj.__name__)
 
 # Define a dictionary to store imported module objects
 IMPORTED_MODULES = {}
+
 
 def __getattr__(name):
     # Check if the requested attribute is a class we need to import
@@ -40,7 +45,7 @@ def __getattr__(name):
             module = IMPORTED_MODULES[module_name]
         # Return the requested class object from the module
         return getattr(module, name)
-    
+
     # Check if the requested attribute is a method we need to import
     elif name in METHOD_TO_MODULE:
         module_name, class_name = METHOD_TO_MODULE[name]
@@ -70,14 +75,8 @@ def __getattr__(name):
     # If the requested attribute is not a class, method, or class method we handle, raise an AttributeError
     raise AttributeError(f"module {__package__} has no attribute '{name}'")
 
+
 # --------------------------------------------------------------------------------------------
-
-
-
-
-
-
-
 
 
 # --------------------------------------------------------------------------------------------
@@ -99,7 +98,7 @@ def __getattr__(name):
 # 		attr (str): The name of an attribute to search for.
 # 		breakOnMatch (bool): Return only the first found attribute.
 
-# 	Return:
+# 	Returns:
 # 		(obj) The found attribute.
 
 # 	:raise AttributeError: If the given attribute is not found in any of the classes in the given module.
@@ -132,7 +131,7 @@ def __getattr__(name):
 # 		filetypes (str)(tuple): Filetype extension(s) to include.
 # 		ignoreStartingWith (str)(tuple): Ignore submodules starting with given chars.
 
-# 	Return:
+# 	Returns:
 # 		(list) the imported modules.
 
 # 	Example: import_submodules(__name__)
@@ -178,4 +177,3 @@ def __getattr__(name):
 # 		cls_members = [(o, getattr(clss, o)) for o in dir(clss) if not o.startswith(ignoreStartingWith)]
 # 		for name, mem in cls_members:
 # 			vars(module)[name] = mem
-
