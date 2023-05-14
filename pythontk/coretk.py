@@ -89,7 +89,7 @@ class Core:
         return rtn
 
     @staticmethod
-    def set_attributes(obj, **attributes):
+    def setAttributes(obj, **attributes):
         """Set attributes for a given object.
 
         Parameters:

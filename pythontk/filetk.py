@@ -17,10 +17,10 @@ class File:
         """Determine if the given file or dir is valid.
 
         Parameters:
-                filepath (str): The path to a file.
+            filepath (str): The path to a file.
 
         Returns:
-                (str) The path type (ie. 'file' or 'dir') or None.
+            (str) The path type (ie. 'file' or 'dir') or None.
         """
         fp = os.path.expandvars(filepath)  # convert any env variables to their values.
 
@@ -35,8 +35,8 @@ class File:
         """Return a file object with the given mode.
 
         Parameters:
-                filepath (str): The path to an existing file or the desired location for one to be created.
-                mode (str): 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
+            filepath (str): The path to an existing file or the desired location for one to be created.
+            mode (str): 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
                         'a' - Append - Opens a file for appending, creates the file if it does not exist.
                         'a+' - Read+Write - Creates a new file or opens an existing file, the file pointer position at the end of the file.
                         'w' - Write - Opens a file for writing, creates the file if it does not exist.
@@ -44,9 +44,8 @@ class File:
                         'x' - Create - Creates a new file, returns an error if the file exists.
                         't' - Text - Default value. Text mode
                         'b' - Binary - Binary mode (e.g. images)
-
         Returns:
-                (obj) file
+            (obj) file
         """
         try:
             with open(filepath, mode) as f:
@@ -60,11 +59,11 @@ class File:
         Will create a file if one doesn't exist.
 
         Parameters:
-                filepath (str): The path to an existing text based file.
-                asList (bool): Return as a list or a string.
+            filepath (str): The path to an existing text based file.
+            asList (bool): Return as a list or a string.
 
         Returns:
-                (list)
+            (list)
         """
         try:
             with open(filepath, "r") as f:
@@ -77,8 +76,8 @@ class File:
         """Write the given list contents to the given file.
 
         Parameters:
-                filepath (str): The path to an existing text based file.
-                lines (list): A list of strings to write to the file.
+            filepath (str): The path to an existing text based file.
+            lines (list): A list of strings to write to the file.
         """
         try:
             with open(filepath, "w") as f:
@@ -141,13 +140,13 @@ class File:
         dirPath,
         returnType="files",
         recursive=False,
+        numThreads=1,
         incFiles=[],
         excFiles=[],
         incDirs=[],
         excDirs=[],
-        numThreads=4,
     ):
-        """Get the contents of a directory and any of it's children.
+        """Get the contents of a directory and any of its children.
 
         Parameters:
             dirPath (str): The path to the directory.
@@ -155,6 +154,8 @@ class File:
                             ex. 'files|dirs' (valid: 'files'(default), filenames, 'filepaths', 'dirs', 'dirpaths')
                             case insensitive. singular or plural.
             recursive (bool): When False, Return the contents of the root dir only.
+            numThreads (int): The number of threads to use for processing directories and files.
+                            If set to 1 or 0, multithreading will not be used.
             incFiles (str/list): Include only specific files.
             excFiles (str/list): Excluded specific files.
             incDirs (str/list): Include only specific child directories.
@@ -163,50 +164,56 @@ class File:
                             ex. *.ext will exclude all files with the given extension.
                             exclude takes precedence over include.
         Returns:
-            (list)
+            (list): A list of files, directories, filenames, filepaths, dirs, or dirpaths based on the returnType.
 
-        ex. getDirContents(dirPath, returnType='filepaths')
-        ex. getDirContents(dirPath, returnType='files|dirs')
+        Examples:
+            getDirContents(dirPath, returnType='filepaths')
+            getDirContents(dirPath, returnType='files|dirs')
         """
-        from concurrent.futures import ThreadPoolExecutor
-
         path = os.path.expandvars(dirPath)
-        returnTypes = [t.strip().rstrip("s").lower() for t in returnType.split("|")]
+        returnTypes = {t.strip().rstrip("s").lower() for t in returnType.split("|")}
 
         def process_directory(root, dirs, files):
             result = []
-            if not recursive:
-                if root != path:
-                    return result
+            if not recursive and root != path:
+                return result
 
             dirs = Iter.filterList(dirs, incDirs, excDirs)
             files = Iter.filterList(files, incFiles, excFiles)
 
-            for d in dirs:
-                for rt in returnTypes:
-                    if rt == "dir":
-                        result.append(d)
-                    elif rt == "dirpath":
-                        result.append(os.path.join(root, d))
-
-            for f in files:
-                for rt in returnTypes:
-                    if rt == "file":
-                        result.append(f)
-                    elif rt == "filename":
-                        result.append(os.path.splitext(f)[0])
-                    elif rt == "filepath":
-                        result.append(os.path.join(root, f))
+            if "dir" in returnTypes:
+                result.extend(dirs)
+            if "dirpath" in returnTypes:
+                result.extend(os.path.join(root, d) for d in dirs)
+            if "file" in returnTypes:
+                result.extend(files)
+            if "filename" in returnTypes:
+                result.extend(os.path.splitext(f)[0] for f in files)
+            if "filepath" in returnTypes:
+                result.extend(os.path.join(root, f) for f in files)
 
             return result
 
-        with ThreadPoolExecutor(max_workers=numThreads) as executor:
-            futures = []
-            for root, dirs, files in os.walk(path, topdown=True):
-                future = executor.submit(process_directory, root, dirs, files)
-                futures.append(future)
+        result = []
 
-            result = [item for future in futures for item in future.result()]
+        if numThreads > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=numThreads) as executor:
+                futures = {
+                    executor.submit(process_directory, root, dirs, files): (
+                        root,
+                        dirs,
+                        files,
+                    )
+                    for root, dirs, files in os.walk(path, topdown=True)
+                }
+
+                for future in as_completed(futures):
+                    result.extend(future.result())
+        else:
+            for root, dirs, files in os.walk(path, topdown=True):
+                result.extend(process_directory(root, dirs, files))
 
         return result
 
@@ -215,7 +222,7 @@ class File:
         """Create a directory if one doesn't already exist.
 
         Parameters:
-                filepath (str): The path to where the file will be created.
+            filepath (str): The path to where the file will be created.
         """
         fp = os.path.expandvars(filepath)  # convert any env variables to their values.
         try:
@@ -233,54 +240,47 @@ class File:
         """Get the filepath of a class or module.
 
         Parameters:
-                obj (obj): A python module, class, or the built-in __file__ variable.
-                incFilename (bool): Include the filename in the returned result.
+            obj (obj): A python module, class, or the built-in __file__ variable.
+            incFilename (bool): Include the filename in the returned result.
 
         Returns:
-                (str)
+            (str)
         """
         from types import ModuleType
+        import inspect
 
-        if isinstance(obj, type(None)):
+        if obj is None:
             return ""
-        elif isinstance(obj, str):
+
+        if isinstance(obj, str):
             filepath = obj
         elif isinstance(obj, ModuleType):
-            filepath = obj.__file__
-        else:
-            clss = obj if callable(obj) else obj.__class__
+            filepath = getattr(obj, "__file__", None)
+            if filepath is None and hasattr(
+                obj, "__path__"
+            ):  # handle namespace packages
+                filepath = obj.__path__[0]
+        elif callable(obj) or isinstance(obj, object):
             try:
-                import inspect
-
-                filepath = inspect.getfile(clss)
-
-            except (
-                TypeError
-            ) as error:  # iterate over each filepath in the call frames, until a class with a matching name is found.
-                import importlib
-
-                filepath = ""
-                for frame_record in inspect.stack():
-                    if filepath:
-                        break
-                    frame = frame_record[0]
-                    _filepath = inspect.getframeinfo(frame).filename
-                    mod_name = os.path.splitext(os.path.basename(_filepath))[0]
-                    spec = importlib.util.spec_from_file_location(mod_name, _filepath)
-                    if not spec:
-                        continue
-                    mod = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(mod)
-
-                    for cls_name, clss_ in inspect.getmembers(
-                        mod, inspect.isclass
-                    ):  # get the module's classes.
-                        if cls_name == clss.__name__:
-                            filepath = _filepath
-        if incFilename:
-            return os.path.abspath(filepath)
+                module = inspect.getmodule(obj)
+                filepath = getattr(module, "__file__", None)
+                if filepath is None and hasattr(
+                    module, "__path__"
+                ):  # handle namespace packages
+                    filepath = module.__path__[0]
+            except AttributeError:
+                raise ValueError(
+                    "Unable to determine file path for object of type: ", type(obj)
+                )
         else:
+            raise ValueError("Invalid type for obj: ", type(obj))
+
+        if filepath and incFilename:
+            return os.path.abspath(filepath)
+        elif filepath:
             return os.path.abspath(os.path.dirname(filepath))
+        else:
+            return None
 
     @staticmethod
     @Core.listify
@@ -290,16 +290,16 @@ class File:
         If a replace arg is given, the stated section will be replaced by the given value.
 
         Parameters:
-                p (str/list): The filepath(s) to be formatted.
-                section (str): The desired subsection of the given path.
-                                'path' path minus filename,
-                                'dir'  directory name,
-                                'file' filename plus ext,
-                                'name', filename minus ext,
-                                'ext', file extension,
-                                (if '' is given, the fullpath will be returned)
+            p (str/list): The filepath(s) to be formatted.
+            section (str): The desired subsection of the given path.
+                'path' path minus filename,
+                'dir'  directory name,
+                'file' filename plus ext,
+                'name', filename minus ext,
+                'ext', file extension,
+                (if '' is given, the fullpath will be returned)
         Returns:
-                (str/list) List if 'strings' given as list.
+            (str/list) List if 'strings' given as list.
         """
         if not isinstance(p, (str)):
             return p
@@ -343,41 +343,32 @@ class File:
 
         return result
 
-    @staticmethod
-    def appendPaths(rootDir, ignoreStartingWith=(".", "__"), verbose=False):
+    @classmethod
+    def appendPaths(cls, rootDir, **kwargs):
         """Append all sub-directories of the given 'rootDir' to the python path.
 
         Parameters:
-                rootDir (str): Sub-directories of this directory will be appended to the system path.
-                ignoreStartingWith (str)(tuple): Ignore directories starting with the given chars.
-                verbose (bool): Output the results to the console. (Debug)
+            rootDir (str): Sub-directories of this directory will be appended to the system path.
+            kwargs (optional): Any file related keyword arguments that 'getDirContents' allows.
+                    ie. recursive, numThreads, incDirs, excDirs. But not: dirPath or returnType.
+        Returns:
+            list:  the appended paths.
         """
         path = os.path.dirname(os.path.abspath(rootDir))
-        sys.path.insert(0, path)
-        if verbose:
-            print(path)
-
-        # recursively append subdirectories to the system path.
-        for root, dirs, files in os.walk(path):
-            dirs[:] = [d for d in dirs if not d.startswith(ignoreStartingWith)]
-            for dir_name in dirs:
-                dir_path = os.path.join(root, dir_name)
-                sys.path.insert(0, dir_path)
-                if verbose:
-                    print(dir_path)
+        return [sys.path.append(d) for d in cls.getDirContents(path, "dirs", **kwargs)]
 
     @classmethod
     def timeStamp(cls, filepaths, detach=False, stamp="%m-%d-%Y  %H:%M", sort=False):
         """Attach a modified timestamp and date to given file path(s).
 
         Parameters:
-                filepaths (str/list): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
-                detach (bool): Remove a previously attached time stamp.
-                stamp (str): The time stamp format.
-                sort (bool): Reorder the list of filepaths by time. (most recent first)
+            filepaths (str/list): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
+            detach (bool): Remove a previously attached time stamp.
+            stamp (str): The time stamp format.
+            sort (bool): Reorder the list of filepaths by time. (most recent first)
 
         Returns:
-                (list) ie. ['16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'] from ['C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb']
+            (list) ie. ['16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'] from ['C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb']
         """
         from datetime import datetime
         import os.path
@@ -421,17 +412,16 @@ class File:
     ) -> None:
         """This function updates the version number in a text file depending on its state.
         The version number is defined as a line in the following format: __version__ = "0.0.0"
-
         The version number is represented as a string in the format 'x.y.z', where x, y, and z are integers.
 
         Parameters:
-                filepath (str): The path to the text file containing the version number.
-                change (str, optional): The type of change, either 'increment' or 'decrement'. Defaults to 'increment'.
-                version_part (str, optional): The part of the version number to update, either 'major', 'minor', or 'patch'. Defaults to 'patch'.
-                max_version_parts (tuple, optional): A tuple containing the maximum values for the minor and patch version parts. Defaults to (9, 9).
+            filepath (str): The path to the text file containing the version number.
+            change (str, optional): The type of change, either 'increment' or 'decrement'. Defaults to 'increment'.
+            version_part (str, optional): The part of the version number to update, either 'major', 'minor', or 'patch'. Defaults to 'patch'.
+            max_version_parts (tuple, optional): A tuple containing the maximum values for the minor and patch version parts. Defaults to (9, 9).
 
         Returns:
-                (str): The new version number.
+            (str): The new version number.
         """
         import re
 
@@ -507,7 +497,7 @@ class File:
         """Set the current json filepath.
 
         Parameters:
-                file (str): The filepath to a json file. If a file doesn't exist, it will be created.
+            file (str): The filepath to a json file. If a file doesn't exist, it will be created.
         """
         cls._jsonFile = file
         File.getFile(cls._jsonFile)  # will create the file if it does not exist.
@@ -517,7 +507,7 @@ class File:
         """Get the current json filepath.
 
         Returns:
-                (str)
+            (str)
         """
         try:
             return cls._jsonFile
@@ -528,13 +518,13 @@ class File:
     def setJson(cls, key, value, file=None):
         """
         Parameters:
-                key () = Set the json key.
-                value () = Set the json value for the given key.
-                file (str): Temporarily set the filepath to a json file.
-                        If no file is given, the previously set file will be used
-                        if one was set.
-
-        Example: setJson('hdr_map_visibility', state)
+            key () = Set the json key.
+            value () = Set the json value for the given key.
+            file (str): Temporarily set the filepath to a json file.
+                    If no file is given, the previously set file will be used
+                    if one was set.
+        Example:
+            setJson('hdr_map_visibility', state)
         """
         if not file:
             file = cls.getJsonFile()
@@ -565,15 +555,16 @@ class File:
     def getJson(cls, key, file=None):
         """
         Parameters:
-                key () = Set the json key.
-                value () = Set the json value for the given key.
-                file (str): Temporarily set the filepath to a json file.
-                                If no file is given, the previously set file will
-                                be used if one was set.
+            key () = Set the json key.
+            value () = Set the json value for the given key.
+            file (str): Temporarily set the filepath to a json file.
+                            If no file is given, the previously set file will
+                            be used if one was set.
         Returns:
-                (str)
+            (str)
 
-        Example: getJson('hdr_map_visibility') #returns: state
+        Example:
+            getJson('hdr_map_visibility') #returns: state
         """
         if not file:
             file = cls.getJsonFile()
@@ -621,6 +612,60 @@ if __name__ == "__main__":
 
 
 # Deprecated ------------------------------------
+
+# @staticmethod
+# def getFilepath(obj, incFilename=False):
+#     """Get the filepath of a class or module.
+
+#     Parameters:
+#             obj (obj): A python module, class, or the built-in __file__ variable.
+#             incFilename (bool): Include the filename in the returned result.
+
+#     Returns:
+#             (str)
+#     """
+#     from types import ModuleType
+
+#     if isinstance(obj, type(None)):
+#         return ""
+#     elif isinstance(obj, str):
+#         filepath = obj
+#     elif isinstance(obj, ModuleType):
+#         filepath = obj.__file__
+#     else:
+#         clss = obj if callable(obj) else obj.__class__
+#         try:
+#             import inspect
+
+#             filepath = inspect.getfile(clss)
+
+#         except (
+#             TypeError
+#         ) as error:  # iterate over each filepath in the call frames, until a class with a matching name is found.
+#             import importlib
+
+#             filepath = ""
+#             for frame_record in inspect.stack():
+#                 if filepath:
+#                     break
+#                 frame = frame_record[0]
+#                 _filepath = inspect.getframeinfo(frame).filename
+#                 mod_name = os.path.splitext(os.path.basename(_filepath))[0]
+#                 spec = importlib.util.spec_from_file_location(mod_name, _filepath)
+#                 if not spec:
+#                     continue
+#                 mod = importlib.util.module_from_spec(spec)
+#                 spec.loader.exec_module(mod)
+
+#                 for cls_name, clss_ in inspect.getmembers(
+#                     mod, inspect.isclass
+#                 ):  # get the module's classes.
+#                     if cls_name == clss.__name__:
+#                         filepath = _filepath
+#     if incFilename:
+#         return os.path.abspath(filepath)
+#     else:
+#         return os.path.abspath(os.path.dirname(filepath))
 
 
 # def getCallingModuleDir():

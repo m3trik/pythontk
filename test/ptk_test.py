@@ -1,7 +1,6 @@
 #!/usr/bin/python
 # coding=utf-8
 import os
-import sys
 import unittest
 import inspect
 
@@ -99,10 +98,10 @@ class CoreTest(Main, Core):
         self.assertEqual(self.formatReturn(["", ""]), ["", ""])
 
     def test_setAttributes(self):
-        """Test set_attributes method."""
+        """Test setAttributes method."""
         self.perform_test(
             {
-                "self.set_attributes(self, attr='value')": None,
+                "self.setAttributes(self, attr='value')": None,
             }
         )
 
@@ -163,6 +162,37 @@ class StrTest(Main, Str):
                 "self.setCase('', 'camel')": "",
             }
         )
+
+    def test_getMangledName(self):
+        """ """
+
+        class DummyClass:
+            ...
+
+        dummy_instance = DummyClass()
+
+        self.assertEqual(  # Test with class name
+            self.getMangledName("DummyClass", "__my_attribute"),
+            "_DummyClass__my_attribute",
+        )
+
+        self.assertEqual(  # Test with class
+            self.getMangledName(DummyClass, "__my_attribute"),
+            "_DummyClass__my_attribute",
+        )
+
+        self.assertEqual(  # Test with class instance
+            self.getMangledName(dummy_instance, "__my_attribute"),
+            "_DummyClass__my_attribute",
+        )
+
+        # Test with invalid attribute name (not a string)
+        with self.assertRaises(TypeError):
+            self.getMangledName("DummyClass", 123)
+
+        # Test with invalid attribute name (does not start with double underscore)
+        with self.assertRaises(ValueError):
+            self.getMangledName("DummyClass", "my_attribute")
 
     def test_getTextBetweenDelimiters(self):
         """Test getTextBetweenDelimiters method."""

@@ -38,6 +38,39 @@ class Str:
                 return string
 
     @staticmethod
+    def getMangledName(class_input, attribute_name):
+        """Returns the mangled name for a private attribute of a class.
+
+        Parameters:
+            class_input (str/type/instance): The class name as a string, the class itself or an instance of the class.
+            attribute_name (str): The original name of the attribute.
+
+        Returns:
+            str: The mangled name of the attribute.
+
+        Raises:
+            TypeError: If class_input is not a string, a type, or an instance of a class, or if attribute_name is not a string.
+            ValueError: If attribute_name does not start with double underscore.
+        """
+        if not isinstance(attribute_name, str):
+            raise TypeError("attribute_name must be a string")
+        if not attribute_name.startswith("__"):
+            raise ValueError("attribute_name must start with double underscore")
+
+        if isinstance(class_input, str):
+            class_name = class_input
+        elif isinstance(class_input, type):
+            class_name = class_input.__name__
+        elif hasattr(class_input, "__class__"):
+            class_name = class_input.__class__.__name__
+        else:
+            raise TypeError(
+                "class_input must be a string, a type, or an instance of a class"
+            )
+
+        return f"_{class_name}{attribute_name}"
+
+    @staticmethod
     def getTextBetweenDelimiters(string, start_delim, end_delim, as_string=False):
         """Get any text between the specified start and end delimiters in the given string. The text can be returned as a
         generator (default behavior) or as a single concatenated string if `as_string` is set to True.
