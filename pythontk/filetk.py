@@ -358,49 +358,39 @@ class File:
         return [sys.path.append(d) for d in cls.getDirContents(path, "dirs", **kwargs)]
 
     @classmethod
-    def timeStamp(cls, filepaths, detach=False, stamp="%m-%d-%Y  %H:%M", sort=False):
-        """Attach a modified timestamp and date to given file path(s).
+    @Core.listify
+    def timeStamp(cls, filepath, stamp="%m-%d-%Y  %H:%M"):
+        """Attach or detach a modified timestamp and date to/from a given file path.
 
         Parameters:
-            filepaths (str/list): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
-            detach (bool): Remove a previously attached time stamp.
+            filepath (str): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
             stamp (str): The time stamp format.
-            sort (bool): Reorder the list of filepaths by time. (most recent first)
 
         Returns:
-            (list) ie. ['16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'] from ['C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb']
+            str: Filepath with attached or detached timestamp, depending on whether it initially had a timestamp.
+                ie. '16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb' from 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
         """
         from datetime import datetime
         import os.path
+        import re
 
-        files = cls.formatPath(Iter.makeList(filepaths))
+        filepath = cls.formatPath(filepath)
 
-        result = []
-        if detach:
-            for f in files:
-                if len(f) > 2 and not any(
-                    ["/" == f[2], "\\" == f[2], "\\\\" == f[:2]]
-                ):  # attempt to decipher whether the path has a time stamp.
-                    strip = "".join(f.split()[2:])
-                    result.append(strip)
-                else:
-                    result.append(f)
+        # Check if the file path has a timestamp using regular expression
+        match = re.match(r"\d{2}:\d{2}  \d{2}-\d{2}-\d{4}", filepath)
+        if match:
+            # If it does, return the file path without the timestamp
+            return "".join(filepath.split()[2:])
         else:
-            for f in files:
-                try:
-                    result.append(
-                        "{}  {}".format(
-                            datetime.fromtimestamp(os.path.getmtime(f)).strftime(stamp),
-                            f,
-                        )
-                    )
-                except (FileNotFoundError, OSError) as error:
-                    continue
-
-            if sort:
-                result = list(reversed(sorted(result)))
-
-        return result
+            # If it doesn't, attach a timestamp
+            try:
+                return "{}  {}".format(
+                    datetime.fromtimestamp(os.path.getmtime(filepath)).strftime(stamp),
+                    filepath,
+                )
+            except (FileNotFoundError, OSError) as error:
+                print(f"Error: {error}")
+                return filepath
 
     @classmethod
     def updateVersion(
