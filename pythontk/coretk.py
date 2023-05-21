@@ -13,11 +13,11 @@ class Core:
         """
 
         def wrapper(lst, *args, **kwargs):
-            input_list = Iter.makeList(lst)
+            input_list = Iter.make_list(lst)
 
             result = [func(x, *args, **kwargs) for x in input_list]
 
-            return Core.formatReturn(result, lst)
+            return Core.format_return(result, lst)
 
         return wrapper
 
@@ -28,14 +28,14 @@ class Core:
         from concurrent.futures import ThreadPoolExecutor
 
         def wrapper(lst, *args, **kwargs):
-            input_list = Iter.makeList(lst)
+            input_list = Iter.make_list(lst)
 
             with ThreadPoolExecutor() as executor:
                 result = list(
                     executor.map(lambda x: func(x, *args, **kwargs), input_list)
                 )
 
-            return Core.formatReturn(result, lst)
+            return Core.format_return(result, lst)
 
         return wrapper
 
@@ -55,24 +55,24 @@ class Core:
         import asyncio
 
         async def wrapper(lst, *args, **kwargs):
-            input_list = Iter.makeList(lst)
+            input_list = Iter.make_list(lst)
 
             result = await asyncio.gather(
                 *[func(x, *args, **kwargs) for x in input_list]
             )
 
-            return Core.formatReturn(result, lst)
+            return Core.format_return(result, lst)
 
         return wrapper
 
     @classmethod
-    def formatReturn(cls, rtn, orig=None):
+    def format_return(cls, lst, orig=None):
         """Return the list element if the given iterable only contains a single element.
         If the list contains multiple elements, always return the full list.
         If the 'orig' arg is a multi-element type then the original format will always be returned.
 
         Parameters:
-                rtn (list): An iterable.
+                lst (list): An iterable.
                 orig (obj): Optionally; derive the return type form the original value.
                                 ie. if it was a multi-value type; do not modify the return value.
         Returns:
@@ -81,15 +81,15 @@ class Core:
         orig = isinstance(orig, (list, tuple, set, dict, range))
 
         try:
-            if len(rtn) == 1 and not orig and not isinstance(rtn, str):
-                return rtn[0]
+            if len(lst) == 1 and not orig and not isinstance(lst, str):
+                return lst[0]
 
         except Exception as e:
             pass
-        return rtn
+        return lst
 
     @staticmethod
-    def setAttributes(obj, **attributes):
+    def set_attributes(obj, **attributes):
         """Set attributes for a given object.
 
         Parameters:
@@ -103,7 +103,7 @@ class Core:
         ]
 
     @staticmethod
-    def getAttributes(obj, inc=[], exc=[]):
+    def get_attributes(obj, inc=[], exc=[]):
         """Get attributes for a given object.
 
         Parameters:
@@ -114,11 +114,11 @@ class Core:
         Returns:
                 (dict) {'string attribute': current value}
         """
-        filtered = Iter.filterList(obj.__dict__, inc, exc)
+        filtered = Iter.filter_list(obj.__dict__, inc, exc)
         return {attr: getattr(obj, attr) for attr in filtered}
 
     @staticmethod
-    def hasAttribute(cls, attr):
+    def has_attribute(cls, attr):
         """This function checks whether a class has a specific static attribute by using `inspect.getattr_static`.
         It does not invoke the class's `__getattr__` method, so it is useful for checking if an attribute is defined
         on the class itself, rather than on its instances.
@@ -138,10 +138,8 @@ class Core:
         except AttributeError:
             return False
 
-    cycleDict = {}
-
     @staticmethod
-    def getDerivedType(
+    def get_derived_type(
         obj,
         return_name=False,
         module=None,
@@ -180,6 +178,8 @@ class Core:
                 ):
                     return derived_type.__name__ if return_name else derived_type
 
+    CYCLEDICT = {}
+
     @classmethod
     def cycle(cls, sequence, name=None, query=False):
         """Toggle between numbers in a given sequence.
@@ -195,45 +195,45 @@ class Core:
         """
         try:
             if query:  # return the value without changing it.
-                return cls.cycleDict[name][-1]  # get the current value ie. 0
+                return cls.CYCLEDICT[name][-1]  # get the current value ie. 0
 
-            value = cls.cycleDict[
+            value = cls.CYCLEDICT[
                 name
             ]  # check if key exists. if so return the value. ie. value = [1,2,3]
 
         except KeyError:  # else create sequence list for the given key
-            cls.cycleDict[name] = [i for i in sequence]  # ie. {name:[1,2,3]}
+            cls.CYCLEDICT[name] = [i for i in sequence]  # ie. {name:[1,2,3]}
 
-        value = cls.cycleDict[name][0]  # get the current value. ie. 1
-        cls.cycleDict[name] = cls.cycleDict[name][1:] + [
+        value = cls.CYCLEDICT[name][0]  # get the current value. ie. 1
+        cls.CYCLEDICT[name] = cls.CYCLEDICT[name][1:] + [
             value
         ]  # move the current value to the end of the list. ie. [2,3,1]
         return value  # return current value. ie. 1
 
     @staticmethod
-    def areSimilar(a, b, tol=0.0):
+    def are_similar(a, b, tolerance=0.0):
         """Check if the two numberical values are within a given tolerance.
         Supports nested lists.
 
         Parameters:
                 a (obj)(tuple): The first object(s) to compare.
                 b (obj)(tuple): The second object(s) to compare.
-                tol (float) = The maximum allowed variation between the values.
+                tolerance (float) = The maximum allowed variation between the values.
 
         Returns:
                 (bool)
 
-        Example: areSimilar(1, 10, 9)" #returns: True
-        Example: areSimilar(1, 10, 8)" #returns: False
+        Example: are_similar(1, 10, 9)" #returns: True
+        Example: are_similar(1, 10, 8)" #returns: False
         """
         func = (
-            lambda a, b: abs(a - b) <= tol
+            lambda a, b: abs(a - b) <= tolerance
             if isinstance(a, (int, float))
             else True
-            if isinstance(a, (list, set, tuple)) and areSimilar(a, b, tol)
+            if isinstance(a, (list, set, tuple)) and are_similar(a, b, tolerance)
             else a == b
         )
-        return all(map(func, Iter.makeList(a), Iter.makeList(b)))
+        return all(map(func, Iter.make_list(a), Iter.make_list(b)))
 
     @staticmethod
     def randomize(lst, ratio=1.0):
@@ -257,9 +257,6 @@ class Core:
         randomized = random.sample(lst, int(normalized))
 
         return randomized
-
-
-# --------------------------------------------------------------------------------------------
 
 
 # --------------------------------------------------------------------------------------------

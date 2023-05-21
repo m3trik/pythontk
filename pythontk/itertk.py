@@ -6,7 +6,7 @@ class Iter:
     """ """
 
     @staticmethod
-    def makeList(x):
+    def make_list(x):
         """Convert the given obj to a list, unless it's a string, bytes, or bytearray.
 
         Parameters:
@@ -24,7 +24,7 @@ class Iter:
         )
 
     @classmethod
-    def nestedDepth(cls, lst, typ=(list, set, tuple)):
+    def nested_depth(cls, lst, typ=(list, set, tuple)):
         """Get the maximum nested depth of any sub-lists of the given list.
         If there is nothing nested, 0 will be returned.
 
@@ -38,7 +38,7 @@ class Iter:
         d = -1
         for i in lst:
             if isinstance(i, typ):
-                d = max(cls.nestedDepth(i), d)
+                d = max(cls.nested_depth(i), d)
         return d + 1
 
     @classmethod
@@ -59,18 +59,20 @@ class Iter:
                 yield i
 
     @staticmethod
-    def collapseList(lst, limit=None, compress=True, toString=True):
-        """Convert a list of integers to a collapsed sequential string format.
-        ie. [19,22,23,24,25,26] to ['19', '22..26']
+    def collapse_integer_sequence(lst, limit=None, compress=True, to_string=True):
+        """Converts a list of integers into a compressed string representation of sequences.
+
+        This function transforms a list of integers into a compressed representation where consecutive sequences are
+        represented as 'start..end'. For example, [19, 22, 23, 24, 25, 26] is transformed to ['19', '22..26'].
 
         Parameters:
-                lst (list): A list of integers.
-                limit (int): limit the maximum length of the returned elements.
-                compress (bool): Trim redundant chars from the second half of a compressed set. ie. ['19', '22-32', '1225-6'] from ['19', '22..32', '1225..1226']
-                toString (bool): Return a single string value instead of a list.
+            lst (List[int]): A list of integers to compress.
+            limit (Optional[int]): If set, limits the maximum length of the returned elements. If the list exceeds this length, it is truncated and '...' is appended.
+            compress (bool): If True, trims redundant characters from the second half of a compressed range. E.g., ['19', '22-32', '1225-6'] instead of ['19', '22..32', '1225..1226']. Defaults to True.
+            to_string (bool): If True, joins the list elements into a single string separated by ', '. Defaults to True.
 
         Returns:
-                (list)(str) string if 'toString'.
+            List[str] or str: The compressed representation of the input list as a list of strings or a single string.
         """
         ranges = []
         for x in map(str, lst):  # make sure the list is made up of strings.
@@ -83,7 +85,7 @@ class Iter:
             prev_x = int(x)
 
         if compress:  # style: ['19', '22-32', '1225-6']
-            collapsedList = [
+            collapsed = [
                 "-".join(
                     [
                         r[0],
@@ -96,38 +98,36 @@ class Iter:
             ]
 
         else:  # style: ['19', '22..32', '1225..1226']
-            collapsedList = [
-                "..".join([r[0], r[-1]] if len(r) > 1 else r) for r in ranges
-            ]
+            collapsed = ["..".join([r[0], r[-1]] if len(r) > 1 else r) for r in ranges]
 
-        if limit and len(collapsedList) > limit:
-            l = collapsedList[:limit]
+        if limit and len(collapsed) > limit:
+            l = collapsed[:limit]
             l.append("...")
-            collapsedList = l
+            collapsed = l
 
-        if toString:
-            collapsedList = ", ".join(collapsedList)
+        if to_string:
+            collapsed = ", ".join(collapsed)
 
-        return collapsedList
+        return collapsed
 
     @staticmethod
-    def bitArrayToList(bitArray):
-        """Convert a binary bitArray to a python list.
+    def bit_array_to_list(bit_array):
+        """Convert a binary bit_array to a python list.
 
         Parameters:
-                bitArray () = A bit array or list of bit arrays.
+                bit_array () = A bit array or list of bit arrays.
 
         Returns:
                 (list) containing values of the indices of the on (True) bits.
         """
-        if len(bitArray):
-            if type(bitArray[0]) != bool:  # if list of bitArrays: flatten
+        if len(bit_array):
+            if type(bit_array[0]) != bool:  # if list of bitArrays: flatten
                 lst = []
-                for array in bitArray:
+                for array in bit_array:
                     lst.append([i + 1 for i, bit in enumerate(array) if bit == 1])
                 return [bit for array in lst for bit in array]
 
-            return [i + 1 for i, bit in enumerate(bitArray) if bit == 1]
+            return [i + 1 for i, bit in enumerate(bit_array) if bit == 1]
 
     @staticmethod
     def rindex(itr, item):
@@ -157,7 +157,7 @@ class Iter:
         return (i for i, v in enumerate(itr) if v == value)
 
     @staticmethod
-    def removeDuplicates(lst, trailing=True):
+    def remove_duplicates(lst, trailing=True):
         """Remove all duplicated occurences while keeping the either the first or last.
 
         Parameters:
@@ -175,7 +175,7 @@ class Iter:
             ]  # reverse the list when removing from the start of the list.
 
     @staticmethod
-    def filterWithMappedValues(lst, filter_func, conversion_func, *args, **kwargs):
+    def filter_mapped_values(lst, filter_func, conversion_func, *args, **kwargs):
         """Filters a list of items based on a filtering function and a conversion function.
 
         This function first applies the conversion function to each item in the list,
@@ -209,8 +209,8 @@ class Iter:
             # Use a lambda function as the conversion function to convert each string to an integer
             conversion_func = lambda x: int(x)
 
-            # Use the filterWithMappedValues function to perform the filtering
-            filtered_list = filterWithMappedValues(
+            # Use the filter_mapped_values function to perform the filtering
+            filtered_list = filter_mapped_values(
                 original_list, keep_even_numbers, conversion_func
             )
 
@@ -228,7 +228,7 @@ class Iter:
         ]
 
     @classmethod
-    def filterList(cls, lst, inc=[], exc=[]):
+    def filter_list(cls, lst, inc=[], exc=[]):
         """Filter the given list.
 
         Parameters:
@@ -243,10 +243,10 @@ class Iter:
         Returns:
                 (list)
 
-        Example: filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
+        Example: filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
         """
-        exc = cls.makeList(exc)
-        inc = cls.makeList(inc)
+        exc = cls.make_list(exc)
+        inc = cls.make_list(inc)
 
         def parse_patterns(patterns):
             """Parse patterns and return separate lists for contains, startswith, and endswith."""
@@ -297,9 +297,9 @@ class Iter:
         return result
 
     @classmethod
-    def filterDict(cls, dct, inc=[], exc=[], keys=False, values=False):
+    def filter_dict(cls, dct, inc=[], exc=[], keys=False, values=False):
         """Filter the given dictionary.
-        Extends `filterList` to operate on either the given dict's keys or values.
+        Extends `filter_list` to operate on either the given dict's keys or values.
 
         Parameters:
                 dct (dict): The dictionary to filter.
@@ -317,20 +317,20 @@ class Iter:
                 (dict)
 
         Example: dct = {1:'1', 'two':2, 3:'three'}
-        filterDict(dct, exc='*t*', values=True) #returns: {1: '1', 'two': 2}
-        filterDict(dct, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
-        filterDict(dct, exc=1, keys=True) #returns: {'two': 2, 3: 'three'}
+        filter_dict(dct, exc='*t*', values=True) #returns: {1: '1', 'two': 2}
+        filter_dict(dct, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
+        filter_dict(dct, exc=1, keys=True) #returns: {'two': 2, 3: 'three'}
         """
         if keys:
-            filtered = cls.filterList(dct.keys(), inc, exc)
+            filtered = cls.filter_list(dct.keys(), inc, exc)
             dct = {k: dct[k] for k in filtered}
         if values:
-            filtered = cls.filterList(dct.values(), inc, exc)
+            filtered = cls.filter_list(dct.values(), inc, exc)
             dct = {k: v for k, v in dct.items() if v in filtered}
         return dct
 
     @staticmethod
-    def splitList(lst, into):
+    def split_list(lst, into):
         """Split a list into parts.
 
         Parameters:
@@ -372,7 +372,7 @@ class Iter:
                 ]
             except ValueError as error:
                 print(
-                    "{} in splitList\n\t# Error: {} #\n\t{}".format(
+                    "{} in split_list\n\t# Error: {} #\n\t{}".format(
                         __file__, error, lst
                     )
                 )
@@ -380,9 +380,6 @@ class Iter:
             if mode == "range":
                 return [[i[0], i[-1]] if len(i) > 1 else (i) for i in contiguous]
             return contiguous
-
-
-# --------------------------------------------------------------------------------------------
 
 
 # --------------------------------------------------------------------------------------------

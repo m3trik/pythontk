@@ -13,7 +13,7 @@ class File:
     """ """
 
     @staticmethod
-    def isValid(filepath: str) -> list:
+    def is_valid(filepath: str) -> list:
         """Determine if the given file or dir is valid.
 
         Parameters:
@@ -31,7 +31,7 @@ class File:
         return None
 
     @staticmethod
-    def getFile(filepath, mode="a+"):
+    def get_file(filepath, mode="a+"):
         """Return a file object with the given mode.
 
         Parameters:
@@ -54,25 +54,25 @@ class File:
             traceback.print_exc()
 
     @staticmethod
-    def getFileContents(filepath: str, asList=False) -> None:
+    def get_file_contents(filepath: str, as_list=False) -> None:
         """Get each line of a text file as indices of a list.
         Will create a file if one doesn't exist.
 
         Parameters:
             filepath (str): The path to an existing text based file.
-            asList (bool): Return as a list or a string.
+            as_list (bool): Return as a list or a string.
 
         Returns:
             (list)
         """
         try:
             with open(filepath, "r") as f:
-                return f.readlines() if asList else f.read()
+                return f.readlines() if as_list else f.read()
         except OSError as error:
             traceback.print_exc()
 
     @staticmethod
-    def writeToFile(filepath, lines):
+    def write_to_file(filepath, lines):
         """Write the given list contents to the given file.
 
         Parameters:
@@ -86,12 +86,12 @@ class File:
             traceback.print_exc()
 
     @staticmethod
-    def getFileInfo(paths, returnType):
+    def get_file_info(paths, returned_type):
         """Get specific file information for a list of paths.
 
         Parameters:
             paths (list): List of paths to retrieve file information from.
-            returnType (str): Return specific file information. Multiple types can be given using '|'.
+            returned_type (str): Return specific file information. Multiple types can be given using '|'.
                               ex. 'file|filename|filepath|dir|dirpath|timestamp|unixtimestamp|size|filetype'
         Returns:
             (list): List of tuples containing requested file information.
@@ -99,7 +99,7 @@ class File:
         import time
         from pathlib import Path
 
-        returnTypes = [t.strip().rstrip("s").lower() for t in returnType.split("|")]
+        returnTypes = [t.strip().rstrip("s").lower() for t in returned_type.split("|")]
         results = []
 
         for path in paths:
@@ -136,50 +136,50 @@ class File:
         return results
 
     @staticmethod
-    def getDirContents(
+    def get_dir_contents(
         dirPath,
-        returnType="files",
+        returned_type="files",
         recursive=False,
-        numThreads=1,
-        incFiles=[],
-        excFiles=[],
-        incDirs=[],
-        excDirs=[],
+        num_threads=1,
+        inc_files=[],
+        exc_files=[],
+        inc_dirs=[],
+        exc_dirs=[],
     ):
         """Get the contents of a directory and any of its children.
 
         Parameters:
             dirPath (str): The path to the directory.
-            returnType (str): Return files and directories. Multiple types can be given using '|'
+            returned_type (str): Return files and directories. Multiple types can be given using '|'
                             ex. 'files|dirs' (valid: 'files'(default), filenames, 'filepaths', 'dirs', 'dirpaths')
                             case insensitive. singular or plural.
             recursive (bool): When False, Return the contents of the root dir only.
-            numThreads (int): The number of threads to use for processing directories and files.
+            num_threads (int): The number of threads to use for processing directories and files.
                             If set to 1 or 0, multithreading will not be used.
-            incFiles (str/list): Include only specific files.
-            excFiles (str/list): Excluded specific files.
-            incDirs (str/list): Include only specific child directories.
-            excDirs (str/list): Excluded specific child directories.
+            inc_files (str/list): Include only specific files.
+            exc_files (str/list): Excluded specific files.
+            inc_dirs (str/list): Include only specific child directories.
+            exc_dirs (str/list): Excluded specific child directories.
                             supports using the '*' operator: startswith*, *endswith, *contains*
                             ex. *.ext will exclude all files with the given extension.
                             exclude takes precedence over include.
         Returns:
-            (list): A list of files, directories, filenames, filepaths, dirs, or dirpaths based on the returnType.
+            (list): A list of files, directories, filenames, filepaths, dirs, or dirpaths based on the returned_type.
 
         Examples:
-            getDirContents(dirPath, returnType='filepaths')
-            getDirContents(dirPath, returnType='files|dirs')
+            get_dir_contents(dirPath, returned_type='filepaths')
+            get_dir_contents(dirPath, returned_type='files|dirs')
         """
         path = os.path.expandvars(dirPath)
-        returnTypes = {t.strip().rstrip("s").lower() for t in returnType.split("|")}
+        returnTypes = {t.strip().rstrip("s").lower() for t in returned_type.split("|")}
 
         def process_directory(root, dirs, files):
             result = []
             if not recursive and root != path:
                 return result
 
-            dirs = Iter.filterList(dirs, incDirs, excDirs)
-            files = Iter.filterList(files, incFiles, excFiles)
+            dirs = Iter.filter_list(dirs, inc_dirs, exc_dirs)
+            files = Iter.filter_list(files, inc_files, exc_files)
 
             if "dir" in returnTypes:
                 result.extend(dirs)
@@ -196,10 +196,10 @@ class File:
 
         result = []
 
-        if numThreads > 1:
+        if num_threads > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            with ThreadPoolExecutor(max_workers=numThreads) as executor:
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
                 futures = {
                     executor.submit(process_directory, root, dirs, files): (
                         root,
@@ -218,7 +218,7 @@ class File:
         return result
 
     @staticmethod
-    def createDir(filepath: str) -> None:
+    def create_dir(filepath: str) -> None:
         """Create a directory if one doesn't already exist.
 
         Parameters:
@@ -230,18 +230,18 @@ class File:
                 os.makedirs(fp)
         except OSError as error:
             print(
-                "{} in createDir\n\t# Error: {}.\n\tConfirm that the following path is correct: #\n\t{}".format(
+                "{} in create_dir\n\t# Error: {}.\n\tConfirm that the following path is correct: #\n\t{}".format(
                     __file__, error, fp
                 )
             )
 
     @staticmethod
-    def getFilepath(obj, incFilename=False):
+    def get_filepath(obj, inc_filename=False):
         """Get the filepath of a class or module.
 
         Parameters:
             obj (obj): A python module, class, or the built-in __file__ variable.
-            incFilename (bool): Include the filename in the returned result.
+            inc_filename (bool): Include the filename in the returned result.
 
         Returns:
             (str)
@@ -275,7 +275,7 @@ class File:
         else:
             raise ValueError("Invalid type for obj: ", type(obj))
 
-        if filepath and incFilename:
+        if filepath and inc_filename:
             return os.path.abspath(filepath)
         elif filepath:
             return os.path.abspath(os.path.dirname(filepath))
@@ -284,7 +284,7 @@ class File:
 
     @staticmethod
     @Core.listify
-    def formatPath(p, section="", replace=""):
+    def format_path(p, section="", replace=""):
         """Format a given filepath(s).
         When a section arg is given, the correlating section of the string will be returned.
         If a replace arg is given, the stated section will be replaced by the given value.
@@ -344,22 +344,24 @@ class File:
         return result
 
     @classmethod
-    def appendPaths(cls, rootDir, **kwargs):
-        """Append all sub-directories of the given 'rootDir' to the python path.
+    def append_paths(cls, root_dir, **kwargs):
+        """Append all sub-directories of the given 'root_dir' to the python path.
 
         Parameters:
-            rootDir (str): Sub-directories of this directory will be appended to the system path.
-            kwargs (optional): Any file related keyword arguments that 'getDirContents' allows.
-                    ie. recursive, numThreads, incDirs, excDirs. But not: dirPath or returnType.
+            root_dir (str): Sub-directories of this directory will be appended to the system path.
+            kwargs (optional): Any file related keyword arguments that 'get_dir_contents' allows.
+                    ie. recursive, num_threads, inc_dirs, exc_dirs. But not: dirPath or returned_type.
         Returns:
             list:  the appended paths.
         """
-        path = os.path.dirname(os.path.abspath(rootDir))
-        return [sys.path.append(d) for d in cls.getDirContents(path, "dirs", **kwargs)]
+        path = os.path.dirname(os.path.abspath(root_dir))
+        return [
+            sys.path.append(d) for d in cls.get_dir_contents(path, "dirs", **kwargs)
+        ]
 
     @classmethod
     @Core.listify
-    def timeStamp(cls, filepath, stamp="%m-%d-%Y  %H:%M"):
+    def time_stamp(cls, filepath, stamp="%m-%d-%Y  %H:%M"):
         """Attach or detach a modified timestamp and date to/from a given file path.
 
         Parameters:
@@ -374,7 +376,7 @@ class File:
         import os.path
         import re
 
-        filepath = cls.formatPath(filepath)
+        filepath = cls.format_path(filepath)
 
         # Check if the file path has a timestamp using regular expression
         match = re.match(r"\d{2}:\d{2}  \d{2}-\d{2}-\d{4}", filepath)
@@ -393,7 +395,7 @@ class File:
                 return filepath
 
     @classmethod
-    def updateVersion(
+    def update_version(
         cls,
         filepath: str,
         change: str = "increment",
@@ -415,7 +417,7 @@ class File:
         """
         import re
 
-        lines = cls.getFileContents(filepath, asList=True)
+        lines = cls.get_file_contents(filepath, as_list=True)
 
         version_pattern = re.compile(r"__version__\s*=\s*['\"](\d+)\.(\d+)\.(\d+)['\"]")
         max_minor, max_patch = max_version_parts
@@ -475,7 +477,7 @@ class File:
                 lines[i] = f"__version__ = '{version}'\n"
                 break
 
-        cls.writeToFile(filepath, lines)
+        cls.write_to_file(filepath, lines)
         if not version:
             print(
                 f'# Error: No version in the format: __version__ = "0.0.0" found in {filepath}'
@@ -483,17 +485,17 @@ class File:
         return version
 
     @classmethod
-    def setJsonFile(cls, file):
+    def set_json_file(cls, file):
         """Set the current json filepath.
 
         Parameters:
             file (str): The filepath to a json file. If a file doesn't exist, it will be created.
         """
         cls._jsonFile = file
-        File.getFile(cls._jsonFile)  # will create the file if it does not exist.
+        File.get_file(cls._jsonFile)  # will create the file if it does not exist.
 
     @classmethod
-    def getJsonFile(cls):
+    def get_json_file(cls):
         """Get the current json filepath.
 
         Returns:
@@ -505,7 +507,7 @@ class File:
             return ""
 
     @classmethod
-    def setJson(cls, key, value, file=None):
+    def set_json(cls, key, value, file=None):
         """
         Parameters:
             key () = Set the json key.
@@ -514,19 +516,19 @@ class File:
                     If no file is given, the previously set file will be used
                     if one was set.
         Example:
-            setJson('hdr_map_visibility', state)
+            set_json('hdr_map_visibility', state)
         """
         if not file:
-            file = cls.getJsonFile()
+            file = cls.get_json_file()
 
         assert (
             file
-        ), "{} in setJson\n\t# Error: Operation requires a json file to be specified. #".format(
+        ), "{} in set_json\n\t# Error: Operation requires a json file to be specified. #".format(
             __file__
         )
         assert isinstance(
             file, str
-        ), "{} in setJson\n\t# Error:   Incorrect datatype: {} #".format(
+        ), "{} in set_json\n\t# Error:   Incorrect datatype: {} #".format(
             __file__, type(file).__name__
         )
 
@@ -542,7 +544,7 @@ class File:
             f.write(json.dumps(dct))
 
     @classmethod
-    def getJson(cls, key, file=None):
+    def get_json(cls, key, file=None):
         """
         Parameters:
             key () = Set the json key.
@@ -554,19 +556,19 @@ class File:
             (str)
 
         Example:
-            getJson('hdr_map_visibility') #returns: state
+            get_json('hdr_map_visibility') #returns: state
         """
         if not file:
-            file = cls.getJsonFile()
+            file = cls.get_json_file()
 
         assert (
             file
-        ), "{} in setJson\n\t# Error: Operation requires a json file to be specified. #".format(
+        ), "{} in set_json\n\t# Error: Operation requires a json file to be specified. #".format(
             __file__
         )
         assert isinstance(
             file, str
-        ), "{} in setJson\n\t# Error:   Incorrect datatype: {} #".format(
+        ), "{} in set_json\n\t# Error:   Incorrect datatype: {} #".format(
             __file__, type(file).__name__
         )
 
@@ -575,20 +577,17 @@ class File:
                 return json.loads(f.read())[key]
 
         except KeyError as error:
-            # print ('# Error: {}: getJson: KeyError: {}'.format(__file__, error))
+            # print ('# Error: {}: get_json: KeyError: {}'.format(__file__, error))
             pass
         except FileNotFoundError as error:
-            # print ('# Error: {}: getJson: FileNotFoundError: {}'.format(__file__, error))
+            # print ('# Error: {}: get_json: FileNotFoundError: {}'.format(__file__, error))
             pass
         except json.decoder.JSONDecodeError as error:
             print(
-                "{} in getJson\n\t# Error: JSONDecodeError: {} #".format(
+                "{} in get_json\n\t# Error: JSONDecodeError: {} #".format(
                     __file__, error
                 )
             )
-
-
-# --------------------------------------------------------------------------------------------
 
 
 # --------------------------------------------------------------------------------------------
@@ -604,12 +603,12 @@ if __name__ == "__main__":
 # Deprecated ------------------------------------
 
 # @staticmethod
-# def getFilepath(obj, incFilename=False):
+# def get_filepath(obj, inc_filename=False):
 #     """Get the filepath of a class or module.
 
 #     Parameters:
 #             obj (obj): A python module, class, or the built-in __file__ variable.
-#             incFilename (bool): Include the filename in the returned result.
+#             inc_filename (bool): Include the filename in the returned result.
 
 #     Returns:
 #             (str)
@@ -652,7 +651,7 @@ if __name__ == "__main__":
 #                 ):  # get the module's classes.
 #                     if cls_name == clss.__name__:
 #                         filepath = _filepath
-#     if incFilename:
+#     if inc_filename:
 #         return os.path.abspath(filepath)
 #     else:
 #         return os.path.abspath(os.path.dirname(filepath))

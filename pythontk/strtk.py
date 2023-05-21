@@ -10,7 +10,7 @@ class Str:
 
     @staticmethod
     @Core.listify
-    def setCase(string, case="title"):
+    def set_case(string, case="title"):
         """Format the given string(s) in the given case.
 
         Parameters:
@@ -38,7 +38,7 @@ class Str:
                 return string
 
     @staticmethod
-    def getMangledName(class_input, attribute_name):
+    def get_mangled_name(class_input, attribute_name):
         """Returns the mangled name for a private attribute of a class.
 
         Parameters:
@@ -71,7 +71,7 @@ class Str:
         return f"_{class_name}{attribute_name}"
 
     @staticmethod
-    def getTextBetweenDelimiters(string, start_delim, end_delim, as_string=False):
+    def get_text_between_delimiters(string, start_delim, end_delim, as_string=False):
         """Get any text between the specified start and end delimiters in the given string. The text can be returned as a
         generator (default behavior) or as a single concatenated string if `as_string` is set to True.
 
@@ -90,12 +90,12 @@ class Str:
                 input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
 
                 # Get the matches as a generator (default behavior)
-                matches_generator = getTextBetweenDelimiters(input_string, '<!-- start -->', '<!-- end -->')
+                matches_generator = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->')
                 for match in matches_generator:
                         print(match)  # Output: first match (first iteration), second match (second iteration)
 
                 # Get the matches as a single string
-                matches_string = getTextBetweenDelimiters(input_string, '<!-- start -->', '<!-- end -->', as_string=True)
+                matches_string = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->', as_string=True)
                 print(matches_string)  # Output: "first match second match"
         """
         import re
@@ -116,7 +116,7 @@ class Str:
             return extract_matches(string, start_delim, end_delim)
 
     @staticmethod
-    def getMatchingHierarchyItems(
+    def get_matching_hierarchy_items(
         hierarchy_items,
         target,
         upstream=False,
@@ -150,13 +150,13 @@ class Str:
             ]
 
             target = "polygons.mesh"
-            getMatchingHierarchyItems(hierarchy_items, target, upstream=True) -> ['polygons']
-            getMatchingHierarchyItems(hierarchy_items, target, downstream=True) -> ['polygons|mesh|submenu', 'polygons|mesh|other']
-            getMatchingHierarchyItems(hierarchy_items, target, exact=True) -> ['polygons|mesh']
+            get_matching_hierarchy_items(hierarchy_items, target, upstream=True) -> ['polygons']
+            get_matching_hierarchy_items(hierarchy_items, target, downstream=True) -> ['polygons|mesh|submenu', 'polygons|mesh|other']
+            get_matching_hierarchy_items(hierarchy_items, target, exact=True) -> ['polygons|mesh']
         """
         import re
 
-        pattern = "|".join(re.escape(d) for d in Iter.makeList(delimiters))
+        pattern = "|".join(re.escape(d) for d in Iter.make_list(delimiters))
         target_parts = re.split(pattern, target)
 
         def match_hierarchy(item_parts):
@@ -189,7 +189,7 @@ class Str:
 
     @staticmethod
     @Core.listify
-    def splitAtChars(string, chars="|", occurrence=-1):
+    def split_at_chars(string, chars="|", occurrence=-1):
         """Split a string containing the given chars at the given occurrence and return
         a two element tuple containing both halves.
 
@@ -203,7 +203,7 @@ class Str:
         Returns:
                 (tuple)(list) two element tuple, or list of two element tuples if multiple strings given.
 
-        Example: splitAtChars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
+        Example: split_at_chars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
         """
         split = string.split(chars)
 
@@ -300,18 +300,18 @@ class Str:
         return string
 
     @staticmethod
-    def getTrailingIntegers(string, inc=0, asString=False):
+    def get_trailing_integers(string, inc=0, as_string=False):
         """Returns any integers from the end of the given string.
 
         Parameters:
                 inc (int): Increment by a step amount. (default: 0)
                                 0 does not increment and returns the original number.
-                asString (bool): Return the integers as a string instead of integers.
+                as_string (bool): Return the integers as a string instead of integers.
 
         "Returns:
                 (int)
 
-        ex. getTrailingIntegers('p001Cube1', inc=1) #returns: 2
+        ex. get_trailing_integers('p001Cube1', inc=1) #returns: 2
         """
         import re
 
@@ -321,12 +321,12 @@ class Str:
         m = re.findall(r"\d+\s*$", string)
         result = int(m[0]) + inc if m else None
 
-        if asString:
+        if as_string:
             return str(result)
         return result
 
     @staticmethod
-    def findStr(find, strings, regEx=False, ignoreCase=False):
+    def find_str(find, strings, regex=False, ignore_case=False):
         """Filter for elements that containing the given string in a list of strings.
 
         Parameters:
@@ -336,7 +336,7 @@ class Str:
                                 *chars - string endswith chars.
                                 chars* - string startswith chars.
                                 chars1|chars2 - string matches any of.  can be used in conjuction with other modifiers.
-                        regular expressions (if regEx True):
+                        regular expressions (if regex True):
                                 (.) match any char. ex. re.match('1..', '1111') #returns the regex object <111>
                                 (^) match start. ex. re.match('^11', '011') #returns None
                                 ($) match end. ex. re.match('11$', '011') #returns the regex object <11>
@@ -344,26 +344,26 @@ class Str:
                                 (\A,\Z) beginning of a string and end of a string. ex. re.match(r'\A011\Z', '011') #
                                 (\b) empty string. (\B matches the empty string anywhere else). ex. re.match(r'\b(011)\b', '011 011 011') #
                 strings (list): The string list to search.
-                regEx (bool): Use regular expressions instead of wildcards.
-                ignoreCase (bool): Search case insensitive.
+                regex (bool): Use regular expressions instead of wildcards.
+                ignore_case (bool): Search case insensitive.
 
         Returns:
                 (list)
 
         ex. lst = ['invertVertexWeights', 'keepCreaseEdgeWeight', 'keepBorder', 'keepBorderWeight', 'keepColorBorder', 'keepColorBorderWeight']
-                findStr('*Weight*', lst) #find any element that contains the string 'Weight'.
-                findStr('Weight$|Weights$', lst, regEx=True) #find any element that endswith 'Weight' or 'Weights'.
+                find_str('*Weight*', lst) #find any element that contains the string 'Weight'.
+                find_str('Weight$|Weights$', lst, regex=True) #find any element that endswith 'Weight' or 'Weights'.
         """
-        if regEx:  # search using a regular expression.
+        if regex:  # search using a regular expression.
             import re
 
             try:
-                if ignoreCase:
+                if ignore_case:
                     result = [i for i in strings if re.search(find, i, re.IGNORECASE)]
                 else:
                     result = [i for i in strings if re.search(find, i)]
             except Exception as e:
-                print("# Error findStr: in {}: {}. #".format(find, e))
+                print("# Error find_str: in {}: {}. #".format(find, e))
                 result = []
 
         else:  # search using wildcards.
@@ -375,7 +375,7 @@ class Str:
 
                 # modifiers
                 if w.startswith("*") and w.endswith("*"):  # contains
-                    if ignoreCase:
+                    if ignore_case:
                         result += [
                             i for i in strings if w_.lower() in i.lower()
                         ]  # case insensitive.
@@ -383,7 +383,7 @@ class Str:
                         result += [i for i in strings if w_ in i]
 
                 elif w.startswith("*"):  # prefix
-                    if ignoreCase:
+                    if ignore_case:
                         result += [
                             i for i in strings if i.lower().endswith(w_.lower())
                         ]  # case insensitive.
@@ -391,7 +391,7 @@ class Str:
                         result += [i for i in strings if i.endswith(w_)]
 
                 elif w.endswith("*"):  # suffix
-                    if ignoreCase:
+                    if ignore_case:
                         result += [
                             i for i in strings if i.lower().startswith(w_.lower())
                         ]  # case insensitive.
@@ -399,7 +399,7 @@ class Str:
                         result += [i for i in strings if i.startswith(w_)]
 
                 else:  # exact match
-                    if ignoreCase:
+                    if ignore_case:
                         result += [
                             i for i in strings if i.lower() == w_.lower()
                         ]  # case insensitive.
@@ -409,10 +409,16 @@ class Str:
         return result
 
     @classmethod
-    def findStrAndFormat(
-        cls, strings, to, fltr="", regEx=False, ignoreCase=False, returnOldNames=False
+    def find_str_and_format(
+        cls,
+        strings,
+        to,
+        fltr="",
+        regex=False,
+        ignore_case=False,
+        return_orig_strings=False,
     ):
-        """Expanding on the 'findStr' function: Find matches of a string in a list of strings and re-format them.
+        """Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format them.
 
         Parameters:
                 strings (list): A list of string objects to search.
@@ -423,13 +429,13 @@ class Str:
                         **chars - append suffix.
                         chars* - replace prefix.
                         chars** - append prefix.
-                fltr (str): See the 'findStr' function's 'fltr' parameter for documentation.
-                regEx (bool): Use regular expressions instead of wildcards for the 'find' argument.
-                ignoreCase (bool): Ignore case when searching. Applies only to the 'fltr' parameter's search.
-                returnOldNames (bool): Return the old names as well as the new.
+                fltr (str): See the 'find_str' function's 'fltr' parameter for documentation.
+                regex (bool): Use regular expressions instead of wildcards for the 'find' argument.
+                ignore_case (bool): Ignore case when searching. Applies only to the 'fltr' parameter's search.
+                return_orig_strings (bool): Return the old names as well as the new.
 
         Returns:
-                (list) if returnOldNames: list of two element tuples containing the original and modified string pairs. [('frm','to')]
+                (list) if return_orig_strings: list of two element tuples containing the original and modified string pairs. [('frm','to')]
                         else: a list of just the new names.
         """
         import re
@@ -437,7 +443,7 @@ class Str:
         if (
             fltr
         ):  # if 'fltr' is not an empty string; fltr 'strings' for matches using 'fltr'.
-            strings = cls.findStr(fltr, strings, regEx=regEx, ignoreCase=ignoreCase)
+            strings = cls.find_str(fltr, strings, regex=regex, ignore_case=ignore_case)
 
         frm_ = fltr.strip("*").rstrip(
             "*"
@@ -450,7 +456,7 @@ class Str:
         for orig_str in strings:
             # modifiers
             if to.startswith("*") and to.endswith("*"):  # replace chars
-                if ignoreCase:
+                if ignore_case:
                     s = re.sub(
                         frm_, to_, orig_str, flags=re.IGNORECASE
                     )  # remove frm_ from the string (case in-sensitive).
@@ -461,7 +467,7 @@ class Str:
                 s = orig_str + to_
 
             elif to.startswith("*"):  # replace suffix
-                if ignoreCase:
+                if ignore_case:
                     end_index = re.search(
                         frm_, orig_str, flags=re.IGNORECASE
                     ).start()  # get the starting index of 'frm_'.
@@ -473,7 +479,7 @@ class Str:
                 s = to_ + orig_str
 
             elif to.endswith("*"):  # replace prefix
-                if ignoreCase:
+                if ignore_case:
                     end_index = re.search(
                         frm_, orig_str, flags=re.IGNORECASE
                     ).end()  # get the ending index of 'frm_'.
@@ -485,7 +491,7 @@ class Str:
                 if fltr.endswith("*") and not fltr.startswith(
                     "*"
                 ):  # strip only beginning chars.
-                    if ignoreCase:
+                    if ignore_case:
                         s = re.sub(
                             frm_, "", orig_str, 1, flags=re.IGNORECASE
                         )  # remove the first instance of frm_ from the string (case in-sensitive).
@@ -497,7 +503,7 @@ class Str:
                 elif fltr.startswith("*") and not fltr.endswith(
                     "*"
                 ):  # strip only ending chars.
-                    if ignoreCase:
+                    if ignore_case:
                         s = re.sub(
                             r"(.*)" + frm_, r"\1", orig_str, flags=re.IGNORECASE
                         )  # remove the last instance of frm_ from the string (case in-sensitive).
@@ -507,7 +513,7 @@ class Str:
                         )  # remove last instance of frm_ from the string.
 
                 else:
-                    if ignoreCase:
+                    if ignore_case:
                         s = re.sub(
                             frm_, "", orig_str, flags=re.IGNORECASE
                         )  # remove frm_ from the string (case in-sensitive).
@@ -516,7 +522,7 @@ class Str:
             else:  # else; replace whole string.
                 s = to_
 
-            if returnOldNames:
+            if return_orig_strings:
                 result.append((orig_str, s))
             else:
                 result.append(s)
@@ -524,8 +530,12 @@ class Str:
         return result
 
     @staticmethod
-    def formatSuffix(
-        string, suffix="", strip="", stripTrailingInts=False, stripTrailingAlpha=False
+    def format_suffix(
+        string,
+        suffix="",
+        strip="",
+        strip_trailing_ints=False,
+        strip_trailing_alpha=False,
     ):
         """Re-format the suffix for the given string.
 
@@ -533,8 +543,8 @@ class Str:
                 string (str): The string to format.
                 suffix (str): Append a new suffix to the given string.
                 strip (str/list): Specific string(s) to strip from the end of the given string.
-                stripTrailingInts (bool): Strip all trailing integers.
-                stripTrailingAlpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
+                strip_trailing_ints (bool): Strip all trailing integers.
+                strip_trailing_alpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
 
         Returns:
                 (str)
@@ -549,31 +559,28 @@ class Str:
         # strip each set of chars in 'strip' from end of string.
         if strip:
             strip = tuple(
-                [i for i in Iter.makeList(strip) if not i == ""]
+                [i for i in Iter.make_list(strip) if not i == ""]
             )  # assure 'strip' is a tuple and does not contain any empty strings.
             while s.endswith(strip):
                 for chars in strip:
                     s = s.rstrip(chars)
 
         while (
-            ((s[-1] == "_" or s[-1].isdigit()) and stripTrailingInts)
+            ((s[-1] == "_" or s[-1].isdigit()) and strip_trailing_ints)
             or ("_" in s and (s == "_" or s[-1].isupper()))
-            and stripTrailingAlpha
+            and strip_trailing_alpha
         ):
             if (
                 s[-1] == "_" or s[-1].isdigit()
-            ) and stripTrailingInts:  # trailing underscore and integers.
+            ) and strip_trailing_ints:  # trailing underscore and integers.
                 s = re.sub(re.escape(s[-1:]) + "$", "", s)
 
             if (
                 "_" in s and (s == "_" or s[-1].isupper())
-            ) and stripTrailingAlpha:  # trailing underscore and uppercase alphanumeric char.
+            ) and strip_trailing_alpha:  # trailing underscore and uppercase alphanumeric char.
                 s = re.sub(re.escape(s[-1:]) + "$", "", s)
 
         return s + suffix
-
-
-# --------------------------------------------------------------------------------------------
 
 
 # --------------------------------------------------------------------------------------------

@@ -73,11 +73,11 @@ class CoreTest(Main, Core):
         import types
         import pythontk as ptk
         from pythontk import Iter
-        from pythontk import makeList
+        from pythontk import make_list
 
         self.assertIsInstance(ptk, types.ModuleType)
         self.assertIsInstance(Iter, type)
-        self.assertIsInstance(makeList, types.FunctionType)
+        self.assertIsInstance(make_list, types.FunctionType)
 
     def test_listify(self):
         """ """
@@ -92,24 +92,24 @@ class CoreTest(Main, Core):
         )
 
     def test_formatReturn(self):
-        """Test formatReturn method."""
-        self.assertEqual(self.formatReturn([""]), "")
-        self.assertEqual(self.formatReturn([""], [""]), [""])
-        self.assertEqual(self.formatReturn(["", ""]), ["", ""])
+        """Test format_return method."""
+        self.assertEqual(self.format_return([""]), "")
+        self.assertEqual(self.format_return([""], [""]), [""])
+        self.assertEqual(self.format_return(["", ""]), ["", ""])
 
     def test_setAttributes(self):
-        """Test setAttributes method."""
+        """Test set_attributes method."""
         self.perform_test(
             {
-                "self.setAttributes(self, attr='value')": None,
+                "self.set_attributes(self, attr='value')": None,
             }
         )
 
     def test_getAttributes(self):
-        """Test getAttributes method."""
+        """Test get_attributes method."""
         self.perform_test(
             {
-                "self.getAttributes(self, '_subtest')": {"_subtest": None},
+                "self.get_attributes(self, '_subtest')": {"_subtest": None},
             }
         )
 
@@ -124,11 +124,11 @@ class CoreTest(Main, Core):
         )
 
     def test_areSimilar(self):
-        """Test areSimilar method."""
+        """Test are_similar method."""
         self.perform_test(
             {
-                "self.areSimilar(1, 10, 9)": True,
-                "self.areSimilar(1, 10, 8)": False,
+                "self.are_similar(1, 10, 9)": True,
+                "self.are_similar(1, 10, 8)": False,
             }
         )
 
@@ -147,19 +147,19 @@ class StrTest(Main, Str):
     """String test class."""
 
     def test_setCase(self):
-        """Test setCase method."""
+        """Test set_case method."""
         self.perform_test(
             {
-                "self.setCase('xxx', 'upper')": "XXX",
-                "self.setCase('XXX', 'lower')": "xxx",
-                "self.setCase('xxx', 'capitalize')": "Xxx",
-                "self.setCase('xxX', 'swapcase')": "XXx",
-                "self.setCase('xxx XXX', 'title')": "Xxx Xxx",
-                "self.setCase('xXx', 'pascal')": "XXx",
-                "self.setCase('xXx', 'camel')": "xXx",
-                "self.setCase(['xXx'], 'camel')": ["xXx"],
-                "self.setCase(None, 'camel')": "",
-                "self.setCase('', 'camel')": "",
+                "self.set_case('xxx', 'upper')": "XXX",
+                "self.set_case('XXX', 'lower')": "xxx",
+                "self.set_case('xxx', 'capitalize')": "Xxx",
+                "self.set_case('xxX', 'swapcase')": "XXx",
+                "self.set_case('xxx XXX', 'title')": "Xxx Xxx",
+                "self.set_case('xXx', 'pascal')": "XXx",
+                "self.set_case('xXx', 'camel')": "xXx",
+                "self.set_case(['xXx'], 'camel')": ["xXx"],
+                "self.set_case(None, 'camel')": "",
+                "self.set_case('', 'camel')": "",
             }
         )
 
@@ -172,40 +172,40 @@ class StrTest(Main, Str):
         dummy_instance = DummyClass()
 
         self.assertEqual(  # Test with class name
-            self.getMangledName("DummyClass", "__my_attribute"),
+            self.get_mangled_name("DummyClass", "__my_attribute"),
             "_DummyClass__my_attribute",
         )
 
         self.assertEqual(  # Test with class
-            self.getMangledName(DummyClass, "__my_attribute"),
+            self.get_mangled_name(DummyClass, "__my_attribute"),
             "_DummyClass__my_attribute",
         )
 
         self.assertEqual(  # Test with class instance
-            self.getMangledName(dummy_instance, "__my_attribute"),
+            self.get_mangled_name(dummy_instance, "__my_attribute"),
             "_DummyClass__my_attribute",
         )
 
         # Test with invalid attribute name (not a string)
         with self.assertRaises(TypeError):
-            self.getMangledName("DummyClass", 123)
+            self.get_mangled_name("DummyClass", 123)
 
         # Test with invalid attribute name (does not start with double underscore)
         with self.assertRaises(ValueError):
-            self.getMangledName("DummyClass", "my_attribute")
+            self.get_mangled_name("DummyClass", "my_attribute")
 
     def test_getTextBetweenDelimiters(self):
-        """Test getTextBetweenDelimiters method."""
+        """Test get_text_between_delimiters method."""
         input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
 
         self.perform_test(
             {
-                f"self.getTextBetweenDelimiters('{input_string}', '<!-- start -->', '<!-- end -->', as_string=True)": "first match second match",
+                f"self.get_text_between_delimiters('{input_string}', '<!-- start -->', '<!-- end -->', as_string=True)": "first match second match",
             }
         )
 
     def test_getMatchingHierarchyItems(self):
-        """Test getMatchingHierarchyItems method."""
+        """Test get_matching_hierarchy_items method."""
         hierarchy_items = [
             "polygons|mesh#submenu",
             "polygons|submenu",
@@ -220,17 +220,19 @@ class StrTest(Main, Str):
 
         self.perform_test(
             (
-                self.getMatchingHierarchyItems(hierarchy_items, target, upstream=True),
+                self.get_matching_hierarchy_items(
+                    hierarchy_items, target, upstream=True
+                ),
                 ["polygons"],
             ),
             (
-                self.getMatchingHierarchyItems(
+                self.get_matching_hierarchy_items(
                     hierarchy_items, target, downstream=True, delimiters=["|", "#"]
                 ),
                 ["polygons|mesh|other", "polygons|mesh#submenu"],
             ),
             (
-                self.getMatchingHierarchyItems(
+                self.get_matching_hierarchy_items(
                     hierarchy_items,
                     target,
                     downstream=True,
@@ -240,7 +242,7 @@ class StrTest(Main, Str):
                 ["polygons|mesh#submenu", "polygons|mesh|other"],
             ),
             (
-                self.getMatchingHierarchyItems(
+                self.get_matching_hierarchy_items(
                     hierarchy_items, target, upstream=True, exact=True
                 ),
                 [
@@ -251,14 +253,14 @@ class StrTest(Main, Str):
         )
 
     def test_splitAtChars(self):
-        """Test splitAtChars method."""
+        """Test split_at_chars method."""
         self.perform_test(
             {
-                "self.splitAtChars(['str|ing', 'string'])": [
+                "self.split_at_chars(['str|ing', 'string'])": [
                     ("str", "ing"),
                     ("string", ""),
                 ],
-                "self.splitAtChars('aCHARScCHARSd', 'CHARS', 0)": ("", "a"),
+                "self.split_at_chars('aCHARScCHARSd', 'CHARS', 0)": ("", "a"),
             }
         )
 
@@ -296,18 +298,18 @@ class StrTest(Main, Str):
         )
 
     def test_getTrailingIntegers(self):
-        """Test getTrailingIntegers method."""
+        """Test get_trailing_integers method."""
         self.perform_test(
             {
-                "self.getTrailingIntegers('p001Cube1')": 1,
-                "self.getTrailingIntegers('p001Cube1', 0, True)": "1",
-                "self.getTrailingIntegers('p001Cube1', 1)": 2,
-                "self.getTrailingIntegers(None)": None,
+                "self.get_trailing_integers('p001Cube1')": 1,
+                "self.get_trailing_integers('p001Cube1', 0, True)": "1",
+                "self.get_trailing_integers('p001Cube1', 1)": 2,
+                "self.get_trailing_integers(None)": None,
             }
         )
 
     def test_findStr(self):
-        """Test findStr method."""
+        """Test find_str method."""
         lst = [
             "invertVertexWeights",
             "keepCreaseEdgeWeight",
@@ -325,15 +327,15 @@ class StrTest(Main, Str):
 
         self.perform_test(
             {
-                f"self.findStr('*Weight*', {lst})": rtn,
-                f"self.findStr('Weight$|Weights$', {lst}, regEx=True)": rtn,
-                f"self.findStr('*weight*', {lst}, False, True)": rtn,
-                f"self.findStr('*Weights|*Weight', {lst})": rtn,
+                f"self.find_str('*Weight*', {lst})": rtn,
+                f"self.find_str('Weight$|Weights$', {lst}, regex=True)": rtn,
+                f"self.find_str('*weight*', {lst}, False, True)": rtn,
+                f"self.find_str('*Weights|*Weight', {lst})": rtn,
             }
         )
 
     def test_findStrAndFormat(self):
-        """Test findStrAndFormat method."""
+        """Test find_str_and_format method."""
         lst = [
             "invertVertexWeights",
             "keepCreaseEdgeWeight",
@@ -345,40 +347,42 @@ class StrTest(Main, Str):
 
         self.perform_test(
             {
-                f"self.findStrAndFormat({lst}, '', '*Weights')": ["invertVertex"],
-                f"self.findStrAndFormat({lst}, 'new name', '*Weights')": ["new name"],
-                f"self.findStrAndFormat({lst}, '*insert*', '*Weights')": [
-                    "invertVertexinsert"
-                ],
-                f"self.findStrAndFormat({lst}, '*_suffix', '*Weights')": [
-                    "invertVertex_suffix"
-                ],
-                f"self.findStrAndFormat({lst}, '**_suffix', '*Weights')": [
-                    "invertVertexWeights_suffix"
-                ],
-                f"self.findStrAndFormat({lst}, 'prefix_*', '*Weights')": [
-                    "prefix_Weights"
-                ],
-                f"self.findStrAndFormat({lst}, 'prefix_**', '*Weights')": [
-                    "prefix_invertVertexWeights"
-                ],
-                f"self.findStrAndFormat({lst}, 'new name', 'Weights$', True)": [
+                f"self.find_str_and_format({lst}, '', '*Weights')": ["invertVertex"],
+                f"self.find_str_and_format({lst}, 'new name', '*Weights')": [
                     "new name"
                 ],
-                f"self.findStrAndFormat({lst}, 'new name', '*weights', False, True, True)": [
+                f"self.find_str_and_format({lst}, '*insert*', '*Weights')": [
+                    "invertVertexinsert"
+                ],
+                f"self.find_str_and_format({lst}, '*_suffix', '*Weights')": [
+                    "invertVertex_suffix"
+                ],
+                f"self.find_str_and_format({lst}, '**_suffix', '*Weights')": [
+                    "invertVertexWeights_suffix"
+                ],
+                f"self.find_str_and_format({lst}, 'prefix_*', '*Weights')": [
+                    "prefix_Weights"
+                ],
+                f"self.find_str_and_format({lst}, 'prefix_**', '*Weights')": [
+                    "prefix_invertVertexWeights"
+                ],
+                f"self.find_str_and_format({lst}, 'new name', 'Weights$', True)": [
+                    "new name"
+                ],
+                f"self.find_str_and_format({lst}, 'new name', '*weights', False, True, True)": [
                     ("invertVertexWeights", "new name")
                 ],
             }
         )
 
     def test_formatSuffix(self):
-        """Test formatSuffix method."""
+        """Test format_suffix method."""
         self.perform_test(
             {
-                "self.formatSuffix('p001Cube1', '_suffix', 'Cube1')": "p00_suffix",
-                "self.formatSuffix('p001Cube1', '_suffix', ['Cu', 'be1'])": "p00_suffix",
-                "self.formatSuffix('p001Cube1', '_suffix', '', True)": "p001Cube_suffix",
-                "self.formatSuffix('pCube_GEO1', '_suffix', '', True, True)": "pCube_suffix",
+                "self.format_suffix('p001Cube1', '_suffix', 'Cube1')": "p00_suffix",
+                "self.format_suffix('p001Cube1', '_suffix', ['Cu', 'be1'])": "p00_suffix",
+                "self.format_suffix('p001Cube1', '_suffix', '', True)": "p001Cube_suffix",
+                "self.format_suffix('pCube_GEO1', '_suffix', '', True, True)": "pCube_suffix",
             }
         )
 
@@ -390,10 +394,10 @@ class IterTest(Main, Iter):
         """ """
         self.perform_test(
             {
-                "self.makeList('x')": ["x"],
-                "self.makeList(1)": [1],
-                "self.makeList('')": [""],
-                "self.makeList({'x':'y'})": ["x"],
+                "self.make_list('x')": ["x"],
+                "self.make_list(1)": [1],
+                "self.make_list('')": [""],
+                "self.make_list({'x':'y'})": ["x"],
             }
         )
 
@@ -401,8 +405,8 @@ class IterTest(Main, Iter):
         """ """
         self.perform_test(
             {
-                "self.nestedDepth([[1, 2], [3, 4]])": 1,
-                "self.nestedDepth([1, 2, 3, 4])": 0,
+                "self.nested_depth([[1, 2], [3, 4]])": 1,
+                "self.nested_depth([1, 2, 3, 4])": 0,
             }
         )
 
@@ -420,9 +424,12 @@ class IterTest(Main, Iter):
 
         self.perform_test(
             {
-                f"self.collapseList({lst})": "19, 22-6",
-                f"self.collapseList({lst}, 1)": "19, ...",
-                f"self.collapseList({lst}, None, False, False)": ["19", "22..26"],
+                f"self.collapse_integer_sequence({lst})": "19, 22-6",
+                f"self.collapse_integer_sequence({lst}, 1)": "19, ...",
+                f"self.collapse_integer_sequence({lst}, None, False, False)": [
+                    "19",
+                    "22..26",
+                ],
             }
         )
 
@@ -433,7 +440,7 @@ class IterTest(Main, Iter):
 
         self.perform_test(
             {
-                f"self.bitArrayToList({bits})": [
+                f"self.bit_array_to_list({bits})": [
                     2,
                     3,
                     4,
@@ -473,8 +480,8 @@ class IterTest(Main, Iter):
         """ """
         self.perform_test(
             {
-                "self.removeDuplicates([0, 1, 2, 3, 2])": [0, 1, 2, 3],
-                "self.removeDuplicates([0, 1, 2, 3, 2], False)": [0, 1, 3, 2],
+                "self.remove_duplicates([0, 1, 2, 3, 2])": [0, 1, 2, 3],
+                "self.remove_duplicates([0, 1, 2, 3, 2], False)": [0, 1, 3, 2],
             }
         )
 
@@ -488,7 +495,7 @@ class IterTest(Main, Iter):
         self.perform_test(
             [
                 (
-                    self.filterWithMappedValues(
+                    self.filter_mapped_values(
                         original_list, keep_even_numbers, lambda x: int(x)
                     ),
                     ["2", "4", "6"],
@@ -502,9 +509,9 @@ class IterTest(Main, Iter):
 
         self.perform_test(
             {
-                f"self.filterDict({dct}, exc='*t*', values=True)": {1: "1", "two": 2},
-                f"self.filterDict({dct}, exc='t*', keys=True)": {1: "1", 3: "three"},
-                f"self.filterDict({dct}, exc=1, keys=True)": {"two": 2, 3: "three"},
+                f"self.filter_dict({dct}, exc='*t*', values=True)": {1: "1", "two": 2},
+                f"self.filter_dict({dct}, exc='t*', keys=True)": {1: "1", 3: "three"},
+                f"self.filter_dict({dct}, exc=1, keys=True)": {"two": 2, 3: "three"},
             }
         )
 
@@ -512,8 +519,8 @@ class IterTest(Main, Iter):
         """ """
         self.perform_test(
             {
-                "self.filterList([0, 1, 2, 3, 2], [1, 2, 3], 2)": [1, 3],
-                "self.filterList([0, 1, 'file.txt', 'file.jpg'], ['*file*', 0], '*.txt')": [
+                "self.filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2)": [1, 3],
+                "self.filter_list([0, 1, 'file.txt', 'file.jpg'], ['*file*', 0], '*.txt')": [
                     0,
                     "file.jpg",
                 ],
@@ -527,16 +534,16 @@ class IterTest(Main, Iter):
 
         self.perform_test(
             {
-                f"self.splitList({lA}, '2parts')": [[1, 2, 3, 5], [7, 8, 9]],
-                f"self.splitList({lB}, '2parts')": [[1, "2", 3, 5], ["7", 8, 9]],
-                f"self.splitList({lA}, '2parts+')": [[1, 2, 3], [5, 7, 8], [9]],
-                f"self.splitList({lB}, '2parts+')": [[1, "2", 3], [5, "7", 8], [9]],
-                f"self.splitList({lA}, '2chunks')": [[1, 2], [3, 5], [7, 8], [9]],
-                f"self.splitList({lB}, '2chunks')": [[1, "2"], [3, 5], ["7", 8], [9]],
-                f"self.splitList({lA}, 'contiguous')": [[1, 2, 3], [5], [7, 8, 9]],
-                f"self.splitList({lB}, 'contiguous')": [[1, "2", 3], [5], ["7", 8, 9]],
-                f"self.splitList({lA}, 'range')": [[1, 3], [5], [7, 9]],
-                f"self.splitList({lB}, 'range')": [[1, 3], [5], ["7", 9]],
+                f"self.split_list({lA}, '2parts')": [[1, 2, 3, 5], [7, 8, 9]],
+                f"self.split_list({lB}, '2parts')": [[1, "2", 3, 5], ["7", 8, 9]],
+                f"self.split_list({lA}, '2parts+')": [[1, 2, 3], [5, 7, 8], [9]],
+                f"self.split_list({lB}, '2parts+')": [[1, "2", 3], [5, "7", 8], [9]],
+                f"self.split_list({lA}, '2chunks')": [[1, 2], [3, 5], [7, 8], [9]],
+                f"self.split_list({lB}, '2chunks')": [[1, "2"], [3, 5], ["7", 8], [9]],
+                f"self.split_list({lA}, 'contiguous')": [[1, 2, 3], [5], [7, 8, 9]],
+                f"self.split_list({lB}, 'contiguous')": [[1, "2", 3], [5], ["7", 8, 9]],
+                f"self.split_list({lA}, 'range')": [[1, 3], [5], [7, 9]],
+                f"self.split_list({lB}, 'range')": [[1, 3], [5], ["7", 9]],
             }
         )
 
@@ -556,36 +563,36 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                f"self.formatPath(r'{p1}')": "X:/n/dir1/dir3",
-                f"self.formatPath(r'{p1}', 'path')": "X:/n/dir1/dir3",
-                f"self.formatPath(r'{p2}', 'path')": "X:/n/dir1/dir3/.vscode",
-                f"self.formatPath(r'{p3}', 'path')": "X:/n/dir1/dir3/.vscode",
-                f"self.formatPath(r'{p4}', 'path')": r"\\192.168.1.240/nas/lost+found",
-                f"self.formatPath(r'{p5}', 'path')": "C:/Program Files",
-                f"self.formatPath(r'{p1}', 'dir')": "dir3",
-                f"self.formatPath(r'{p2}', 'dir')": ".vscode",
-                f"self.formatPath(r'{p3}', 'dir')": ".vscode",
-                f"self.formatPath(r'{p4}', 'dir')": "lost+found",
-                f"self.formatPath(r'{p5}', 'dir')": "Program Files",
-                f"self.formatPath(r'{p1}', 'file')": "",
-                f"self.formatPath(r'{p2}', 'file')": "",
-                f"self.formatPath(r'{p3}', 'file')": "tasks.json",
-                f"self.formatPath(r'{p4}', 'file')": "file.ext",
-                f"self.formatPath(r'{p5}', 'file')": "",
-                f"self.formatPath(r'{p1}', 'name')": "",
-                f"self.formatPath(r'{p2}', 'name')": "",
-                f"self.formatPath(r'{p3}', 'name')": "tasks",
-                f"self.formatPath(r'{p4}', 'name')": "file",
-                f"self.formatPath(r'{p5}', 'name')": "",
-                f"self.formatPath(r'{p1}', 'ext')": "",
-                f"self.formatPath(r'{p2}', 'ext')": "",
-                f"self.formatPath(r'{p3}', 'ext')": "json",
-                f"self.formatPath(r'{p4}', 'ext')": "ext",
-                f"self.formatPath(r'{p5}', 'ext')": "",
-                f"self.formatPath(r'{p6}', 'filename')": "programfiles",
-                f"self.formatPath(r'{p6}', 'path')": "programfiles",
-                f"self.formatPath(r'{p7}', 'path')": "programfiles",
-                f"self.formatPath({[p1, p2]}, 'dir')": ["dir3", ".vscode"],
+                f"self.format_path(r'{p1}')": "X:/n/dir1/dir3",
+                f"self.format_path(r'{p1}', 'path')": "X:/n/dir1/dir3",
+                f"self.format_path(r'{p2}', 'path')": "X:/n/dir1/dir3/.vscode",
+                f"self.format_path(r'{p3}', 'path')": "X:/n/dir1/dir3/.vscode",
+                f"self.format_path(r'{p4}', 'path')": r"\\192.168.1.240/nas/lost+found",
+                f"self.format_path(r'{p5}', 'path')": "C:/Program Files",
+                f"self.format_path(r'{p1}', 'dir')": "dir3",
+                f"self.format_path(r'{p2}', 'dir')": ".vscode",
+                f"self.format_path(r'{p3}', 'dir')": ".vscode",
+                f"self.format_path(r'{p4}', 'dir')": "lost+found",
+                f"self.format_path(r'{p5}', 'dir')": "Program Files",
+                f"self.format_path(r'{p1}', 'file')": "",
+                f"self.format_path(r'{p2}', 'file')": "",
+                f"self.format_path(r'{p3}', 'file')": "tasks.json",
+                f"self.format_path(r'{p4}', 'file')": "file.ext",
+                f"self.format_path(r'{p5}', 'file')": "",
+                f"self.format_path(r'{p1}', 'name')": "",
+                f"self.format_path(r'{p2}', 'name')": "",
+                f"self.format_path(r'{p3}', 'name')": "tasks",
+                f"self.format_path(r'{p4}', 'name')": "file",
+                f"self.format_path(r'{p5}', 'name')": "",
+                f"self.format_path(r'{p1}', 'ext')": "",
+                f"self.format_path(r'{p2}', 'ext')": "",
+                f"self.format_path(r'{p3}', 'ext')": "json",
+                f"self.format_path(r'{p4}', 'ext')": "ext",
+                f"self.format_path(r'{p5}', 'ext')": "",
+                f"self.format_path(r'{p6}', 'filename')": "programfiles",
+                f"self.format_path(r'{p6}', 'path')": "programfiles",
+                f"self.format_path(r'{p7}', 'path')": "programfiles",
+                f"self.format_path({[p1, p2]}, 'dir')": ["dir3", ".vscode"],
             }
         )
 
@@ -599,9 +606,9 @@ class FileTest(Main, File):
         print("\ntimestamp: skipped")
         self.perform_test(
             {
-                # "self.timeStamp({})".format(paths): [],
-                # "self.timeStamp({}, False, '%m-%d-%Y  %H:%M', True)".format(paths): [],
-                # "self.timeStamp({}, True)".format(paths): [],
+                # "self.time_stamp({})".format(paths): [],
+                # "self.time_stamp({}, False, '%m-%d-%Y  %H:%M', True)".format(paths): [],
+                # "self.time_stamp({}, True)".format(paths): [],
             }
         )
 
@@ -612,8 +619,8 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                f"self.isValid(r'{file}')": "file",
-                f"self.isValid(r'{path}')": "dir",
+                f"self.is_valid(r'{file}')": "file",
+                f"self.is_valid(r'{path}')": "dir",
             }
         )
 
@@ -624,7 +631,7 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                f"self.writeToFile(r'{file}', '__version__ = \"0.9.0\"')": None,
+                f"self.write_to_file(r'{file}', '__version__ = \"0.9.0\"')": None,
             }
         )
 
@@ -635,8 +642,8 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                f"self.getFileContents(r'{file}', asList=True)": '__version__ = "0.9.0"',
-                f"self.getFileContents(r'{file}', asList=True)": [
+                f"self.get_file_contents(r'{file}', as_list=True)": '__version__ = "0.9.0"',
+                f"self.get_file_contents(r'{file}', as_list=True)": [
                     '__version__ = "0.9.0"'
                 ],
             }
@@ -648,7 +655,7 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                f"self.createDir(r'{path}'+'/sub-directory')": None,
+                f"self.create_dir(r'{path}'+'/sub-directory')": None,
             }
         )
 
@@ -664,7 +671,7 @@ class FileTest(Main, File):
         files = [file1_path, file2_path]
 
         self.assertEqual(
-            self.getFileInfo(files, "file|filename|filepath"),
+            self.get_file_info(files, "file|filename|filepath"),
             [
                 ("file1.txt", "file1", file1_path),
                 ("file2.txt", "file2", file2_path),
@@ -672,7 +679,7 @@ class FileTest(Main, File):
         )
 
         self.assertEqual(
-            self.getFileInfo(files, "file|filetype"),
+            self.get_file_info(files, "file|filetype"),
             [
                 ("file1.txt", ".txt"),
                 ("file2.txt", ".txt"),
@@ -680,7 +687,7 @@ class FileTest(Main, File):
         )
 
         self.assertEqual(
-            self.getFileInfo(files, "filename|filetype"),
+            self.get_file_info(files, "filename|filetype"),
             [
                 ("file1", ".txt"),
                 ("file2", ".txt"),
@@ -688,7 +695,7 @@ class FileTest(Main, File):
         )
 
         self.assertEqual(
-            self.getFileInfo(files, "file|size"),
+            self.get_file_info(files, "file|size"),
             [
                 ("file1.txt", os.path.getsize(file1_path)),
                 ("file2.txt", os.path.getsize(file2_path)),
@@ -706,14 +713,14 @@ class FileTest(Main, File):
         sub_directory_dirpath = os.path.join(base_path, "test_files\\sub-directory")
 
         self.assertEqual(
-            self.getDirContents(path, "dirpaths"),
+            self.get_dir_contents(path, "dirpaths"),
             [
                 imgtk_test_dirpath,
                 sub_directory_dirpath,
             ],
         )
         self.assertEqual(
-            self.getDirContents(path, "filenames", recursive=True),
+            self.get_dir_contents(path, "filenames", recursive=True),
             [
                 "file1",
                 "file2",
@@ -730,23 +737,23 @@ class FileTest(Main, File):
             ],
         )
         self.assertEqual(
-            self.getDirContents(path, "files|dirs"),
+            self.get_dir_contents(path, "files|dirs"),
             ["imgtk_test", "sub-directory", "file1.txt", "file2.txt", "test.json"],
         )
         self.assertEqual(
-            self.getDirContents(path, "files|dirs", excDirs=["sub*"]),
+            self.get_dir_contents(path, "files|dirs", exc_dirs=["sub*"]),
             ["imgtk_test", "file1.txt", "file2.txt", "test.json"],
         )
         self.assertEqual(
-            self.getDirContents(path, "filenames", incFiles="*.txt"),
+            self.get_dir_contents(path, "filenames", inc_files="*.txt"),
             ["file1", "file2"],
         )
         self.assertEqual(
-            self.getDirContents(path, "files", incFiles="*.txt"),
+            self.get_dir_contents(path, "files", inc_files="*.txt"),
             ["file1.txt", "file2.txt"],
         )
         self.assertEqual(
-            sorted(self.getDirContents(path, "dirpath|dir")),
+            sorted(self.get_dir_contents(path, "dirpath|dir")),
             [
                 imgtk_test_dirpath,
                 sub_directory_dirpath,
@@ -761,8 +768,8 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                "self.getFilepath(__file__)": path,
-                "self.getFilepath(__file__, True)": __file__,
+                "self.get_filepath(__file__)": path,
+                "self.get_filepath(__file__, True)": __file__,
             }
         )
 
@@ -773,7 +780,7 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                f"str(self.getFile(r'{file}'))": r"<_io.TextIOWrapper name='O:\\Cloud\\Code\\_scripts\\pythontk\\test/test_files/file1.txt' mode='a+' encoding='cp1252'>",
+                f"str(self.get_file(r'{file}'))": r"<_io.TextIOWrapper name='O:\\Cloud\\Code\\_scripts\\pythontk\\test/test_files/file1.txt' mode='a+' encoding='cp1252'>",
             }
         )
 
@@ -784,8 +791,8 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                f"str(self.updateVersion(r'{file}', 'increment'))": r"0.9.1",
-                f"str(self.updateVersion(r'{file}', 'decrement'))": r"0.9.0",
+                f"str(self.update_version(r'{file}', 'increment'))": r"0.9.1",
+                f"str(self.update_version(r'{file}', 'decrement'))": r"0.9.0",
             }
         )
 
@@ -797,10 +804,10 @@ class FileTest(Main, File):
 
         self.perform_test(
             {
-                f"self.setJsonFile(r'{file}')": None,
-                "self.getJsonFile()": file,
-                "self.setJson('key', 'value')": None,
-                "self.getJson('key')": "value",
+                f"self.set_json_file(r'{file}')": None,
+                "self.get_json_file()": file,
+                "self.set_json('key', 'value')": None,
+                "self.get_json('key')": "value",
             }
         )
 
@@ -808,14 +815,14 @@ class FileTest(Main, File):
 class ImgTest(Main, Img):
     """ """
 
-    im_h = Img.createImage("RGB", (1024, 1024), (0, 0, 0))
-    im_n = Img.createImage("RGB", (1024, 1024), (127, 127, 255))
+    im_h = Img.create_image("RGB", (1024, 1024), (0, 0, 0))
+    im_n = Img.create_image("RGB", (1024, 1024), (127, 127, 255))
 
     def test_createImage(self):
         """ """
         self.perform_test(
             {
-                "self.createImage('RGB', (1024, 1024), (0, 0, 0))": self.im_h,
+                "self.create_image('RGB', (1024, 1024), (0, 0, 0))": self.im_h,
             }
         )
 
@@ -823,7 +830,7 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.resizeImage(self.im_h, 32, 32).size": (32, 32),
+                "self.resize_image(self.im_h, 32, 32).size": (32, 32),
             }
         )
 
@@ -831,17 +838,17 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.saveImageFile(self.im_h, 'test_files/imgtk_test/im_h.png')": None,
-                "self.saveImageFile(self.im_n, 'test_files/imgtk_test/im_n.png')": None,
+                "self.save_image(self.im_h, 'test_files/imgtk_test/im_h.png')": None,
+                "self.save_image(self.im_n, 'test_files/imgtk_test/im_n.png')": None,
             }
         )
 
     def test_getImages(self):
         """ """
-        # print (\n'test_getImages:', self.getImages('test_files/imgtk_test/'))
+        # print (\n'test_getImages:', self.get_images('test_files/imgtk_test/'))
         self.perform_test(
             {
-                "list(self.getImages('test_files/imgtk_test/', '*Normal*').keys())": [
+                "list(self.get_images('test_files/imgtk_test/', '*Normal*').keys())": [
                     "test_files/imgtk_test/im_Normal_DirectX.png",
                     "test_files/imgtk_test/im_Normal_OpenGL.png",
                 ],
@@ -853,7 +860,7 @@ class ImgTest(Main, Img):
         print("\ngetImageFiles: skipped")
         self.perform_test(
             {
-                # "self.getImageFiles('*.png|*.jpg')": '',
+                # "self.get_image_files('*.png|*.jpg')": '',
             }
         )
 
@@ -862,7 +869,7 @@ class ImgTest(Main, Img):
         print("\ngetImageDirectory: skipped")
         self.perform_test(
             {
-                # "self.getImageDirectory()": '',
+                # "self.get_image_dir()": '',
             }
         )
 
@@ -870,10 +877,10 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.getImageTypeFromFilename('test_files/imgtk_test/im_h.png')": "Height",
-                "self.getImageTypeFromFilename('test_files/imgtk_test/im_h.png', key=False)": "_H",
-                "self.getImageTypeFromFilename('test_files/imgtk_test/im_n.png')": "Normal",
-                "self.getImageTypeFromFilename('test_files/imgtk_test/im_n.png', key=False)": "_N",
+                "self.get_image_type_from_filename('test_files/imgtk_test/im_h.png')": "Height",
+                "self.get_image_type_from_filename('test_files/imgtk_test/im_h.png', key=False)": "_H",
+                "self.get_image_type_from_filename('test_files/imgtk_test/im_n.png')": "Normal",
+                "self.get_image_type_from_filename('test_files/imgtk_test/im_n.png', key=False)": "_N",
             }
         )
 
@@ -881,7 +888,7 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.filterImagesByType(File.getDirContents('test_files/imgtk_test'), 'Height')": [
+                "self.filter_images_by_type(File.get_dir_contents('test_files/imgtk_test'), 'Height')": [
                     "im_h.png",
                     "im_Height.png",
                 ],
@@ -892,11 +899,11 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.sortImagesByType([('im_h.png', '<im_h>'), ('im_n.png', '<im_n>')])": {
+                "self.sort_images_by_type([('im_h.png', '<im_h>'), ('im_n.png', '<im_n>')])": {
                     "Height": [("im_h.png", "<im_h>")],
                     "Normal": [("im_n.png", "<im_n>")],
                 },
-                "self.sortImagesByType({'im_h.png':'<im_h>', 'im_n.png':'<im_n>'})": {
+                "self.sort_images_by_type({'im_h.png':'<im_h>', 'im_n.png':'<im_n>'})": {
                     "Height": [("im_h.png", "<im_h>")],
                     "Normal": [("im_n.png", "<im_n>")],
                 },
@@ -907,11 +914,11 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.containsMapTypes([('im_h.png', '<im_h>')], 'Height')": True,
-                "self.containsMapTypes({'im_h.png':'<im_h>', 'im_n.png':'<im_n>'}, 'Height')": True,
-                "self.containsMapTypes({'Height': [('im_h.png', '<im_h>')]}, 'Height')": True,
-                "self.containsMapTypes({'Height': [('im_h.png', '<im_h>')]}, 'Height|Normal')": True,
-                "self.containsMapTypes({'Height': [('im_h.png', '<im_h>')]}, ['Height', 'Normal'])": True,
+                "self.contains_map_types([('im_h.png', '<im_h>')], 'Height')": True,
+                "self.contains_map_types({'im_h.png':'<im_h>', 'im_n.png':'<im_n>'}, 'Height')": True,
+                "self.contains_map_types({'Height': [('im_h.png', '<im_h>')]}, 'Height')": True,
+                "self.contains_map_types({'Height': [('im_h.png', '<im_h>')]}, 'Height|Normal')": True,
+                "self.contains_map_types({'Height': [('im_h.png', '<im_h>')]}, ['Height', 'Normal'])": True,
             }
         )
 
@@ -919,8 +926,8 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.isNormalMap('im_h.png')": False,
-                "self.isNormalMap('im_n.png')": True,
+                "self.is_normal_map('im_h.png')": False,
+                "self.is_normal_map('im_n.png')": True,
             }
         )
 
@@ -928,7 +935,7 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "str(self.invertChannels(self.im_n, 'g').getchannel('G')).split('size')[0]": "<PIL.Image.Image image mode=L ",
+                "str(self.invert_channels(self.im_n, 'g').getchannel('G')).split('size')[0]": "<PIL.Image.Image image mode=L ",
             }
         )
 
@@ -936,7 +943,7 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.createDXFromGL('test_files/imgtk_test/im_Normal_OpenGL.png')": "test_files/imgtk_test/im_Normal_DirectX.png",
+                "self.create_dx_from_gl('test_files/imgtk_test/im_Normal_OpenGL.png')": "test_files/imgtk_test/im_Normal_DirectX.png",
             }
         )
 
@@ -944,31 +951,31 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.createGLFromDX('test_files/imgtk_test/im_Normal_DirectX.png')": "test_files/imgtk_test/im_Normal_OpenGL.png",
+                "self.create_gl_from_dx('test_files/imgtk_test/im_Normal_DirectX.png')": "test_files/imgtk_test/im_Normal_OpenGL.png",
             }
         )
 
     def test_createMask(self):
         """ """
-        bg = self.getBackground("test_files/imgtk_test/im_Base_color.png", "RGB")
-        # self.createMask('test_files/imgtk_test/im_Base_color.png', self.bg).show()
+        bg = self.get_background("test_files/imgtk_test/im_Base_color.png", "RGB")
+        # self.create_mask('test_files/imgtk_test/im_Base_color.png', self.bg).show()
         self.perform_test(
             {
-                f"str(self.createMask('test_files/imgtk_test/im_Base_color.png', {bg})).split('size')[0]": "<PIL.Image.Image image mode=L ",
-                "str(self.createMask('test_files/imgtk_test/im_Base_color.png', 'test_files/imgtk_test/im_Base_color.png')).split('size')[0]": "<PIL.Image.Image image mode=L ",
+                f"str(self.create_mask('test_files/imgtk_test/im_Base_color.png', {bg})).split('size')[0]": "<PIL.Image.Image image mode=L ",
+                "str(self.create_mask('test_files/imgtk_test/im_Base_color.png', 'test_files/imgtk_test/im_Base_color.png')).split('size')[0]": "<PIL.Image.Image image mode=L ",
             }
         )
 
     def test_fillMaskedArea(self):
         """ """
-        bg = self.getBackground("test_files/imgtk_test/im_Base_color.png", "RGB")
-        self.mask_fillMaskedArea = self.createMask(
+        bg = self.get_background("test_files/imgtk_test/im_Base_color.png", "RGB")
+        self.mask_fillMaskedArea = self.create_mask(
             "test_files/imgtk_test/im_Base_color.png", bg
         )
-        # self.fillMaskedArea('test_files/imgtk_test/im_Base_color.png', (0, 255, 0), self.mask).show()
+        # self.fill_masked_area('test_files/imgtk_test/im_Base_color.png', (0, 255, 0), self.mask).show()
         self.perform_test(
             {
-                "str(self.fillMaskedArea('test_files/imgtk_test/im_Base_color.png', (0, 255, 0), self.mask_fillMaskedArea)).split('size')[0]": "<PIL.Image.Image image mode=RGB ",
+                "str(self.fill_masked_area('test_files/imgtk_test/im_Base_color.png', (0, 255, 0), self.mask_fillMaskedArea)).split('size')[0]": "<PIL.Image.Image image mode=RGB ",
             }
         )
 
@@ -985,9 +992,9 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.getBackground('test_files/imgtk_test/im_Height.png', 'I')": 32767,
-                "self.getBackground('test_files/imgtk_test/im_Height.png', 'L')": 255,
-                "self.getBackground('test_files/imgtk_test/im_n.png', 'RGB')": (
+                "self.get_background('test_files/imgtk_test/im_Height.png', 'I')": 32767,
+                "self.get_background('test_files/imgtk_test/im_Height.png', 'L')": 255,
+                "self.get_background('test_files/imgtk_test/im_n.png', 'RGB')": (
                     127,
                     127,
                     255,
@@ -997,20 +1004,20 @@ class ImgTest(Main, Img):
 
     def test_replaceColor(self):
         """ """
-        bg = self.getBackground("test_files/imgtk_test/im_Base_color.png", "RGB")
-        # self.replaceColor('test_files/imgtk_test/im_Base_color.png', self.bg, (255, 0, 0)).show()
+        bg = self.get_background("test_files/imgtk_test/im_Base_color.png", "RGB")
+        # self.replace_color('test_files/imgtk_test/im_Base_color.png', self.bg, (255, 0, 0)).show()
         self.perform_test(
             {
-                f"str(self.replaceColor('test_files/imgtk_test/im_Base_color.png', {bg}, (255, 0, 0))).split('size')[0]": "<PIL.Image.Image image mode=RGBA ",
+                f"str(self.replace_color('test_files/imgtk_test/im_Base_color.png', {bg}, (255, 0, 0))).split('size')[0]": "<PIL.Image.Image image mode=RGBA ",
             }
         )
 
     def test_setContrast(self):
         """ """
-        # self.setContrast('test_files/imgtk_test/im_Mixed_AO.png', 255).show()
+        # self.set_contrast('test_files/imgtk_test/im_Mixed_AO.png', 255).show()
         self.perform_test(
             {
-                "str(self.setContrast('test_files/imgtk_test/im_Mixed_AO.png', 255)).split('size')[0]": "<PIL.Image.Image image mode=L ",
+                "str(self.set_contrast('test_files/imgtk_test/im_Mixed_AO.png', 255)).split('size')[0]": "<PIL.Image.Image image mode=L ",
             }
         )
 
@@ -1027,17 +1034,17 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "str(self.convert_RGB_to_HSV(self.im_h)).split('size')[0]": "<PIL.Image.Image image mode=HSV ",
+                "str(self.convert_rgb_to_hsv(self.im_h)).split('size')[0]": "<PIL.Image.Image image mode=HSV ",
             }
         )
 
     def test_convert_I_to_L(self):
         """ """
-        self.im_convert_I_to_L = self.createImage("I", (32, 32))
-        # im = self.convert_I_to_L(self.im)
+        self.im_convert_I_to_L = self.create_image("I", (32, 32))
+        # im = self.convert_i_to_l(self.im)
         self.perform_test(
             {
-                "self.convert_I_to_L(self.im_convert_I_to_L).mode": "L",
+                "self.convert_i_to_l(self.im_convert_I_to_L).mode": "L",
             }
         )
 
@@ -1045,8 +1052,8 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.areIdentical(self.im_h, self.im_n)": False,
-                "self.areIdentical(self.im_h, self.im_h)": True,
+                "self.are_identical(self.im_h, self.im_n)": False,
+                "self.are_identical(self.im_h, self.im_h)": True,
             }
         )
 
@@ -1058,7 +1065,7 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.getVectorFromTwoPoints((1, 2, 3), (1, 1, -1))": (0, -1, -4),
+                "self.get_vector_from_two_points((1, 2, 3), (1, 1, -1))": (0, -1, -4),
             }
         )
 
@@ -1092,8 +1099,8 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.getMagnitude((2, 3, 4))": 5.385164807134504,
-                "self.getMagnitude((2, 3))": 3.605551275463989,
+                "self.get_magnitude((2, 3, 4))": 5.385164807134504,
+                "self.get_magnitude((2, 3))": 3.605551275463989,
             }
         )
 
@@ -1101,9 +1108,9 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.dotProduct((1, 2, 3), (1, 1, -1))": 0,
-                "self.dotProduct((1, 2), (1, 1))": 3,
-                "self.dotProduct((1, 2, 3), (1, 1, -1), True)": 0,
+                "self.dot_product((1, 2, 3), (1, 1, -1))": 0,
+                "self.dot_product((1, 2), (1, 1))": 3,
+                "self.dot_product((1, 2, 3), (1, 1, -1), True)": 0,
             }
         )
 
@@ -1111,9 +1118,9 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.crossProduct((1, 2, 3), (1, 1, -1))": (-5, 4, -1),
-                "self.crossProduct((3, 1, 1), (1, 4, 2), (1, 3, 4))": (7, 4, 2),
-                "self.crossProduct((1, 2, 3), (1, 1, -1), None, 1)": (
+                "self.cross_product((1, 2, 3), (1, 1, -1))": (-5, 4, -1),
+                "self.cross_product((3, 1, 1), (1, 4, 2), (1, 3, 4))": (7, 4, 2),
+                "self.cross_product((1, 2, 3), (1, 1, -1), None, 1)": (
                     -0.7715167498104595,
                     0.6172133998483676,
                     -0.1543033499620919,
@@ -1125,8 +1132,8 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.movePointRelative((0, 5, 0), (0, 5, 0))": (0, 10, 0),
-                "self.movePointRelative((0, 5, 0), 5, (0, 1, 0))": (0, 10, 0),
+                "self.move_point_relative((0, 5, 0), (0, 5, 0))": (0, 10, 0),
+                "self.move_point_relative((0, 5, 0), 5, (0, 1, 0))": (0, 10, 0),
             }
         )
 
@@ -1134,12 +1141,12 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.movePointAlongVectorRelativeToPoint((0, 0, 0), (0, 10, 0), (0, 1, 0), 5)": (
+                "self.move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5)": (
                     0.0,
                     5.0,
                     0.0,
                 ),
-                "self.movePointAlongVectorRelativeToPoint((0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False)": (
+                "self.move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False)": (
                     0.0,
                     -5.0,
                     0.0,
@@ -1151,7 +1158,7 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.getDistBetweenTwoPoints((0, 10, 0), (0, 5, 0))": 5.0,
+                "self.get_distance((0, 10, 0), (0, 5, 0))": 5.0,
             }
         )
 
@@ -1159,7 +1166,7 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.getCenterPointBetweenTwoPoints((0, 10, 0), (0, 5, 0))": (
+                "self.get_center_of_two_points((0, 10, 0), (0, 5, 0))": (
                     0.0,
                     7.5,
                     0.0,
@@ -1171,8 +1178,8 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.getAngleFrom2Vectors((1, 2, 3), (1, 1, -1))": 1.5707963267948966,
-                "self.getAngleFrom2Vectors((1, 2, 3), (1, 1, -1), True)": 90,
+                "self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1))": 1.5707963267948966,
+                "self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1), True)": 90,
             }
         )
 
@@ -1180,8 +1187,8 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.getAngleFrom3Points((1, 1, 1), (-1, 2, 3), (1, 4, -3))": 0.7904487543360762,
-                "self.getAngleFrom3Points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True)": 45.29,
+                "self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3))": 0.7904487543360762,
+                "self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True)": 45.29,
             }
         )
 
@@ -1189,7 +1196,7 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.getTwoSidesOfASATriangle(60, 60, 100)": (
+                "self.get_two_sides_of_asa_triangle(60, 60, 100)": (
                     100.00015320566493,
                     100.00015320566493,
                 ),
@@ -1200,12 +1207,12 @@ class MathTest(Main, Math):
         """ """
         self.perform_test(
             {
-                "self.xyzRotation(2, (0, 1, 0))": (
+                "self.xyz_rotation(2, (0, 1, 0))": (
                     3.589792907376932e-09,
                     1.9999999964102069,
                     3.589792907376932e-09,
                 ),
-                "self.xyzRotation(2, (0, 1, 0), [], True)": (0.0, 114.59, 0.0),
+                "self.xyz_rotation(2, (0, 1, 0), [], True)": (0.0, 114.59, 0.0),
             }
         )
 
@@ -1217,7 +1224,7 @@ class MathTest(Main, Math):
 
 if __name__ == "__main__":
     unittest.main(exit=False)
-    # print(self.areSimilar)
+    # print(self.are_similar)
 
 # -----------------------------------------------------------------------------
 # Notes

@@ -21,10 +21,10 @@ python -m pip install pythontk
 ###### As the name suggests, the class `Iter` holds the package's iterable related functions.
 ```python
 from pythontk import Iter
-Iter.filterList([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
+Iter.filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
 ```
 ###### You can also import any function directly.
 ```python
-from pythontk import filterDict
-filterDict({1:'1', 'two':2, 3:'three'}, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
+from pythontk import filter_dict
+filter_dict({1:'1', 'two':2, 3:'three'}, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
 ```
