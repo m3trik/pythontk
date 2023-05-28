@@ -283,7 +283,7 @@ class File:
             return None
 
     @staticmethod
-    @Core.listify
+    @Core.listify(threading=True)
     def format_path(p, section="", replace=""):
         """Format a given filepath(s).
         When a section arg is given, the correlating section of the string will be returned.
@@ -360,7 +360,7 @@ class File:
         ]
 
     @classmethod
-    @Core.listify
+    @Core.listify(threading=True)
     def time_stamp(cls, filepath, stamp="%m-%d-%Y  %H:%M"):
         """Attach or detach a modified timestamp and date to/from a given file path.
 

@@ -7,61 +7,69 @@ from pythontk.itertk import Iter
 class Core:
     """ """
 
-    def listify(func):
-        """Decorator that allows a function to take a single value or a list of values as its first argument.
+    @staticmethod
+    def listify(func=None, *, arg_name=None, threading=False):
+        """Decorator that allows a function to take a single value or a list of values for a specific argument.
         This version executes the function sequentially on the elements of the input list.
+        If threading is True, uses threading to execute the function in parallel on different elements of the input list.
         """
+        import functools
 
-        def wrapper(lst, *args, **kwargs):
-            input_list = Iter.make_list(lst)
-
-            result = [func(x, *args, **kwargs) for x in input_list]
-
-            return Core.format_return(result, lst)
-
-        return wrapper
-
-    def listify_threaded(func):
-        """Decorator that allows a function to take a single value or a list of values as its first argument.
-        This version uses threading to execute the function in parallel on different elements of the input list.
-        """
-        from concurrent.futures import ThreadPoolExecutor
-
-        def wrapper(lst, *args, **kwargs):
-            input_list = Iter.make_list(lst)
-
-            with ThreadPoolExecutor() as executor:
-                result = list(
-                    executor.map(lambda x: func(x, *args, **kwargs), input_list)
-                )
-
-            return Core.format_return(result, lst)
-
-        return wrapper
-
-    def listify_async(func):
-        """Decorator that allows a function to take a single value or a list of values as its first argument.
-
-        The decorated function will be called with each element of the input list as its first argument,
-        and with any additional positional or keyword arguments passed to the decorated function.
-
-        Parameters:
-            func (callable): The function to be decorated.
-
-        Returns:
-            The result of each function call will be collected in a list, and the list will be returned if the input argument
-            is a list. If the input argument is not a list, the result of the function call will be returned directly.
-        """
-        import asyncio
-
-        async def wrapper(lst, *args, **kwargs):
-            input_list = Iter.make_list(lst)
-
-            result = await asyncio.gather(
-                *[func(x, *args, **kwargs) for x in input_list]
+        if func is None:  # decorator was called with arguments, return a decorator
+            return lambda func: Core.listify(
+                func, arg_name=arg_name, threading=threading
             )
 
-            return Core.format_return(result, lst)
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Determine the argument to listify
+            if arg_name is None:  # use the first positional argument
+                if not args:
+                    return func(
+                        *args, **kwargs
+                    )  # No positional arguments, call the function without listifying
+                arg_value = args[0]
+                args = args[1:]
+            else:  # use the specified keyword argument
+                if arg_name not in kwargs:
+                    return func(
+                        *args, **kwargs
+                    )  # Argument not present, call the function without listifying
+                arg_value = kwargs.pop(arg_name)
+
+            # Ensure the argument value is a list
+            was_single_value = not isinstance(arg_value, (list, tuple, set, range))
+            arg_value = Iter.make_list(arg_value)
+
+            # Apply the function to each item in the list
+            if threading:
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor() as executor:
+                    if arg_name is None:
+                        results = list(
+                            executor.map(lambda x: func(x, *args, **kwargs), arg_value)
+                        )
+                    else:
+                        results = list(
+                            executor.map(
+                                lambda x: func(*args, **{**kwargs, arg_name: x}),
+                                arg_value,
+                            )
+                        )
+            else:
+                if arg_name is None:
+                    results = [func(x, *args, **kwargs) for x in arg_value]
+                else:
+                    results = [
+                        func(*args, **{**kwargs, arg_name: x}) for x in arg_value
+                    ]
+
+            # If the input was a single value, return a single value
+            if was_single_value:
+                return results[0]
+
+            return results
 
         return wrapper
 

@@ -82,7 +82,7 @@ class CoreTest(Main, Core):
     def test_listify(self):
         """ """
 
-        @Core.listify
+        @Core.listify(threading=True)
         def to_string(n):
             return str(n)
 

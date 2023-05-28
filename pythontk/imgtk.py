@@ -463,7 +463,7 @@ class Img:
         return filepath
 
     @classmethod
-    @Core.listify
+    @Core.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
     ):
