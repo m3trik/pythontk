@@ -1,15 +1,15 @@
 # !/usr/bin/python
 # coding=utf-8
 # from this package:
-from pythontk.coretk import Core
-from pythontk.itertk import Iter
+from pythontk.misc_utils import Misc
+from pythontk.iter_utils import Iter
 
 
 class Str:
     """ """
 
     @staticmethod
-    @Core.listify(threading=True)
+    @Misc.listify(threading=True)
     def set_case(string, case="title"):
         """Format the given string(s) in the given case.
 
@@ -188,7 +188,7 @@ class Str:
         return sorted(matches, key=lambda x: len(x), reverse=reverse)
 
     @staticmethod
-    @Core.listify(threading=True)
+    @Misc.listify(threading=True)
     def split_at_chars(string, chars="|", occurrence=-1):
         """Split a string containing the given chars at the given occurrence and return
         a two element tuple containing both halves.
@@ -274,7 +274,7 @@ class Str:
             return str(new).join(string.rsplit(old))
 
     @staticmethod
-    @Core.listify(threading=True)
+    @Misc.listify(threading=True)
     def truncate(string, length=75, beginning=True, insert=".."):
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.

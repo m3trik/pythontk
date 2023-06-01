@@ -16,9 +16,9 @@ except ImportError as error:
     print("{}\n # Error: {} #".format(__file__, error))
 
 # from this package:
-from pythontk.coretk import Core
-from pythontk.filetk import File
-from pythontk.itertk import Iter
+from pythontk.misc_utils import Misc
+from pythontk.file_utils import File
+from pythontk.iter_utils import Iter
 
 
 class Img:
@@ -463,7 +463,7 @@ class Img:
         return filepath
 
     @classmethod
-    @Core.listify(threading=True)
+    @Misc.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
     ):

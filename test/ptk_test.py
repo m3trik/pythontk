@@ -3,8 +3,7 @@
 import os
 import unittest
 import inspect
-
-from pythontk import Core, File, Img, Iter, Math, Str
+from pythontk import Misc, File, Img, Iter, Math, Str
 
 
 class Main(unittest.TestCase):
@@ -64,8 +63,8 @@ class Main(unittest.TestCase):
         return re.sub(r"0x[a-fA-F\d]+", "0x00000000000", str(obj))
 
 
-class CoreTest(Main, Core):
-    """Core test class."""
+class CoreTest(Main, Misc):
+    """Misc test class."""
 
     def test_imports(self):
         """Test imports."""
@@ -82,7 +81,7 @@ class CoreTest(Main, Core):
     def test_listify(self):
         """ """
 
-        @Core.listify(threading=True)
+        @Misc.listify(threading=True)
         def to_string(n):
             return str(n)
 

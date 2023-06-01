@@ -1,10 +1,10 @@
 # !/usr/bin/python
 # coding=utf-8
 # from this package:
-from pythontk.itertk import Iter
+from pythontk.iter_utils import Iter
 
 
-class Core:
+class Misc:
     """ """
 
     @staticmethod
@@ -16,7 +16,7 @@ class Core:
         import functools
 
         if func is None:  # decorator was called with arguments, return a decorator
-            return lambda func: Core.listify(
+            return lambda func: Misc.listify(
                 func, arg_name=arg_name, threading=threading
             )
 
