@@ -1,5 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
+from typing import Any, Callable
+
 # from this package:
 from pythontk.iter_utils import Iter
 
@@ -8,15 +10,57 @@ class Misc:
     """ """
 
     @staticmethod
-    def listify(func=None, *, arg_name=None, threading=False):
-        """Decorator that allows a function to take a single value or a list of values for a specific argument.
-        This version executes the function sequentially on the elements of the input list.
-        If threading is True, uses threading to execute the function in parallel on different elements of the input list.
+    def cached_property(func: Callable) -> Any:
+        """Decorator that converts a method with a single self argument into a property
+        that runs the method only once and stores the result, returning the stored
+        result on subsequent accesses.
+
+        This is useful for expensive computations that don't change once computed.
+
+        Parameters:
+            func: Method to be converted into a cached property.
+
+        Returns:
+            A descriptor object that can be used as a decorator.
+        """
+        from functools import wraps
+
+        attr_name = "_cached_" + func.__name__
+
+        @property
+        @wraps(func)
+        def _cached_property(self: Any) -> Any:
+            if not hasattr(self, attr_name):
+                setattr(self, attr_name, func(self))
+            return getattr(self, attr_name)
+
+        return _cached_property
+
+    @classmethod
+    def listify(cls, func=None, *, arg_name=None, threading=False):
+        """Decorator that allows a function to take either a single value or a list of values for a specific argument.
+
+        This decorator enhances a function to handle both individual values and lists for a given argument.
+        When the function is called with a list, the function is applied to each element of the list.
+        If the 'threading' parameter is set to True, these function calls will be executed in parallel
+        using Python's built-in threading.
+
+        The argument to be listified can be specified with the 'arg_name' parameter.
+        If no argument is specified, the decorator defaults to listifying the first positional argument.
+
+        Parameters:
+            func (Callable): The function to be enhanced.
+            arg_name (str, optional): The name of the argument to be listified.
+            threading (bool, optional): Whether to use threading to apply the function to
+                multiple elements of a list simultaneously.
+
+        Returns:
+            Callable: The enhanced function.
         """
         import functools
 
         if func is None:  # decorator was called with arguments, return a decorator
-            return lambda func: Misc.listify(
+            return lambda func: cls.listify(
                 func, arg_name=arg_name, threading=threading
             )
 

@@ -41,7 +41,7 @@ class Main(unittest.TestCase):
         self.assertEqual(
             result,
             expected_result,
-            f"\n\n# Error: {path}\n#\tCall: {method_name}({', '.join(map(str, function_args)) if 'function_args' in locals() else ''})\n#\tExpected {type(expected_result)}: {expected_result}\n#\tReturned {type(result)}: {result}",
+            f"\n\n# Error: {path}\n#\t{method_name}\n#\tExpected {type(expected_result)}: {expected_result}\n#\tReturned {type(result)}: {result}",
         )
 
     @staticmethod
@@ -63,7 +63,7 @@ class Main(unittest.TestCase):
         return re.sub(r"0x[a-fA-F\d]+", "0x00000000000", str(obj))
 
 
-class CoreTest(Main, Misc):
+class MiscTest(Main, Misc):
     """Misc test class."""
 
     def test_imports(self):
@@ -78,16 +78,69 @@ class CoreTest(Main, Misc):
         self.assertIsInstance(Iter, type)
         self.assertIsInstance(make_list, types.FunctionType)
 
-    def test_listify(self):
-        """ """
+    def test_cached_property(self):
+        """Test the `cached_property` decorator."""
 
+        class MyClass:
+            def __init__(self):
+                self._counter = 0
+
+            @Misc.cached_property
+            def counter(self):
+                """A property that increments the counter by one each time it's accessed."""
+                self._counter += 1
+                return self._counter
+
+        my_instance = MyClass()
+
+        # At this point, the property should not be computed yet, so the counter should still be zero.
+        self.assertEqual(my_instance._counter, 0)
+
+        # The first time we access the property, it should compute the result and increment the counter.
+        self.assertEqual(my_instance.counter, 1)
+        self.assertEqual(my_instance._counter, 1)
+
+        # Subsequent accesses should not recompute the property, so the counter should stay at one.
+        self.assertEqual(my_instance.counter, 1)
+        self.assertEqual(my_instance._counter, 1)
+        self.assertEqual(my_instance.counter, 1)
+        self.assertEqual(my_instance._counter, 1)
+
+    def test_listify(self):
+        # 1. Standalone function with threading
         @Misc.listify(threading=True)
         def to_string(n):
             return str(n)
 
+        class TestClass:
+            # 2. Method within a class with threading
+            @Misc.listify(arg_name="n", threading=True)
+            def to_string(self, n):
+                return str(n)
+
+        # 3. Function with arg_name specified and threading
+        @Misc.listify(arg_name="n", threading=True)
+        def to_string_arg(n):
+            return str(n)
+
+        # 4. Function with arg_name specified and no threading
+        @Misc.listify(arg_name="n", threading=False)
+        def to_string_no_thread(n):
+            return str(n)
+
+        self.assertEqual(to_string(range(4)), ["0", "1", "2", "3"])
+
+        test_obj = TestClass()
         self.assertEqual(
-            to_string(range(10)),
-            ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+            test_obj.to_string(range(4)),
+            ["0", "1", "2", "3"],
+        )
+
+        self.assertEqual(to_string_arg(range(4)), ["0", "1", "2", "3"])
+
+        self.assertEqual(
+            to_string_no_thread(range(4)),
+            ["0", "1", "2", "3"],
         )
 
     def test_formatReturn(self):
