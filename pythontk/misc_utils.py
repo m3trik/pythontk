@@ -1,5 +1,9 @@
 # !/usr/bin/python
 # coding=utf-8
+import functools
+import inspect
+import collections.abc
+import concurrent.futures
 from typing import Any, Callable
 
 # from this package:
@@ -36,81 +40,47 @@ class Misc:
 
         return _cached_property
 
-    @classmethod
-    def listify(cls, func=None, *, arg_name=None, threading=False):
-        """Decorator that allows a function to take either a single value or a list of values for a specific argument.
-
-        This decorator enhances a function to handle both individual values and lists for a given argument.
-        When the function is called with a list, the function is applied to each element of the list.
-        If the 'threading' parameter is set to True, these function calls will be executed in parallel
-        using Python's built-in threading.
-
-        The argument to be listified can be specified with the 'arg_name' parameter.
-        If no argument is specified, the decorator defaults to listifying the first positional argument.
-
-        Parameters:
-            func (Callable): The function to be enhanced.
-            arg_name (str, optional): The name of the argument to be listified.
-            threading (bool, optional): Whether to use threading to apply the function to
-                multiple elements of a list simultaneously.
-
-        Returns:
-            Callable: The enhanced function.
-        """
-        import functools
-
-        if func is None:  # decorator was called with arguments, return a decorator
-            return lambda func: cls.listify(
-                func, arg_name=arg_name, threading=threading
-            )
+    @staticmethod
+    def listify(func=None, arg_name=None, threading=False):
+        if func is None:
+            return lambda func: Misc.listify(func, arg_name=arg_name)
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Determine the argument to listify
-            if arg_name is None:  # use the first positional argument
-                if not args:
-                    return func(
-                        *args, **kwargs
-                    )  # No positional arguments, call the function without listifying
-                arg_value = args[0]
-                args = args[1:]
-            else:  # use the specified keyword argument
-                if arg_name not in kwargs:
-                    return func(
-                        *args, **kwargs
-                    )  # Argument not present, call the function without listifying
-                arg_value = kwargs.pop(arg_name)
+            func_args = inspect.getfullargspec(func).args
+            if "self" in func_args or "cls" in func_args:
+                func_args = func_args[1:]  # skip 'self' or 'cls' argument for methods
 
-            # Ensure the argument value is a list
-            was_single_value = not isinstance(arg_value, (list, tuple, set, range))
-            arg_value = Iter.make_list(arg_value)
-
-            # Apply the function to each item in the list
-            if threading:
-                from concurrent.futures import ThreadPoolExecutor
-
-                with ThreadPoolExecutor() as executor:
-                    if arg_name is None:
-                        results = list(
-                            executor.map(lambda x: func(x, *args, **kwargs), arg_value)
-                        )
-                    else:
-                        results = list(
-                            executor.map(
-                                lambda x: func(*args, **{**kwargs, arg_name: x}),
-                                arg_value,
-                            )
-                        )
-            else:
-                if arg_name is None:
-                    results = [func(x, *args, **kwargs) for x in arg_value]
+            if arg_name and arg_name in func_args:
+                arg_index = func_args.index(arg_name)
+                if arg_index < len(args):
+                    # Argument is in the positional arguments
+                    arg = args[arg_index]
+                    args = args[:arg_index] + args[arg_index + 1 :]
                 else:
-                    results = [
-                        func(*args, **{**kwargs, arg_name: x}) for x in arg_value
-                    ]
+                    raise ValueError(f"No argument named '{arg_name}' provided")
+            elif args:
+                arg_index = 0
+                arg = args[arg_index]
+                args = args[arg_index + 1 :]
+            else:
+                raise ValueError("No argument provided")
 
-            # If the input was a single value, return a single value
-            if was_single_value:
+            # Check if a single item was provided
+            single_item = not isinstance(arg, collections.abc.Iterable) or isinstance(
+                arg, (str, bytes, bytearray)
+            )
+
+            if single_item:
+                arg = [arg]
+
+            results = [
+                func(*(args[:arg_index] + (x,) + args[arg_index:]), **kwargs)
+                for x in arg
+            ]
+
+            # If a single item was provided, return a single result
+            if single_item:
                 return results[0]
 
             return results
@@ -285,7 +255,7 @@ class Misc:
             if isinstance(a, (list, set, tuple)) and are_similar(a, b, tolerance)
             else a == b
         )
-        return all(map(func, Iter.make_list(a), Iter.make_list(b)))
+        return all(map(func, Iter.make_iterable(a), Iter.make_iterable(b)))
 
     @staticmethod
     def randomize(lst, ratio=1.0):

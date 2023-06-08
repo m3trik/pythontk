@@ -6,22 +6,19 @@ class Iter:
     """ """
 
     @staticmethod
-    def make_list(x):
-        """Convert the given obj to a list, unless it's a string, bytes, or bytearray.
+    def make_iterable(x):
+        """Convert the given obj to an iterable, unless it's a string, bytes, or bytearray.
 
         Parameters:
-                x () = The object to convert to a list if not already a list, set, or tuple.
+            x () = The object to convert to an iterable if not already a list, set, or tuple.
 
         Returns:
-                (list)
+            (iterable)
         """
-        return (
-            [x]
-            if isinstance(x, (str, bytes, bytearray))
-            else list(x)
-            if isinstance(x, (list, tuple, set, dict, range))
-            else [x]
-        )
+        if isinstance(x, (list, tuple, set, dict, range)):
+            return x
+        else:
+            return (x,)
 
     @classmethod
     def nested_depth(cls, lst, typ=(list, set, tuple)):
@@ -245,8 +242,8 @@ class Iter:
 
         Example: filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
         """
-        exc = cls.make_list(exc)
-        inc = cls.make_list(inc)
+        exc = cls.make_iterable(exc)
+        inc = cls.make_iterable(inc)
 
         def parse_patterns(patterns):
             """Parse patterns and return separate lists for contains, startswith, and endswith."""

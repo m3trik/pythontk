@@ -156,7 +156,7 @@ class Str:
         """
         import re
 
-        pattern = "|".join(re.escape(d) for d in Iter.make_list(delimiters))
+        pattern = "|".join(re.escape(d) for d in Iter.make_iterable(delimiters))
         target_parts = re.split(pattern, target)
 
         def match_hierarchy(item_parts):
@@ -559,7 +559,7 @@ class Str:
         # strip each set of chars in 'strip' from end of string.
         if strip:
             strip = tuple(
-                [i for i in Iter.make_list(strip) if not i == ""]
+                [i for i in Iter.make_iterable(strip) if not i == ""]
             )  # assure 'strip' is a tuple and does not contain any empty strings.
             while s.endswith(strip):
                 for chars in strip:

@@ -72,11 +72,11 @@ class MiscTest(Main, Misc):
         import types
         import pythontk as ptk
         from pythontk import Iter
-        from pythontk import make_list
+        from pythontk import make_iterable
 
         self.assertIsInstance(ptk, types.ModuleType)
         self.assertIsInstance(Iter, type)
-        self.assertIsInstance(make_list, types.FunctionType)
+        self.assertIsInstance(make_iterable, types.FunctionType)
 
     def test_cached_property(self):
         """Test the `cached_property` decorator."""
@@ -109,39 +109,53 @@ class MiscTest(Main, Misc):
     def test_listify(self):
         # 1. Standalone function with threading
         @Misc.listify(threading=True)
-        def to_string(n):
+        def to_str(n):
             return str(n)
 
-        class TestClass:
-            # 2. Method within a class with threading
-            @Misc.listify(arg_name="n", threading=True)
-            def to_string(self, n):
-                return str(n)
+        # 2. Function with arg_name specified
+        @Misc.listify(arg_name="n")
+        def to_str_arg_name(n):
+            return str(n)
 
         # 3. Function with arg_name specified and threading
         @Misc.listify(arg_name="n", threading=True)
-        def to_string_arg(n):
+        def to_str_arg_name_threaded(n):
             return str(n)
 
-        # 4. Function with arg_name specified and no threading
-        @Misc.listify(arg_name="n", threading=False)
-        def to_string_no_thread(n):
-            return str(n)
+        # 4. Method within a class with threading
+        class TestClass:
+            @Misc.listify
+            def to_str(self, n, x=None):
+                return str(n)
 
-        self.assertEqual(to_string(range(4)), ["0", "1", "2", "3"])
+            @staticmethod
+            @Misc.listify
+            def to_str_staticmethod(n):
+                return str(n)
 
+            @classmethod
+            @Misc.listify
+            def to_str_classmethod(cls, n):
+                return str(n)
+
+            @Misc.listify(threading=True)
+            def to_str_threading(self, n):
+                return str(n)
+
+            @Misc.listify(arg_name="n", threading=True)
+            def to_str_arg_name(self, n):
+                return str(n)
+
+        self.assertEqual(to_str([0, 1]), ["0", "1"])
+        self.assertEqual(to_str_arg_name([0, 1]), ["0", "1"])
+        self.assertEqual(to_str_arg_name_threaded([0, 1]), ["0", "1"])
         test_obj = TestClass()
-        self.assertEqual(
-            test_obj.to_string(range(4)),
-            ["0", "1", "2", "3"],
-        )
-
-        self.assertEqual(to_string_arg(range(4)), ["0", "1", "2", "3"])
-
-        self.assertEqual(
-            to_string_no_thread(range(4)),
-            ["0", "1", "2", "3"],
-        )
+        self.assertEqual(test_obj.to_str([0, 1]), ["0", "1"])
+        self.assertEqual(test_obj.to_str_staticmethod([0, 1]), ["0", "1"])
+        self.assertEqual(test_obj.to_str_classmethod([0, 1]), ["0", "1"])
+        self.assertEqual(test_obj.to_str_threading([0, 1]), ["0", "1"])
+        self.assertEqual(test_obj.to_str_arg_name([0, 1]), ["0", "1"])
+        self.assertEqual(test_obj.to_str(None), "None")
 
     def test_formatReturn(self):
         """Test format_return method."""
@@ -200,20 +214,16 @@ class StrTest(Main, Str):
 
     def test_setCase(self):
         """Test set_case method."""
-        self.perform_test(
-            {
-                "self.set_case('xxx', 'upper')": "XXX",
-                "self.set_case('XXX', 'lower')": "xxx",
-                "self.set_case('xxx', 'capitalize')": "Xxx",
-                "self.set_case('xxX', 'swapcase')": "XXx",
-                "self.set_case('xxx XXX', 'title')": "Xxx Xxx",
-                "self.set_case('xXx', 'pascal')": "XXx",
-                "self.set_case('xXx', 'camel')": "xXx",
-                "self.set_case(['xXx'], 'camel')": ["xXx"],
-                "self.set_case(None, 'camel')": "",
-                "self.set_case('', 'camel')": "",
-            }
-        )
+        self.assertEqual(self.set_case("xxx", "upper"), "XXX")
+        self.assertEqual(self.set_case("XXX", "lower"), "xxx")
+        self.assertEqual(self.set_case("xxx", "capitalize"), "Xxx")
+        self.assertEqual(self.set_case("xxX", "swapcase"), "XXx")
+        self.assertEqual(self.set_case("xxx XXX", "title"), "Xxx Xxx")
+        self.assertEqual(self.set_case("xXx", "pascal"), "XXx")
+        self.assertEqual(self.set_case("xXx", "camel"), "xXx")
+        self.assertEqual(self.set_case(["xXx"], "camel"), ["xXx"])
+        self.assertEqual(self.set_case(None, "camel"), "")
+        self.assertEqual(self.set_case("", "camel"), "")
 
     def test_getMangledName(self):
         """ """
@@ -442,16 +452,33 @@ class StrTest(Main, Str):
 class IterTest(Main, Iter):
     """ """
 
-    def test_makeList(self):
-        """ """
-        self.perform_test(
-            {
-                "self.make_list('x')": ["x"],
-                "self.make_list(1)": [1],
-                "self.make_list('')": [""],
-                "self.make_list({'x':'y'})": ["x"],
-            }
-        )
+
+def test_make_iterable(self):
+    # Test an object that isn't a string, list, tuple, set, dict, range, map, filter, or zip
+    class ExampleClass:
+        ...
+
+    example_instance = ExampleClass()
+    self.assertEqual(Iter.make_iterable(example_instance), (example_instance,))
+    self.assertEqual(Iter.make_iterable("x"), ("x",))
+    self.assertEqual(Iter.make_iterable(1), (1,))
+    self.assertEqual(Iter.make_iterable(""), ("",))
+    self.assertEqual(Iter.make_iterable(["x", "y"]), ["x", "y"])
+    self.assertEqual(Iter.make_iterable(("x", "y")), ("x", "y"))
+    self.assertEqual(Iter.make_iterable({"x": "y"}), {"x": "y"})
+    self.assertEqual(Iter.make_iterable(range(3)), range(3))
+    self.assertEqual(Iter.make_iterable({1, 2, 3}), {1, 2, 3})
+    # Note: Map, filter, and zip objects are evaluated once and can't be used again,
+    # so we convert them to lists first
+    self.assertEqual(Iter.make_iterable(map(str, range(3))), list(map(str, range(3))))
+    self.assertEqual(
+        Iter.make_iterable(filter(lambda x: x % 2 == 0, range(3))),
+        list(filter(lambda x: x % 2 == 0, range(3))),
+    )
+    self.assertEqual(
+        Iter.make_iterable(zip(["a", "b", "c"], range(3))),
+        list(zip(["a", "b", "c"], range(3))),
+    )
 
     def test_nestedDepth(self):
         """ """

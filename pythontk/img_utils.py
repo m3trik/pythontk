@@ -291,7 +291,7 @@ class Img:
         Returns:
                 (dict)
         """
-        types = Iter.make_list(types.split("|"))
+        types = Iter.make_iterable(types.split("|"))
         return [f for f in files if cls.get_image_type_from_filename(f) in types]
 
     @classmethod

@@ -1,12 +1,15 @@
 # !/usr/bin/python
 # coding=utf-8
-import sys, os
+import sys
+import os
 import re
 import json
+import traceback
 
 # from this package:
 from pythontk.misc_utils import Misc
 from pythontk.iter_utils import Iter
+from pythontk.str_utils import Str
 
 
 class File:
@@ -50,7 +53,7 @@ class File:
         try:
             with open(filepath, mode) as f:
                 return f
-        except OSError as error:
+        except OSError:
             traceback.print_exc()
 
     @staticmethod
@@ -68,7 +71,7 @@ class File:
         try:
             with open(filepath, "r") as f:
                 return f.readlines() if as_list else f.read()
-        except OSError as error:
+        except OSError:
             traceback.print_exc()
 
     @staticmethod
@@ -82,7 +85,7 @@ class File:
         try:
             with open(filepath, "w") as f:
                 f.writelines(lines)
-        except OSError as error:
+        except OSError:
             traceback.print_exc()
 
     @staticmethod
@@ -339,7 +342,7 @@ class File:
             result = p
 
         if replace:
-            result = Str_utils.rreplace(p, result, replace, 1)
+            result = Str.rreplace(p, result, replace, 1)
 
         return result
 
