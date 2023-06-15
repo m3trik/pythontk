@@ -157,62 +157,51 @@ class MiscTest(Main, Misc):
         self.assertEqual(test_obj.to_str_arg_name([0, 1]), ["0", "1"])
         self.assertEqual(test_obj.to_str(None), "None")
 
-    def test_formatReturn(self):
+    def test_format_return(self):
         """Test format_return method."""
         self.assertEqual(self.format_return([""]), "")
         self.assertEqual(self.format_return([""], [""]), [""])
         self.assertEqual(self.format_return(["", ""]), ["", ""])
+        self.assertEqual(self.format_return([], ""), None)
 
-    def test_setAttributes(self):
+    def test_set_attributes(self):
         """Test set_attributes method."""
-        self.perform_test(
-            {
-                "self.set_attributes(self, attr='value')": None,
-            }
-        )
+        self.assertEqual(self.set_attributes(self, attr="value"), None)
 
-    def test_getAttributes(self):
+    def test_get_attributes(self):
         """Test get_attributes method."""
-        self.perform_test(
-            {
-                "self.get_attributes(self, '_subtest')": {"_subtest": None},
-            }
-        )
+        self.assertEqual(self.get_attributes(self, "_subtest"), {"_subtest": None})
 
     def test_cycle(self):
         """Test cycle method."""
-        self.perform_test(
-            {
-                "self.cycle([0,1], 'ID')": 0,
-                "self.cycle([0,1], 'ID')": 1,
-                "self.cycle([0,1], 'ID')": 0,
-            }
-        )
+        self.assertEqual(self.cycle([0, 1], "ID"), 0)
+        self.assertEqual(self.cycle([0, 1], "ID"), 1)
+        self.assertEqual(self.cycle([0, 1], "ID"), 0)
 
-    def test_areSimilar(self):
+    def test_are_similar(self):
         """Test are_similar method."""
-        self.perform_test(
-            {
-                "self.are_similar(1, 10, 9)": True,
-                "self.are_similar(1, 10, 8)": False,
-            }
-        )
+        self.assertEqual(self.are_similar(1, 10, 9), True)
+        self.assertEqual(self.are_similar(1, 10, 8), False)
 
     def test_randomize(self):
         """Test randomize method."""
-        print("\nrandomize: skipped")
-        self.perform_test(
-            {
-                # "self.randomize(range(10), 1.0)": [],
-                # "self.randomize(range(10), 0.5)": [],
-            }
-        )
+        # Test when proportion is 1.0, it should return an empty list
+        result = self.randomize(list(range(10)), 1.0)
+        # Test that all elements in the result are in the original list
+        for item in result:
+            self.assertIn(item, range(10))
+
+        # Test when proportion is 0.5, it should return a list with length 5
+        result = self.randomize(list(range(10)), 0.5)
+        # Test that all elements in the result are in the original list
+        for item in result:
+            self.assertIn(item, range(10))
 
 
 class StrTest(Main, Str):
     """String test class."""
 
-    def test_setCase(self):
+    def test_set_case(self):
         """Test set_case method."""
         self.assertEqual(self.set_case("xxx", "upper"), "XXX")
         self.assertEqual(self.set_case("XXX", "lower"), "xxx")
@@ -225,7 +214,7 @@ class StrTest(Main, Str):
         self.assertEqual(self.set_case(None, "camel"), "")
         self.assertEqual(self.set_case("", "camel"), "")
 
-    def test_getMangledName(self):
+    def test_get_mangled_name(self):
         """ """
 
         class DummyClass:

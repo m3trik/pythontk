@@ -3,7 +3,6 @@
 import functools
 import inspect
 import collections.abc
-import concurrent.futures
 from typing import Any, Callable
 
 # from this package:
@@ -100,15 +99,16 @@ class Misc:
         Returns:
                 (obj/list) dependant on flags.
         """
-        orig = isinstance(orig, (list, tuple, set, dict, range))
+        orig_was_iter = isinstance(orig, (list, tuple, set, dict, range))
 
-        try:
-            if len(lst) == 1 and not orig and not isinstance(lst, str):
-                return lst[0]
+        if (
+            len(lst) == 1
+            and not orig_was_iter
+            and not isinstance(lst, (str, bytes, bytearray))
+        ):
+            return lst[0]
 
-        except Exception as e:
-            pass
-        return lst
+        return lst if orig_was_iter or len(lst) > 1 else None
 
     @staticmethod
     def set_attributes(obj, **attributes):
