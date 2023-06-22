@@ -1,3 +1,5 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 ### PYTHONTK (Python Toolkit)
 
 ---
@@ -17,14 +19,11 @@ python -m pip install pythontk
 ```
 
 ### Example use-case:
-###### Import the class `Iter` from the package.
-###### As the name suggests, the class `Iter` holds the package's iterable related functions.
 ```python
-from pythontk import Iter
-Iter.filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2) #returns: [1, 3]
-```
-###### You can also import any function directly.
-```python
-from pythontk import filter_dict
-filter_dict({1:'1', 'two':2, 3:'three'}, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
+import pythontk as ptk
+ptk.filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2)
+# Returns: [1, 3]
+
+ptk.filter_dict({1:'1', 'two':2, 3:'three'}, exc='t*', keys=True)
+# Returns: {1: '1', 3: 'three'}
 ```
