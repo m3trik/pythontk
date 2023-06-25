@@ -95,7 +95,7 @@ class File:
         Parameters:
             paths (list): List of paths to retrieve file information from.
             returned_type (str): Return specific file information. Multiple types can be given using '|'.
-                              ex. 'file|filename|filepath|dir|dirpath|timestamp|unixtimestamp|size|filetype'
+                    ex. 'file|filename|filepath|dir|dirpath|timestamp|unixtimestamp|size|filetype'
         Returns:
             (list): List of tuples containing requested file information.
         """
@@ -266,11 +266,14 @@ class File:
         elif callable(obj) or isinstance(obj, object):
             try:
                 module = inspect.getmodule(obj)
-                filepath = getattr(module, "__file__", None)
-                if filepath is None and hasattr(
-                    module, "__path__"
-                ):  # handle namespace packages
-                    filepath = module.__path__[0]
+                if module.__name__ == "__main__":
+                    filepath = sys.argv[0]
+                else:
+                    filepath = getattr(module, "__file__", None)
+                    if filepath is None and hasattr(
+                        module, "__path__"
+                    ):  # handle namespace packages
+                        filepath = module.__path__[0]
             except AttributeError:
                 raise ValueError(
                     "Unable to determine file path for object of type: ", type(obj)
@@ -506,7 +509,7 @@ class File:
         """
         try:
             return cls._jsonFile
-        except AttributeError as error:
+        except AttributeError:
             return ""
 
     @classmethod
@@ -539,7 +542,7 @@ class File:
             with open(file, "r") as f:
                 dct = json.loads(f.read())
                 dct[key] = value
-        except json.decoder.JSONDecodeError as error:
+        except json.decoder.JSONDecodeError:
             dct = {}
             dct[key] = value
 
@@ -579,10 +582,10 @@ class File:
             with open(file, "r") as f:
                 return json.loads(f.read())[key]
 
-        except KeyError as error:
+        except KeyError:
             # print ('# Error: {}: get_json: KeyError: {}'.format(__file__, error))
             pass
-        except FileNotFoundError as error:
+        except FileNotFoundError:
             # print ('# Error: {}: get_json: FileNotFoundError: {}'.format(__file__, error))
             pass
         except json.decoder.JSONDecodeError as error:

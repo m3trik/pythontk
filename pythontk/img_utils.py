@@ -28,7 +28,7 @@ class Img:
         sys.argv
     )  # return the existing QApplication object, or create a new one if none exists.
 
-    mapTypes = {  # Get map type from filename suffix.
+    map_types = {  # Get map type from filename suffix.
         "Base_Color": ("Base_Color", "BaseColor", "_BC"),
         "Roughness": ("Roughness", "Rough", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "_M"),
@@ -52,7 +52,7 @@ class Img:
         "Opacity": ("Opacity", "Transparancy", "Alpha", "Alpha_Mask", "_O"),
     }
 
-    mapBackgrounds = {  # Get default map backgrounds in RGBA format from map type.
+    map_backgrounds = {  # Get default map backgrounds in RGBA format from map type.
         "Base_Color": (127, 127, 127, 255),
         "Roughness": (255, 255, 255, 255),
         "Metallic": (0, 0, 0, 255),
@@ -70,7 +70,7 @@ class Img:
         "Reflection": (0, 0, 0, 255),
     }
 
-    mapModes = {  # Get default map mode from map type.
+    map_modes = {  # Get default map mode from map type.
         "Base_Color": "RGB",
         "Roughness": "L",
         "Metallic": "L",
@@ -88,7 +88,7 @@ class Img:
         "Reflection": "L",
     }
 
-    bitDepth = {  # Get bit depth from mode.
+    bit_depth = {  # Get bit depth from mode.
         "1": 1,
         "L": 8,
         "P": 8,
@@ -247,7 +247,7 @@ class Img:
         """
         Parameters:
                 file (str): Image filename, fullpath, or map type suffix.
-                key (bool): Get the corresponding key from the type in 'mapTypes'.
+                key (bool): Get the corresponding key from the type in 'map_types'.
                         ie. Base_Color from <filename>_BC or BC. else: _BC from <filename>_BC.
 
         Returns:
@@ -259,7 +259,7 @@ class Img:
             result = next(
                 (
                     k
-                    for k, v in cls.mapTypes.items()
+                    for k, v in cls.map_types.items()
                     for i in v
                     if name.lower().endswith(i.lower())
                 ),
@@ -269,7 +269,7 @@ class Img:
             result = next(
                 (
                     i
-                    for v in cls.mapTypes.values()
+                    for v in cls.map_types.values()
                     for i in v
                     if name.lower().endswith(i.lower())
                 ),
@@ -356,7 +356,7 @@ class Img:
 
     @classmethod
     def is_normal_map(cls, file):
-        """Check the map type for one of the normal values in mapTypes.
+        """Check the map type for one of the normal values in map_types.
 
         Parameters:
                 file (str): Image filename, fullpath, or map type suffix.
@@ -367,9 +367,9 @@ class Img:
         typ = cls.get_image_type_from_filename(file)
         return any(
             (
-                typ in cls.mapTypes["Normal_DirectX"],
-                typ in cls.mapTypes["Normal_OpenGL"],
-                typ in cls.mapTypes["Normal"],
+                typ in cls.map_types["Normal_DirectX"],
+                typ in cls.map_types["Normal_OpenGL"],
+                typ in cls.map_types["Normal"],
             )
         )
 
@@ -419,8 +419,8 @@ class Img:
 
         typ = cls.get_image_type_from_filename(file, key=False)
         try:
-            index = cls.mapTypes["Normal_OpenGL"].index(typ)
-            new_type = cls.mapTypes["Normal_DirectX"][index]
+            index = cls.map_types["Normal_OpenGL"].index(typ)
+            new_type = cls.map_types["Normal_DirectX"][index]
         except (IndexError, ValueError) as error:
             print("{} in create_dx_from_gl\n\t# Error: {} #".format(__file__, error))
             new_type = "Normal_DirectX"
@@ -450,8 +450,8 @@ class Img:
 
         typ = cls.get_image_type_from_filename(file, key=False)
         try:
-            index = cls.mapTypes["Normal_DirectX"].index(typ)
-            new_type = cls.mapTypes["Normal_OpenGL"][index]
+            index = cls.map_types["Normal_DirectX"].index(typ)
+            new_type = cls.map_types["Normal_OpenGL"][index]
         except IndexError as error:
             print("{} in create_gl_from_dx\n\t# Error: {} #".format(__file__, error))
             new_type = "Normal_OpenGL"
@@ -737,9 +737,9 @@ if __name__ == "__main__":
 #       im = cls.load_image(image) if isinstance(image, str) else image
 #       data = np.array(im)
 
-#       bitDepth = {'uint8':8, 'uint16':16, 'uint32':32, 'uint64':64}
+#       bit_depth = {'uint8':8, 'uint16':16, 'uint32':32, 'uint64':64}
 
-#       return bitDepth[str(data.dtype)]
+#       return bit_depth[str(data.dtype)]
 
 
 # width, height = im.size
