@@ -1,25 +1,24 @@
 # !/usr/bin/python
 # coding=utf-8
 # from this package:
-from pythontk.misc_utils import Misc
-from pythontk.iter_utils import Iter
+from pythontk.utils import Utils
+from pythontk.iter_utils import IterUtils
 
 
-class Str:
+class StrUtils:
     """ """
 
     @staticmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def set_case(string, case="title"):
         """Format the given string(s) in the given case.
 
         Parameters:
-                string (str/list): The string(s) to format.
-                case (str): The desired return case. Accepts all python case operators.
-                        valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
-
+            string (str/list): The string(s) to format.
+            case (str): The desired return case. Accepts all python case operators.
+                    valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
         Returns:
-                (str/list) List if 'string' given as list.
+            (str/list) List if 'string' given as list.
         """
         if (not string) or (not isinstance(string, str)):
             return ""
@@ -76,27 +75,27 @@ class Str:
         generator (default behavior) or as a single concatenated string if `as_string` is set to True.
 
         Parameters:
-                string (str): The input string to search for matches.
-                start_delim (str): The starting delimiter to search for.
-                end_delim (str): The ending delimiter to search for.
-                as_string (bool, optional): If True, the function returns a single concatenated string of all matches.
-                                                                         If False (default), the function returns a generator that yields each match.
+            string (str): The input string to search for matches.
+            start_delim (str): The starting delimiter to search for.
+            end_delim (str): The ending delimiter to search for.
+            as_string (bool, optional): If True, the function returns a single concatenated string of all matches.
+                                                                     If False (default), the function returns a generator that yields each match.
 
         Returns:
-                If as_string is False (default): A generator that yields all matches found in the input string.
-                If as_string is True: A single concatenated string containing all matches found in the input string.
+            If as_string is False (default): A generator that yields all matches found in the input string.
+            If as_string is True: A single concatenated string containing all matches found in the input string.
 
         Examples:
-                input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
+            input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
 
-                # Get the matches as a generator (default behavior)
-                matches_generator = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->')
-                for match in matches_generator:
-                        print(match)  # Output: first match (first iteration), second match (second iteration)
+            # Get the matches as a generator (default behavior)
+            matches_generator = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->')
+            for match in matches_generator:
+                    print(match)  # Output: first match (first iteration), second match (second iteration)
 
-                # Get the matches as a single string
-                matches_string = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->', as_string=True)
-                print(matches_string)  # Output: "first match second match"
+            # Get the matches as a single string
+            matches_string = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->', as_string=True)
+            print(matches_string)  # Output: "first match second match"
         """
         import re
 
@@ -156,7 +155,7 @@ class Str:
         """
         import re
 
-        pattern = "|".join(re.escape(d) for d in Iter.make_iterable(delimiters))
+        pattern = "|".join(re.escape(d) for d in IterUtils.make_iterable(delimiters))
         target_parts = re.split(pattern, target)
 
         def match_hierarchy(item_parts):
@@ -188,22 +187,23 @@ class Str:
         return sorted(matches, key=lambda x: len(x), reverse=reverse)
 
     @staticmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def split_at_chars(string, chars="|", occurrence=-1):
         """Split a string containing the given chars at the given occurrence and return
         a two element tuple containing both halves.
 
         Parameters:
-                strings (str/list): The string(s) to operate on.
-                chars (str): The chars to split at.
-                occurrence (int): The occurrence of the pipe to split at from left.
-                        ex. -1 would split at the last occurrence. 0 would split at the first.
-                                If the occurrence is out of range, the full string will be
-                                returned as: ('original string', '')
+            strings (str/list): The string(s) to operate on.
+            chars (str): The chars to split at.
+            occurrence (int): The occurrence of the pipe to split at from left.
+                    ex. -1 would split at the last occurrence. 0 would split at the first.
+                        If the occurrence is out of range, the full string will be
+                        returned as: ('original string', '')
         Returns:
-                (tuple)(list) two element tuple, or list of two element tuples if multiple strings given.
+            (tuple)(list) two element tuple, or list of two element tuples if multiple strings given.
 
-        Example: split_at_chars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
+        Example:
+            split_at_chars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
         """
         split = string.split(chars)
 
@@ -214,7 +214,7 @@ class Str:
                 return (s1, s2)
             else:
                 return (s2, "")
-        except IndexError as error:
+        except IndexError:
             return (string, "")
 
     @classmethod
@@ -223,25 +223,24 @@ class Str:
         if the character doesn't exist, the original string will be returned.
 
         Parameters:
-                src (str): The source string.
-                ins (str): The character(s) to insert.
-                at (str)(int): The index or char(s) to insert at.
-                occurrence (int): Specify which occurrence to insert at.
-                                                Valid only when 'at' is given as a string.
-                                                default: The first occurrence.
-                                                (A value of -1 would insert at the last occurrence)
-                before (bool): Specify inserting before or after. default: after
-                                                Valid only when 'at' is given as a string.
+            src (str): The source string.
+            ins (str): The character(s) to insert.
+            at (str)(int): The index or char(s) to insert at.
+            occurrence (int): Specify which occurrence to insert at.
+                        Valid only when 'at' is given as a string.
+                        default: The first occurrence.
+                        (A value of -1 would insert at the last occurrence)
+            before (bool): Specify inserting before or after. default: after
+                        Valid only when 'at' is given as a string.
         Returns:
-                (str)
+            (str)
         """
         try:
             return "".join((src[:at], str(ins), src[at:]))
 
         except TypeError:
-            if (
-                occurrence < 0
-            ):  # if 'occurrance' is a negative value, search from the right.
+            # if 'occurrance' is a negative value, search from the right.
+            if occurrence < 0:
                 i = src.replace(at, " " * len(at), occurrence - 1).rfind(at)
             else:
                 i = src.replace(at, " " * len(at), occurrence - 1).find(at)
@@ -257,13 +256,13 @@ class Str:
         The number of occurrances replaced can be limited by using the 'count' argument.
 
         Parameters:
-                string (str):
-                old (str):
-                new (str)(int):
-                count (int):
+            string (str):
+            old (str):
+            new (str)(int):
+            count (int):
 
         Returns:
-                (str)
+            (str)
         """
         if not string or not isinstance(string, str):
             return string
@@ -274,20 +273,21 @@ class Str:
             return str(new).join(string.rsplit(old))
 
     @staticmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def truncate(string, length=75, beginning=True, insert=".."):
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.
 
         Parameters:
-                length (int): The maximum allowed length before trunicating.
-                beginning (bool): Trim starting chars, else; ending.
-                insert (str): Chars to add at the trimmed area. (default: ellipsis)
+            length (int): The maximum allowed length before trunicating.
+            beginning (bool): Trim starting chars, else; ending.
+            insert (str): Chars to add at the trimmed area. (default: ellipsis)
 
         Returns:
-                (str)
+            (str)
 
-        Example: truncate('12345678', 4) #returns: '..5678'
+        Example:
+            truncate('12345678', 4) #returns: '..5678'
         """
         if not string or not isinstance(string, str):
             return string
@@ -304,14 +304,15 @@ class Str:
         """Returns any integers from the end of the given string.
 
         Parameters:
-                inc (int): Increment by a step amount. (default: 0)
-                                0 does not increment and returns the original number.
-                as_string (bool): Return the integers as a string instead of integers.
+            inc (int): Increment by a step amount. (default: 0)
+                    0 does not increment and returns the original number.
+            as_string (bool): Return the integers as a string instead of integers.
 
-        "Returns:
-                (int)
+        Returns:
+            (int)
 
-        ex. get_trailing_integers('p001Cube1', inc=1) #returns: 2
+        Example:
+            get_trailing_integers('p001Cube1', inc=1) #returns: 2
         """
         import re
 
@@ -330,29 +331,30 @@ class Str:
         """Filter for elements that containing the given string in a list of strings.
 
         Parameters:
-                find (str): The search string. An asterisk denotes startswith*, *endswith, *contains*, and multiple search strings can be separated by pipe chars.
-                        wildcards:
-                                *chars* - string contains chars.
-                                *chars - string endswith chars.
-                                chars* - string startswith chars.
-                                chars1|chars2 - string matches any of.  can be used in conjuction with other modifiers.
-                        regular expressions (if regex True):
-                                (.) match any char. ex. re.match('1..', '1111') #returns the regex object <111>
-                                (^) match start. ex. re.match('^11', '011') #returns None
-                                ($) match end. ex. re.match('11$', '011') #returns the regex object <11>
-                                (|) or. ex. re.match('1|0', '011') #returns the regex object <0>
-                                (\A,\Z) beginning of a string and end of a string. ex. re.match(r'\A011\Z', '011') #
-                                (\b) empty string. (\B matches the empty string anywhere else). ex. re.match(r'\b(011)\b', '011 011 011') #
-                strings (list): The string list to search.
-                regex (bool): Use regular expressions instead of wildcards.
-                ignore_case (bool): Search case insensitive.
+            find (str): The search string. An asterisk denotes startswith*, *endswith, *contains*, and multiple search strings can be separated by pipe chars.
+                    wildcards:
+                        *chars* - string contains chars.
+                        *chars - string endswith chars.
+                        chars* - string startswith chars.
+                        chars1|chars2 - string matches any of.  can be used in conjuction with other modifiers.
+                    regular expressions (if regex True):
+                        (.) match any char. ex. re.match('1..', '1111') #returns the regex object <111>
+                        (^) match start. ex. re.match('^11', '011') #returns None
+                        ($) match end. ex. re.match('11$', '011') #returns the regex object <11>
+                        (|) or. ex. re.match('1|0', '011') #returns the regex object <0>
+                        (\A,\Z) beginning of a string and end of a string. ex. re.match(r'\A011\Z', '011') #
+                        (\b) empty string. (\B matches the empty string anywhere else). ex. re.match(r'\b(011)\b', '011 011 011') #
+            strings (list): The string list to search.
+            regex (bool): Use regular expressions instead of wildcards.
+            ignore_case (bool): Search case insensitive.
 
         Returns:
-                (list)
+            (list)
 
-        ex. lst = ['invertVertexWeights', 'keepCreaseEdgeWeight', 'keepBorder', 'keepBorderWeight', 'keepColorBorder', 'keepColorBorderWeight']
-                find_str('*Weight*', lst) #find any element that contains the string 'Weight'.
-                find_str('Weight$|Weights$', lst, regex=True) #find any element that endswith 'Weight' or 'Weights'.
+        Example:
+            lst = ['invertVertexWeights', 'keepCreaseEdgeWeight', 'keepBorder', 'keepBorderWeight', 'keepColorBorder', 'keepColorBorderWeight']
+            find_str('*Weight*', lst) #find any element that contains the string 'Weight'.
+            find_str('Weight$|Weights$', lst, regex=True) #find any element that endswith 'Weight' or 'Weights'.
         """
         if regex:  # search using a regular expression.
             import re
@@ -421,45 +423,41 @@ class Str:
         """Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format them.
 
         Parameters:
-                strings (list): A list of string objects to search.
-                to (str): An optional asterisk modifier can be used for formatting. An empty string will attempt to remove the part of the string designated in the from argument.
-                        "" - (empty string) - strip chars.
-                        *chars* - replace only.
-                        *chars - replace suffix.
-                        **chars - append suffix.
-                        chars* - replace prefix.
-                        chars** - append prefix.
-                fltr (str): See the 'find_str' function's 'fltr' parameter for documentation.
-                regex (bool): Use regular expressions instead of wildcards for the 'find' argument.
-                ignore_case (bool): Ignore case when searching. Applies only to the 'fltr' parameter's search.
-                return_orig_strings (bool): Return the old names as well as the new.
+            strings (list): A list of string objects to search.
+            to (str): An optional asterisk modifier can be used for formatting. An empty string will attempt to remove the part of the string designated in the from argument.
+                    "" - (empty string) - strip chars.
+                    *chars* - replace only.
+                    *chars - replace suffix.
+                    **chars - append suffix.
+                    chars* - replace prefix.
+                    chars** - append prefix.
+            fltr (str): See the 'find_str' function's 'fltr' parameter for documentation.
+            regex (bool): Use regular expressions instead of wildcards for the 'find' argument.
+            ignore_case (bool): Ignore case when searching. Applies only to the 'fltr' parameter's search.
+            return_orig_strings (bool): Return the old names as well as the new.
 
         Returns:
-                (list) if return_orig_strings: list of two element tuples containing the original and modified string pairs. [('frm','to')]
-                        else: a list of just the new names.
+            (list) if return_orig_strings: list of two element tuples containing the original and modified string pairs. [('frm','to')]
+                    else: a list of just the new names.
         """
         import re
 
-        if (
-            fltr
-        ):  # if 'fltr' is not an empty string; fltr 'strings' for matches using 'fltr'.
+        # if 'fltr' is not an empty string; fltr 'strings' for matches using 'fltr'.
+        if fltr:
             strings = cls.find_str(fltr, strings, regex=regex, ignore_case=ignore_case)
 
-        frm_ = fltr.strip("*").rstrip(
-            "*"
-        )  # re.sub('[^A-Za-z0-9_:]+', '', fltr) #strip any special chars other than '_'.
-        to_ = to.strip("*").rstrip(
-            "*"
-        )  # remove any modifiers from the left and right end chars.
+        # re.sub('[^A-Za-z0-9_:]+', '', fltr) #strip any special chars other than '_'.
+        frm_ = fltr.strip("*").rstrip("*")
+        # remove any modifiers from the left and right end chars.
+        to_ = to.strip("*").rstrip("*")
 
         result = []
         for orig_str in strings:
             # modifiers
             if to.startswith("*") and to.endswith("*"):  # replace chars
                 if ignore_case:
-                    s = re.sub(
-                        frm_, to_, orig_str, flags=re.IGNORECASE
-                    )  # remove frm_ from the string (case in-sensitive).
+                    # remove frm_ from the string (case in-sensitive).
+                    s = re.sub(frm_, to_, orig_str, flags=re.IGNORECASE)
                 else:
                     s = orig_str.replace(frm_, to_)
 
@@ -468,9 +466,8 @@ class Str:
 
             elif to.startswith("*"):  # replace suffix
                 if ignore_case:
-                    end_index = re.search(
-                        frm_, orig_str, flags=re.IGNORECASE
-                    ).start()  # get the starting index of 'frm_'.
+                    # get the starting index of 'frm_'.
+                    index = re.search(frm_, orig_str, flags=re.IGNORECASE).start()
                     s = orig_str[:index] + to_
                 else:
                     s = orig_str.split(frm_)[0] + to_
@@ -480,9 +477,8 @@ class Str:
 
             elif to.endswith("*"):  # replace prefix
                 if ignore_case:
-                    end_index = re.search(
-                        frm_, orig_str, flags=re.IGNORECASE
-                    ).end()  # get the ending index of 'frm_'.
+                    # get the ending index of 'frm_'.
+                    index = re.search(frm_, orig_str, flags=re.IGNORECASE).end()
                     s = to_ + orig_str[index:]
                 else:
                     s = to_ + frm_ + orig_str.split(frm_)[-1]
@@ -492,31 +488,26 @@ class Str:
                     "*"
                 ):  # strip only beginning chars.
                     if ignore_case:
-                        s = re.sub(
-                            frm_, "", orig_str, 1, flags=re.IGNORECASE
-                        )  # remove the first instance of frm_ from the string (case in-sensitive).
+                        # remove the first instance of frm_ from the string (case in-sensitive).
+                        s = re.sub(frm_, "", orig_str, 1, flags=re.IGNORECASE)
                     else:
-                        s = orig_str.replace(
-                            frm_, "", 1
-                        )  # remove first instance of frm_ from the string.
+                        # remove first instance of frm_ from the string.
+                        s = orig_str.replace(frm_, "", 1)
 
                 elif fltr.startswith("*") and not fltr.endswith(
                     "*"
                 ):  # strip only ending chars.
                     if ignore_case:
-                        s = re.sub(
-                            r"(.*)" + frm_, r"\1", orig_str, flags=re.IGNORECASE
-                        )  # remove the last instance of frm_ from the string (case in-sensitive).
+                        # remove the last instance of frm_ from the string (case in-sensitive).
+                        s = re.sub(r"(.*)" + frm_, r"\1", orig_str, flags=re.IGNORECASE)
                     else:
-                        s = "".join(
-                            orig_str.rsplit(frm_, 1)
-                        )  # remove last instance of frm_ from the string.
+                        # remove last instance of frm_ from the string.
+                        s = "".join(orig_str.rsplit(frm_, 1))
 
                 else:
                     if ignore_case:
-                        s = re.sub(
-                            frm_, "", orig_str, flags=re.IGNORECASE
-                        )  # remove frm_ from the string (case in-sensitive).
+                        # remove frm_ from the string (case in-sensitive).
+                        s = re.sub(frm_, "", orig_str, flags=re.IGNORECASE)
                     else:
                         s = orig_str.replace(frm_, "")  # remove frm_ from the string.
             else:  # else; replace whole string.
@@ -540,26 +531,26 @@ class Str:
         """Re-format the suffix for the given string.
 
         Parameters:
-                string (str): The string to format.
-                suffix (str): Append a new suffix to the given string.
-                strip (str/list): Specific string(s) to strip from the end of the given string.
-                strip_trailing_ints (bool): Strip all trailing integers.
-                strip_trailing_alpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
+            string (str): The string to format.
+            suffix (str): Append a new suffix to the given string.
+            strip (str/list): Specific string(s) to strip from the end of the given string.
+            strip_trailing_ints (bool): Strip all trailing integers.
+            strip_trailing_alpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
 
         Returns:
-                (str)
+            (str)
         """
         import re
 
         try:
             s = string.split("|")[-1]
-        except Exception as error:
+        except Exception:
             s = string.string().split("|")[-1]
 
         # strip each set of chars in 'strip' from end of string.
         if strip:
             strip = tuple(
-                [i for i in Iter.make_iterable(strip) if not i == ""]
+                [i for i in IterUtils.make_iterable(strip) if not i == ""]
             )  # assure 'strip' is a tuple and does not contain any empty strings.
             while s.endswith(strip):
                 for chars in strip:
@@ -583,14 +574,14 @@ class Str:
         return s + suffix
 
 
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     pass
 
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Notes
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 
-# Deprecated ------------------------------------
+# deprecated ---------------------

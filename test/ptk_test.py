@@ -3,7 +3,7 @@
 import os
 import unittest
 import inspect
-from pythontk import Misc, File, Img, Iter, Math, Str
+from pythontk import Utils, FileUtils, ImgUtils, IterUtils, MathUtils, StrUtils
 
 
 class Main(unittest.TestCase):
@@ -63,19 +63,19 @@ class Main(unittest.TestCase):
         return re.sub(r"0x[a-fA-F\d]+", "0x00000000000", str(obj))
 
 
-class MiscTest(Main, Misc):
-    """Misc test class."""
+class UtilsTest(Main, Utils):
+    """Utils test class."""
 
     def test_imports(self):
         """Test imports."""
 
         import types
         import pythontk as ptk
-        from pythontk import Iter
+        from pythontk import IterUtils
         from pythontk import make_iterable
 
         self.assertIsInstance(ptk, types.ModuleType)
-        self.assertIsInstance(Iter, type)
+        self.assertIsInstance(IterUtils, type)
         self.assertIsInstance(make_iterable, types.FunctionType)
 
     def test_cached_property(self):
@@ -85,7 +85,7 @@ class MiscTest(Main, Misc):
             def __init__(self):
                 self._counter = 0
 
-            @Misc.cached_property
+            @Utils.cached_property
             def counter(self):
                 """A property that increments the counter by one each time it's accessed."""
                 self._counter += 1
@@ -108,41 +108,41 @@ class MiscTest(Main, Misc):
 
     def test_listify(self):
         # 1. Standalone function with threading
-        @Misc.listify(threading=True)
+        @Utils.listify(threading=True)
         def to_str(n):
             return str(n)
 
         # 2. Function with arg_name specified
-        @Misc.listify(arg_name="n")
+        @Utils.listify(arg_name="n")
         def to_str_arg_name(n):
             return str(n)
 
         # 3. Function with arg_name specified and threading
-        @Misc.listify(arg_name="n", threading=True)
+        @Utils.listify(arg_name="n", threading=True)
         def to_str_arg_name_threaded(n):
             return str(n)
 
         # 4. Method within a class with threading
         class TestClass:
-            @Misc.listify
+            @Utils.listify
             def to_str(self, n, x=None):
                 return str(n)
 
             @staticmethod
-            @Misc.listify
+            @Utils.listify
             def to_str_staticmethod(n):
                 return str(n)
 
             @classmethod
-            @Misc.listify
+            @Utils.listify
             def to_str_classmethod(cls, n):
                 return str(n)
 
-            @Misc.listify(threading=True)
+            @Utils.listify(threading=True)
             def to_str_threading(self, n):
                 return str(n)
 
-            @Misc.listify(arg_name="n", threading=True)
+            @Utils.listify(arg_name="n", threading=True)
             def to_str_arg_name(self, n):
                 return str(n)
 
@@ -198,7 +198,7 @@ class MiscTest(Main, Misc):
             self.assertIn(item, range(10))
 
 
-class StrTest(Main, Str):
+class StrTest(Main, StrUtils):
     """String test class."""
 
     def test_set_case(self):
@@ -438,7 +438,7 @@ class StrTest(Main, Str):
         )
 
 
-class IterTest(Main, Iter):
+class IterTest(Main, IterUtils):
     """ """
 
 
@@ -448,24 +448,26 @@ def test_make_iterable(self):
         ...
 
     example_instance = ExampleClass()
-    self.assertEqual(Iter.make_iterable(example_instance), (example_instance,))
-    self.assertEqual(Iter.make_iterable("x"), ("x",))
-    self.assertEqual(Iter.make_iterable(1), (1,))
-    self.assertEqual(Iter.make_iterable(""), ("",))
-    self.assertEqual(Iter.make_iterable(["x", "y"]), ["x", "y"])
-    self.assertEqual(Iter.make_iterable(("x", "y")), ("x", "y"))
-    self.assertEqual(Iter.make_iterable({"x": "y"}), {"x": "y"})
-    self.assertEqual(Iter.make_iterable(range(3)), range(3))
-    self.assertEqual(Iter.make_iterable({1, 2, 3}), {1, 2, 3})
+    self.assertEqual(IterUtils.make_iterable(example_instance), (example_instance,))
+    self.assertEqual(IterUtils.make_iterable("x"), ("x",))
+    self.assertEqual(IterUtils.make_iterable(1), (1,))
+    self.assertEqual(IterUtils.make_iterable(""), ("",))
+    self.assertEqual(IterUtils.make_iterable(["x", "y"]), ["x", "y"])
+    self.assertEqual(IterUtils.make_iterable(("x", "y")), ("x", "y"))
+    self.assertEqual(IterUtils.make_iterable({"x": "y"}), {"x": "y"})
+    self.assertEqual(IterUtils.make_iterable(range(3)), range(3))
+    self.assertEqual(IterUtils.make_iterable({1, 2, 3}), {1, 2, 3})
     # Note: Map, filter, and zip objects are evaluated once and can't be used again,
     # so we convert them to lists first
-    self.assertEqual(Iter.make_iterable(map(str, range(3))), list(map(str, range(3))))
     self.assertEqual(
-        Iter.make_iterable(filter(lambda x: x % 2 == 0, range(3))),
+        IterUtils.make_iterable(map(str, range(3))), list(map(str, range(3)))
+    )
+    self.assertEqual(
+        IterUtils.make_iterable(filter(lambda x: x % 2 == 0, range(3))),
         list(filter(lambda x: x % 2 == 0, range(3))),
     )
     self.assertEqual(
-        Iter.make_iterable(zip(["a", "b", "c"], range(3))),
+        IterUtils.make_iterable(zip(["a", "b", "c"], range(3))),
         list(zip(["a", "b", "c"], range(3))),
     )
 
@@ -616,7 +618,7 @@ def test_make_iterable(self):
         )
 
 
-class FileTest(Main, File):
+class FileTest(Main, FileUtils):
     """ """
 
     def test_formatPath(self):
@@ -880,11 +882,11 @@ class FileTest(Main, File):
         )
 
 
-class ImgTest(Main, Img):
+class ImgTest(Main, ImgUtils):
     """ """
 
-    im_h = Img.create_image("RGB", (1024, 1024), (0, 0, 0))
-    im_n = Img.create_image("RGB", (1024, 1024), (127, 127, 255))
+    im_h = ImgUtils.create_image("RGB", (1024, 1024), (0, 0, 0))
+    im_n = ImgUtils.create_image("RGB", (1024, 1024), (127, 127, 255))
 
     def test_createImage(self):
         """ """
@@ -956,7 +958,7 @@ class ImgTest(Main, Img):
         """ """
         self.perform_test(
             {
-                "self.filter_images_by_type(File.get_dir_contents('test_files/imgtk_test'), 'Height')": [
+                "self.filter_images_by_type(FileUtils.get_dir_contents('test_files/imgtk_test'), 'Height')": [
                     "im_h.png",
                     "im_Height.png",
                 ],
@@ -1126,7 +1128,7 @@ class ImgTest(Main, Img):
         )
 
 
-class MathTest(Main, Math):
+class MathTest(Main, MathUtils):
     """ """
 
     def test_getVectorFromTwoPoints(self):
@@ -1283,9 +1285,6 @@ class MathTest(Main, Math):
                 "self.xyz_rotation(2, (0, 1, 0), [], True)": (0.0, 114.59, 0.0),
             }
         )
-
-
-# -----------------------------------------------------------------------------
 
 
 # -----------------------------------------------------------------------------

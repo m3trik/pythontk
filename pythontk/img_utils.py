@@ -16,19 +16,19 @@ except ImportError as error:
     print("{}\n # Error: {} #".format(__file__, error))
 
 # from this package:
-from pythontk.misc_utils import Misc
-from pythontk.file_utils import File
-from pythontk.iter_utils import Iter
+from pythontk.utils import Utils
+from pythontk.file_utils import FileUtils
+from pythontk.iter_utils import IterUtils
 
 
-class Img:
+class ImgUtils:
     """Helper methods for working with image file formats."""
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         sys.argv
     )  # return the existing QApplication object, or create a new one if none exists.
 
-    mapTypes = {  # Get map type from filename suffix.
+    map_types = {  # Get map type from filename suffix.
         "Base_Color": ("Base_Color", "BaseColor", "_BC"),
         "Roughness": ("Roughness", "Rough", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "_M"),
@@ -52,7 +52,7 @@ class Img:
         "Opacity": ("Opacity", "Transparancy", "Alpha", "Alpha_Mask", "_O"),
     }
 
-    mapBackgrounds = {  # Get default map backgrounds in RGBA format from map type.
+    map_backgrounds = {  # Get default map backgrounds in RGBA format from map type.
         "Base_Color": (127, 127, 127, 255),
         "Roughness": (255, 255, 255, 255),
         "Metallic": (0, 0, 0, 255),
@@ -70,7 +70,7 @@ class Img:
         "Reflection": (0, 0, 0, 255),
     }
 
-    mapModes = {  # Get default map mode from map type.
+    map_modes = {  # Get default map mode from map type.
         "Base_Color": "RGB",
         "Roughness": "L",
         "Metallic": "L",
@@ -88,7 +88,7 @@ class Img:
         "Reflection": "L",
     }
 
-    bitDepth = {  # Get bit depth from mode.
+    bit_depth = {  # Get bit depth from mode.
         "1": 1,
         "L": 8,
         "P": 8,
@@ -202,7 +202,7 @@ class Img:
                 (dict) {<full file path>:<image object>}
         """
         images = {}
-        for f in File.get_dir_contents(
+        for f in FileUtils.get_dir_contents(
             directory, "filepaths", inc_files=inc.split("|"), exc_files=exc.split("|")
         ):
             im = cls.load_image(f)
@@ -247,19 +247,19 @@ class Img:
         """
         Parameters:
                 file (str): Image filename, fullpath, or map type suffix.
-                key (bool): Get the corresponding key from the type in 'mapTypes'.
+                key (bool): Get the corresponding key from the type in 'map_types'.
                         ie. Base_Color from <filename>_BC or BC. else: _BC from <filename>_BC.
 
         Returns:
                 (str)
         """
-        name = File.format_path(file, "name")
+        name = FileUtils.format_path(file, "name")
 
         if key:
             result = next(
                 (
                     k
-                    for k, v in cls.mapTypes.items()
+                    for k, v in cls.map_types.items()
                     for i in v
                     if name.lower().endswith(i.lower())
                 ),
@@ -269,7 +269,7 @@ class Img:
             result = next(
                 (
                     i
-                    for v in cls.mapTypes.values()
+                    for v in cls.map_types.values()
                     for i in v
                     if name.lower().endswith(i.lower())
                 ),
@@ -291,7 +291,7 @@ class Img:
         Returns:
                 (dict)
         """
-        types = Iter.make_iterable(types.split("|"))
+        types = IterUtils.make_iterable(types.split("|"))
         return [f for f in files if cls.get_image_type_from_filename(f) in types]
 
     @classmethod
@@ -356,7 +356,7 @@ class Img:
 
     @classmethod
     def is_normal_map(cls, file):
-        """Check the map type for one of the normal values in mapTypes.
+        """Check the map type for one of the normal values in map_types.
 
         Parameters:
                 file (str): Image filename, fullpath, or map type suffix.
@@ -367,9 +367,9 @@ class Img:
         typ = cls.get_image_type_from_filename(file)
         return any(
             (
-                typ in cls.mapTypes["Normal_DirectX"],
-                typ in cls.mapTypes["Normal_OpenGL"],
-                typ in cls.mapTypes["Normal"],
+                typ in cls.map_types["Normal_DirectX"],
+                typ in cls.map_types["Normal_OpenGL"],
+                typ in cls.map_types["Normal"],
             )
         )
 
@@ -413,14 +413,14 @@ class Img:
         """
         inverted_image = cls.invert_channels(file, "g")
 
-        output_dir = File.format_path(file, "path")
-        name = File.format_path(file, "name")
-        ext = File.format_path(file, "ext")
+        output_dir = FileUtils.format_path(file, "path")
+        name = FileUtils.format_path(file, "name")
+        ext = FileUtils.format_path(file, "ext")
 
         typ = cls.get_image_type_from_filename(file, key=False)
         try:
-            index = cls.mapTypes["Normal_OpenGL"].index(typ)
-            new_type = cls.mapTypes["Normal_DirectX"][index]
+            index = cls.map_types["Normal_OpenGL"].index(typ)
+            new_type = cls.map_types["Normal_DirectX"][index]
         except (IndexError, ValueError) as error:
             print("{} in create_dx_from_gl\n\t# Error: {} #".format(__file__, error))
             new_type = "Normal_DirectX"
@@ -444,14 +444,14 @@ class Img:
         """
         inverted_image = cls.invert_channels(file, "g")
 
-        output_dir = File.format_path(file, "path")
-        name = File.format_path(file, "name")
-        ext = File.format_path(file, "ext")
+        output_dir = FileUtils.format_path(file, "path")
+        name = FileUtils.format_path(file, "name")
+        ext = FileUtils.format_path(file, "ext")
 
         typ = cls.get_image_type_from_filename(file, key=False)
         try:
-            index = cls.mapTypes["Normal_DirectX"].index(typ)
-            new_type = cls.mapTypes["Normal_OpenGL"][index]
+            index = cls.map_types["Normal_DirectX"].index(typ)
+            new_type = cls.map_types["Normal_OpenGL"][index]
         except IndexError as error:
             print("{} in create_gl_from_dx\n\t# Error: {} #".format(__file__, error))
             new_type = "Normal_OpenGL"
@@ -463,7 +463,7 @@ class Img:
         return filepath
 
     @classmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
     ):
@@ -737,9 +737,9 @@ if __name__ == "__main__":
 #       im = cls.load_image(image) if isinstance(image, str) else image
 #       data = np.array(im)
 
-#       bitDepth = {'uint8':8, 'uint16':16, 'uint32':32, 'uint64':64}
+#       bit_depth = {'uint8':8, 'uint16':16, 'uint32':32, 'uint64':64}
 
-#       return bitDepth[str(data.dtype)]
+#       return bit_depth[str(data.dtype)]
 
 
 # width, height = im.size
@@ -792,7 +792,7 @@ if __name__ == "__main__":
 #   files = cls.get_image_files()
 #   for file, image in files.items():
 #       inverted_image = cls.invert_channels(image, 'g')
-#       # name = File.format_path(file, remove='_DirectX', append='_OpenGL')
+#       # name = FileUtils.format_path(file, remove='_DirectX', append='_OpenGL')
 #       # cls.save_image(inverted_image, name)
 
 
@@ -802,7 +802,7 @@ if __name__ == "__main__":
 #   files = cls.get_image_files()
 #   for file, image in files.items():
 #       inverted_image = cls.invert_channels(image, 'g')
-#       # name = File.format_path(file, remove='_OpenGL', append='_DirectX')
+#       # name = FileUtils.format_path(file, remove='_OpenGL', append='_DirectX')
 #       # cls.save_image(inverted_image, name)
 
 

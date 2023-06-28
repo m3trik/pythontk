@@ -2,7 +2,7 @@
 # coding=utf-8
 
 
-class Iter:
+class IterUtils:
     """ """
 
     @staticmethod
