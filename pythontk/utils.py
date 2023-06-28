@@ -6,10 +6,10 @@ import collections.abc
 from typing import Any, Callable
 
 # from this package:
-from pythontk.iter_utils import Iter
+from pythontk.iter_utils import IterUtils
 
 
-class Misc:
+class Utils:
     """ """
 
     @staticmethod
@@ -17,7 +17,6 @@ class Misc:
         """Decorator that converts a method with a single self argument into a property
         that runs the method only once and stores the result, returning the stored
         result on subsequent accesses.
-
         This is useful for expensive computations that don't change once computed.
 
         Parameters:
@@ -42,7 +41,7 @@ class Misc:
     @staticmethod
     def listify(func=None, arg_name=None, threading=False):
         if func is None:
-            return lambda func: Misc.listify(func, arg_name=arg_name)
+            return lambda func: Utils.listify(func, arg_name=arg_name)
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -93,11 +92,11 @@ class Misc:
         If the 'orig' arg is a multi-element type then the original format will always be returned.
 
         Parameters:
-                lst (list): An iterable.
-                orig (obj): Optionally; derive the return type form the original value.
-                                ie. if it was a multi-value type; do not modify the return value.
+            lst (list): An iterable.
+            orig (obj): Optionally; derive the return type form the original value.
+                            ie. if it was a multi-value type; do not modify the return value.
         Returns:
-                (obj/list) dependant on flags.
+            (obj/list) dependant on flags.
         """
         orig_was_iter = isinstance(orig, (list, tuple, set, dict, range))
 
@@ -115,8 +114,8 @@ class Misc:
         """Set attributes for a given object.
 
         Parameters:
-                obj (obj): The object to set attributes for.
-                attributes (kwargs) = Attributes and their correponding values as keyword args.
+            obj (obj): The object to set attributes for.
+            attributes (kwargs) = Attributes and their correponding values as keyword args.
         """
         [
             setattr(obj, attr, value)
@@ -129,14 +128,14 @@ class Misc:
         """Get attributes for a given object.
 
         Parameters:
-                obj (obj): The object to get the attributes of.
-                inc (list): Attributes to include. All other will be omitted. Exclude takes dominance over include. Meaning, if the same attribute is in both lists, it will be excluded.
-                exc (list): Attributes to exclude from the returned dictionay. ie. [u'Position',u'Rotation',u'Scale',u'renderable',u'isHidden',u'isFrozen',u'selected']
+            obj (obj): The object to get the attributes of.
+            inc (list): Attributes to include. All other will be omitted. Exclude takes dominance over include. Meaning, if the same attribute is in both lists, it will be excluded.
+            exc (list): Attributes to exclude from the returned dictionay. ie. [u'Position',u'Rotation',u'Scale',u'renderable',u'isHidden',u'isFrozen',u'selected']
 
         Returns:
-                (dict) {'string attribute': current value}
+            (dict) {'string attribute': current value}
         """
-        filtered = Iter.filter_list(obj.__dict__, inc, exc)
+        filtered = IterUtils.filter_list(obj.__dict__, inc, exc)
         return {attr: getattr(obj, attr) for attr in filtered}
 
     @staticmethod
@@ -146,11 +145,11 @@ class Misc:
         on the class itself, rather than on its instances.
 
         Parameters:
-                cls (obj): The class to check for the attribute.
-                attr (str): The name of the attribute to check.
+            cls (obj): The class to check for the attribute.
+            attr (str): The name of the attribute to check.
 
-        :return:
-                (bool) True if the class has the attribute, False otherwise.
+        Returns:
+            (bool) True if the class has the attribute, False otherwise.
         """
         import inspect
 
@@ -210,10 +209,11 @@ class Misc:
         using the name string as an identifier key.
 
         Parameters:
-                sequence (list): sequence to cycle through. ie. [1,2,3].
-                name (str): identifier. used as a key to get the sequence value from the dict.
+            sequence (list): sequence to cycle through. ie. [1,2,3].
+            name (str): identifier. used as a key to get the sequence value from the dict.
 
-        ex. cycle([0,1,2,3,4], 'componentID')
+        Example:
+            cycle([0,1,2,3,4], 'componentID')
         """
         try:
             if query:  # return the value without changing it.
@@ -232,30 +232,31 @@ class Misc:
         ]  # move the current value to the end of the list. ie. [2,3,1]
         return value  # return current value. ie. 1
 
-    @staticmethod
-    def are_similar(a, b, tolerance=0.0):
+    @classmethod
+    def are_similar(cls, a, b, tolerance=0.0):
         """Check if the two numberical values are within a given tolerance.
         Supports nested lists.
 
         Parameters:
-                a (obj)(tuple): The first object(s) to compare.
-                b (obj)(tuple): The second object(s) to compare.
-                tolerance (float) = The maximum allowed variation between the values.
+            a (obj)(tuple): The first object(s) to compare.
+            b (obj)(tuple): The second object(s) to compare.
+            tolerance (float) = The maximum allowed variation between the values.
 
         Returns:
-                (bool)
+            (bool)
 
-        Example: are_similar(1, 10, 9)" #returns: True
-        Example: are_similar(1, 10, 8)" #returns: False
+        Example:
+            are_similar(1, 10, 9)" #returns: True
+            are_similar(1, 10, 8)" #returns: False
         """
         func = (
             lambda a, b: abs(a - b) <= tolerance
             if isinstance(a, (int, float))
             else True
-            if isinstance(a, (list, set, tuple)) and are_similar(a, b, tolerance)
+            if isinstance(a, (list, set, tuple)) and cls.are_similar(a, b, tolerance)
             else a == b
         )
-        return all(map(func, Iter.make_iterable(a), Iter.make_iterable(b)))
+        return all(map(func, IterUtils.make_iterable(a), IterUtils.make_iterable(b)))
 
     @staticmethod
     def randomize(lst, ratio=1.0):
@@ -263,14 +264,15 @@ class Misc:
         A value of 0.5 will return 50% of the original elements in random order.
 
         Parameters:
-                lst (tuple): A list to randomize.
-                ratio (float) = A value of 0.0-1. (default: 100%) With 0 representing 0% and
-                                1 representing 100% of the given elements returned in random order.
+            lst (tuple): A list to randomize.
+            ratio (float) = A value of 0.0-1. (default: 100%) With 0 representing 0% and
+                            1 representing 100% of the given elements returned in random order.
         Returns:
-                (list)
+            (list)
 
-        Example: randomize(range(10), 1.0) #returns: [8, 4, 7, 6, 0, 5, 9, 1, 3, 2]
-        Example: randomize(range(10), 0.5) #returns: [7, 6, 4, 2, 8]
+        Example:
+            randomize(range(10), 1.0) #returns: [8, 4, 7, 6, 0, 5, 9, 1, 3, 2]
+            randomize(range(10), 0.5) #returns: [7, 6, 4, 2, 8]
         """
         import random
 
@@ -281,16 +283,14 @@ class Misc:
         return randomized
 
 
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     pass
 
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Notes
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------------------
-# deprecated:
-# --------------------------------------------------------------------------------------------
+# deprecated ---------------------

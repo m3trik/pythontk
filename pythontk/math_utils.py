@@ -3,26 +3,26 @@
 from typing import List, Tuple
 
 # from this package:
-from pythontk.misc_utils import Misc
+from pythontk.utils import Utils
 
 
-class Math:
+class MathUtils:
     """ """
 
     @staticmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def move_decimal_point(num, places):
         """Move the decimal place in a given number.
 
         Parameters:
-                num (int/float): The number in which you are modifying.
-                places (int): The number of decimal places to move.
+            num (int/float): The number in which you are modifying.
+            places (int): The number of decimal places to move.
 
         Returns:
-                (float)
+            (float)
 
         Example:
-                move_decimal_point(11.05, -2) #returns: 0.1105
+            move_decimal_point(11.05, -2) #returns: 0.1105
         """
         from decimal import Decimal
 
@@ -43,31 +43,32 @@ class Math:
         """Get a directional vector from a given start and end point.
 
         Parameters:
-                a (List[float]): A start point given as [x, y, z].
-                b (List[float]): An end point given as [x, y, z].
+            a (List[float]): A start point given as [x, y, z].
+            b (List[float]): An end point given as [x, y, z].
 
         Returns:
-                Tuple[float, float, float]: The directional vector from the start point to the end point.
+            Tuple[float, float, float]: The directional vector from the start point to the end point.
 
         Example:
-                get_vector_from_two_points([1, 2, 3], [1, 1, -1]) #returns: (0, -1, -4)
+            get_vector_from_two_points([1, 2, 3], [1, 1, -1]) #returns: (0, -1, -4)
         """
         return (b[0] - a[0], b[1] - a[1], b[2] - a[2])
 
     @staticmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def clamp(n=0.0, minimum=0.0, maximum=1.0):
         """Clamps the value x between min and max.
 
         Parameters:
-                n (float)(tuple): The numeric value to clamp.
-                minimum (float) = Clamp min value.
-                maximum (float) = Clamp max value.
+            n (float)(tuple): The numeric value to clamp.
+            minimum (float): Clamp min value.
+            maximum (float): Clamp max value.
 
         Returns:
-                (float)
+            (float)
 
-        Example: clamp(range(10), 3, 7) #returns: [3, 3, 3, 3, 4, 5, 6, 7, 7, 7]
+        Example:
+            clamp(range(10), 3, 7) #returns: [3, 3, 3, 3, 4, 5, 6, 7, 7, 7]
         """
         return max(minimum, min(n, maximum))
 
@@ -76,15 +77,16 @@ class Math:
         """Normalize a 2 or 3 dimensional vector.
 
         Parameters:
-                vector (tuple): A two or three point vector. ie. (-0.03484, 0.0, -0.55195)
-                amount (float) = (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
+            vector (tuple): A two or three point vector. ie. (-0.03484, 0.0, -0.55195)
+            amount (float): (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
 
         Returns:
-                (tuple)
+            (tuple)
 
-        Example: normalize((2, 3, 4)) #returns: (0.3713906763541037, 0.5570860145311556, 0.7427813527082074)
-        Example: normalize((2, 3)) #returns: (0.5547001962252291, 0.8320502943378437)
-        Example: normalize((2, 3, 4), 2) #returns: (0.7427813527082074, 1.1141720290623112, 1.4855627054164149)
+        Example:
+            normalize((2, 3, 4)) #returns: (0.3713906763541037, 0.5570860145311556, 0.7427813527082074)
+            normalize((2, 3)) #returns: (0.5547001962252291, 0.8320502943378437)
+            normalize((2, 3, 4), 2) #returns: (0.7427813527082074, 1.1141720290623112, 1.4855627054164149)
         """
         n = len(vector)  # determine 2 or 3d vector.
         length = cls.get_magnitude(vector)
@@ -95,13 +97,14 @@ class Math:
         """Get the magnatude (length) of a given vector.
 
         Parameters:
-                vector (tuple): A two or three point vector. ie. (-0.03484, 0.0, -0.55195)
+            vector (tuple): A two or three point vector. ie. (-0.03484, 0.0, -0.55195)
 
         Returns:
-                (float)
+            (float)
 
-        Example: get_magnitude((2, 3, 4)) #returns: 5.385164807134504
-        Example: get_magnitude((2, 3)) #returns: 3.605551275463989
+        Example:
+            get_magnitude((2, 3, 4)) #returns: 5.385164807134504
+            get_magnitude((2, 3)) #returns: 3.605551275463989
         """
         from math import sqrt
 
@@ -114,15 +117,16 @@ class Math:
         is set then the vectors are normalized before the dot product is calculated.
 
         Parameters:
-                v1 (tuple): The first 3 point vector.
-                v2 (tuple): The second 3 point vector.
-                normalize_input (int): Normalize v1, v2 before calculating the point float list.
+            v1 (tuple): The first 3 point vector.
+            v2 (tuple): The second 3 point vector.
+            normalize_input (int): Normalize v1, v2 before calculating the point float list.
 
         Returns:
-                (float) Dot product of the two vectors.
+            (float) Dot product of the two vectors.
 
-        Example: dot_product((1, 2, 3), (1, 1, -1)) #returns: 0
-        Example: dot_product((1, 2), (1, 1)) #returns: 3
+        Example:
+            dot_product((1, 2, 3), (1, 1, -1)) #returns: 0
+            dot_product((1, 2), (1, 1)) #returns: 3
         """
         if normalize_input:  # normalize the input vectors
             v1 = cls.normalize(v1)
@@ -135,17 +139,18 @@ class Math:
         """Get the cross product of two vectors, using two 3d vectors, or 3 points.
 
         Parameters:
-                a (tuple): A point represented as x,y,z or a 3 point vector.
-                b (tuple): A point represented as x,y,z or a 3 point vector.
-                c (tuple): A point represented as x,y,z (used only when working with 3 point values instead of 2 vectors).
-                normalize (float) = (0) Do not normalize. (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
+            a (tuple): A point represented as x,y,z or a 3 point vector.
+            b (tuple): A point represented as x,y,z or a 3 point vector.
+            c (tuple): A point represented as x,y,z (used only when working with 3 point values instead of 2 vectors).
+            normalize (float): (0) Do not normalize. (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
 
         Returns:
-                (tuple)
+            (tuple)
 
-        Example: cross_product((1, 2, 3), (1, 1, -1)) #returns: (-5, 4, -1),
-        Example: cross_product((3, 1, 1), (1, 4, 2), (1, 3, 4)) #returns: (7, 4, 2),
-        Example: cross_product((1, 2, 3), (1, 1, -1), None, 1) #returns: (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919)
+        Example:
+            cross_product((1, 2, 3), (1, 1, -1)) #returns: (-5, 4, -1),
+            cross_product((3, 1, 1), (1, 4, 2), (1, 3, 4)) #returns: (7, 4, 2),
+            cross_product((1, 2, 3), (1, 1, -1), None, 1) #returns: (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919)
         """
         if c is not None:  # convert points to vectors and unpack.
             a = cls.get_vector_from_two_points(a, b)
@@ -166,16 +171,17 @@ class Math:
         """Move a point relative to it's current position.
 
         Parameters:
-                p (tuple): A points x, y, z values.
-                d (tuple)(float) = The distance to move. Use a float value when moving along a vector,
-                                        and a point value to move in a given distance.
-                v (tuple): Optional: A vectors x, y, z values can be given to move the point along that vector.
+            p (tuple): A points x, y, z values.
+            d (tuple)(float): The distance to move. Use a float value when moving along a vector,
+                                    and a point value to move in a given distance.
+            v (tuple): Optional: A vectors x, y, z values can be given to move the point along that vector.
 
         Returns:
-                (tuple) point.
+            (tuple) point.
 
-        Example: move_point_relative((0, 5, 0), (0, 5, 0)) #returns: (0, 10, 0)
-        Example: move_point_relative((0, 5, 0), 5, (0, 1, 0)) #returns: (0, 10, 0)
+        Example:
+            move_point_relative((0, 5, 0), (0, 5, 0)) #returns: (0, 10, 0)
+            move_point_relative((0, 5, 0), 5, (0, 1, 0)) #returns: (0, 10, 0)
         """
         x, y, z = p
 
@@ -203,14 +209,14 @@ class Math:
         """Move a point (a) along a given vector toward or away from a given point (b).
 
         Parameters:
-                a (tuple): The point to move given as (x,y,z).
-                b (tuple): The point to move toward.
-                vect (tuple): A vector to move the point along.
-                dist (float) = The linear amount to move the point.
-                toward (bool): Move the point toward or away from.
+            a (tuple): The point to move given as (x,y,z).
+            b (tuple): The point to move toward.
+            vect (tuple): A vector to move the point along.
+            dist (float): The linear amount to move the point.
+            toward (bool): Move the point toward or away from.
 
         Returns:
-                (tuple) point.
+            (tuple) point.
 
         Example: move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5) #returns: (0.0, 5.0, 0.0)
         Example: move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False) #returns: (0.0, -15.0, 0.0)
@@ -233,11 +239,11 @@ class Math:
         Calculate the distance between two points.
 
         Parameters:
-                a (List[float]): A list of the first point's coordinates [x, y, z].
-                b (List[float]): A list of the second point's coordinates [x, y, z].
+            a (List[float]): A list of the first point's coordinates [x, y, z].
+            b (List[float]): A list of the second point's coordinates [x, y, z].
 
         Returns:
-                float: The distance between the two points.
+            float: The distance between the two points.
         """
         return ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 + (b[2] - a[2]) ** 2) ** 0.5
 
@@ -248,14 +254,14 @@ class Math:
         """Get the point in the middle of two given points.
 
         Parameters:
-                a (List[float]): A point given as [x, y, z].
-                b (List[float]): A point given as [x, y, z].
+            a (List[float]): A point given as [x, y, z].
+            b (List[float]): A point given as [x, y, z].
 
         Returns:
-                Tuple[float, float, float]: The center point between the two input points.
+            Tuple[float, float, float]: The center point between the two input points.
 
         Example:
-                get_center_of_two_points([0, 10, 0], [0, 5, 0]) #returns: (0.0, 7.5, 0.0)
+            get_center_of_two_points([0, 10, 0], [0, 5, 0]) #returns: (0.0, 7.5, 0.0)
         """
         return ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2)
 
@@ -264,15 +270,16 @@ class Math:
         """Get an angle from two given vectors.
 
         Parameters:
-                v1 (tuple): A vectors xyz values as a tuple.
-                v2 (tuple): A vectors xyz values as a tuple.
-                degree (bool): Convert the radian result to degrees.
+            v1 (tuple): A vectors xyz values as a tuple.
+            v2 (tuple): A vectors xyz values as a tuple.
+            degree (bool): Convert the radian result to degrees.
 
         Returns:
-                (float)
+            (float)
 
-        Example: get_angle_from_two_vectors((1, 2, 3), (1, 1, -1)) #returns: 1.5707963267948966,
-        Example: get_angle_from_two_vectors((1, 2, 3), (1, 1, -1), True) #returns: 90
+        Example:
+            get_angle_from_two_vectors((1, 2, 3), (1, 1, -1)) #returns: 1.5707963267948966,
+            get_angle_from_two_vectors((1, 2, 3), (1, 1, -1), True) #returns: 90
         """
         from math import acos, degrees
 
@@ -290,16 +297,17 @@ class Math:
         """Get the opposing angle from 3 given points.
 
         Parameters:
-                a (tuple): A point given as (x,y,z).
-                b (tuple): A point given as (x,y,z).
-                c (tuple): A point given as (x,y,z).
-                degree (bool): Convert the radian result to degrees.
+            a (tuple): A point given as (x,y,z).
+            b (tuple): A point given as (x,y,z).
+            c (tuple): A point given as (x,y,z).
+            degree (bool): Convert the radian result to degrees.
 
         Returns:
-                (float)
+            (float)
 
-        Example: get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3)) #returns: 0.7904487543360762,
-        Example: get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True) #returns: 45.29
+        Example:
+            get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3)) #returns: 0.7904487543360762,
+            get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True) #returns: 45.29
         """
         from math import sqrt, acos, degrees
 
@@ -327,15 +335,16 @@ class Math:
         """Get the length of two sides of a triangle, given two angles, and the length of the side in-between.
 
         Parameters:
-                a1 (float) = Angle in radians or degrees. (unit flag must be set if value given in radians)
-                a2 (float) = Angle in radians or degrees. (unit flag must be set if value given in radians)
-                s (float) = The distance of the side between the two given angles.
-                unit (str): Specify whether the angle values are given in degrees or radians. (valid: 'radians', 'degrees')(default: degrees)
+            a1 (float): Angle in radians or degrees. (unit flag must be set if value given in radians)
+            a2 (float): Angle in radians or degrees. (unit flag must be set if value given in radians)
+            s (float): The distance of the side between the two given angles.
+            unit (str): Specify whether the angle values are given in degrees or radians. (valid: 'radians', 'degrees')(default: degrees)
 
         Returns:
-                (tuple)
+            (tuple)
 
-        Example: get_two_sides_of_asa_triangle(60, 60, 100) #returns: (100.00015320566493, 100.00015320566493)
+        Example:
+            get_two_sides_of_asa_triangle(60, 60, 100) #returns: (100.00015320566493, 100.00015320566493)
         """
         from math import sin, radians
 
@@ -355,16 +364,17 @@ class Math:
         do the rotation.
 
         Parameters:
-                theta (float) = The angular position of a vector in radians.
-                axis (tuple): The rotation axis given as float values (x,y,z).
-                rotation (list):
-                degree (bool): Convert the radian result to degrees.
+            theta (float):The angular position of a vector in radians.
+            axis (tuple): The rotation axis given as float values (x,y,z).
+            rotation (list):
+            degree (bool): Convert the radian result to degrees.
 
         Returns:
-                (tuple) 3 point rotation.
+            (tuple) 3 point rotation.
 
-        Example: xyz_rotation(2, (0, 1, 0)) #returns: [3.589792907376932e-09, 1.9999999964102069, 3.589792907376932e-09]
-        Example: xyz_rotation(2, (0, 1, 0), [], True) #returns: [0.0, 114.59, 0.0]
+        Example:
+            xyz_rotation(2, (0, 1, 0)) #returns: [3.589792907376932e-09, 1.9999999964102069, 3.589792907376932e-09]
+            xyz_rotation(2, (0, 1, 0), [], True) #returns: [0.0, 114.59, 0.0]
         """
         from math import cos, sin, sqrt, atan2, degrees
 
@@ -428,18 +438,17 @@ class Math:
         return tuple(rotation)
 
 
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     pass
 
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Notes
-# --------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 
-# Deprecated ------------------------------------
-
+# deprecated ---------------------
 # @classmethod
 # def normalize(cls, vector, amount=1):
 #   '''Normalize a vector

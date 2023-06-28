@@ -16,12 +16,12 @@ except ImportError as error:
     print("{}\n # Error: {} #".format(__file__, error))
 
 # from this package:
-from pythontk.misc_utils import Misc
-from pythontk.file_utils import File
-from pythontk.iter_utils import Iter
+from pythontk.utils import Utils
+from pythontk.file_utils import FileUtils
+from pythontk.iter_utils import IterUtils
 
 
-class Img:
+class ImgUtils:
     """Helper methods for working with image file formats."""
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
@@ -202,7 +202,7 @@ class Img:
                 (dict) {<full file path>:<image object>}
         """
         images = {}
-        for f in File.get_dir_contents(
+        for f in FileUtils.get_dir_contents(
             directory, "filepaths", inc_files=inc.split("|"), exc_files=exc.split("|")
         ):
             im = cls.load_image(f)
@@ -253,7 +253,7 @@ class Img:
         Returns:
                 (str)
         """
-        name = File.format_path(file, "name")
+        name = FileUtils.format_path(file, "name")
 
         if key:
             result = next(
@@ -291,7 +291,7 @@ class Img:
         Returns:
                 (dict)
         """
-        types = Iter.make_iterable(types.split("|"))
+        types = IterUtils.make_iterable(types.split("|"))
         return [f for f in files if cls.get_image_type_from_filename(f) in types]
 
     @classmethod
@@ -413,9 +413,9 @@ class Img:
         """
         inverted_image = cls.invert_channels(file, "g")
 
-        output_dir = File.format_path(file, "path")
-        name = File.format_path(file, "name")
-        ext = File.format_path(file, "ext")
+        output_dir = FileUtils.format_path(file, "path")
+        name = FileUtils.format_path(file, "name")
+        ext = FileUtils.format_path(file, "ext")
 
         typ = cls.get_image_type_from_filename(file, key=False)
         try:
@@ -444,9 +444,9 @@ class Img:
         """
         inverted_image = cls.invert_channels(file, "g")
 
-        output_dir = File.format_path(file, "path")
-        name = File.format_path(file, "name")
-        ext = File.format_path(file, "ext")
+        output_dir = FileUtils.format_path(file, "path")
+        name = FileUtils.format_path(file, "name")
+        ext = FileUtils.format_path(file, "ext")
 
         typ = cls.get_image_type_from_filename(file, key=False)
         try:
@@ -463,7 +463,7 @@ class Img:
         return filepath
 
     @classmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
     ):
@@ -792,7 +792,7 @@ if __name__ == "__main__":
 #   files = cls.get_image_files()
 #   for file, image in files.items():
 #       inverted_image = cls.invert_channels(image, 'g')
-#       # name = File.format_path(file, remove='_DirectX', append='_OpenGL')
+#       # name = FileUtils.format_path(file, remove='_DirectX', append='_OpenGL')
 #       # cls.save_image(inverted_image, name)
 
 
@@ -802,7 +802,7 @@ if __name__ == "__main__":
 #   files = cls.get_image_files()
 #   for file, image in files.items():
 #       inverted_image = cls.invert_channels(image, 'g')
-#       # name = File.format_path(file, remove='_OpenGL', append='_DirectX')
+#       # name = FileUtils.format_path(file, remove='_OpenGL', append='_DirectX')
 #       # cls.save_image(inverted_image, name)
 
 

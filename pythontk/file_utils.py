@@ -7,12 +7,12 @@ import json
 import traceback
 
 # from this package:
-from pythontk.misc_utils import Misc
-from pythontk.iter_utils import Iter
-from pythontk.str_utils import Str
+from pythontk.utils import Utils
+from pythontk.iter_utils import IterUtils
+from pythontk.str_utils import StrUtils
 
 
-class File:
+class FileUtils:
     """ """
 
     @staticmethod
@@ -181,8 +181,8 @@ class File:
             if not recursive and root != path:
                 return result
 
-            dirs = Iter.filter_list(dirs, inc_dirs, exc_dirs)
-            files = Iter.filter_list(files, inc_files, exc_files)
+            dirs = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
+            files = IterUtils.filter_list(files, inc_files, exc_files)
 
             if "dir" in returnTypes:
                 result.extend(dirs)
@@ -289,7 +289,7 @@ class File:
             return None
 
     @staticmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def format_path(p, section="", replace=""):
         """Format a given filepath(s).
         When a section arg is given, the correlating section of the string will be returned.
@@ -345,7 +345,7 @@ class File:
             result = p
 
         if replace:
-            result = Str.rreplace(p, result, replace, 1)
+            result = StrUtils.rreplace(p, result, replace, 1)
 
         return result
 
@@ -366,7 +366,7 @@ class File:
         ]
 
     @classmethod
-    @Misc.listify(threading=True)
+    @Utils.listify(threading=True)
     def time_stamp(cls, filepath, stamp="%m-%d-%Y  %H:%M"):
         """Attach or detach a modified timestamp and date to/from a given file path.
 
@@ -498,7 +498,7 @@ class File:
             file (str): The filepath to a json file. If a file doesn't exist, it will be created.
         """
         cls._jsonFile = file
-        File.get_file(cls._jsonFile)  # will create the file if it does not exist.
+        cls.get_file(cls._jsonFile)  # will create the file if it does not exist.
 
     @classmethod
     def get_json_file(cls):
@@ -607,7 +607,6 @@ if __name__ == "__main__":
 
 
 # Deprecated ------------------------------------
-
 # @staticmethod
 # def get_filepath(obj, inc_filename=False):
 #     """Get the filepath of a class or module.
