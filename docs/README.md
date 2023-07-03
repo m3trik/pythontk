@@ -9,22 +9,11 @@
 
 ### Submodules:
 
-#### Utils
 [![Utils Tests](https://img.shields.io/badge/FileUtils-Failing-red.svg)](test/ptk_test.py#UtilsTest)
-
-#### FileUtils
 [![FileUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#FileUtilsTest)
-
-#### ImgUtils
 [![ImgUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#ImgUtilsTest)
-
-#### IterUtils
 [![IterUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#IterUtilsTest)
-
-#### MathUtils
 [![MathUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#MathUtilsTest)
-
-#### StrUtils
 [![StrUtils Tests](https://img.shields.io/badge/StrUtils-Passing-brightgreen.svg)](test/ptk_test.py#StrUtilsTest)
 
 ### Installation:
