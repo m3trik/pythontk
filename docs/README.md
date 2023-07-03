@@ -1,4 +1,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Utils Tests](https://img.shields.io/badge/FileUtils-Failing-red.svg)](test/ptk_test.py#UtilsTest)
+[![FileUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#FileUtilsTest)
+[![ImgUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#ImgUtilsTest)
+[![IterUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#IterUtilsTest)
+[![MathUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#MathUtilsTest)
+[![StrUtils Tests](https://img.shields.io/badge/StrUtils-Passing-brightgreen.svg)](test/ptk_test.py#StrUtilsTest)
 
 ### PYTHONTK (Python Toolkit)
 
@@ -6,15 +12,6 @@
 <!-- short_description_start -->
 *pythontk is a collection of backend utilities for Python.*
 <!-- short_description_end -->
-
-### Submodules:
-
-[![Utils Tests](https://img.shields.io/badge/FileUtils-Failing-red.svg)](test/ptk_test.py#UtilsTest)
-[![FileUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#FileUtilsTest)
-[![ImgUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#ImgUtilsTest)
-[![IterUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#IterUtilsTest)
-[![MathUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](test/ptk_test.py#MathUtilsTest)
-[![StrUtils Tests](https://img.shields.io/badge/StrUtils-Passing-brightgreen.svg)](test/ptk_test.py#StrUtilsTest)
 
 ### Installation:
 
