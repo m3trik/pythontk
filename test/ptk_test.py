@@ -546,7 +546,7 @@ def test_make_iterable(self):
             }
         )
 
-    def test_removeDuplicates(self):
+    def test_remove_duplicates(self):
         """ """
         self.perform_test(
             {
@@ -555,7 +555,7 @@ def test_make_iterable(self):
             }
         )
 
-    def test_filterWithMappedValues(self):
+    def test_filter_with_mapped_values(self):
         """ """
         original_list = ["1", "2", "3", "4", "5", "6"]
 
@@ -573,7 +573,7 @@ def test_make_iterable(self):
             ]
         )
 
-    def test_filterDict(self):
+    def test_filter_dict(self):
         """ """
         dct = {1: "1", "two": 2, 3: "three"}
 
@@ -585,7 +585,7 @@ def test_make_iterable(self):
             }
         )
 
-    def test_filterList(self):
+    def test_filter_list(self):
         """ """
         self.perform_test(
             {
@@ -597,7 +597,7 @@ def test_make_iterable(self):
             }
         )
 
-    def test_splitList(self):
+    def test_split_list(self):
         """ """
         lA = [1, 2, 3, 5, 7, 8, 9]
         lB = [1, "2", 3, 5, "7", 8, 9]
@@ -621,7 +621,7 @@ def test_make_iterable(self):
 class FileTest(Main, FileUtils):
     """ """
 
-    def test_formatPath(self):
+    def test_format_path(self):
         """ """
         p1 = r"X:\n/dir1/dir3"
         p2 = r"X:\n/dir1/dir3/.vscode"
@@ -666,7 +666,7 @@ class FileTest(Main, FileUtils):
             }
         )
 
-    def test_timeStamp(self):
+    def test_time_stamp(self):
         """ """
         paths = [
             r"%ProgramFiles%",
@@ -682,7 +682,7 @@ class FileTest(Main, FileUtils):
             }
         )
 
-    def test_isValid(self):
+    def test_is_valid(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__)) + "/test_files"
         file = path + "/file1.txt"
@@ -694,7 +694,7 @@ class FileTest(Main, FileUtils):
             }
         )
 
-    def test_writeToFile(self):
+    def test_write_to_file(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__)) + "/test_files"
         file = path + "/file1.txt"
@@ -705,7 +705,7 @@ class FileTest(Main, FileUtils):
             }
         )
 
-    def test_getFileContents(self):
+    def test_get_file_contents(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__)) + "/test_files"
         file = path + "/file1.txt"
@@ -719,7 +719,7 @@ class FileTest(Main, FileUtils):
             }
         )
 
-    def test_createDirectory(self):
+    def test_create_directory(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__)) + "/test_files"
 
@@ -729,7 +729,7 @@ class FileTest(Main, FileUtils):
             }
         )
 
-    def test_getFileInfo(self):
+    def test_get_file_info(self):
         """ """
         base_path = os.path.dirname(__file__)
         relative_path = "test_files"
@@ -772,7 +772,7 @@ class FileTest(Main, FileUtils):
             ],
         )
 
-    def test_getDirectoryContents(self):
+    def test_get_directory_contents(self):
         """ """
         base_path = os.path.dirname(__file__)
         relative_path = "test_files"
@@ -832,14 +832,14 @@ class FileTest(Main, FileUtils):
             ],
         )
 
-    def test_getFilepath(self):
+    def test_get_filepath(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__))
 
         self.assertEqual(self.get_filepath(__file__), path)
         self.assertEqual(self.get_filepath(__file__, inc_filename=True), __file__)
 
-    def test_getFile(self):
+    def test_get_file(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__)) + "/test_files"
         file = path + "/file1.txt"
@@ -850,7 +850,24 @@ class FileTest(Main, FileUtils):
             }
         )
 
-    def test_updateVersion(self):
+    def test_get_classes_from_dir(self):
+        """ """
+        path = os.path.abspath(os.path.dirname(__file__))
+
+        self.assertEqual(
+            self.get_classes_from_dir(path),
+            {
+                "FileTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
+                "ImgTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
+                "IterTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
+                "Main": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
+                "MathTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
+                "StrTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
+                "UtilsTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
+            },
+        )
+
+    def test_update_version(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__)) + "/test_files"
         file = path + "/file1.txt"

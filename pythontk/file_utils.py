@@ -365,6 +365,54 @@ class FileUtils:
             sys.path.append(d) for d in cls.get_dir_contents(path, "dirs", **kwargs)
         ]
 
+    @staticmethod
+    def get_classes_from_dir(dir_path):
+        """Parses the Python source files in a directory and extracts the names of all defined classes.
+        This function uses the Abstract Syntax Tree (AST) module to parse the Python source files, and hence does not execute any code within these files. It only considers classes that are defined at the top level of each file, and not those defined within other classes or functions.
+
+        Parameters:
+            dir_path (str): The path to the directory containing the Python source files.
+
+        Raises:
+            Exception: If the provided directory path does not exist or is not a directory.
+
+        Returns:
+            dict: A dictionary where the keys are the names of the identified classes, and the values are the corresponding paths to the Python files where these classes are defined.
+
+        Examples:
+            >>> get_classes_from_dir('/path/to/directory')
+            {'MyClass1': '/path/to/directory/my_file1.py', 'MyClass2': '/path/to/directory/my_file2.py'}
+
+        Note:
+            This function will not correctly identify classes that are defined dynamically or otherwise in non-standard ways.
+        """
+        import ast
+
+        # Check if directory exists
+        if not os.path.isdir(dir_path):
+            raise Exception(f"Directory {dir_path} doesn't exist")
+
+        # Create an empty dictionary to store class names and their module file paths
+        widget_classes = {}
+
+        # Iterate over each file in the directory
+        for filename in os.listdir(dir_path):
+            # Check if the file is a Python file
+            if filename.endswith(".py"):
+                with open(os.path.join(dir_path, filename), "r") as file:
+                    module = ast.parse(file.read())
+                    classes = [
+                        node for node in module.body if isinstance(node, ast.ClassDef)
+                    ]
+
+                    for cls in classes:
+                        # Check if the class inherits from QWidget
+                        for base in cls.bases:
+                            # Add the class name and file path to the dictionary
+                            widget_classes[cls.name] = os.path.join(dir_path, filename)
+
+        return widget_classes
+
     @classmethod
     @Utils.listify(threading=True)
     def time_stamp(cls, filepath, stamp="%m-%d-%Y  %H:%M"):
