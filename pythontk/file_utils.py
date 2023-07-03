@@ -244,7 +244,7 @@ class FileUtils:
 
         Parameters:
             obj (obj): A python module, class, or the built-in __file__ variable.
-            inc_filename (bool): Include the filename in the returned result.
+            inc_filename (bool): Include the filename (or directory if the object is a package) in the returned path.
 
         Returns:
             (str)

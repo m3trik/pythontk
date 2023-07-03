@@ -836,12 +836,8 @@ class FileTest(Main, FileUtils):
         """ """
         path = os.path.abspath(os.path.dirname(__file__))
 
-        self.perform_test(
-            {
-                "self.get_filepath(__file__)": path,
-                "self.get_filepath(__file__, True)": __file__,
-            }
-        )
+        self.assertEqual(self.get_filepath(__file__), path)
+        self.assertEqual(self.get_filepath(__file__, inc_filename=True), __file__)
 
     def test_getFile(self):
         """ """
