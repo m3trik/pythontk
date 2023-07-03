@@ -3,7 +3,7 @@
 import os
 import unittest
 import inspect
-from pythontk import Utils, FileUtils, ImgUtils, IterUtils, MathUtils, StrUtils
+from pythontk import CoreUtils, FileUtils, ImgUtils, IterUtils, MathUtils, StrUtils
 
 
 class Main(unittest.TestCase):
@@ -63,8 +63,8 @@ class Main(unittest.TestCase):
         return re.sub(r"0x[a-fA-F\d]+", "0x00000000000", str(obj))
 
 
-class UtilsTest(Main, Utils):
-    """Utils test class."""
+class CoreUtilsTest(Main, CoreUtils):
+    """CoreUtils test class."""
 
     def test_imports(self):
         """Test imports."""
@@ -85,7 +85,7 @@ class UtilsTest(Main, Utils):
             def __init__(self):
                 self._counter = 0
 
-            @Utils.cached_property
+            @CoreUtils.cached_property
             def counter(self):
                 """A property that increments the counter by one each time it's accessed."""
                 self._counter += 1
@@ -108,41 +108,41 @@ class UtilsTest(Main, Utils):
 
     def test_listify(self):
         # 1. Standalone function with threading
-        @Utils.listify(threading=True)
+        @CoreUtils.listify(threading=True)
         def to_str(n):
             return str(n)
 
         # 2. Function with arg_name specified
-        @Utils.listify(arg_name="n")
+        @CoreUtils.listify(arg_name="n")
         def to_str_arg_name(n):
             return str(n)
 
         # 3. Function with arg_name specified and threading
-        @Utils.listify(arg_name="n", threading=True)
+        @CoreUtils.listify(arg_name="n", threading=True)
         def to_str_arg_name_threaded(n):
             return str(n)
 
         # 4. Method within a class with threading
         class TestClass:
-            @Utils.listify
+            @CoreUtils.listify
             def to_str(self, n, x=None):
                 return str(n)
 
             @staticmethod
-            @Utils.listify
+            @CoreUtils.listify
             def to_str_staticmethod(n):
                 return str(n)
 
             @classmethod
-            @Utils.listify
+            @CoreUtils.listify
             def to_str_classmethod(cls, n):
                 return str(n)
 
-            @Utils.listify(threading=True)
+            @CoreUtils.listify(threading=True)
             def to_str_threading(self, n):
                 return str(n)
 
-            @Utils.listify(arg_name="n", threading=True)
+            @CoreUtils.listify(arg_name="n", threading=True)
             def to_str_arg_name(self, n):
                 return str(n)
 

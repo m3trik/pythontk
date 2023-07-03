@@ -9,7 +9,7 @@ from typing import Any, Callable
 from pythontk.iter_utils import IterUtils
 
 
-class Utils:
+class CoreUtils:
     """ """
 
     @staticmethod
@@ -41,7 +41,7 @@ class Utils:
     @staticmethod
     def listify(func=None, arg_name=None, threading=False):
         if func is None:
-            return lambda func: Utils.listify(func, arg_name=arg_name)
+            return lambda func: CoreUtils.listify(func, arg_name=arg_name)
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -291,6 +291,3 @@ if __name__ == "__main__":
 # -----------------------------------------------------------------------------
 # Notes
 # -----------------------------------------------------------------------------
-
-
-# deprecated ---------------------
