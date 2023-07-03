@@ -16,7 +16,7 @@ except ImportError as error:
     print("{}\n # Error: {} #".format(__file__, error))
 
 # from this package:
-from pythontk.utils import Utils
+from pythontk.utils import CoreUtils
 from pythontk.file_utils import FileUtils
 from pythontk.iter_utils import IterUtils
 
@@ -463,7 +463,7 @@ class ImgUtils:
         return filepath
 
     @classmethod
-    @Utils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
     ):
