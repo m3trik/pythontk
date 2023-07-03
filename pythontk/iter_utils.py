@@ -1,5 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
+from collections.abc import Iterable
 
 
 class IterUtils:
@@ -10,12 +11,14 @@ class IterUtils:
         """Convert the given obj to an iterable, unless it's a string, bytes, or bytearray.
 
         Parameters:
-            x () = The object to convert to an iterable if not already a list, set, or tuple.
+            x () = The object to convert to an iterable if not already a list, set, tuple, dict_values or range.
 
         Returns:
             (iterable)
         """
-        if isinstance(x, (list, tuple, set, dict, range)):
+        if isinstance(x, (list, tuple, set, dict, range)) or (
+            isinstance(x, Iterable) and not isinstance(x, (str, bytes, bytearray))
+        ):
             return x
         else:
             return (x,)
