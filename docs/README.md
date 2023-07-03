@@ -2,8 +2,8 @@
 [![CoreUtils Tests](https://img.shields.io/badge/CoreUtils-Failing-red.svg)](../test/ptk_test.py#CoreUtilsTest)
 [![FileUtils Tests](https://img.shields.io/badge/FileUtils-Passing-brightgreen.svg)](../test/ptk_test.py#FileUtilsTest)
 [![ImgUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](../test/ptk_test.py#ImgUtilsTest)
-[![IterUtils Tests](https://img.shields.io/badge/IterUtils-Passing-brightgreen.svg)](../test/ptk_test.py#IterUtilsTest)
 [![MathUtils Tests](https://img.shields.io/badge/MathUtils-Passing-brightgreen.svg)](../test/ptk_test.py#MathUtilsTest)
+[![IterUtils Tests](https://img.shields.io/badge/IterUtils-Passing-brightgreen.svg)](../test/ptk_test.py#IterUtilsTest)
 [![StrUtils Tests](https://img.shields.io/badge/StrUtils-Passing-brightgreen.svg)](../test/ptk_test.py#StrUtilsTest)
 
 ### PYTHONTK (Python Toolkit)
