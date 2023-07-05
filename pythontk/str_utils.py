@@ -1,7 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 # from this package:
-from pythontk.utils import CoreUtils
+from pythontk.core_utils import CoreUtils
 from pythontk.iter_utils import IterUtils
 
 
