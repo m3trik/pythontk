@@ -16,7 +16,7 @@ except ImportError as error:
     print("{}\n # Error: {} #".format(__file__, error))
 
 # from this package:
-from pythontk.utils import CoreUtils
+from pythontk.core_utils import CoreUtils
 from pythontk.file_utils import FileUtils
 from pythontk.iter_utils import IterUtils
 

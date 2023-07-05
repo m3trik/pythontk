@@ -3,7 +3,7 @@
 from typing import List, Tuple
 
 # from this package:
-from pythontk.utils import CoreUtils
+from pythontk.core_utils import CoreUtils
 
 
 class MathUtils:

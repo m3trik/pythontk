@@ -7,7 +7,7 @@ import json
 import traceback
 
 # from this package:
-from pythontk.utils import CoreUtils
+from pythontk.core_utils import CoreUtils
 from pythontk.iter_utils import IterUtils
 from pythontk.str_utils import StrUtils
 
