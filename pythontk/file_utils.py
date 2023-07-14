@@ -455,30 +455,31 @@ class FileUtils:
         change: str = "increment",
         version_part: str = "patch",
         max_version_parts: tuple = (9, 9),
+        version_regex: str = r"__version__\s*=\s*['\"](\d+)\.(\d+)\.(\d+)['\"]",
     ) -> None:
         """This function updates the version number in a text file depending on its state.
-        The version number is defined as a line in the following format: __version__ = "0.0.0"
-        The version number is represented as a string in the format 'x.y.z', where x, y, and z are integers.
+        The version number is represented as a string in the format 'x.y.z', where x, y, and z are integers and it matches the provided regex pattern.
 
         Parameters:
             filepath (str): The path to the text file containing the version number.
             change (str, optional): The type of change, either 'increment' or 'decrement'. Defaults to 'increment'.
             version_part (str, optional): The part of the version number to update, either 'major', 'minor', or 'patch'. Defaults to 'patch'.
             max_version_parts (tuple, optional): A tuple containing the maximum values for the minor and patch version parts. Defaults to (9, 9).
-
+            version_regex (str, optional): A regex pattern that defines the format of the version line in the file.
+                    The pattern should have three groups each representing major, minor, and patch versions respectively.
         Returns:
-            (str): The new version number.
+            str: The new version number. If the function could not find a version number that matches the provided pattern in the file, it will print an error message and return an empty string.
         """
         import re
 
         lines = cls.get_file_contents(filepath, as_list=True)
 
-        version_pattern = re.compile(r"__version__\s*=\s*['\"](\d+)\.(\d+)\.(\d+)['\"]")
+        version_pattern = re.compile(version_regex)
         max_minor, max_patch = max_version_parts
 
         version = ""
         for i, line in enumerate(lines):
-            match = version_pattern.match(line)
+            match = version_pattern.search(line)
             if match:
                 major, minor, patch = map(int, match.groups())
 
@@ -528,7 +529,16 @@ class FileUtils:
                     )
 
                 version = f"{major}.{minor}.{patch}"
-                lines[i] = f"__version__ = '{version}'\n"
+
+                # Preserve the original format of the line
+                new_line = re.sub(
+                    version_regex,
+                    lambda m: m.group(0).replace(
+                        m.group(1) + "." + m.group(2) + "." + m.group(3), version
+                    ),
+                    line,
+                )
+                lines[i] = new_line
                 break
 
         cls.write_to_file(filepath, lines)
