@@ -555,22 +555,67 @@ def test_make_iterable(self):
             }
         )
 
-    def test_filter_with_mapped_values(self):
+    def test_filter_list(self):
         """ """
-        original_list = ["1", "2", "3", "4", "5", "6"]
-
-        def keep_even_numbers(lst):
-            return [x for x in lst if x % 2 == 0]
-
-        self.perform_test(
+        self.assertEqual(self.filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2), [1, 3])
+        self.assertEqual(
+            self.filter_list([0, 1, "file.txt", "file.jpg"], ["*file*", 0], "*.txt"),
             [
-                (
-                    self.filter_mapped_values(
-                        original_list, keep_even_numbers, lambda x: int(x)
-                    ),
-                    ["2", "4", "6"],
-                ),
-            ]
+                0,
+                "file.jpg",
+            ],
+        )
+        # Test filter_list with a map_func.
+        self.assertEqual(
+            self.filter_list(
+                ["apple", "banana", "cherry"], "*a*", "*n*", map_func=lambda x: x[::-1]
+            ),
+            ["apple"],
+        )
+        # Test filter_list with a map_func and check_unmapped=True.
+        self.assertEqual(
+            self.filter_list(
+                ["apple", "banana", "cherry"],
+                "*e*",  # Changed the inclusion criterion
+                "*n*",
+                map_func=lambda x: x[::-1],  # This reverses the string
+                check_unmapped=True,
+            ),
+            ["apple", "cherry"],
+        )
+        # Test filter_list with check_unmapped=True.
+        self.assertEqual(
+            self.filter_list([1, 2, 3, 4, 5], [2, 3], 4, check_unmapped=True), [2, 3]
+        )
+        # Test the filter_list method in the case where map_func converts all items to a non-matching string, but check_unmapped is set to True. This means the original, unmapped items should be used for the matching check.
+        self.assertEqual(
+            self.filter_list(
+                ["apple", "banana", "cherry"],
+                "*a*",
+                "*n*",
+                map_func=lambda x: "nothing",
+                check_unmapped=True,
+            ),
+            ["apple", "cherry"],
+        )
+
+        # Test filter_list with object inputs and check_unmapped=True.
+        class MyObject:
+            def __init__(self, name):
+                self.name = name
+
+        obj1 = MyObject("object1")
+        obj2 = MyObject("object2")
+        obj3 = MyObject("object3")
+        self.assertEqual(
+            self.filter_list(
+                [obj1, obj2, obj3],
+                obj2,
+                obj3,
+                map_func=lambda x: x.name,
+                check_unmapped=True,
+            ),
+            [obj2],
         )
 
     def test_filter_dict(self):
@@ -582,18 +627,6 @@ def test_make_iterable(self):
                 f"self.filter_dict({dct}, exc='*t*', values=True)": {1: "1", "two": 2},
                 f"self.filter_dict({dct}, exc='t*', keys=True)": {1: "1", 3: "three"},
                 f"self.filter_dict({dct}, exc=1, keys=True)": {"two": 2, 3: "three"},
-            }
-        )
-
-    def test_filter_list(self):
-        """ """
-        self.perform_test(
-            {
-                "self.filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2)": [1, 3],
-                "self.filter_list([0, 1, 'file.txt', 'file.jpg'], ['*file*', 0], '*.txt')": [
-                    0,
-                    "file.jpg",
-                ],
             }
         )
 
@@ -1089,56 +1122,49 @@ class ImgTest(Main, ImgUtils):
         """ """
         bg = self.get_background("test_files/imgtk_test/im_Base_color.png", "RGB")
         # self.replace_color('test_files/imgtk_test/im_Base_color.png', self.bg, (255, 0, 0)).show()
-        self.perform_test(
-            {
-                f"str(self.replace_color('test_files/imgtk_test/im_Base_color.png', {bg}, (255, 0, 0))).split('size')[0]": "<PIL.Image.Image image mode=RGBA ",
-            }
+        self.assertEqual(
+            str(
+                self.replace_color(
+                    "test_files/imgtk_test/im_Base_color.png", bg, (255, 0, 0)
+                )
+            ).split("size")[0],
+            "<PIL.Image.Image image mode=RGBA ",
         )
 
     def test_setContrast(self):
         """ """
         # self.set_contrast('test_files/imgtk_test/im_Mixed_AO.png', 255).show()
-        self.perform_test(
-            {
-                "str(self.set_contrast('test_files/imgtk_test/im_Mixed_AO.png', 255)).split('size')[0]": "<PIL.Image.Image image mode=L ",
-            }
+        self.assertEqual(
+            str(self.set_contrast("test_files/imgtk_test/im_Mixed_AO.png", 255)).split(
+                "size"
+            )[0],
+            "<PIL.Image.Image image mode=L ",
         )
 
     def test_convert_rgb_to_gray(self):
         """ """
         # print (\n'test_convert_rgb_to_gray:', self.convert_rgb_to_gray(self.im_h))
-        self.perform_test(
-            {
-                "str(type(self.convert_rgb_to_gray(self.im_h)))": "<class 'numpy.ndarray'>",
-            }
+        self.assertEqual(
+            str(type(self.convert_rgb_to_gray(self.im_h))), "<class 'numpy.ndarray'>"
         )
 
     def test_convert_RGB_to_HSV(self):
         """ """
-        self.perform_test(
-            {
-                "str(self.convert_rgb_to_hsv(self.im_h)).split('size')[0]": "<PIL.Image.Image image mode=HSV ",
-            }
+        self.assertEqual(
+            str(self.convert_rgb_to_hsv(self.im_h)).split("size")[0],
+            "<PIL.Image.Image image mode=HSV ",
         )
 
     def test_convert_I_to_L(self):
         """ """
         self.im_convert_I_to_L = self.create_image("I", (32, 32))
         # im = self.convert_i_to_l(self.im)
-        self.perform_test(
-            {
-                "self.convert_i_to_l(self.im_convert_I_to_L).mode": "L",
-            }
-        )
+        self.assertEqual(self.convert_i_to_l(self.im_convert_I_to_L).mode, "L")
 
     def test_areIdentical(self):
         """ """
-        self.perform_test(
-            {
-                "self.are_identical(self.im_h, self.im_n)": False,
-                "self.are_identical(self.im_h, self.im_h)": True,
-            }
-        )
+        self.assertEqual(self.are_identical(self.im_h, self.im_n), False)
+        self.assertEqual(self.are_identical(self.im_h, self.im_h), True)
 
 
 class MathTest(Main, MathUtils):
@@ -1146,158 +1172,138 @@ class MathTest(Main, MathUtils):
 
     def test_getVectorFromTwoPoints(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_vector_from_two_points((1, 2, 3), (1, 1, -1))": (0, -1, -4),
-            }
+        self.assertEqual(
+            self.get_vector_from_two_points((1, 2, 3), (1, 1, -1)), (0, -1, -4)
         )
 
     def test_clamp(self):
         """ """
-        self.perform_test(
-            {
-                "self.clamp(range(10), 3, 7)": [3, 3, 3, 3, 4, 5, 6, 7, 7, 7],
-            }
-        )
+        self.assertEqual(self.clamp(range(10), 3, 7), [3, 3, 3, 3, 4, 5, 6, 7, 7, 7])
 
     def test_normalize(self):
         """ """
-        self.perform_test(
-            {
-                "self.normalize((2, 3, 4))": (
-                    0.3713906763541037,
-                    0.5570860145311556,
-                    0.7427813527082074,
-                ),
-                "self.normalize((2, 3))": (0.5547001962252291, 0.8320502943378437),
-                "self.normalize((2, 3, 4), 2)": (
-                    0.7427813527082074,
-                    1.1141720290623112,
-                    1.4855627054164149,
-                ),
-            }
+        self.assertEqual(
+            self.normalize((2, 3, 4)),
+            (
+                0.3713906763541037,
+                0.5570860145311556,
+                0.7427813527082074,
+            ),
+        )
+        self.assertEqual(
+            self.normalize((2, 3)), (0.5547001962252291, 0.8320502943378437)
+        )
+        self.assertEqual(
+            self.normalize((2, 3, 4), 2),
+            (0.7427813527082074, 1.1141720290623112, 1.4855627054164149),
         )
 
     def test_getMagnitude(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_magnitude((2, 3, 4))": 5.385164807134504,
-                "self.get_magnitude((2, 3))": 3.605551275463989,
-            }
-        )
+        self.assertEqual(self.get_magnitude((2, 3, 4)), 5.385164807134504)
+        self.assertEqual(self.get_magnitude((2, 3)), 3.605551275463989)
 
     def test_dotProduct(self):
         """ """
-        self.perform_test(
-            {
-                "self.dot_product((1, 2, 3), (1, 1, -1))": 0,
-                "self.dot_product((1, 2), (1, 1))": 3,
-                "self.dot_product((1, 2, 3), (1, 1, -1), True)": 0,
-            }
-        )
+        self.assertEqual(self.dot_product((1, 2, 3), (1, 1, -1)), 0)
+        self.assertEqual(self.dot_product((1, 2), (1, 1)), 3)
+        self.assertEqual(self.dot_product((1, 2, 3), (1, 1, -1), True), 0)
 
     def test_crossProduct(self):
         """ """
-        self.perform_test(
-            {
-                "self.cross_product((1, 2, 3), (1, 1, -1))": (-5, 4, -1),
-                "self.cross_product((3, 1, 1), (1, 4, 2), (1, 3, 4))": (7, 4, 2),
-                "self.cross_product((1, 2, 3), (1, 1, -1), None, 1)": (
-                    -0.7715167498104595,
-                    0.6172133998483676,
-                    -0.1543033499620919,
-                ),
-            }
+        self.assertEqual(self.cross_product((1, 2, 3), (1, 1, -1)), (-5, 4, -1))
+        self.assertEqual(self.cross_product((3, 1, 1), (1, 4, 2), (1, 3, 4)), (7, 4, 2))
+        self.assertEqual(
+            self.cross_product((1, 2, 3), (1, 1, -1), None, 1),
+            (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919),
         )
 
     def test_movePointRelative(self):
         """ """
-        self.perform_test(
-            {
-                "self.move_point_relative((0, 5, 0), (0, 5, 0))": (0, 10, 0),
-                "self.move_point_relative((0, 5, 0), 5, (0, 1, 0))": (0, 10, 0),
-            }
-        )
+        self.assertEqual(self.move_point_relative((0, 5, 0), (0, 5, 0)), (0, 10, 0))
+        self.assertEqual(self.move_point_relative((0, 5, 0), 5, (0, 1, 0)), (0, 10, 0))
 
     def test_movePointAlongVectorRelativeToPoint(self):
         """ """
-        self.perform_test(
-            {
-                "self.move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5)": (
-                    0.0,
-                    5.0,
-                    0.0,
-                ),
-                "self.move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False)": (
-                    0.0,
-                    -5.0,
-                    0.0,
-                ),
-            }
+        self.assertEqual(
+            self.move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5),
+            (
+                0.0,
+                5.0,
+                0.0,
+            ),
+        )
+        self.assertEqual(
+            self.move_point_relative_along_vector(
+                (0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False
+            ),
+            (
+                0.0,
+                -5.0,
+                0.0,
+            ),
         )
 
     def test_getDistanceBetweenTwoPoints(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_distance((0, 10, 0), (0, 5, 0))": 5.0,
-            }
-        )
+        self.assertEqual(self.get_distance((0, 10, 0), (0, 5, 0)), 5.0)
 
     def test_getCenterPointBetweenTwoPoints(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_center_of_two_points((0, 10, 0), (0, 5, 0))": (
-                    0.0,
-                    7.5,
-                    0.0,
-                ),
-            }
+        self.assertEqual(
+            self.get_center_of_two_points((0, 10, 0), (0, 5, 0)),
+            (
+                0.0,
+                7.5,
+                0.0,
+            ),
         )
 
     def test_getAngleFrom2Vectors(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1))": 1.5707963267948966,
-                "self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1), True)": 90,
-            }
+        self.assertEqual(
+            self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1)), 1.5707963267948966
+        )
+        self.assertEqual(
+            self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1), True), 90
         )
 
     def test_getAngleFrom3Points(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3))": 0.7904487543360762,
-                "self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True)": 45.29,
-            }
+        self.assertEqual(
+            self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3)),
+            0.7904487543360762,
+        )
+        self.assertEqual(
+            self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True),
+            45.29,
         )
 
     def test_getTwoSidesOfASATriangle(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_two_sides_of_asa_triangle(60, 60, 100)": (
-                    100.00015320566493,
-                    100.00015320566493,
-                ),
-            }
+        self.assertEqual(
+            self.get_two_sides_of_asa_triangle(60, 60, 100),
+            (100.00015320566493, 100.00015320566493),
         )
 
     def test_xyzRotation(self):
         """ """
-        self.perform_test(
-            {
-                "self.xyz_rotation(2, (0, 1, 0))": (
-                    3.589792907376932e-09,
-                    1.9999999964102069,
-                    3.589792907376932e-09,
-                ),
-                "self.xyz_rotation(2, (0, 1, 0), [], True)": (0.0, 114.59, 0.0),
-            }
+        self.assertEqual(
+            self.xyz_rotation(2, (0, 1, 0)),
+            (
+                3.589792907376932e-09,
+                1.9999999964102069,
+                3.589792907376932e-09,
+            ),
         )
+        self.assertEqual(self.xyz_rotation(2, (0, 1, 0), [], True), (0.0, 114.59, 0.0))
+
+    def test_lerp(self):
+        """Test the lerp function with a variety of inputs."""
+        self.assertEqual(self.lerp(0, 10, 0.5), 5.0)
+        self.assertEqual(self.lerp(-10, 10, 0.5), 0.0)
+        self.assertEqual(self.lerp(0, 10, 0), 0)
+        self.assertEqual(self.lerp(0, 10, 1), 10)
 
 
 # -----------------------------------------------------------------------------

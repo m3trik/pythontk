@@ -543,9 +543,7 @@ class FileUtils:
 
         cls.write_to_file(filepath, lines)
         if not version:
-            print(
-                f'# Error: No version in the format: __version__ = "0.0.0" found in {filepath}'
-            )
+            print(f"Error: No version found in {filepath}")
         return version
 
     @classmethod
