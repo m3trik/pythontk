@@ -203,7 +203,7 @@ class ImgUtils:
         """
         images = {}
         for f in FileUtils.get_dir_contents(
-            directory, "filepaths", inc_files=inc.split("|"), exc_files=exc.split("|")
+            directory, "filepath", inc_files=inc.split("|"), exc_files=exc.split("|")
         ):
             im = cls.load_image(f)
             images[f] = im

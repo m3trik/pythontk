@@ -11,17 +11,18 @@ class IterUtils:
         """Convert the given obj to an iterable, unless it's a string, bytes, or bytearray.
 
         Parameters:
-            x () = The object to convert to an iterable if not already a list, set, tuple, dict_values or range.
+            x (unknown): The object to convert to an iterable if not already a list, set, tuple, dict_values or range.
 
         Returns:
             (iterable)
         """
-        if isinstance(x, (list, tuple, set, dict, range)) or (
-            isinstance(x, Iterable) and not isinstance(x, (str, bytes, bytearray))
-        ):
-            return x
-        else:
+        if hasattr(x, "__apimfn__") or isinstance(x, (str, bytes, bytearray)):
             return (x,)
+        elif isinstance(x, (map, filter, zip)):
+            return list(x)
+        elif isinstance(x, Iterable):
+            return x
+        return (x,)
 
     @classmethod
     def nested_depth(cls, lst, typ=(list, set, tuple)):
@@ -75,6 +76,7 @@ class IterUtils:
             List[str] or str: The compressed representation of the input list as a list of strings or a single string.
         """
         ranges = []
+        prev_x = None
         for x in map(str, lst):  # make sure the list is made up of strings.
             if not ranges:
                 ranges.append([x])
@@ -101,9 +103,9 @@ class IterUtils:
             collapsed = ["..".join([r[0], r[-1]] if len(r) > 1 else r) for r in ranges]
 
         if limit and len(collapsed) > limit:
-            l = collapsed[:limit]
-            l.append("...")
-            collapsed = l
+            limited_collapsed = collapsed[:limit]
+            limited_collapsed.append("...")
+            collapsed = limited_collapsed
 
         if to_string:
             collapsed = ", ".join(collapsed)
@@ -178,97 +180,99 @@ class IterUtils:
     def filter_list(
         cls,
         lst: List,
-        inc: Optional[Union[str, List]] = None,
-        exc: Optional[Union[str, List]] = None,
+        inc: Optional[Union[str, List]] = [],
+        exc: Optional[Union[str, List]] = [],
         map_func: Optional[Callable] = None,
         check_unmapped: bool = False,
+        nested_as_unit: bool = False,
     ) -> List:
-        """Filter the given list based on inclusion/exclusion criteria.
-
-        The function applies the `map_func` (if provided) to each item in the list and checks for matches against
-        `inc` and `exc` lists. If an item matches any pattern in the `exc` list, it is excluded from the result.
-        If `inc` list is provided, only the items that match any pattern in this list are included in the result.
-        If `map_func` raises an exception or if `check_unmapped` is True, the checks are performed on the original item.
+        """Filters the given list based on inclusion/exclusion criteria using shell-style wildcards. This method can also apply
+        the filter to nested structures like lists, tuples, or sets. If 'nested_as_unit' is True, then the entire structure is
+        considered as a single unit for inclusion or exclusion based on whether any of its elements match the criteria.
 
         Parameters:
             lst (list): The list to filter.
-            inc (str/int/obj/list, optional): The pattern(s) or object(s) to include.
-                Each item can be a string, number, or object. Strings can include the '*' wildcard at the start, middle, or end.
+            inc (str/list, optional): The pattern(s) or object(s) to include.
+                Each item can be a string or integer. Strings can include shell-style wildcards:
+                    - '*': Matches any sequence of characters (including none).
+                    - '?': Matches any single character.
+                    - '[seq]': Matches any character in 'seq'.
+                    - '[!seq]': Matches any character not in 'seq'.
                 If provided, only items that match any pattern or object in this list are included in the result.
-            exc (str/int/obj/list, optional): The pattern(s) or object(s) to exclude.
-                Each item can be a string, number, or object. Strings can include the '*' wildcard at the start, middle, or end.
+            exc (str/list, optional): The pattern(s) or object(s) to exclude.
+                Each item can be a string or integer. Supports the same wildcards as 'inc'.
                 If an item matches any pattern or object in this list, it is excluded from the result.
             map_func (callable, optional): The function to apply on each item in the list before matching.
                 This function should accept a single argument and return a new value. If the function raises an exception,
-                it is ignored and the original item is used instead for matching.
+                it is ignored, and the original item is used instead for matching.
             check_unmapped (bool, optional): Whether to perform matching checks on the original items if `map_func` is used.
-                If True, both the mapped and the original items are used for matching checks. Defaults to False.
+                If True and `map_func` is provided, the function will check both the transformed (mapped) and the original (unmapped)
+                items against the inclusion and exclusion criteria. If either the transformed or the original item matches the criteria,
+                the original item is included or excluded in the result accordingly. Defaults to False.
+            nested_as_unit (bool, optional): Whether to consider the entire nested structure as a single entity for filtering.
+                If True, the entire nested structure will be included or excluded if any of its elements match the inclusion or exclusion criteria.
 
         Returns:
             list: The filtered list.
-
-        Examples:
-            >>> filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2)  # returns: [1, 3]
-            >>> filter_list(['apple', 'banana', 'cherry'], 'a*', exc='*a')  # returns: ['apple']
-            >>> filter_list([1.1, 2.2, 3.3], exc=2.2, map_func=round)  # returns: [1.1, 3.3]
         """
-        exc = list(cls.make_iterable(exc))
+        from fnmatch import fnmatchcase
+
         inc = list(cls.make_iterable(inc))
+        exc = list(cls.make_iterable(exc))
 
-        def parse_patterns(patterns):
-            contains, startswith, endswith = [], [], []
-            for pattern in patterns:
-                if isinstance(pattern, str) and "*" in pattern:
-                    if pattern.startswith("*"):
-                        if pattern.endswith("*"):
-                            contains.append(pattern[1:-1])
-                        else:
-                            endswith.append(pattern[1:])
-                    elif pattern.endswith("*"):
-                        startswith.append(pattern[:-1])
-            return contains, startswith, endswith
+        def match_item(item: Union[str, int], patterns: List[Union[str, int]]) -> bool:
+            return any(
+                fnmatchcase(str(item), pattern)
+                if isinstance(pattern, str)
+                else item == pattern
+                for pattern in patterns
+            )
 
-        exc_contains, exc_startswith, exc_endswith = parse_patterns(exc)
-        inc_contains, inc_startswith, inc_endswith = parse_patterns(inc)
+        def check_item(item):
+            try:
+                mapped_item = map_func(item) if map_func is not None else item
+            except Exception:
+                mapped_item = item
 
-        def match_item(item, condition, contains, startswith, endswith):
-            if item in condition:
+            if match_item(mapped_item, exc):
+                return False
+
+            if not inc or match_item(mapped_item, inc):
                 return True
-            if isinstance(item, str):
-                return (
-                    any(item.startswith(sw) for sw in startswith)
-                    or any(item.endswith(ew) for ew in endswith)
-                    or any(c in item for c in contains)
-                )
+
+            if check_unmapped and (
+                (not inc or match_item(item, inc)) and not match_item(item, exc)
+            ):
+                return True
+
             return False
 
         result = []
         for original_item in lst:
-            try:
-                mapped_item = (
-                    map_func(original_item) if map_func is not None else original_item
-                )
-            except Exception:
-                mapped_item = original_item
-
-            if match_item(mapped_item, exc, exc_contains, exc_startswith, exc_endswith):
-                continue
-
-            if not inc or match_item(
-                mapped_item, inc, inc_contains, inc_startswith, inc_endswith
-            ):
-                result.append(original_item)
-                continue
-
-            if check_unmapped:
-                if match_item(
-                    original_item, exc, exc_contains, exc_startswith, exc_endswith
-                ):
-                    continue
-                if not inc or match_item(
-                    original_item, inc, inc_contains, inc_startswith, inc_endswith
-                ):
+            if isinstance(original_item, (list, tuple, set)):
+                if nested_as_unit:
+                    match_inc = match_exc = False
+                    for i in original_item:
+                        if check_item(i):
+                            match_inc = True
+                        if match_item(i, exc):
+                            match_exc = True
+                    if match_inc and not match_exc:
+                        result.append(original_item)
+                else:
+                    filtered_sublist = cls.filter_list(
+                        original_item,
+                        inc,
+                        exc,
+                        map_func,
+                        check_unmapped,
+                        nested_as_unit,
+                    )
+                    result.append(type(original_item)(filtered_sublist))
+            else:
+                if check_item(original_item):
                     result.append(original_item)
+
         return result
 
     @classmethod

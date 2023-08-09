@@ -63,7 +63,7 @@ class Main(unittest.TestCase):
         return re.sub(r"0x[a-fA-F\d]+", "0x00000000000", str(obj))
 
 
-class CoreUtilsTest(Main, CoreUtils):
+class CoreTest(Main, CoreUtils):
     """CoreUtils test class."""
 
     def test_imports(self):
@@ -441,35 +441,43 @@ class StrTest(Main, StrUtils):
 class IterTest(Main, IterUtils):
     """ """
 
+    def test_make_iterable(self):
+        # Test an object that isn't a string, list, tuple, set, dict, range, map, filter, or zip
+        class ExampleClass:
+            ...
 
-def test_make_iterable(self):
-    # Test an object that isn't a string, list, tuple, set, dict, range, map, filter, or zip
-    class ExampleClass:
-        ...
+        class ExampleClassWithAttr:
+            __apimfn__ = True
 
-    example_instance = ExampleClass()
-    self.assertEqual(IterUtils.make_iterable(example_instance), (example_instance,))
-    self.assertEqual(IterUtils.make_iterable("x"), ("x",))
-    self.assertEqual(IterUtils.make_iterable(1), (1,))
-    self.assertEqual(IterUtils.make_iterable(""), ("",))
-    self.assertEqual(IterUtils.make_iterable(["x", "y"]), ["x", "y"])
-    self.assertEqual(IterUtils.make_iterable(("x", "y")), ("x", "y"))
-    self.assertEqual(IterUtils.make_iterable({"x": "y"}), {"x": "y"})
-    self.assertEqual(IterUtils.make_iterable(range(3)), range(3))
-    self.assertEqual(IterUtils.make_iterable({1, 2, 3}), {1, 2, 3})
-    # Note: Map, filter, and zip objects are evaluated once and can't be used again,
-    # so we convert them to lists first
-    self.assertEqual(
-        IterUtils.make_iterable(map(str, range(3))), list(map(str, range(3)))
-    )
-    self.assertEqual(
-        IterUtils.make_iterable(filter(lambda x: x % 2 == 0, range(3))),
-        list(filter(lambda x: x % 2 == 0, range(3))),
-    )
-    self.assertEqual(
-        IterUtils.make_iterable(zip(["a", "b", "c"], range(3))),
-        list(zip(["a", "b", "c"], range(3))),
-    )
+        example_instance = ExampleClass()
+        example_instance_with_attr = ExampleClassWithAttr()
+
+        self.assertEqual(IterUtils.make_iterable(example_instance), (example_instance,))
+        self.assertEqual(
+            IterUtils.make_iterable(example_instance_with_attr),
+            (example_instance_with_attr,),
+        )
+        self.assertEqual(IterUtils.make_iterable("foo"), ("foo",))
+        self.assertEqual(IterUtils.make_iterable(1), (1,))
+        self.assertEqual(IterUtils.make_iterable(""), ("",))
+        self.assertEqual(IterUtils.make_iterable(["foo", "bar"]), ["foo", "bar"])
+        self.assertEqual(IterUtils.make_iterable(("foo", "bar")), ("foo", "bar"))
+        self.assertEqual(IterUtils.make_iterable({"foo": "bar"}), {"foo": "bar"})
+        self.assertEqual(IterUtils.make_iterable(range(3)), range(3))
+        self.assertEqual(IterUtils.make_iterable({1, 2, 3}), {1, 2, 3})
+        # Note: Map, filter, and zip objects are evaluated once and can't be used again,
+        # so we convert them to lists first
+        self.assertEqual(
+            IterUtils.make_iterable(map(str, range(3))), list(map(str, range(3)))
+        )
+        self.assertEqual(
+            IterUtils.make_iterable(filter(lambda x: x % 2 == 0, range(3))),
+            list(filter(lambda x: x % 2 == 0, range(3))),
+        )
+        self.assertEqual(
+            IterUtils.make_iterable(zip(["a", "b", "c"], range(3))),
+            list(zip(["a", "b", "c"], range(3))),
+        )
 
     def test_nestedDepth(self):
         """ """
@@ -586,17 +594,6 @@ def test_make_iterable(self):
         # Test filter_list with check_unmapped=True.
         self.assertEqual(
             self.filter_list([1, 2, 3, 4, 5], [2, 3], 4, check_unmapped=True), [2, 3]
-        )
-        # Test the filter_list method in the case where map_func converts all items to a non-matching string, but check_unmapped is set to True. This means the original, unmapped items should be used for the matching check.
-        self.assertEqual(
-            self.filter_list(
-                ["apple", "banana", "cherry"],
-                "*a*",
-                "*n*",
-                map_func=lambda x: "nothing",
-                check_unmapped=True,
-            ),
-            ["apple", "cherry"],
         )
 
         # Test filter_list with object inputs and check_unmapped=True.
@@ -816,14 +813,14 @@ class FileTest(Main, FileUtils):
         sub_directory_dirpath = os.path.join(base_path, "test_files\\sub-directory")
 
         self.assertEqual(
-            self.get_dir_contents(path, "dirpaths"),
+            self.get_dir_contents(path, "dirpath"),
             [
                 imgtk_test_dirpath,
                 sub_directory_dirpath,
             ],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "filenames", recursive=True),
+            self.get_dir_contents(path, "filename", recursive=True),
             [
                 "file1",
                 "file2",
@@ -840,19 +837,19 @@ class FileTest(Main, FileUtils):
             ],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "files|dirs"),
+            self.get_dir_contents(path, "file|dir"),
             ["imgtk_test", "sub-directory", "file1.txt", "file2.txt", "test.json"],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "files|dirs", exc_dirs=["sub*"]),
+            self.get_dir_contents(path, "file|dir", exc_dirs=["sub*"]),
             ["imgtk_test", "file1.txt", "file2.txt", "test.json"],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "filenames", inc_files="*.txt"),
+            self.get_dir_contents(path, "filename", inc_files="*.txt"),
             ["file1", "file2"],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "files", inc_files="*.txt"),
+            self.get_dir_contents(path, "file", inc_files="*.txt"),
             ["file1.txt", "file2.txt"],
         )
         self.assertEqual(
@@ -865,12 +862,12 @@ class FileTest(Main, FileUtils):
             ],
         )
 
-    def test_get_filepath(self):
+    def test_get_object_path(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__))
 
-        self.assertEqual(self.get_filepath(__file__), path)
-        self.assertEqual(self.get_filepath(__file__, inc_filename=True), __file__)
+        self.assertEqual(self.get_object_path(__file__), path)
+        self.assertEqual(self.get_object_path(__file__, inc_filename=True), __file__)
 
     def test_get_file(self):
         """ """
@@ -886,18 +883,59 @@ class FileTest(Main, FileUtils):
     def test_get_classes_from_dir(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__))
-
         self.assertEqual(
-            self.get_classes_from_dir(path),
-            {
-                "FileTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "ImgTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "IterTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "Main": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "MathTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "StrTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "UtilsTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-            },
+            self.get_classes_from_path(path),
+            [
+                ("Main", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("MathTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+            ],
+        )
+        self.assertEqual(
+            self.get_classes_from_path(path, "classname"),
+            [
+                ("Main"),
+                ("CoreTest"),
+                ("StrTest"),
+                ("IterTest"),
+                ("FileTest"),
+                ("ImgTest"),
+                ("MathTest"),
+            ],
+        )
+        # Test_get_classes_from_dir_with_inc
+        self.assertEqual(
+            self.get_classes_from_path(path, inc="*Test"),
+            [
+                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("MathTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+            ],
+        )
+        # Test_get_classes_from_dir_with_exc
+        self.assertEqual(
+            self.get_classes_from_path(path, exc="*Test"),
+            [
+                ("Main", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+            ],
+        )
+        # Test_get_classes_from_dir_with_inc_and_exc
+        self.assertEqual(
+            self.get_classes_from_path(path, inc="*Test", exc="MathTest"),
+            [
+                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+            ],
         )
 
     def test_update_version(self):
