@@ -419,11 +419,11 @@ class FileUtils:
             path (str): The path to the directory or Python file to scan for classes.
             returned_type (str): A string representing the type of information to return. This string is a combination of the following options, separated by '|':
                  - classname: Returns the name of the class.
+                 - classobj: Returns the class object.
                  - file: Returns the name of the file including extension (if it's a file).
                  - filename: Returns the name of the file excluding extension (if it's a file).
                  - filepath: Returns the file path of the Python file where the class is defined.
                  - module: Returns the module object where the class is defined.
-                 - class: Returns the class object.
             inc (list, optional): A list of class names to include in the results.
             exc (list, optional): A list of class names to exclude from the results.
             top_level_only (bool, optional): If True, only retrieves top-level classes. If False, retrieves all classes within the specified path. Default is True.
@@ -453,7 +453,14 @@ class FileUtils:
         options = [t.strip().lower() for t in returned_type.split("|")]
         results = []
 
-        valid_options = {"file", "filename", "filepath", "class", "classname", "module"}
+        valid_options = {
+            "file",
+            "filename",
+            "filepath",
+            "classobj",
+            "classname",
+            "module",
+        }
         if not all(option in valid_options for option in options):
             raise ValueError(
                 f"Invalid option in returned_type. Valid options are {valid_options}."
@@ -488,7 +495,7 @@ class FileUtils:
                     "file": filename,
                     "filename": module_name,
                     "filepath": filepath,
-                    "class": module_obj.__dict__.get(clss.name),
+                    "classobj": module_obj.__dict__.get(clss.name),
                     "classname": clss.name,
                     "module": module_obj,
                 }
