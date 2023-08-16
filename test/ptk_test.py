@@ -437,6 +437,22 @@ class StrTest(Main, StrUtils):
             }
         )
 
+    def test_time_stamp(self):
+        """ """
+        paths = [
+            r"%ProgramFiles%",
+            r"C:/",
+        ]
+
+        print("\ntimestamp: skipped")
+        self.perform_test(
+            {
+                # "self.time_stamp({})".format(paths): [],
+                # "self.time_stamp({}, False, '%m-%d-%Y  %H:%M', True)".format(paths): [],
+                # "self.time_stamp({}, True)".format(paths): [],
+            }
+        )
+
 
 class IterTest(Main, IterUtils):
     """ """
@@ -614,6 +630,18 @@ class IterTest(Main, IterUtils):
             ),
             [obj2],
         )
+        # Test filter_list with nested tuples and removal of empty tuples.
+        self.assertEqual(
+            self.filter_list(
+                [
+                    ("bevel_edges", "path/to/bevel_edges.py"),
+                    ("other_file", "path/to/other_file.py"),
+                ],
+                inc=["bevel_edges"],
+                exc=["path/to/bevel_edges.py"],
+            ),
+            [("bevel_edges",)],
+        )
 
     def test_filter_dict(self):
         """ """
@@ -693,22 +721,6 @@ class FileTest(Main, FileUtils):
                 f"self.format_path(r'{p6}', 'path')": "programfiles",
                 f"self.format_path(r'{p7}', 'path')": "programfiles",
                 f"self.format_path({[p1, p2]}, 'dir')": ["dir3", ".vscode"],
-            }
-        )
-
-    def test_time_stamp(self):
-        """ """
-        paths = [
-            r"%ProgramFiles%",
-            r"C:/",
-        ]
-
-        print("\ntimestamp: skipped")
-        self.perform_test(
-            {
-                # "self.time_stamp({})".format(paths): [],
-                # "self.time_stamp({}, False, '%m-%d-%Y  %H:%M', True)".format(paths): [],
-                # "self.time_stamp({}, True)".format(paths): [],
             }
         )
 
@@ -863,11 +875,36 @@ class FileTest(Main, FileUtils):
         )
 
     def test_get_object_path(self):
-        """ """
+        """Test get_object_path for various scenarios."""
         path = os.path.abspath(os.path.dirname(__file__))
 
+        # Test with __file__ variable
         self.assertEqual(self.get_object_path(__file__), path)
-        self.assertEqual(self.get_object_path(__file__, inc_filename=True), __file__)
+        self.assertEqual(
+            self.get_object_path(__file__, inc_filename=True), os.path.abspath(__file__)
+        )
+
+        # Test with a module
+        import pythontk
+
+        self.assertEqual(
+            self.get_object_path(pythontk), os.path.dirname(pythontk.__file__)
+        )
+
+        # Test with a class
+        class TestClass:
+            pass
+
+        self.assertEqual(self.get_object_path(TestClass), path)
+
+        # Test with a callable object (function)
+        def test_function():
+            pass
+
+        self.assertEqual(self.get_object_path(test_function), path)
+
+        # Test with None
+        self.assertEqual(self.get_object_path(None), "")
 
     def test_get_file(self):
         """ """

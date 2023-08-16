@@ -7,9 +7,9 @@ import json
 import traceback
 
 # from this package:
-from pythontk.core_utils import CoreUtils
-from pythontk.iter_utils import IterUtils
-from pythontk.str_utils import StrUtils
+from pythontk import core_utils
+from pythontk import iter_utils
+from pythontk import str_utils
 
 
 class FileUtils:
@@ -93,8 +93,8 @@ class FileUtils:
             if not recursive and root != path:
                 return result
 
-            dirs = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
-            files = IterUtils.filter_list(files, inc_files, exc_files)
+            dirs = iter_utils.IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
+            files = iter_utils.IterUtils.filter_list(files, inc_files, exc_files)
 
             if "dir" in options:
                 result.extend(dirs)
@@ -226,7 +226,7 @@ class FileUtils:
         options = [t.strip().lower() for t in returned_type.split("|")]
         results = []
 
-        for _path in IterUtils.make_iterable(paths):
+        for _path in iter_utils.IterUtils.make_iterable(paths):
             path = os.path.expandvars(_path)
             path_obj = Path(path)
             if not path_obj.exists():
@@ -270,7 +270,7 @@ class FileUtils:
         return results
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @core_utils.CoreUtils.listify(threading=True)
     def format_path(p, section="", replace=""):
         """Format a given filepath(s).
         When a section arg is given, the correlating section of the string will be returned.
@@ -326,7 +326,7 @@ class FileUtils:
             result = p
 
         if replace:
-            result = StrUtils.rreplace(p, result, replace, 1)
+            result = str_utils.StrUtils.rreplace(p, result, replace, 1)
 
         return result
 
@@ -360,48 +360,61 @@ class FileUtils:
             str: The absolute file path associated with the input object. If the input is a string, the absolute path of the string is returned.
                 If include_filename is set to False, only the directory containing the file is returned.
                 Returns None if the file path cannot be determined.
-
-        Raises:
-            ValueError: If the obj is not a string, a module, or a class.
         """
         from types import ModuleType
         import inspect
+        import importlib
 
         if obj is None:
             return ""
 
-        if isinstance(obj, str):
+        elif isinstance(obj, str):
             filepath = obj
-        elif isinstance(obj, ModuleType):
-            filepath = getattr(obj, "__file__", None)
-            if filepath is None and hasattr(
-                obj, "__path__"
-            ):  # handle namespace packages
-                filepath = obj.__path__[0]
-        elif callable(obj) or isinstance(obj, object):
-            try:
-                module = inspect.getmodule(obj)
-                if module.__name__ == "__main__":
-                    filepath = sys.argv[0]
-                else:
-                    filepath = getattr(module, "__file__", None)
-                    if filepath is None and hasattr(
-                        module, "__path__"
-                    ):  # handle namespace packages
-                        filepath = module.__path__[0]
-            except AttributeError:
-                raise ValueError(
-                    "Unable to determine file path for object of type: ", type(obj)
-                )
-        else:
-            raise ValueError("Invalid type for obj: ", type(obj))
 
-        if filepath and inc_filename:
-            return os.path.abspath(filepath)
-        elif filepath:
-            return os.path.abspath(os.path.dirname(filepath))
+        elif isinstance(obj, ModuleType):
+            if hasattr(obj, "__file__"):
+                filepath = obj.__file__
+            elif hasattr(obj, "__path__"):
+                filepath = obj.__path__[0]
+            else:
+                filepath = None
+
         else:
-            return None
+            clss = obj if callable(obj) else obj.__class__
+            try:
+                filepath = inspect.getfile(clss)
+            except TypeError:
+                filepath = ""
+                for frame_record in inspect.stack():
+                    if filepath:
+                        break
+                    frame = frame_record[0]
+                    _filepath = inspect.getframeinfo(frame).filename
+                    mod_name = os.path.splitext(os.path.basename(_filepath))[0]
+                    spec = importlib.util.spec_from_file_location(mod_name, _filepath)
+                    if spec:
+                        mod = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(mod)
+                        filepath = next(
+                            (
+                                _filepath
+                                for cls_name, _ in inspect.getmembers(
+                                    mod, inspect.isclass
+                                )
+                                if cls_name == clss.__name__
+                            ),
+                            "",
+                        )
+
+        if filepath is None:
+            raise ValueError(
+                f"Unable to determine the file path for the given object: {obj}"
+            )
+
+        if not inc_filename:
+            filepath = os.path.dirname(filepath)
+
+        return os.path.abspath(filepath)
 
     @classmethod
     def get_classes_from_path(
@@ -488,7 +501,12 @@ class FileUtils:
             spec = importlib.util.spec_from_file_location(module_name, filepath)
             module_obj = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module_obj
-            spec.loader.exec_module(module_obj)
+            try:
+                spec.loader.exec_module(module_obj)
+            except Exception as e:
+                raise RuntimeError(
+                    f"The following error occurred while loading the module {module_name} from {filepath}: {e}"
+                ) from e
 
             for clss in classes:
                 info = {
@@ -505,45 +523,10 @@ class FileUtils:
                     results.append(tuple(info[option] for option in options))
 
         if inc or exc:
-            results = IterUtils.filter_list(
+            results = iter_utils.IterUtils.filter_list(
                 results, inc=inc, exc=exc, nested_as_unit=True
             )
         return results
-
-    @classmethod
-    @CoreUtils.listify(threading=True)
-    def time_stamp(cls, filepath, stamp="%m-%d-%Y  %H:%M"):
-        """Attach or detach a modified timestamp and date to/from a given file path.
-
-        Parameters:
-            filepath (str): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
-            stamp (str): The time stamp format.
-
-        Returns:
-            str: Filepath with attached or detached timestamp, depending on whether it initially had a timestamp.
-            ie. '16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb' from 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
-        """
-        from datetime import datetime
-        import os.path
-        import re
-
-        filepath = cls.format_path(filepath)
-
-        # Check if the file path has a timestamp using regular expression
-        match = re.match(r"\d{2}:\d{2}  \d{2}-\d{2}-\d{4}", filepath)
-        if match:
-            # If it does, return the file path without the timestamp
-            return "".join(filepath.split()[2:])
-        else:
-            # If it doesn't, attach a timestamp
-            try:
-                return "{}  {}".format(
-                    datetime.fromtimestamp(os.path.getmtime(filepath)).strftime(stamp),
-                    filepath,
-                )
-            except (FileNotFoundError, OSError) as error:
-                print(f"Error: {error}")
-                return filepath
 
     @classmethod
     def set_json_file(cls, file):

@@ -1,15 +1,16 @@
 # !/usr/bin/python
 # coding=utf-8
 # from this package:
-from pythontk.core_utils import CoreUtils
-from pythontk.iter_utils import IterUtils
+from pythontk import core_utils
+from pythontk import iter_utils
+from pythontk import file_utils
 
 
 class StrUtils:
     """ """
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @core_utils.CoreUtils.listify(threading=True)
     def set_case(string, case="title"):
         """Format the given string(s) in the given case.
 
@@ -155,7 +156,9 @@ class StrUtils:
         """
         import re
 
-        pattern = "|".join(re.escape(d) for d in IterUtils.make_iterable(delimiters))
+        pattern = "|".join(
+            re.escape(d) for d in iter_utils.IterUtils.make_iterable(delimiters)
+        )
         target_parts = re.split(pattern, target)
 
         def match_hierarchy(item_parts):
@@ -187,7 +190,7 @@ class StrUtils:
         return sorted(matches, key=lambda x: len(x), reverse=reverse)
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @core_utils.CoreUtils.listify(threading=True)
     def split_at_chars(string, chars="|", occurrence=-1):
         """Split a string containing the given chars at the given occurrence and return
         a two element tuple containing both halves.
@@ -273,7 +276,7 @@ class StrUtils:
             return str(new).join(string.rsplit(old))
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @core_utils.CoreUtils.listify(threading=True)
     def truncate(string, length=75, beginning=True, insert=".."):
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.
@@ -550,7 +553,7 @@ class StrUtils:
         # strip each set of chars in 'strip' from end of string.
         if strip:
             strip = tuple(
-                [i for i in IterUtils.make_iterable(strip) if not i == ""]
+                [i for i in iter_utils.IterUtils.make_iterable(strip) if not i == ""]
             )  # assure 'strip' is a tuple and does not contain any empty strings.
             while s.endswith(strip):
                 for chars in strip:
@@ -572,6 +575,41 @@ class StrUtils:
                 s = re.sub(re.escape(s[-1:]) + "$", "", s)
 
         return s + suffix
+
+    @staticmethod
+    @core_utils.CoreUtils.listify(threading=True)
+    def time_stamp(filepath, stamp="%m-%d-%Y  %H:%M"):
+        """Attach or detach a modified timestamp and date to/from a given file path.
+
+        Parameters:
+            filepath (str): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
+            stamp (str): The time stamp format.
+
+        Returns:
+            str: Filepath with attached or detached timestamp, depending on whether it initially had a timestamp.
+            ie. '16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb' from 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
+        """
+        from datetime import datetime
+        import os.path
+        import re
+
+        filepath = file_utils.FileUtils.format_path(filepath)
+
+        # Check if the file path has a timestamp using regular expression
+        match = re.match(r"\d{2}:\d{2}  \d{2}-\d{2}-\d{4}", filepath)
+        if match:
+            # If it does, return the file path without the timestamp
+            return "".join(filepath.split()[2:])
+        else:
+            # If it doesn't, attach a timestamp
+            try:
+                return "{}  {}".format(
+                    datetime.fromtimestamp(os.path.getmtime(filepath)).strftime(stamp),
+                    filepath,
+                )
+            except (FileNotFoundError, OSError) as error:
+                print(f"Error: {error}")
+                return filepath
 
 
 # -----------------------------------------------------------------------------

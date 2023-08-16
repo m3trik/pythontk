@@ -268,7 +268,9 @@ class IterUtils:
                         check_unmapped,
                         nested_as_unit,
                     )
-                    result.append(type(original_item)(filtered_sublist))
+                    # Only append non-empty tuples/lists/sets
+                    if filtered_sublist:
+                        result.append(type(original_item)(filtered_sublist))
             else:
                 if check_item(original_item):
                     result.append(original_item)
