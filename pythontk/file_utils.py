@@ -66,8 +66,8 @@ class FileUtils:
 
         Parameters:
             dirPath (str): The path to the directory.
-            returned_type (str): Return files and directories. Multiple types can be given using '|'
-                    ex. 'file|dir' (valid: 'file'(default), filename, 'filepath', 'dir', 'dirpath')
+            returned_type (str/list): Return files and directories. Can be a single string or a list of strings.
+                    (valid: 'file'(default), 'filename', 'filepath', 'dir', 'dirpath')
             recursive (bool): When False, Return the contents of the root dir only.
             num_threads (int): The number of threads to use for processing directories and files.
                     If set to 1 or 0, multithreading will not be used.
@@ -83,10 +83,10 @@ class FileUtils:
 
         Examples:
             get_dir_contents(dirPath, returned_type='filepath')
-            get_dir_contents(dirPath, returned_type='file|dir')
+            get_dir_contents(dirPath, returned_type=['file', 'dir'])
         """
         path = os.path.expandvars(dirPath)
-        options = [t.strip().lower() for t in returned_type.split("|")]
+        options = iter_utils.IterUtils.make_iterable(returned_type)
 
         def process_directory(root, dirs, files):
             result = []
@@ -195,8 +195,8 @@ class FileUtils:
 
         Parameters:
             paths (str/list): Path(s) to a file or directory.
-            returned_type (str): A string containing types of information to be returned.
-                 Each type is separated by '|'. Supported types are as follows:
+            returned_type (str/list): A single string or a list of strings containing types of information to be returned.
+                 Supported types are as follows:
                  - 'file': Returns the name of the file including extension (if it's a file).
                  - 'filename': Returns the name of the file excluding extension (if it's a file).
                  - 'filepath': Returns the full file path.
@@ -223,7 +223,7 @@ class FileUtils:
         from stat import filemode
         from pathlib import Path
 
-        options = [t.strip().lower() for t in returned_type.split("|")]
+        options = iter_utils.IterUtils.make_iterable(returned_type)
         results = []
 
         for _path in iter_utils.IterUtils.make_iterable(paths):
@@ -420,7 +420,7 @@ class FileUtils:
     def get_classes_from_path(
         cls,
         path,
-        returned_type="classname|filepath",
+        returned_type=["classname", "filepath"],
         inc=[],
         exc=[],
         top_level_only=True,
@@ -430,7 +430,8 @@ class FileUtils:
 
         Parameters:
             path (str): The path to the directory or Python file to scan for classes.
-            returned_type (str): A string representing the type of information to return. This string is a combination of the following options, separated by '|':
+            returned_type (str/list): A single string or a list of strings representing the type of information to return.
+                 Supported options are:
                  - classname: Returns the name of the class.
                  - classobj: Returns the class object.
                  - file: Returns the name of the file including extension (if it's a file).
@@ -463,7 +464,7 @@ class FileUtils:
             filenames = [os.path.basename(path)]
             path = os.path.dirname(path)
 
-        options = [t.strip().lower() for t in returned_type.split("|")]
+        options = iter_utils.IterUtils.make_iterable(returned_type)
         results = []
 
         valid_options = {
@@ -476,7 +477,7 @@ class FileUtils:
         }
         if not all(option in valid_options for option in options):
             raise ValueError(
-                f"Invalid option in returned_type. Valid options are {valid_options}."
+                f"Invalid option in returned_type. Valid options are {', '.join(valid_options)}, got {options}"
             )
 
         for filename in filenames:
