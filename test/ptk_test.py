@@ -63,7 +63,7 @@ class Main(unittest.TestCase):
         return re.sub(r"0x[a-fA-F\d]+", "0x00000000000", str(obj))
 
 
-class CoreUtilsTest(Main, CoreUtils):
+class CoreTest(Main, CoreUtils):
     """CoreUtils test class."""
 
     def test_imports(self):
@@ -437,39 +437,63 @@ class StrTest(Main, StrUtils):
             }
         )
 
+    def test_time_stamp(self):
+        """ """
+        paths = [
+            r"%ProgramFiles%",
+            r"C:/",
+        ]
+
+        print("\ntimestamp: skipped")
+        self.perform_test(
+            {
+                # "self.time_stamp({})".format(paths): [],
+                # "self.time_stamp({}, False, '%m-%d-%Y  %H:%M', True)".format(paths): [],
+                # "self.time_stamp({}, True)".format(paths): [],
+            }
+        )
+
 
 class IterTest(Main, IterUtils):
     """ """
 
+    def test_make_iterable(self):
+        # Test an object that isn't a string, list, tuple, set, dict, range, map, filter, or zip
+        class ExampleClass:
+            ...
 
-def test_make_iterable(self):
-    # Test an object that isn't a string, list, tuple, set, dict, range, map, filter, or zip
-    class ExampleClass:
-        ...
+        class ExampleClassWithAttr:
+            __apimfn__ = True
 
-    example_instance = ExampleClass()
-    self.assertEqual(IterUtils.make_iterable(example_instance), (example_instance,))
-    self.assertEqual(IterUtils.make_iterable("x"), ("x",))
-    self.assertEqual(IterUtils.make_iterable(1), (1,))
-    self.assertEqual(IterUtils.make_iterable(""), ("",))
-    self.assertEqual(IterUtils.make_iterable(["x", "y"]), ["x", "y"])
-    self.assertEqual(IterUtils.make_iterable(("x", "y")), ("x", "y"))
-    self.assertEqual(IterUtils.make_iterable({"x": "y"}), {"x": "y"})
-    self.assertEqual(IterUtils.make_iterable(range(3)), range(3))
-    self.assertEqual(IterUtils.make_iterable({1, 2, 3}), {1, 2, 3})
-    # Note: Map, filter, and zip objects are evaluated once and can't be used again,
-    # so we convert them to lists first
-    self.assertEqual(
-        IterUtils.make_iterable(map(str, range(3))), list(map(str, range(3)))
-    )
-    self.assertEqual(
-        IterUtils.make_iterable(filter(lambda x: x % 2 == 0, range(3))),
-        list(filter(lambda x: x % 2 == 0, range(3))),
-    )
-    self.assertEqual(
-        IterUtils.make_iterable(zip(["a", "b", "c"], range(3))),
-        list(zip(["a", "b", "c"], range(3))),
-    )
+        example_instance = ExampleClass()
+        example_instance_with_attr = ExampleClassWithAttr()
+
+        self.assertEqual(IterUtils.make_iterable(example_instance), (example_instance,))
+        self.assertEqual(
+            IterUtils.make_iterable(example_instance_with_attr),
+            (example_instance_with_attr,),
+        )
+        self.assertEqual(IterUtils.make_iterable("foo"), ("foo",))
+        self.assertEqual(IterUtils.make_iterable(1), (1,))
+        self.assertEqual(IterUtils.make_iterable(""), ("",))
+        self.assertEqual(IterUtils.make_iterable(["foo", "bar"]), ["foo", "bar"])
+        self.assertEqual(IterUtils.make_iterable(("foo", "bar")), ("foo", "bar"))
+        self.assertEqual(IterUtils.make_iterable({"foo": "bar"}), {"foo": "bar"})
+        self.assertEqual(IterUtils.make_iterable(range(3)), range(3))
+        self.assertEqual(IterUtils.make_iterable({1, 2, 3}), {1, 2, 3})
+        # Note: Map, filter, and zip objects are evaluated once and can't be used again,
+        # so we convert them to lists first
+        self.assertEqual(
+            IterUtils.make_iterable(map(str, range(3))), list(map(str, range(3)))
+        )
+        self.assertEqual(
+            IterUtils.make_iterable(filter(lambda x: x % 2 == 0, range(3))),
+            list(filter(lambda x: x % 2 == 0, range(3))),
+        )
+        self.assertEqual(
+            IterUtils.make_iterable(zip(["a", "b", "c"], range(3))),
+            list(zip(["a", "b", "c"], range(3))),
+        )
 
     def test_nestedDepth(self):
         """ """
@@ -555,22 +579,68 @@ def test_make_iterable(self):
             }
         )
 
-    def test_filter_with_mapped_values(self):
+    def test_filter_list(self):
         """ """
-        original_list = ["1", "2", "3", "4", "5", "6"]
-
-        def keep_even_numbers(lst):
-            return [x for x in lst if x % 2 == 0]
-
-        self.perform_test(
+        self.assertEqual(self.filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2), [1, 3])
+        self.assertEqual(
+            self.filter_list([0, 1, "file.txt", "file.jpg"], ["*file*", 0], "*.txt"),
             [
-                (
-                    self.filter_mapped_values(
-                        original_list, keep_even_numbers, lambda x: int(x)
-                    ),
-                    ["2", "4", "6"],
-                ),
-            ]
+                0,
+                "file.jpg",
+            ],
+        )
+        # Test filter_list with a map_func.
+        self.assertEqual(
+            self.filter_list(
+                ["apple", "banana", "cherry"], "*a*", "*n*", map_func=lambda x: x[::-1]
+            ),
+            ["apple"],
+        )
+        # Test filter_list with a map_func and check_unmapped=True.
+        self.assertEqual(
+            self.filter_list(
+                ["apple", "banana", "cherry"],
+                "*e*",  # Changed the inclusion criterion
+                "*n*",
+                map_func=lambda x: x[::-1],  # This reverses the string
+                check_unmapped=True,
+            ),
+            ["apple", "cherry"],
+        )
+        # Test filter_list with check_unmapped=True.
+        self.assertEqual(
+            self.filter_list([1, 2, 3, 4, 5], [2, 3], 4, check_unmapped=True), [2, 3]
+        )
+
+        # Test filter_list with object inputs and check_unmapped=True.
+        class MyObject:
+            def __init__(self, name):
+                self.name = name
+
+        obj1 = MyObject("object1")
+        obj2 = MyObject("object2")
+        obj3 = MyObject("object3")
+        self.assertEqual(
+            self.filter_list(
+                [obj1, obj2, obj3],
+                obj2,
+                obj3,
+                map_func=lambda x: x.name,
+                check_unmapped=True,
+            ),
+            [obj2],
+        )
+        # Test filter_list with nested tuples and removal of empty tuples.
+        self.assertEqual(
+            self.filter_list(
+                [
+                    ("bevel_edges", "path/to/bevel_edges.py"),
+                    ("other_file", "path/to/other_file.py"),
+                ],
+                inc=["bevel_edges"],
+                exc=["path/to/bevel_edges.py"],
+            ),
+            [("bevel_edges",)],
         )
 
     def test_filter_dict(self):
@@ -582,18 +652,6 @@ def test_make_iterable(self):
                 f"self.filter_dict({dct}, exc='*t*', values=True)": {1: "1", "two": 2},
                 f"self.filter_dict({dct}, exc='t*', keys=True)": {1: "1", 3: "three"},
                 f"self.filter_dict({dct}, exc=1, keys=True)": {"two": 2, 3: "three"},
-            }
-        )
-
-    def test_filter_list(self):
-        """ """
-        self.perform_test(
-            {
-                "self.filter_list([0, 1, 2, 3, 2], [1, 2, 3], 2)": [1, 3],
-                "self.filter_list([0, 1, 'file.txt', 'file.jpg'], ['*file*', 0], '*.txt')": [
-                    0,
-                    "file.jpg",
-                ],
             }
         )
 
@@ -666,22 +724,6 @@ class FileTest(Main, FileUtils):
             }
         )
 
-    def test_time_stamp(self):
-        """ """
-        paths = [
-            r"%ProgramFiles%",
-            r"C:/",
-        ]
-
-        print("\ntimestamp: skipped")
-        self.perform_test(
-            {
-                # "self.time_stamp({})".format(paths): [],
-                # "self.time_stamp({}, False, '%m-%d-%Y  %H:%M', True)".format(paths): [],
-                # "self.time_stamp({}, True)".format(paths): [],
-            }
-        )
-
     def test_is_valid(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__)) + "/test_files"
@@ -741,7 +783,7 @@ class FileTest(Main, FileUtils):
         files = [file1_path, file2_path]
 
         self.assertEqual(
-            self.get_file_info(files, "file|filename|filepath"),
+            self.get_file_info(files, ["file", "filename", "filepath"]),
             [
                 ("file1.txt", "file1", file1_path),
                 ("file2.txt", "file2", file2_path),
@@ -749,7 +791,7 @@ class FileTest(Main, FileUtils):
         )
 
         self.assertEqual(
-            self.get_file_info(files, "file|filetype"),
+            self.get_file_info(files, ["file", "filetype"]),
             [
                 ("file1.txt", ".txt"),
                 ("file2.txt", ".txt"),
@@ -757,7 +799,7 @@ class FileTest(Main, FileUtils):
         )
 
         self.assertEqual(
-            self.get_file_info(files, "filename|filetype"),
+            self.get_file_info(files, ["filename", "filetype"]),
             [
                 ("file1", ".txt"),
                 ("file2", ".txt"),
@@ -765,7 +807,7 @@ class FileTest(Main, FileUtils):
         )
 
         self.assertEqual(
-            self.get_file_info(files, "file|size"),
+            self.get_file_info(files, ["file", "size"]),
             [
                 ("file1.txt", os.path.getsize(file1_path)),
                 ("file2.txt", os.path.getsize(file2_path)),
@@ -778,19 +820,19 @@ class FileTest(Main, FileUtils):
         relative_path = "test_files"
         path = os.path.join(base_path, relative_path)
 
-        test_files_dirpath = os.path.join(base_path, "test_files")
+        # test_files_dirpath = os.path.join(base_path, "test_files")
         imgtk_test_dirpath = os.path.join(base_path, "test_files\\imgtk_test")
         sub_directory_dirpath = os.path.join(base_path, "test_files\\sub-directory")
 
         self.assertEqual(
-            self.get_dir_contents(path, "dirpaths"),
+            self.get_dir_contents(path, "dirpath"),
             [
                 imgtk_test_dirpath,
                 sub_directory_dirpath,
             ],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "filenames", recursive=True),
+            self.get_dir_contents(path, "filename", recursive=True),
             [
                 "file1",
                 "file2",
@@ -807,23 +849,23 @@ class FileTest(Main, FileUtils):
             ],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "files|dirs"),
+            self.get_dir_contents(path, ["file", "dir"]),
             ["imgtk_test", "sub-directory", "file1.txt", "file2.txt", "test.json"],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "files|dirs", exc_dirs=["sub*"]),
+            self.get_dir_contents(path, ["file", "dir"], exc_dirs=["sub*"]),
             ["imgtk_test", "file1.txt", "file2.txt", "test.json"],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "filenames", inc_files="*.txt"),
+            self.get_dir_contents(path, "filename", inc_files="*.txt"),
             ["file1", "file2"],
         )
         self.assertEqual(
-            self.get_dir_contents(path, "files", inc_files="*.txt"),
+            self.get_dir_contents(path, "file", inc_files="*.txt"),
             ["file1.txt", "file2.txt"],
         )
         self.assertEqual(
-            sorted(self.get_dir_contents(path, "dirpath|dir")),
+            sorted(self.get_dir_contents(path, ["dirpath", "dir"])),
             [
                 imgtk_test_dirpath,
                 sub_directory_dirpath,
@@ -832,12 +874,37 @@ class FileTest(Main, FileUtils):
             ],
         )
 
-    def test_get_filepath(self):
-        """ """
+    def test_get_object_path(self):
+        """Test get_object_path for various scenarios."""
         path = os.path.abspath(os.path.dirname(__file__))
 
-        self.assertEqual(self.get_filepath(__file__), path)
-        self.assertEqual(self.get_filepath(__file__, inc_filename=True), __file__)
+        # Test with __file__ variable
+        self.assertEqual(self.get_object_path(__file__), path)
+        self.assertEqual(
+            self.get_object_path(__file__, inc_filename=True), os.path.abspath(__file__)
+        )
+
+        # Test with a module
+        import pythontk
+
+        self.assertEqual(
+            self.get_object_path(pythontk), os.path.dirname(pythontk.__file__)
+        )
+
+        # Test with a class
+        class TestClass:
+            pass
+
+        self.assertEqual(self.get_object_path(TestClass), path)
+
+        # Test with a callable object (function)
+        def test_function():
+            pass
+
+        self.assertEqual(self.get_object_path(test_function), path)
+
+        # Test with None
+        self.assertEqual(self.get_object_path(None), "")
 
     def test_get_file(self):
         """ """
@@ -853,18 +920,59 @@ class FileTest(Main, FileUtils):
     def test_get_classes_from_dir(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__))
-
         self.assertEqual(
-            self.get_classes_from_dir(path),
-            {
-                "FileTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "ImgTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "IterTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "Main": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "MathTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "StrTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-                "UtilsTest": "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py",
-            },
+            self.get_classes_from_path(path),
+            [
+                ("Main", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("MathTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+            ],
+        )
+        self.assertEqual(
+            self.get_classes_from_path(path, "classname"),
+            [
+                ("Main"),
+                ("CoreTest"),
+                ("StrTest"),
+                ("IterTest"),
+                ("FileTest"),
+                ("ImgTest"),
+                ("MathTest"),
+            ],
+        )
+        # Test_get_classes_from_dir_with_inc
+        self.assertEqual(
+            self.get_classes_from_path(path, inc="*Test"),
+            [
+                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("MathTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+            ],
+        )
+        # Test_get_classes_from_dir_with_exc
+        self.assertEqual(
+            self.get_classes_from_path(path, exc="*Test"),
+            [
+                ("Main", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+            ],
+        )
+        # Test_get_classes_from_dir_with_inc_and_exc
+        self.assertEqual(
+            self.get_classes_from_path(path, inc="*Test", exc="MathTest"),
+            [
+                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+            ],
         )
 
     def test_update_version(self):
@@ -903,139 +1011,140 @@ class ImgTest(Main, ImgUtils):
 
     def test_createImage(self):
         """ """
-        self.perform_test(
-            {
-                "self.create_image('RGB', (1024, 1024), (0, 0, 0))": self.im_h,
-            }
-        )
+        self.assertEqual(self.create_image("RGB", (1024, 1024), (0, 0, 0)), self.im_h)
 
     def test_resizeImage(self):
         """ """
-        self.perform_test(
-            {
-                "self.resize_image(self.im_h, 32, 32).size": (32, 32),
-            }
-        )
+        self.assertEqual(self.resize_image(self.im_h, 32, 32).size, (32, 32))
 
     def test_saveImageFile(self):
         """ """
-        self.perform_test(
-            {
-                "self.save_image(self.im_h, 'test_files/imgtk_test/im_h.png')": None,
-                "self.save_image(self.im_n, 'test_files/imgtk_test/im_n.png')": None,
-            }
+        self.assertEqual(
+            self.save_image(self.im_h, "test_files/imgtk_test/im_h.png"), None
+        )
+        self.assertEqual(
+            self.save_image(self.im_n, "test_files/imgtk_test/im_n.png"), None
         )
 
     def test_getImages(self):
         """ """
         # print (\n'test_getImages:', self.get_images('test_files/imgtk_test/'))
-        self.perform_test(
-            {
-                "list(self.get_images('test_files/imgtk_test/', '*Normal*').keys())": [
-                    "test_files/imgtk_test/im_Normal_DirectX.png",
-                    "test_files/imgtk_test/im_Normal_OpenGL.png",
-                ],
-            }
+        self.assertEqual(
+            list(self.get_images("test_files/imgtk_test/", "*Normal*").keys()),
+            [
+                "test_files/imgtk_test/im_Normal_DirectX.png",
+                "test_files/imgtk_test/im_Normal_OpenGL.png",
+            ],
         )
 
     def test_getImageFiles(self):
         """ """
         print("\ngetImageFiles: skipped")
-        self.perform_test(
-            {
-                # "self.get_image_files('*.png|*.jpg')": '',
-            }
-        )
+        # self.assertEqual(self.get_image_files('*.png|*.jpg'), '')
 
     def test_getImageDirectory(self):
         """ """
         print("\ngetImageDirectory: skipped")
-        self.perform_test(
-            {
-                # "self.get_image_dir()": '',
-            }
-        )
+        # self.assertEqual(self.get_image_dir(), "")
 
     def test_getImageTypeFromFilename(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_image_type_from_filename('test_files/imgtk_test/im_h.png')": "Height",
-                "self.get_image_type_from_filename('test_files/imgtk_test/im_h.png', key=False)": "_H",
-                "self.get_image_type_from_filename('test_files/imgtk_test/im_n.png')": "Normal",
-                "self.get_image_type_from_filename('test_files/imgtk_test/im_n.png', key=False)": "_N",
-            }
+        self.assertEqual(
+            self.get_image_type_from_filename("test_files/imgtk_test/im_h.png"),
+            "Height",
+        )
+        self.assertEqual(
+            self.get_image_type_from_filename(
+                "test_files/imgtk_test/im_h.png", key=False
+            ),
+            "_H",
+        )
+        self.assertEqual(
+            self.get_image_type_from_filename("test_files/imgtk_test/im_n.png"),
+            "Normal",
+        )
+        self.assertEqual(
+            self.get_image_type_from_filename(
+                "test_files/imgtk_test/im_n.png", key=False
+            ),
+            "_N",
         )
 
     def test_filterImagesByType(self):
         """ """
-        self.perform_test(
-            {
-                "self.filter_images_by_type(FileUtils.get_dir_contents('test_files/imgtk_test'), 'Height')": [
-                    "im_h.png",
-                    "im_Height.png",
-                ],
-            }
+        self.assertEqual(
+            self.filter_images_by_type(
+                FileUtils.get_dir_contents("test_files/imgtk_test"), "Height"
+            ),
+            [
+                "im_h.png",
+                "im_Height.png",
+            ],
         )
 
     def test_sortImagesByType(self):
         """ """
-        self.perform_test(
+        self.assertEqual(
+            self.sort_images_by_type([("im_h.png", "<im_h>"), ("im_n.png", "<im_n>")]),
             {
-                "self.sort_images_by_type([('im_h.png', '<im_h>'), ('im_n.png', '<im_n>')])": {
-                    "Height": [("im_h.png", "<im_h>")],
-                    "Normal": [("im_n.png", "<im_n>")],
-                },
-                "self.sort_images_by_type({'im_h.png':'<im_h>', 'im_n.png':'<im_n>'})": {
-                    "Height": [("im_h.png", "<im_h>")],
-                    "Normal": [("im_n.png", "<im_n>")],
-                },
-            }
+                "Height": [("im_h.png", "<im_h>")],
+                "Normal": [("im_n.png", "<im_n>")],
+            },
+        )
+        self.assertEqual(
+            self.sort_images_by_type({"im_h.png": "<im_h>", "im_n.png": "<im_n>"}),
+            {
+                "Height": [("im_h.png", "<im_h>")],
+                "Normal": [("im_n.png", "<im_n>")],
+            },
         )
 
     def test_containsMapTypes(self):
         """ """
-        self.perform_test(
-            {
-                "self.contains_map_types([('im_h.png', '<im_h>')], 'Height')": True,
-                "self.contains_map_types({'im_h.png':'<im_h>', 'im_n.png':'<im_n>'}, 'Height')": True,
-                "self.contains_map_types({'Height': [('im_h.png', '<im_h>')]}, 'Height')": True,
-                "self.contains_map_types({'Height': [('im_h.png', '<im_h>')]}, 'Height|Normal')": True,
-                "self.contains_map_types({'Height': [('im_h.png', '<im_h>')]}, ['Height', 'Normal'])": True,
-            }
+        self.assertEqual(
+            self.contains_map_types([("im_h.png", "<im_h>")], "Height"), True
+        )
+        self.assertEqual(
+            self.contains_map_types(
+                {"im_h.png": "<im_h>", "im_n.png": "<im_n>"}, "Height"
+            ),
+            True,
+        )
+        self.assertEqual(
+            self.contains_map_types({"Height": [("im_h.png", "<im_h>")]}, "Height"),
+            True,
+        )
+        self.assertEqual(
+            self.contains_map_types(
+                {"Height": [("im_h.png", "<im_h>")]}, ["Height", "Normal"]
+            ),
+            True,
         )
 
     def test_isNormalMap(self):
         """ """
-        self.perform_test(
-            {
-                "self.is_normal_map('im_h.png')": False,
-                "self.is_normal_map('im_n.png')": True,
-            }
-        )
+        self.assertEqual(self.is_normal_map("im_h.png"), False)
+        self.assertEqual(self.is_normal_map("im_n.png"), True)
 
     def test_invertChannels(self):
         """ """
-        self.perform_test(
-            {
-                "str(self.invert_channels(self.im_n, 'g').getchannel('G')).split('size')[0]": "<PIL.Image.Image image mode=L ",
-            }
+        self.assertEqual(
+            str(self.invert_channels(self.im_n, "g").getchannel("G")).split("size")[0],
+            "<PIL.Image.Image image mode=L ",
         )
 
     def test_createDXFromGL(self):
         """ """
-        self.perform_test(
-            {
-                "self.create_dx_from_gl('test_files/imgtk_test/im_Normal_OpenGL.png')": "test_files/imgtk_test/im_Normal_DirectX.png",
-            }
+        self.assertEqual(
+            self.create_dx_from_gl("test_files/imgtk_test/im_Normal_OpenGL.png"),
+            "test_files/imgtk_test/im_Normal_DirectX.png",
         )
 
     def test_createGLFromDX(self):
         """ """
-        self.perform_test(
-            {
-                "self.create_gl_from_dx('test_files/imgtk_test/im_Normal_DirectX.png')": "test_files/imgtk_test/im_Normal_OpenGL.png",
-            }
+        self.assertEqual(
+            self.create_gl_from_dx("test_files/imgtk_test/im_Normal_DirectX.png"),
+            "test_files/imgtk_test/im_Normal_OpenGL.png",
         )
 
     def test_createMask(self):
@@ -1065,80 +1174,71 @@ class ImgTest(Main, ImgUtils):
     def test_fill(self):
         """ """
         # self.fill(self.im_h, (255, 0, 0)).show()
-        self.perform_test(
-            {
-                "str(self.fill(self.im_h, (127, 127, 127))).split('size')[0]": "<PIL.Image.Image image mode=RGB ",
-            }
+        self.assertEqual(
+            str(self.fill(self.im_h, (127, 127, 127))).split("size")[0],
+            "<PIL.Image.Image image mode=RGB ",
         )
 
     def test_getBackground(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_background('test_files/imgtk_test/im_Height.png', 'I')": 32767,
-                "self.get_background('test_files/imgtk_test/im_Height.png', 'L')": 255,
-                "self.get_background('test_files/imgtk_test/im_n.png', 'RGB')": (
-                    127,
-                    127,
-                    255,
-                ),
-            }
+        self.assertEqual(
+            self.get_background("test_files/imgtk_test/im_Height.png", "I"), 32767
+        )
+        self.assertEqual(
+            self.get_background("test_files/imgtk_test/im_Height.png", "L"), 255
+        )
+        self.assertEqual(
+            self.get_background("test_files/imgtk_test/im_n.png", "RGB"),
+            (127, 127, 255),
         )
 
     def test_replaceColor(self):
         """ """
         bg = self.get_background("test_files/imgtk_test/im_Base_color.png", "RGB")
         # self.replace_color('test_files/imgtk_test/im_Base_color.png', self.bg, (255, 0, 0)).show()
-        self.perform_test(
-            {
-                f"str(self.replace_color('test_files/imgtk_test/im_Base_color.png', {bg}, (255, 0, 0))).split('size')[0]": "<PIL.Image.Image image mode=RGBA ",
-            }
+        self.assertEqual(
+            str(
+                self.replace_color(
+                    "test_files/imgtk_test/im_Base_color.png", bg, (255, 0, 0)
+                )
+            ).split("size")[0],
+            "<PIL.Image.Image image mode=RGBA ",
         )
 
     def test_setContrast(self):
         """ """
         # self.set_contrast('test_files/imgtk_test/im_Mixed_AO.png', 255).show()
-        self.perform_test(
-            {
-                "str(self.set_contrast('test_files/imgtk_test/im_Mixed_AO.png', 255)).split('size')[0]": "<PIL.Image.Image image mode=L ",
-            }
+        self.assertEqual(
+            str(self.set_contrast("test_files/imgtk_test/im_Mixed_AO.png", 255)).split(
+                "size"
+            )[0],
+            "<PIL.Image.Image image mode=L ",
         )
 
     def test_convert_rgb_to_gray(self):
         """ """
         # print (\n'test_convert_rgb_to_gray:', self.convert_rgb_to_gray(self.im_h))
-        self.perform_test(
-            {
-                "str(type(self.convert_rgb_to_gray(self.im_h)))": "<class 'numpy.ndarray'>",
-            }
+        self.assertEqual(
+            str(type(self.convert_rgb_to_gray(self.im_h))), "<class 'numpy.ndarray'>"
         )
 
     def test_convert_RGB_to_HSV(self):
         """ """
-        self.perform_test(
-            {
-                "str(self.convert_rgb_to_hsv(self.im_h)).split('size')[0]": "<PIL.Image.Image image mode=HSV ",
-            }
+        self.assertEqual(
+            str(self.convert_rgb_to_hsv(self.im_h)).split("size")[0],
+            "<PIL.Image.Image image mode=HSV ",
         )
 
     def test_convert_I_to_L(self):
         """ """
         self.im_convert_I_to_L = self.create_image("I", (32, 32))
         # im = self.convert_i_to_l(self.im)
-        self.perform_test(
-            {
-                "self.convert_i_to_l(self.im_convert_I_to_L).mode": "L",
-            }
-        )
+        self.assertEqual(self.convert_i_to_l(self.im_convert_I_to_L).mode, "L")
 
     def test_areIdentical(self):
         """ """
-        self.perform_test(
-            {
-                "self.are_identical(self.im_h, self.im_n)": False,
-                "self.are_identical(self.im_h, self.im_h)": True,
-            }
-        )
+        self.assertEqual(self.are_identical(self.im_h, self.im_n), False)
+        self.assertEqual(self.are_identical(self.im_h, self.im_h), True)
 
 
 class MathTest(Main, MathUtils):
@@ -1146,158 +1246,138 @@ class MathTest(Main, MathUtils):
 
     def test_getVectorFromTwoPoints(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_vector_from_two_points((1, 2, 3), (1, 1, -1))": (0, -1, -4),
-            }
+        self.assertEqual(
+            self.get_vector_from_two_points((1, 2, 3), (1, 1, -1)), (0, -1, -4)
         )
 
     def test_clamp(self):
         """ """
-        self.perform_test(
-            {
-                "self.clamp(range(10), 3, 7)": [3, 3, 3, 3, 4, 5, 6, 7, 7, 7],
-            }
-        )
+        self.assertEqual(self.clamp(range(10), 3, 7), [3, 3, 3, 3, 4, 5, 6, 7, 7, 7])
 
     def test_normalize(self):
         """ """
-        self.perform_test(
-            {
-                "self.normalize((2, 3, 4))": (
-                    0.3713906763541037,
-                    0.5570860145311556,
-                    0.7427813527082074,
-                ),
-                "self.normalize((2, 3))": (0.5547001962252291, 0.8320502943378437),
-                "self.normalize((2, 3, 4), 2)": (
-                    0.7427813527082074,
-                    1.1141720290623112,
-                    1.4855627054164149,
-                ),
-            }
+        self.assertEqual(
+            self.normalize((2, 3, 4)),
+            (
+                0.3713906763541037,
+                0.5570860145311556,
+                0.7427813527082074,
+            ),
+        )
+        self.assertEqual(
+            self.normalize((2, 3)), (0.5547001962252291, 0.8320502943378437)
+        )
+        self.assertEqual(
+            self.normalize((2, 3, 4), 2),
+            (0.7427813527082074, 1.1141720290623112, 1.4855627054164149),
         )
 
     def test_getMagnitude(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_magnitude((2, 3, 4))": 5.385164807134504,
-                "self.get_magnitude((2, 3))": 3.605551275463989,
-            }
-        )
+        self.assertEqual(self.get_magnitude((2, 3, 4)), 5.385164807134504)
+        self.assertEqual(self.get_magnitude((2, 3)), 3.605551275463989)
 
     def test_dotProduct(self):
         """ """
-        self.perform_test(
-            {
-                "self.dot_product((1, 2, 3), (1, 1, -1))": 0,
-                "self.dot_product((1, 2), (1, 1))": 3,
-                "self.dot_product((1, 2, 3), (1, 1, -1), True)": 0,
-            }
-        )
+        self.assertEqual(self.dot_product((1, 2, 3), (1, 1, -1)), 0)
+        self.assertEqual(self.dot_product((1, 2), (1, 1)), 3)
+        self.assertEqual(self.dot_product((1, 2, 3), (1, 1, -1), True), 0)
 
     def test_crossProduct(self):
         """ """
-        self.perform_test(
-            {
-                "self.cross_product((1, 2, 3), (1, 1, -1))": (-5, 4, -1),
-                "self.cross_product((3, 1, 1), (1, 4, 2), (1, 3, 4))": (7, 4, 2),
-                "self.cross_product((1, 2, 3), (1, 1, -1), None, 1)": (
-                    -0.7715167498104595,
-                    0.6172133998483676,
-                    -0.1543033499620919,
-                ),
-            }
+        self.assertEqual(self.cross_product((1, 2, 3), (1, 1, -1)), (-5, 4, -1))
+        self.assertEqual(self.cross_product((3, 1, 1), (1, 4, 2), (1, 3, 4)), (7, 4, 2))
+        self.assertEqual(
+            self.cross_product((1, 2, 3), (1, 1, -1), None, 1),
+            (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919),
         )
 
     def test_movePointRelative(self):
         """ """
-        self.perform_test(
-            {
-                "self.move_point_relative((0, 5, 0), (0, 5, 0))": (0, 10, 0),
-                "self.move_point_relative((0, 5, 0), 5, (0, 1, 0))": (0, 10, 0),
-            }
-        )
+        self.assertEqual(self.move_point_relative((0, 5, 0), (0, 5, 0)), (0, 10, 0))
+        self.assertEqual(self.move_point_relative((0, 5, 0), 5, (0, 1, 0)), (0, 10, 0))
 
     def test_movePointAlongVectorRelativeToPoint(self):
         """ """
-        self.perform_test(
-            {
-                "self.move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5)": (
-                    0.0,
-                    5.0,
-                    0.0,
-                ),
-                "self.move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False)": (
-                    0.0,
-                    -5.0,
-                    0.0,
-                ),
-            }
+        self.assertEqual(
+            self.move_point_relative_along_vector((0, 0, 0), (0, 10, 0), (0, 1, 0), 5),
+            (
+                0.0,
+                5.0,
+                0.0,
+            ),
+        )
+        self.assertEqual(
+            self.move_point_relative_along_vector(
+                (0, 0, 0), (0, 10, 0), (0, 1, 0), 5, False
+            ),
+            (
+                0.0,
+                -5.0,
+                0.0,
+            ),
         )
 
     def test_getDistanceBetweenTwoPoints(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_distance((0, 10, 0), (0, 5, 0))": 5.0,
-            }
-        )
+        self.assertEqual(self.get_distance((0, 10, 0), (0, 5, 0)), 5.0)
 
     def test_getCenterPointBetweenTwoPoints(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_center_of_two_points((0, 10, 0), (0, 5, 0))": (
-                    0.0,
-                    7.5,
-                    0.0,
-                ),
-            }
+        self.assertEqual(
+            self.get_center_of_two_points((0, 10, 0), (0, 5, 0)),
+            (
+                0.0,
+                7.5,
+                0.0,
+            ),
         )
 
     def test_getAngleFrom2Vectors(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1))": 1.5707963267948966,
-                "self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1), True)": 90,
-            }
+        self.assertEqual(
+            self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1)), 1.5707963267948966
+        )
+        self.assertEqual(
+            self.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1), True), 90
         )
 
     def test_getAngleFrom3Points(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3))": 0.7904487543360762,
-                "self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True)": 45.29,
-            }
+        self.assertEqual(
+            self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3)),
+            0.7904487543360762,
+        )
+        self.assertEqual(
+            self.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True),
+            45.29,
         )
 
     def test_getTwoSidesOfASATriangle(self):
         """ """
-        self.perform_test(
-            {
-                "self.get_two_sides_of_asa_triangle(60, 60, 100)": (
-                    100.00015320566493,
-                    100.00015320566493,
-                ),
-            }
+        self.assertEqual(
+            self.get_two_sides_of_asa_triangle(60, 60, 100),
+            (100.00015320566493, 100.00015320566493),
         )
 
     def test_xyzRotation(self):
         """ """
-        self.perform_test(
-            {
-                "self.xyz_rotation(2, (0, 1, 0))": (
-                    3.589792907376932e-09,
-                    1.9999999964102069,
-                    3.589792907376932e-09,
-                ),
-                "self.xyz_rotation(2, (0, 1, 0), [], True)": (0.0, 114.59, 0.0),
-            }
+        self.assertEqual(
+            self.xyz_rotation(2, (0, 1, 0)),
+            (
+                3.589792907376932e-09,
+                1.9999999964102069,
+                3.589792907376932e-09,
+            ),
         )
+        self.assertEqual(self.xyz_rotation(2, (0, 1, 0), [], True), (0.0, 114.59, 0.0))
+
+    def test_lerp(self):
+        """Test the lerp function with a variety of inputs."""
+        self.assertEqual(self.lerp(0, 10, 0.5), 5.0)
+        self.assertEqual(self.lerp(-10, 10, 0.5), 0.0)
+        self.assertEqual(self.lerp(0, 10, 0), 0)
+        self.assertEqual(self.lerp(0, 10, 1), 10)
 
 
 # -----------------------------------------------------------------------------
@@ -1309,16 +1389,3 @@ if __name__ == "__main__":
 # -----------------------------------------------------------------------------
 # Notes
 # -----------------------------------------------------------------------------
-
-"""
-def test_(self):
-        '''
-        '''
-        self.perform_test({
-            "<class>.()": ,
-        })
-"""
-
-# --------------------------------------------------------------------------------------------
-# deprecated:
-# --------------------------------------------------------------------------------------------

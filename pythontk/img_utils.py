@@ -16,9 +16,9 @@ except ImportError as error:
     print("{}\n # Error: {} #".format(__file__, error))
 
 # from this package:
-from pythontk.core_utils import CoreUtils
-from pythontk.file_utils import FileUtils
-from pythontk.iter_utils import IterUtils
+from pythontk import core_utils
+from pythontk import file_utils
+from pythontk import iter_utils
 
 
 class ImgUtils:
@@ -189,7 +189,12 @@ class ImgUtils:
             return im.copy()
 
     @classmethod
-    def get_images(cls, directory, inc="*.png|*.jpg|*.bmp|*.tga|*.tiff|*.gif", exc=""):
+    def get_images(
+        cls,
+        directory,
+        inc=["*.png", "*.jpg", "*.bmp", "*.tga", "*.tiff", "*.gif"],
+        exc="",
+    ):
         """Get bitmap images from a given directory as PIL images.
 
         Parameters:
@@ -202,8 +207,8 @@ class ImgUtils:
                 (dict) {<full file path>:<image object>}
         """
         images = {}
-        for f in FileUtils.get_dir_contents(
-            directory, "filepaths", inc_files=inc.split("|"), exc_files=exc.split("|")
+        for f in file_utils.FileUtils.get_dir_contents(
+            directory, "filepath", inc_files=inc, exc_files=exc
         ):
             im = cls.load_image(f)
             images[f] = im
@@ -211,7 +216,9 @@ class ImgUtils:
         return images
 
     @staticmethod
-    def get_image_files(file_types="*.png|*.jpg|*.bmp|*.tga|*.tiff|*.gif"):
+    def get_image_files(
+        file_types=["*.png", "*.jpg", "*.bmp", "*.tga", "*.tiff", "*.gif"]
+    ):
         """Open a dialog prompt to choose image files of the given type(s).
 
         Parameters:
@@ -220,11 +227,13 @@ class ImgUtils:
         Returns:
                 (list)
         """
+        file_types_list = iter_utils.IterUtils.make_iterable(file_types)
+
         files = QtWidgets.QFileDialog.getOpenFileNames(
             None,
             "Select one or more image files to open",
             "/home",
-            "Images ({})".format(" ".join(file_types.split("|"))),
+            f"Images ({' '.join(file_types_list)})",
         )[0]
 
         return files
@@ -253,7 +262,7 @@ class ImgUtils:
         Returns:
                 (str)
         """
-        name = FileUtils.format_path(file, "name")
+        name = file_utils.FileUtils.format_path(file, "name")
 
         if key:
             result = next(
@@ -282,16 +291,15 @@ class ImgUtils:
     def filter_images_by_type(cls, files, types=""):
         """
         Parameters:
-                files (list): A list of image filenames, fullpaths, or map type suffixes.
-                types (str): Any of the keys in the 'map_types' dict.
-                        Multiple types can be given separated by '|' ex. 'Base_Color|Roughness'
-                        ex. 'Base_Color','Roughness','Metallic','Ambient_Occlusion','Normal',
-                                'Normal_DirectX','Normal_OpenGL','Height','Emissive','Diffuse','Specular',
-                                'Glossiness','Displacement','Refraction','Reflection'
+            files (list): A list of image filenames, fullpaths, or map type suffixes.
+            types (str/list): Any of the keys in the 'map_types' dict.
+                    A single string or a list of strings representing the types. ex. 'Base_Color','Roughness','Metallic','Ambient_Occlusion','Normal',
+                            'Normal_DirectX','Normal_OpenGL','Height','Emissive','Diffuse','Specular',
+                            'Glossiness','Displacement','Refraction','Reflection'
         Returns:
-                (dict)
+            (list)
         """
-        types = IterUtils.make_iterable(types.split("|"))
+        types = iter_utils.IterUtils.make_iterable(types)
         return [f for f in files if cls.get_image_type_from_filename(f) in types]
 
     @classmethod
@@ -299,10 +307,10 @@ class ImgUtils:
         """Sort images files by map type.
 
         Parameters:
-                files (list)(dict): filenames, fullpaths, or map type suffixes as the first element
+            files (list)(dict): filenames, fullpaths, or map type suffixes as the first element
                                 of two element tuples or keys in a dictionary. ex. [('file', <image>)] or {'file': <image>}
         Returns:
-                (dict) ex. {Height:[('img_height.png', <image>)]}
+            (dict): ex. {Height:[('img_height.png', <image>)]}
         """
         if not isinstance(files, (list, tuple, set)):
             files = files.items()
@@ -315,7 +323,7 @@ class ImgUtils:
 
             try:
                 sorted_images[typ].append((file, image))
-            except KeyError as error:
+            except KeyError:
                 sorted_images[typ] = [(file, image)]
 
         return sorted_images
@@ -325,23 +333,20 @@ class ImgUtils:
         """Check if the given images contain the given map types.
 
         Parameters:
-                files (list)(dict): filenames, fullpaths, or map type suffixes as the first element
-                                of two element tuples or keys in a dictionary. ex. [('file', <image>)] or {'file': <image>} or {'type': ('file', <image>)}
-                map_types (str/list): The map type(s) to query. Any of the keys in the 'map_types' dict.
-                                Multiple types can be given separated by '|' ex. 'Base_Color|Roughness'
-                                ex. 'Base_Color','Roughness','Metallic','Ambient_Occlusion','Normal',
-                                        'Normal_DirectX','Normal_OpenGL','Height','Emissive','Diffuse','Specular',
-                                        'Glossiness','Displacement','Refraction','Reflection'
+            files (list)(dict): filenames, fullpaths, or map type suffixes as the first element
+                of two-element tuples or keys in a dictionary. ex. [('file', <image>)] or {'file': <image>} or {'type': ('file', <image>)}
+            map_types (str/list): The map type(s) to query. Any of the keys in the 'map_types' dict.
+                A single string or a list of strings representing the types. ex. 'Base_Color','Roughness','Metallic','Ambient_Occlusion','Normal',
+                    'Normal_DirectX','Normal_OpenGL','Height','Emissive','Diffuse','Specular',
+                    'Glossiness','Displacement','Refraction','Reflection'
         Returns:
-                (bool)
+            (bool)
         """
         if isinstance(files, (list, set, tuple)):
-            files = cls.sort_images_by_type(
-                files
-            )  # convert list to dict of the correct format.
+            # convert list to dict of the correct format.
+            files = cls.sort_images_by_type(files)
 
-        if isinstance(map_types, str):
-            map_types = map_types.split("|")
+        map_types = iter_utils.IterUtils.make_iterable(map_types)
 
         result = next(
             (
@@ -359,10 +364,10 @@ class ImgUtils:
         """Check the map type for one of the normal values in map_types.
 
         Parameters:
-                file (str): Image filename, fullpath, or map type suffix.
+            file (str): Image filename, fullpath, or map type suffix.
 
         Returns:
-                (bool)
+            (bool)
         """
         typ = cls.get_image_type_from_filename(file)
         return any(
@@ -378,11 +383,11 @@ class ImgUtils:
         """Invert RGB channels.
 
         Parameters:
-                image (str/obj): An image or path to an image.
-                channels (str): Specify which channels to invert.
-                        valid: 'R','G','B' case insensitive.
+            image (str/obj): An image or path to an image.
+            channels (str): Specify which channels to invert.
+                    valid: 'R','G','B' case insensitive.
         Returns:
-                (obj) image.
+            (obj): image.
         """
         im = cls.load_image(image) if isinstance(image, str) else image
         alpha = None
@@ -406,16 +411,16 @@ class ImgUtils:
         The new map will be saved next to the existing map.
 
         Parameters:
-                file (str): The fullpath to a DirectX normal map file.
+            file (str): The fullpath to a DirectX normal map file.
 
         Returns:
-                (str) filepath of the new image.
+            (str) filepath of the new image.
         """
         inverted_image = cls.invert_channels(file, "g")
 
-        output_dir = FileUtils.format_path(file, "path")
-        name = FileUtils.format_path(file, "name")
-        ext = FileUtils.format_path(file, "ext")
+        output_dir = file_utils.FileUtils.format_path(file, "path")
+        name = file_utils.FileUtils.format_path(file, "name")
+        ext = file_utils.FileUtils.format_path(file, "ext")
 
         typ = cls.get_image_type_from_filename(file, key=False)
         try:
@@ -437,16 +442,16 @@ class ImgUtils:
         The new map will be saved next to the existing map.
 
         Parameters:
-                file (str): The fullpath to a OpenGL normal map file.
+            file (str): The fullpath to a OpenGL normal map file.
 
         Returns:
-                (str) filepath of the new image.
+            (str): filepath of the new image.
         """
         inverted_image = cls.invert_channels(file, "g")
 
-        output_dir = FileUtils.format_path(file, "path")
-        name = FileUtils.format_path(file, "name")
-        ext = FileUtils.format_path(file, "ext")
+        output_dir = file_utils.FileUtils.format_path(file, "path")
+        name = file_utils.FileUtils.format_path(file, "name")
+        ext = file_utils.FileUtils.format_path(file, "ext")
 
         typ = cls.get_image_type_from_filename(file, key=False)
         try:
@@ -463,27 +468,27 @@ class ImgUtils:
         return filepath
 
     @classmethod
-    @CoreUtils.listify(threading=True)
+    @core_utils.CoreUtils.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
     ):
         """Create mask(s) from the given image(s).
 
         Parameters:
-                images (str/obj/list): Image(s) or path(s) to an image.
-                mask (tuple)(image) = The color to isolate as a mask. (RGB) or (RGBA)
-                                or an Image(s) or path(s) to an image. The image's background color will be used.
-                background (tuple): Mask background color. (RGB) or (RGBA)
-                foreground (tuple): Mask foreground color. (RGB) or (RGBA)
+            images (str/obj/list): Image(s) or path(s) to an image.
+            mask (tuple)(image) = The color to isolate as a mask. (RGB) or (RGBA)
+                            or an Image(s) or path(s) to an image. The image's background color will be used.
+            background (tuple): Mask background color. (RGB) or (RGBA)
+            foreground (tuple): Mask foreground color. (RGB) or (RGBA)
 
         Returns:
-                (obj/list) 'L' mode images. list if 'images' given as a list. else; single image.
+            (obj/list) 'L' mode images. list if 'images' given as a list. else; single image.
         """
         if not isinstance(mask, (tuple, list, set)):
             mask = cls.get_background(mask)
 
         im = cls.load_image(image) if isinstance(image, str) else image
-        mode = im.mode
+        # mode = im.mode
         im = im.convert("RGBA")
         width, height = im.size
         data = np.array(im)
@@ -501,11 +506,11 @@ class ImgUtils:
         data[:, :, :4][bool_list.any()] = foreground
         data[:, :, :4][bool_list] = background
 
-        # set the border to background color:
-        data[0, 0] = background  # get the pixel value at top left coordinate.
-        data[width - 1, 0] = background  #          ""   top right coordinate.
-        data[0, height - 1] = background  #             ""   bottom right coordinate.
-        data[width - 1, height - 1] = background  #         ""   bottom left coordinate.
+        # Set the border to background color:
+        data[0, 0] = background  # Get the pixel value at top left coordinate.
+        data[width - 1, 0] = background  # Top right coordinate.
+        data[0, height - 1] = background  # Bottom right coordinate.
+        data[width - 1, height - 1] = background  # Bottom left coordinate.
 
         mask = Image.fromarray(data).convert("L")
         return mask
@@ -514,12 +519,12 @@ class ImgUtils:
     def fill_masked_area(cls, image, color, mask):
         """
         Parameters:
-                image (str/obj): An image or path to an image.
-                color (list): RGB or RGBA color values.
-                mask () =
+            image (str/obj): An image or path to an image.
+            color (list): RGB or RGBA color values.
+            mask () =
 
         Returns:
-                (obj) image.
+            (obj) image.
         """
         im = cls.load_image(image) if isinstance(image, str) else image
         mode = im.mode
@@ -726,110 +731,3 @@ if __name__ == "__main__":
 # --------------------------------------------------------------------------------------------
 # Notes
 # --------------------------------------------------------------------------------------------
-
-
-# Deprecated ------------------------------------
-
-
-# def getBitDepth(cls, image):
-#       '''
-#       '''
-#       im = cls.load_image(image) if isinstance(image, str) else image
-#       data = np.array(im)
-
-#       bit_depth = {'uint8':8, 'uint16':16, 'uint32':32, 'uint64':64}
-
-#       return bit_depth[str(data.dtype)]
-
-
-# width, height = im.size
-
-# for i in range(0, width):# process all pixels
-#   for ii in range(0, height):
-#       data = im.getpixel((i, ii))
-#       # data[0] = Red,  [1] = Green, [2] = Blue
-#       # data[0,1,2] range = 0~255
-#       if data==mask:
-#       # if data[0] > 150 and data[1] < 50 and data[2] < 50 :
-#           im.putpixel((i, ii), (0, 0, 0))
-#       else :
-#           im.putpixel((i, ii), (255, 255, 255))
-
-# return im.convert(mode)
-
-
-# def isolateColor(cls, image, color):
-#   '''Return an image with only pixels of the given color retained.
-#   '''
-#   im = cls.load_image(image) if isinstance(image, str) else image
-#   data = np.array(im)
-
-#   r, g, b =  color[:3]
-#   array = np.where(data == r, g, b)
-
-#   return Image.fromarray(array.astype('uint8')) #Image.fromarray(converted.astype('uint8'))
-
-
-# def create_mask(cls, image, mask):
-#   '''
-#   '''
-#   im = cls.load_image(image) if isinstance(image, str) else image
-
-#   im = cls.replace_color(im, from_color=mask, to_color=(0, 177, 64, 255))
-
-#   # background = cls.create_image(mode='RGBA', size=im.size, rgba=(0, 177, 64, 255))
-#   # im = Image.alpha_composite(background, im) #(background, foreground)
-
-#   # im = cls.isolateColor(im, (0, 177, 64))
-#   # im = cls.replace_color(im, from_color=(0, 177, 64), to_color=(255, 255, 255, 255), background_color=(0, 0, 0, 255))
-#   # im = cls.set_contrast(im, 255)
-#   return im
-
-
-# def convertDXToGL(cls):
-#   '''
-#   '''
-#   files = cls.get_image_files()
-#   for file, image in files.items():
-#       inverted_image = cls.invert_channels(image, 'g')
-#       # name = FileUtils.format_path(file, remove='_DirectX', append='_OpenGL')
-#       # cls.save_image(inverted_image, name)
-
-
-# def convertGLToDX(cls):
-#   '''
-#   '''
-#   files = cls.get_image_files()
-#   for file, image in files.items():
-#       inverted_image = cls.invert_channels(image, 'g')
-#       # name = FileUtils.format_path(file, remove='_OpenGL', append='_DirectX')
-#       # cls.save_image(inverted_image, name)
-
-
-# def changeColorDepth(cls, image, depth):
-#   '''
-#   '''
-# return image.convert(image.mode, colors=depth)
-
-# import math
-
-# grayscale_color_count = 256
-# rgb_color_count = 256
-
-# if image.mode=='L':
-#   raito = grayscale_color_count / colorCount
-#   change = lambda value: math.trunc(value/raito)*raito
-#   return image.point(change)
-
-# if image.mode=='RGB' or image.mode=='RGBA':
-#   raito = rgb_color_count / colorCount
-#   change = lambda value: math.trunc(value/raito)*raito
-#   return Image.eval(image, change)
-
-# raise ValueError('invalid image mode: {mode}'.format(mode=image.mode))
-
-
-# appended = '{}{}.{}'.format(''.join(string.split('.')[:-1]), append, ''.join(string.split('.')[-1]))
-# removed = appended.replace(remove, '')
-
-# return '{}/{}'.format(path, removed)

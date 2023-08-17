@@ -437,6 +437,26 @@ class MathUtils:
             rotation = [round(degrees(r), 2) for r in rotation]
         return tuple(rotation)
 
+    @staticmethod
+    def lerp(a, b, t):
+        """Perform linear interpolation between two points.
+
+        Linear interpolation is a method of curve fitting using linear
+        polynomials to construct new data points within the range of
+        a discrete set of known data points.
+
+        Parameters:
+            a (float or int): The first point, corresponds to the value at t=0.
+            b (float or int): The second point, corresponds to the value at t=1.
+            t (float): The interpolation parameter, should be in range [0.0, 1.0].
+                       If t=0, it will return `a`, if t=1 it will return `b`.
+                       Intermediate values of `t` will return a value somewhere between `a` and `b`.
+
+        Returns:
+            float: The interpolated value between `a` and `b`.
+        """
+        return a + (b - a) * t
+
 
 # -----------------------------------------------------------------------------
 
