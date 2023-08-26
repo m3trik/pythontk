@@ -1,17 +1,11 @@
 # !/usr/bin/python
 # coding=utf-8
-import sys
-
 try:
     import numpy as np
 except ImportError as error:
     print("{}\n # Error: {} #".format(__file__, error))
 try:
     from PIL import Image, ImageChops, ImageDraw
-except ImportError as error:
-    print("{}\n # Error: {} #".format(__file__, error))
-try:
-    from PySide2 import QtWidgets
 except ImportError as error:
     print("{}\n # Error: {} #".format(__file__, error))
 
@@ -23,10 +17,6 @@ from pythontk import iter_utils
 
 class ImgUtils:
     """Helper methods for working with image file formats."""
-
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
-        sys.argv
-    )  # return the existing QApplication object, or create a new one if none exists.
 
     map_types = {  # Get map type from filename suffix.
         "Base_Color": ("Base_Color", "BaseColor", "_BC"),
@@ -214,42 +204,6 @@ class ImgUtils:
             images[f] = im
 
         return images
-
-    @staticmethod
-    def get_image_files(
-        file_types=["*.png", "*.jpg", "*.bmp", "*.tga", "*.tiff", "*.gif"]
-    ):
-        """Open a dialog prompt to choose image files of the given type(s).
-
-        Parameters:
-                file_types (str): The extensions of image types to include.
-
-        Returns:
-                (list)
-        """
-        file_types_list = iter_utils.IterUtils.make_iterable(file_types)
-
-        files = QtWidgets.QFileDialog.getOpenFileNames(
-            None,
-            "Select one or more image files to open",
-            "/home",
-            f"Images ({' '.join(file_types_list)})",
-        )[0]
-
-        return files
-
-    @staticmethod
-    def get_image_dir():
-        """Open a dialog prompt to choose a directory.
-
-        Returns:
-                (list)
-        """
-        image_dir = QtWidgets.QFileDialog.getExistingDirectory(
-            None, "Select a directory containing image files", "/home"
-        )
-
-        return image_dir
 
     @classmethod
     def get_image_type_from_filename(cls, file, key=True):
@@ -630,11 +584,12 @@ class ImgUtils:
         im = cls.load_image(image) if isinstance(image, str) else image
 
         factor = (259 * (level + 255)) / (255 * (259 - level))
-        _contrast = lambda c: int(
-            max(0, min(255, 128 + factor * (c - 128)))
-        )  # make sure the contrast filter only return values within the range [0-255].
 
-        return im.point(_contrast)
+        def adjust_contrast(c):
+            # make sure the contrast filter only return values within the range [0-255].
+            return int(max(0, min(255, 128 + factor * (c - 128))))
+
+        return im.point(adjust_contrast)  # Pass the contrast filter to im.point.
 
     @staticmethod
     def convert_rgb_to_gray(data):

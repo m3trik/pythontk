@@ -5,6 +5,7 @@ import os
 import re
 import json
 import traceback
+from typing import List, Union
 
 # from this package:
 from pythontk import core_utils
@@ -331,18 +332,26 @@ class FileUtils:
         return result
 
     @classmethod
-    def append_paths(cls, root_dir, **kwargs):
-        """Append all sub-directories of the given 'root_dir' to the python path.
+    def append_path(cls, path, **kwargs):
+        """Append a directory to the python path.
 
         Parameters:
-            root_dir (str): Sub-directories of this directory will be appended to the system path.
+            path (str): The directory to be appended to the system path.
             kwargs (optional): Any file related keyword arguments that 'get_dir_contents' allows.
                     ie. recursive, num_threads, inc_dirs, exc_dirs. But not: dirPath or returned_type.
         Returns:
-            list:  the appended paths.
+            list:  The appended paths.
+
+        Example:
+            ptk.append_path(<path>, recursive=True, exc_dirs="_*")
+        )
         """
-        path = os.path.dirname(os.path.abspath(root_dir))
-        return [sys.path.append(d) for d in cls.get_dir_contents(path, "dir", **kwargs)]
+        root_dir = os.path.dirname(os.path.abspath(path))
+        appended_paths = []
+        for directory in cls.get_dir_contents(root_dir, "dirpath", **kwargs):
+            sys.path.append(directory)
+            appended_paths.append(directory)
+        return appended_paths
 
     @staticmethod
     def get_object_path(obj, inc_filename=False):
