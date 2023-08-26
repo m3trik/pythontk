@@ -1,6 +1,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-![Version](https://img.shields.io/badge/Version-0.6.9-blue.svg)
-[![CoreUtils Tests](https://img.shields.io/badge/CoreUtils-Failing-red.svg)](../test/ptk_test.py#CoreUtilsTest)
+![Version](https://img.shields.io/badge/Version-0.7.1-blue.svg)
+[![CoreUtils Tests](https://img.shields.io/badge/CoreUtils-Passing-brightgreen.svg)](../test/ptk_test.py#CoreUtilsTest)
 [![FileUtils Tests](https://img.shields.io/badge/FileUtils-Passing-brightgreen.svg)](../test/ptk_test.py#FileUtilsTest)
 [![ImgUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](../test/ptk_test.py#ImgUtilsTest)
 [![MathUtils Tests](https://img.shields.io/badge/MathUtils-Passing-brightgreen.svg)](../test/ptk_test.py#MathUtilsTest)
