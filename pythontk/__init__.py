@@ -6,7 +6,7 @@ import pkgutil
 
 
 __package__ = "pythontk"
-__version__ = '0.7.0'
+__version__ = '0.7.1'
 
 
 # Define dictionaries to map class names, method names, and class method names to their respective modules

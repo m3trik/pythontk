@@ -106,55 +106,81 @@ class CoreTest(Main, CoreUtils):
         self.assertEqual(my_instance.counter, 1)
         self.assertEqual(my_instance._counter, 1)
 
-    def test_listify(self):
-        # 1. Standalone function with threading
+    def test_listify_standalone_function_with_threading(self):
         @CoreUtils.listify(threading=True)
         def to_str(n):
             return str(n)
 
-        # 2. Function with arg_name specified
+        self.assertEqual(to_str([0, 1]), ["0", "1"])
+
+    def test_listify_function_with_arg_name(self):
         @CoreUtils.listify(arg_name="n")
         def to_str_arg_name(n):
             return str(n)
 
-        # 3. Function with arg_name specified and threading
+        self.assertEqual(to_str_arg_name([0, 1]), ["0", "1"])
+
+    def test_listify_function_with_arg_name_and_threading(self):
         @CoreUtils.listify(arg_name="n", threading=True)
         def to_str_arg_name_threaded(n):
             return str(n)
 
-        # 4. Method within a class with threading
+        self.assertEqual(to_str_arg_name_threaded([0, 1]), ["0", "1"])
+
+    def test_listify_method_within_class(self):
         class TestClass:
             @CoreUtils.listify
             def to_str(self, n, x=None):
                 return str(n)
 
+        test_obj = TestClass()
+        self.assertEqual(test_obj.to_str([0, 1]), ["0", "1"])
+
+    def test_listify_static_method_within_class(self):
+        class TestClass:
             @staticmethod
             @CoreUtils.listify
             def to_str_staticmethod(n):
                 return str(n)
 
+        test_obj = TestClass()
+        self.assertEqual(test_obj.to_str_staticmethod([0, 1]), ["0", "1"])
+
+    def test_listify_class_method_within_class(self):
+        class TestClass:
             @classmethod
             @CoreUtils.listify
             def to_str_classmethod(cls, n):
                 return str(n)
 
+        test_obj = TestClass()
+        self.assertEqual(test_obj.to_str_classmethod([0, 1]), ["0", "1"])
+
+    def test_listify_method_within_class_with_threading(self):
+        class TestClass:
             @CoreUtils.listify(threading=True)
             def to_str_threading(self, n):
                 return str(n)
 
+        test_obj = TestClass()
+        self.assertEqual(test_obj.to_str_threading([0, 1]), ["0", "1"])
+
+    def test_listify_method_within_class_with_arg_name_and_threading(self):
+        class TestClass:
             @CoreUtils.listify(arg_name="n", threading=True)
             def to_str_arg_name(self, n):
                 return str(n)
 
-        self.assertEqual(to_str([0, 1]), ["0", "1"])
-        self.assertEqual(to_str_arg_name([0, 1]), ["0", "1"])
-        self.assertEqual(to_str_arg_name_threaded([0, 1]), ["0", "1"])
         test_obj = TestClass()
-        self.assertEqual(test_obj.to_str([0, 1]), ["0", "1"])
-        self.assertEqual(test_obj.to_str_staticmethod([0, 1]), ["0", "1"])
-        self.assertEqual(test_obj.to_str_classmethod([0, 1]), ["0", "1"])
-        self.assertEqual(test_obj.to_str_threading([0, 1]), ["0", "1"])
         self.assertEqual(test_obj.to_str_arg_name([0, 1]), ["0", "1"])
+
+    def test_listify_method_within_class_with_none(self):
+        class TestClass:
+            @CoreUtils.listify
+            def to_str(self, n, x=None):
+                return str(n)
+
+        test_obj = TestClass()
         self.assertEqual(test_obj.to_str(None), "None")
 
     def test_format_return(self):
@@ -1036,16 +1062,6 @@ class ImgTest(Main, ImgUtils):
                 "test_files/imgtk_test/im_Normal_OpenGL.png",
             ],
         )
-
-    def test_getImageFiles(self):
-        """ """
-        print("\ngetImageFiles: skipped")
-        # self.assertEqual(self.get_image_files('*.png|*.jpg'), '')
-
-    def test_getImageDirectory(self):
-        """ """
-        print("\ngetImageDirectory: skipped")
-        # self.assertEqual(self.get_image_dir(), "")
 
     def test_getImageTypeFromFilename(self):
         """ """

@@ -4,6 +4,7 @@ import functools
 import inspect
 import collections.abc
 from typing import Any, Callable
+from concurrent.futures import ThreadPoolExecutor
 
 # from this package:
 from pythontk.iter_utils import IterUtils
@@ -40,48 +41,72 @@ class CoreUtils:
 
     @staticmethod
     def listify(func=None, arg_name=None, threading=False):
+        """A decorator to make a function accept list-like arguments and return a list of results.
+
+        Parameters:
+            func (callable): The function to be decorated.
+            arg_name (str): The name of the argument that should be listified. If None, the first argument is used.
+            threading (bool): Whether to use multi-threading for processing the list.
+
+        Returns:
+            callable: A wrapper function that takes the same arguments as the original function.
+
+        Example:
+            ```
+            @listify
+            def my_function(x):
+                return x * 2
+
+            result = my_function([1, 2, 3])  # result will be [2, 4, 6]
+            ```
+        Notes:
+            - If `threading` is True, the function uses a ThreadPoolExecutor to parallelize the operation.
+            - The function raises a ValueError if the specified `arg_name` is not found in the function arguments.
+        """
+
         if func is None:
-            return lambda func: CoreUtils.listify(func, arg_name=arg_name)
+            return lambda func: CoreUtils.listify(
+                func, arg_name=arg_name, threading=threading
+            )
+
+        func_args = inspect.getfullargspec(func).args  # Cache this information
+        offset = "self" in func_args or "cls" in func_args
+        arg_index = func_args.index(arg_name) - offset if arg_name else 0
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            func_args = inspect.getfullargspec(func).args
-            if "self" in func_args or "cls" in func_args:
-                func_args = func_args[1:]  # skip 'self' or 'cls' argument for methods
+            arg = kwargs.get(
+                arg_name,
+                args[arg_index + offset] if arg_index + offset < len(args) else None,
+            )
 
-            if arg_name and arg_name in func_args:
-                arg_index = func_args.index(arg_name)
-                if arg_index < len(args):
-                    # Argument is in the positional arguments
-                    arg = args[arg_index]
-                    args = args[:arg_index] + args[arg_index + 1 :]
-                else:
-                    raise ValueError(f"No argument named '{arg_name}' provided")
-            elif args:
-                arg_index = 0
-                arg = args[arg_index]
-                args = args[arg_index + 1 :]
-            else:
+            if (
+                arg is None
+                and arg_name
+                and arg_name not in kwargs
+                and arg_index + offset >= len(args)
+            ):
                 raise ValueError("No argument provided")
 
-            # Check if a single item was provided
             single_item = not isinstance(arg, collections.abc.Iterable) or isinstance(
                 arg, (str, bytes, bytearray)
             )
+            arg = [arg] if single_item else arg
 
-            if single_item:
-                arg = [arg]
+            def slice_args(x):
+                return (
+                    args[: arg_index + offset] + (x,) + args[arg_index + offset + 1 :]
+                )
 
-            results = [
-                func(*(args[:arg_index] + (x,) + args[arg_index:]), **kwargs)
-                for x in arg
-            ]
+            if threading:
+                with ThreadPoolExecutor() as executor:
+                    results = list(
+                        executor.map(lambda x: func(*slice_args(x), **kwargs), arg)
+                    )
+            else:
+                results = [func(*slice_args(x), **kwargs) for x in arg]
 
-            # If a single item was provided, return a single result
-            if single_item:
-                return results[0]
-
-            return results
+            return results[0] if single_item else results
 
         return wrapper
 
