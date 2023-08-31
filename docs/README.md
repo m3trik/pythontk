@@ -1,5 +1,5 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-![Version](https://img.shields.io/badge/Version-0.7.1-blue.svg)
+![Version](https://img.shields.io/badge/Version-0.7.2-blue.svg)
 [![CoreUtils Tests](https://img.shields.io/badge/CoreUtils-Passing-brightgreen.svg)](../test/ptk_test.py#CoreUtilsTest)
 [![FileUtils Tests](https://img.shields.io/badge/FileUtils-Passing-brightgreen.svg)](../test/ptk_test.py#FileUtilsTest)
 [![ImgUtils Tests](https://img.shields.io/badge/ImgUtils-Passing-brightgreen.svg)](../test/ptk_test.py#ImgUtilsTest)
