@@ -63,50 +63,47 @@ class CoreUtils:
             - If `threading` is True, the function uses a ThreadPoolExecutor to parallelize the operation.
             - The function raises a ValueError if the specified `arg_name` is not found in the function arguments.
         """
-
         if func is None:
-            return lambda func: CoreUtils.listify(
-                func, arg_name=arg_name, threading=threading
+            return lambda f: CoreUtils.listify(
+                f, arg_name=arg_name, threading=threading
             )
 
-        func_args = inspect.getfullargspec(func).args  # Cache this information
-        offset = "self" in func_args or "cls" in func_args
-        arg_index = func_args.index(arg_name) - offset if arg_name else 0
+        func_args = inspect.getfullargspec(func)
+        arg_names = func_args.args
+        defaults = func_args.defaults or []
+        offset = "self" in arg_names or "cls" in arg_names
+        arg_index = arg_names.index(arg_name) if arg_name else 1 if offset else 0
+        arg_name = arg_name or arg_names[arg_index]
+        arg_has_default = arg_name in arg_names[-len(defaults) :]
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            arg = kwargs.get(
-                arg_name,
-                args[arg_index + offset] if arg_index + offset < len(args) else None,
+            arg = kwargs.pop(
+                arg_name, args[arg_index] if arg_index < len(args) else None
             )
+            if arg is None and arg_has_default:
+                default_value = defaults[arg_names.index(arg_name) - len(arg_names)]
+                if default_value is not None:
+                    raise ValueError("No argument provided")
 
-            if (
-                arg is None
-                and arg_name
-                and arg_name not in kwargs
-                and arg_index + offset >= len(args)
-            ):
-                raise ValueError("No argument provided")
+            is_single_item = not isinstance(
+                arg, collections.abc.Iterable
+            ) or isinstance(arg, (str, bytes, bytearray))
+            arg_list = [arg] if is_single_item else arg
+            new_args = args[:arg_index] + (None,) + args[arg_index + 1 :]
 
-            single_item = not isinstance(arg, collections.abc.Iterable) or isinstance(
-                arg, (str, bytes, bytearray)
-            )
-            arg = [arg] if single_item else arg
-
-            def slice_args(x):
-                return (
-                    args[: arg_index + offset] + (x,) + args[arg_index + offset + 1 :]
+            def apply_func(x):
+                return func(
+                    *(new_args[:arg_index] + (x,) + new_args[arg_index + 1 :]), **kwargs
                 )
 
             if threading:
                 with ThreadPoolExecutor() as executor:
-                    results = list(
-                        executor.map(lambda x: func(*slice_args(x), **kwargs), arg)
-                    )
+                    results = list(executor.map(apply_func, arg_list))
             else:
-                results = [func(*slice_args(x), **kwargs) for x in arg]
+                results = [apply_func(x) for x in arg_list]
 
-            return results[0] if single_item else results
+            return results[0] if is_single_item else results
 
         return wrapper
 
