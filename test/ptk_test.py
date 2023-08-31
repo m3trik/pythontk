@@ -183,6 +183,42 @@ class CoreTest(Main, CoreUtils):
         test_obj = TestClass()
         self.assertEqual(test_obj.to_str(None), "None")
 
+    def test_listify_method_with_overlapping_args_and_kwargs(self):
+        class TestClass:
+            @CoreUtils.listify(arg_name="n")
+            def to_str(self, n, x=None):
+                return str(n)
+
+        test_obj = TestClass()
+        self.assertEqual(test_obj.to_str([0, 1], x=2), ["0", "1"])
+        self.assertEqual(test_obj.to_str(n=[0, 1], x=2), ["0", "1"])
+        self.assertEqual(test_obj.to_str([0, 1], x=2, n=[0, 1]), ["0", "1"])
+
+    def test_listify_method_with_keyword_arg_conflict(self):
+        class TestClass:
+            @CoreUtils.listify
+            def to_str(self, n, x=None):
+                return str(n)
+
+            @CoreUtils.listify(arg_name="n")
+            def to_str_arg_name(self, n, x=None):
+                return str(n)
+
+        test_obj = TestClass()
+        self.assertEqual(test_obj.to_str([0, 1], x=2), ["0", "1"])
+        self.assertEqual(test_obj.to_str(n=[0, 1], x=2), ["0", "1"])
+        self.assertEqual(test_obj.to_str_arg_name([0, 1], x=2), ["0", "1"])
+
+    def test_listify_method_within_class_with_valid_none(self):
+        class TestClass:
+            @CoreUtils.listify(arg_name="n")
+            def to_str(self, n=None):
+                return str(n) if n is not None else "None"
+
+        test_obj = TestClass()
+        self.assertEqual(test_obj.to_str(None), "None")
+        self.assertEqual(test_obj.to_str([None, 1]), ["None", "1"])
+
     def test_format_return(self):
         """Test format_return method."""
         self.assertEqual(self.format_return([""]), "")
@@ -1400,7 +1436,6 @@ class MathTest(Main, MathUtils):
 
 if __name__ == "__main__":
     unittest.main(exit=False)
-    # print(self.are_similar)
 
 # -----------------------------------------------------------------------------
 # Notes
