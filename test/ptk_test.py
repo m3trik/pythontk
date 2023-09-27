@@ -882,59 +882,95 @@ class FileTest(Main, FileUtils):
         relative_path = "test_files"
         path = os.path.join(base_path, relative_path)
 
-        # test_files_dirpath = os.path.join(base_path, "test_files")
         imgtk_test_dirpath = os.path.join(base_path, "test_files\\imgtk_test")
         sub_directory_dirpath = os.path.join(base_path, "test_files\\sub-directory")
 
-        self.assertEqual(
-            self.get_dir_contents(path, "dirpath"),
-            [
-                imgtk_test_dirpath,
-                sub_directory_dirpath,
-            ],
-        )
-        self.assertEqual(
-            self.get_dir_contents(path, "filename", recursive=True),
-            [
-                "file1",
-                "file2",
-                "test",
-                "im_Base_color",
-                "im_h",
-                "im_Height",
-                "im_Metallic",
-                "im_Mixed_AO",
-                "im_n",
-                "im_Normal_DirectX",
-                "im_Normal_OpenGL",
-                "im_Roughness",
-            ],
-        )
-        self.assertEqual(
-            self.get_dir_contents(path, ["file", "dir"]),
-            ["imgtk_test", "sub-directory", "file1.txt", "file2.txt", "test.json"],
-        )
-        self.assertEqual(
-            self.get_dir_contents(path, ["file", "dir"], exc_dirs=["sub*"]),
-            ["imgtk_test", "file1.txt", "file2.txt", "test.json"],
-        )
-        self.assertEqual(
-            self.get_dir_contents(path, "filename", inc_files="*.txt"),
-            ["file1", "file2"],
-        )
-        self.assertEqual(
-            self.get_dir_contents(path, "file", inc_files="*.txt"),
-            ["file1.txt", "file2.txt"],
-        )
-        self.assertEqual(
-            sorted(self.get_dir_contents(path, ["dirpath", "dir"])),
-            [
-                imgtk_test_dirpath,
-                sub_directory_dirpath,
-                "imgtk_test",
-                "sub-directory",
-            ],
-        )
+        with self.subTest("Test returned dirpaths"):
+            self.assertEqual(
+                self.get_dir_contents(path, "dirpath"),
+                [
+                    imgtk_test_dirpath,
+                    sub_directory_dirpath,
+                ],
+            )
+
+        with self.subTest("Test returned filenames recursively"):
+            self.assertEqual(
+                self.get_dir_contents(path, "filename", recursive=True),
+                [
+                    "file1",
+                    "file2",
+                    "test",
+                    "im_Base_color",
+                    "im_h",
+                    "im_Height",
+                    "im_Metallic",
+                    "im_Mixed_AO",
+                    "im_n",
+                    "im_Normal_DirectX",
+                    "im_Normal_OpenGL",
+                    "im_Roughness",
+                ],
+            )
+
+        with self.subTest("Test returned file and dir"):
+            self.assertEqual(
+                sorted(self.get_dir_contents(path, ["file", "dir"])),
+                sorted(
+                    [
+                        "imgtk_test",
+                        "sub-directory",
+                        "file1.txt",
+                        "file2.txt",
+                        "test.json",
+                    ]
+                ),
+            )
+
+        with self.subTest("Test with exc_dirs"):
+            self.assertEqual(
+                sorted(self.get_dir_contents(path, ["file", "dir"], exc_dirs=["sub*"])),
+                sorted(["imgtk_test", "file1.txt", "file2.txt", "test.json"]),
+            )
+
+        with self.subTest("Test with inc_files"):
+            self.assertEqual(
+                self.get_dir_contents(path, "filename", inc_files="*.txt"),
+                ["file1", "file2"],
+            )
+
+        with self.subTest("Test returned file with inc_files"):
+            self.assertEqual(
+                self.get_dir_contents(path, "file", inc_files="*.txt"),
+                ["file1.txt", "file2.txt"],
+            )
+
+        with self.subTest("Test returned dirpath and dir"):
+            self.assertEqual(
+                sorted(self.get_dir_contents(path, ["dirpath", "dir"])),
+                [
+                    imgtk_test_dirpath,
+                    sub_directory_dirpath,
+                    "imgtk_test",
+                    "sub-directory",
+                ],
+            )
+
+        with self.subTest("Test group_by_type functionality"):
+            result = self.get_dir_contents(
+                path, ["dirpath", "file"], group_by_type=True
+            )
+            self.assertIsInstance(result, dict)
+            self.assertIn("dirpath", result)
+            self.assertIn("file", result)
+
+            self.assertEqual(
+                sorted(result["dirpath"]),
+                sorted([imgtk_test_dirpath, sub_directory_dirpath]),
+            )
+            self.assertEqual(
+                sorted(result["file"]), sorted(["file1.txt", "file2.txt", "test.json"])
+            )
 
     def test_get_object_path(self):
         """Test get_object_path for various scenarios."""

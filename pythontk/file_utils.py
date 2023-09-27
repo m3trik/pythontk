@@ -5,7 +5,6 @@ import os
 import re
 import json
 import traceback
-from typing import List, Union
 
 # from this package:
 from pythontk import core_utils
@@ -62,55 +61,68 @@ class FileUtils:
         exc_files=[],
         inc_dirs=[],
         exc_dirs=[],
+        group_by_type=False,
     ):
         """Get the contents of a directory and any of its children.
 
         Parameters:
             dirPath (str): The path to the directory.
             returned_type (str/list): Return files and directories. Can be a single string or a list of strings.
-                    (valid: 'file'(default), 'filename', 'filepath', 'dir', 'dirpath')
-            recursive (bool): When False, Return the contents of the root dir only.
+                                      (valid: 'file'(default), 'filename', 'filepath', 'dir', 'dirpath')
+            recursive (bool): When False, return the contents of the root dir only. When True, includes sub-directories.
             num_threads (int): The number of threads to use for processing directories and files.
-                    If set to 1 or 0, multithreading will not be used.
+                               If set to 1 or 0, multithreading will not be used.
             inc_files (str/list): Include only specific files.
-            exc_files (str/list): Excluded specific files.
+            exc_files (str/list): Exclude specific files.
             inc_dirs (str/list): Include only specific child directories.
-            exc_dirs (str/list): Excluded specific child directories.
-                    supports using the '*' operator: startswith*, *endswith, *contains*
-                    ex. *.ext will exclude all files with the given extension.
-                    exclude takes precedence over include.
+            exc_dirs (str/list): Exclude specific child directories.
+            group_by_type (bool): When set to True, returns a dictionary where each key corresponds to a 'returned_type',
+                                  and the value is a list of items of that type.
+
         Returns:
-            (list): A list of files, directories, filenames, filepaths, dirs, or dirpaths based on the returned_type.
+            list/dict: A list or dictionary containing the results based on the `returned_type` and `group_by_type` parameters.
 
         Examples:
-            get_dir_contents(dirPath, returned_type='filepath')
-            get_dir_contents(dirPath, returned_type=['file', 'dir'])
+            # Example 1: Basic usage with default `returned_type`
+            result = get_dir_contents('/path/to/directory')
+
+            # Example 2: Specifying multiple return types
+            result = get_dir_contents('/path/to/directory', returned_type=['filename', 'filepath'])
+
+            # Example 3: Using the `group_by_type` flag
+            result = get_dir_contents('/path/to/directory', returned_type=['filename', 'filepath'], group_by_type=True)
+            result['filename']  # ['file1', 'file2', ...],
+            result['filepath']  # ['/path/to/file1', '/path/to/file2', ...]
+
         """
+        from itertools import chain
+
         path = os.path.expandvars(dirPath)
         options = iter_utils.IterUtils.make_iterable(returned_type)
+        grouped_result = {opt: [] for opt in options}
 
         def process_directory(root, dirs, files):
-            result = []
+            temp_result = {opt: [] for opt in options}
+
             if not recursive and root != path:
-                return result
+                return temp_result
 
             dirs = iter_utils.IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
             files = iter_utils.IterUtils.filter_list(files, inc_files, exc_files)
 
-            if "dir" in options:
-                result.extend(dirs)
-            if "dirpath" in options:
-                result.extend(os.path.join(root, d) for d in dirs)
-            if "file" in options:
-                result.extend(files)
-            if "filename" in options:
-                result.extend(os.path.splitext(f)[0] for f in files)
-            if "filepath" in options:
-                result.extend(os.path.join(root, f) for f in files)
+            for opt in options:
+                if opt == "dir":
+                    temp_result[opt].extend(dirs)
+                elif opt == "dirpath":
+                    temp_result[opt].extend([os.path.join(root, d) for d in dirs])
+                elif opt == "file":
+                    temp_result[opt].extend(files)
+                elif opt == "filename":
+                    temp_result[opt].extend([os.path.splitext(f)[0] for f in files])
+                elif opt == "filepath":
+                    temp_result[opt].extend([os.path.join(root, f) for f in files])
 
-            return result
-
-        result = []
+            return temp_result
 
         if num_threads > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -126,12 +138,20 @@ class FileUtils:
                 }
 
                 for future in as_completed(futures):
-                    result.extend(future.result())
+                    data = future.result()
+                    for opt in options:
+                        grouped_result[opt].extend(data[opt])
         else:
             for root, dirs, files in os.walk(path, topdown=True):
-                result.extend(process_directory(root, dirs, files))
+                data = process_directory(root, dirs, files)
+                for opt in options:
+                    grouped_result[opt].extend(data[opt])
 
-        return result
+        return (
+            grouped_result
+            if group_by_type
+            else list(chain.from_iterable(grouped_result.values()))
+        )
 
     @staticmethod
     def get_file(filepath, mode="a+"):
