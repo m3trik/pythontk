@@ -70,15 +70,14 @@ class FileUtils:
             returned_type (str/list): Return files and directories. Can be a single string or a list of strings.
                                       (valid: 'file'(default), 'filename', 'filepath', 'dir', 'dirpath')
             recursive (bool): When False, return the contents of the root dir only. When True, includes sub-directories.
-            num_threads (int): The number of threads to use for processing directories and files.
-                               If set to 1 or 0, multithreading will not be used.
+            num_threads (int): Specifies the number of threads to use for processing directories and files.
+                           A value of 0 (default) means no multithreading, -1 means use all available cores.
             inc_files (str/list): Include only specific files.
             exc_files (str/list): Exclude specific files.
             inc_dirs (str/list): Include only specific child directories.
             exc_dirs (str/list): Exclude specific child directories.
             group_by_type (bool): When set to True, returns a dictionary where each key corresponds to a 'returned_type',
                                   and the value is a list of items of that type.
-
         Returns:
             list/dict: A list or dictionary containing the results based on the `returned_type` and `group_by_type` parameters.
 
@@ -125,9 +124,11 @@ class FileUtils:
             return temp_result
 
         if num_threads > 1:
+            import multiprocessing
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            num_cores = multiprocessing.cpu_count() if num_threads == -1 else num_threads
+            with ThreadPoolExecutor(max_workers=num_cores) as executor:
                 futures = {
                     executor.submit(process_directory, root, dirs, files): (
                         root,
@@ -146,6 +147,7 @@ class FileUtils:
                 data = process_directory(root, dirs, files)
                 for opt in options:
                     grouped_result[opt].extend(data[opt])
+
 
         return (
             grouped_result
