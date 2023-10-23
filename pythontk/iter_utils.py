@@ -185,6 +185,7 @@ class IterUtils:
         map_func: Optional[Callable] = None,
         check_unmapped: bool = False,
         nested_as_unit: bool = False,
+        basename_only: bool = False,
     ) -> List:
         """Filters the given list based on inclusion/exclusion criteria using shell-style wildcards. This method can also apply
         the filter to nested structures like lists, tuples, or sets. If 'nested_as_unit' is True, then the entire structure is
@@ -211,22 +212,30 @@ class IterUtils:
                 the original item is included or excluded in the result accordingly. Defaults to False.
             nested_as_unit (bool, optional): Whether to consider the entire nested structure as a single entity for filtering.
                 If True, the entire nested structure will be included or excluded if any of its elements match the inclusion or exclusion criteria.
+            basename_only (bool, optional): Use only the base name of the file paths when filtering.
 
         Returns:
             list: The filtered list.
         """
         from fnmatch import fnmatchcase
+        import os
 
         inc = list(cls.make_iterable(inc))
         exc = list(cls.make_iterable(exc))
 
         def match_item(item: Union[str, int], patterns: List[Union[str, int]]) -> bool:
-            return any(
-                fnmatchcase(str(item), pattern)
-                if isinstance(pattern, str)
-                else item == pattern
-                for pattern in patterns
-            )
+            for pattern in patterns:
+                check_item = (
+                    os.path.basename(str(item)) if basename_only else str(item)
+                )  # Adjusted line
+                match_result = (
+                    fnmatchcase(check_item, pattern)
+                    if isinstance(pattern, str)
+                    else item == pattern
+                )
+                if match_result:
+                    return True
+            return False
 
         def check_item(item):
             try:
