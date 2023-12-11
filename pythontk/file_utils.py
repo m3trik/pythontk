@@ -127,7 +127,9 @@ class FileUtils:
             import multiprocessing
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            num_cores = multiprocessing.cpu_count() if num_threads == -1 else num_threads
+            num_cores = (
+                multiprocessing.cpu_count() if num_threads == -1 else num_threads
+            )
             with ThreadPoolExecutor(max_workers=num_cores) as executor:
                 futures = {
                     executor.submit(process_directory, root, dirs, files): (
@@ -147,7 +149,6 @@ class FileUtils:
                 data = process_directory(root, dirs, files)
                 for opt in options:
                     grouped_result[opt].extend(data[opt])
-
 
         return (
             grouped_result
@@ -671,7 +672,7 @@ class FileUtils:
         filepath: str,
         change: str = "increment",
         version_part: str = "patch",
-        max_version_parts: tuple = (9, 9),
+        max_version_parts: tuple = (99, 99),
         version_regex: str = r"__version__\s*=\s*['\"](\d+)\.(\d+)\.(\d+)['\"]",
     ) -> None:
         """This function updates the version number in a text file depending on its state.
@@ -762,6 +763,55 @@ class FileUtils:
         if not version:
             print(f"Error: No version found in {filepath}")
         return version
+
+    @staticmethod
+    def update_requirements(file_path=None):
+        """Update the requirements.txt file with the current versions of packages.
+
+        Parameters:
+            file_path (str): Path to the requirements.txt file. Defaults to the caller's directory.
+                             If a relative path is given, it's relative to the caller's directory.
+        """
+        import inspect
+        import pkg_resources
+
+        # Determine the caller's directory
+        caller_frame = inspect.stack()[1]
+        caller_path = caller_frame.filename
+        caller_dir = os.path.dirname(caller_path)
+
+        if file_path is None:
+            file_path = os.path.join(caller_dir, "requirements.txt")
+        else:
+            # Resolve relative paths relative to the caller's directory
+            file_path = os.path.abspath(os.path.join(caller_dir, file_path))
+
+        required_packages = []
+
+        try:
+            # Read the existing requirements.txt
+            with open(file_path, "r") as file:
+                lines = file.readlines()
+
+            for line in lines:
+                # Ignore empty lines or comments
+                if not line.strip() or line.startswith("#"):
+                    continue
+
+                # Extract package name
+                package_name = line.strip().split("==")[0]
+
+                try:
+                    # Get the current version of the package
+                    version = pkg_resources.get_distribution(package_name).version
+                    required_packages.append(f"{package_name}=={version}")
+                except Exception as e:
+                    print(f"Error updating version for {package_name}: {e}")
+
+        except FileNotFoundError:
+            print(f"File not found: {file_path}")
+
+        return required_packages
 
 
 # --------------------------------------------------------------------------------------------

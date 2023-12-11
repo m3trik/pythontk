@@ -2,12 +2,12 @@
 # coding=utf-8
 try:
     import numpy as np
-except ImportError as error:
-    print("{}\n # Error: {} #".format(__file__, error))
+except ImportError as e:
+    print(f"# ImportError: {__file__}\n\t{e}")
 try:
     from PIL import Image, ImageChops, ImageDraw
-except ImportError as error:
-    print("{}\n # Error: {} #".format(__file__, error))
+except ImportError as e:
+    print(f"# ImportError: {__file__}\n\t{e}")
 
 # from this package:
 from pythontk import core_utils
@@ -262,7 +262,7 @@ class ImgUtils:
 
         Parameters:
             files (list)(dict): filenames, fullpaths, or map type suffixes as the first element
-                                of two element tuples or keys in a dictionary. ex. [('file', <image>)] or {'file': <image>}
+                    of two element tuples or keys in a dictionary. ex. [('file', <image>)] or {'file': <image>}
         Returns:
             (dict): ex. {Height:[('img_height.png', <image>)]}
         """
