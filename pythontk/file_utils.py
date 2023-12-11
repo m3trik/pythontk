@@ -786,7 +786,7 @@ class FileUtils:
             # Resolve relative paths relative to the caller's directory
             file_path = os.path.abspath(os.path.join(caller_dir, file_path))
 
-        required_packages = []
+        updated_lines = []
 
         try:
             # Read the existing requirements.txt
@@ -804,14 +804,19 @@ class FileUtils:
                 try:
                     # Get the current version of the package
                     version = pkg_resources.get_distribution(package_name).version
-                    required_packages.append(f"{package_name}=={version}")
+                    updated_lines.append(f"{package_name}=={version}\n")
                 except Exception as e:
                     print(f"Error updating version for {package_name}: {e}")
+                    updated_lines.append(line)
+
+            # Write the updated requirements back to the file
+            with open(file_path, "w") as file:
+                file.writelines(updated_lines)
 
         except FileNotFoundError:
             print(f"File not found: {file_path}")
 
-        return required_packages
+        return updated_lines  # Return the updated package requirements as a list
 
 
 # --------------------------------------------------------------------------------------------

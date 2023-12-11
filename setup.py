@@ -1,9 +1,6 @@
 import setuptools
 import pythontk as ptk
 
-# Update requirements.txt with the current package versions and add to install_requires
-required_packages = ptk.update_requirements()
-
 long_description = ptk.get_file_contents("docs/README.md")
 description = ptk.get_text_between_delimiters(
     long_description,
@@ -28,12 +25,11 @@ setuptools.setup(
     ],
     packages=setuptools.find_packages(),
     include_package_data=True,
-    install_requires=required_packages,
+    install_requires=ptk.update_requirements(),
     data_files=ptk.get_dir_contents(
         ptk.__package__, "filepath", exc_files=["*.py", "*.pyc", "*.json"]
     ),  # ie. ('uitk/ui/0', ['uitk/ui/0/init.ui']),
 )
-
 
 # --------------------------------------------------------------------------------------------
 
