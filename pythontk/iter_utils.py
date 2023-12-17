@@ -180,8 +180,8 @@ class IterUtils:
     def filter_list(
         cls,
         lst: List,
-        inc: Optional[Union[str, List]] = [],
-        exc: Optional[Union[str, List]] = [],
+        inc: Optional[Union[str, List]] = None,
+        exc: Optional[Union[str, List]] = None,
         map_func: Optional[Callable] = None,
         check_unmapped: bool = False,
         nested_as_unit: bool = False,
@@ -220,8 +220,16 @@ class IterUtils:
         from fnmatch import fnmatchcase
         import os
 
-        inc = list(cls.make_iterable(inc))
-        exc = list(cls.make_iterable(exc))
+        # Handle None values for inc and exc
+        if inc is None:
+            inc = []
+        else:
+            inc = list(cls.make_iterable(inc))
+
+        if exc is None:
+            exc = []
+        else:
+            exc = list(cls.make_iterable(exc))
 
         def match_item(item: Union[str, int], patterns: List[Union[str, int]]) -> bool:
             for pattern in patterns:
