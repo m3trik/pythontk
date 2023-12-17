@@ -765,12 +765,14 @@ class FileUtils:
         return version
 
     @staticmethod
-    def update_requirements(file_path=None):
+    def update_requirements(file_path=None, inc=None, exc=None):
         """Update the requirements.txt file with the current versions of packages.
 
         Parameters:
             file_path (str): Path to the requirements.txt file. Defaults to the caller's directory.
                              If a relative path is given, it's relative to the caller's directory.
+            inc (str/list, optional): Patterns or objects to include in the update.
+            exc (str/list, optional): Patterns or objects to exclude from the update.
         """
         import inspect
         import pkg_resources
@@ -783,40 +785,38 @@ class FileUtils:
         if file_path is None:
             file_path = os.path.join(caller_dir, "requirements.txt")
         else:
-            # Resolve relative paths relative to the caller's directory
             file_path = os.path.abspath(os.path.join(caller_dir, file_path))
 
-        updated_lines = []
-
         try:
-            # Read the existing requirements.txt
             with open(file_path, "r") as file:
                 lines = file.readlines()
 
+            updated_lines = []
             for line in lines:
-                # Ignore empty lines or comments
-                if not line.strip() or line.startswith("#"):
-                    continue
-
-                # Extract package name
-                package_name = line.strip().split("==")[0]
-
-                try:
-                    # Get the current version of the package
-                    version = pkg_resources.get_distribution(package_name).version
-                    updated_lines.append(f"{package_name}=={version}\n")
-                except Exception as e:
-                    print(f"Error updating version for {package_name}: {e}")
+                if line.strip() and not line.startswith("#"):
+                    package_name = line.strip().split("==")[0]
+                    if package_name in iter_utils.IterUtils.filter_list(
+                        [package_name], inc, exc
+                    ):
+                        try:
+                            version = pkg_resources.get_distribution(
+                                package_name
+                            ).version
+                            updated_lines.append(f"{package_name}=={version}\n")
+                        except Exception as e:
+                            print(f"Error updating version for {package_name}: {e}")
+                    else:
+                        updated_lines.append(line)
+                else:
                     updated_lines.append(line)
 
-            # Write the updated requirements back to the file
             with open(file_path, "w") as file:
                 file.writelines(updated_lines)
 
         except FileNotFoundError:
             print(f"File not found: {file_path}")
 
-        return updated_lines  # Return the updated package requirements as a list
+        return updated_lines
 
 
 # --------------------------------------------------------------------------------------------
