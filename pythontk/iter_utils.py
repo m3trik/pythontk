@@ -1,27 +1,43 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Callable, Iterable, List, Optional, Union
+from typing import Any, Callable, Iterable, List, Optional, Union
+
+# from this package:
+from pythontk import core_utils
 
 
-class IterUtils:
+class IterUtils(core_utils.HelpMixin):
     """ """
 
     @staticmethod
-    def make_iterable(x):
-        """Convert the given obj to an iterable, unless it's a string, bytes, or bytearray.
+    def make_iterable(x: Any) -> Iterable:
+        """Convert the given object to an iterable, unless it's a string, bytes, or bytearray.
 
         Parameters:
-            x (unknown): The object to convert to an iterable if not already a list, set, tuple, dict_values or range.
+            x (Any): The object to convert to an iterable if not already a list, set, tuple, dict_values or range.
 
         Returns:
-            (iterable)
+            Iterable: An iterable representation of the input.
         """
+        from collections.abc import Iterable as ABCIterable
+
+        # Handle None case
+        if x is None:
+            return ()
+
+        # Check for special types
         if hasattr(x, "__apimfn__") or isinstance(x, (str, bytes, bytearray)):
             return (x,)
+
+        # Convert map, filter, zip to list
         elif isinstance(x, (map, filter, zip)):
             return list(x)
-        elif isinstance(x, Iterable):
+
+        # Return if already iterable
+        elif isinstance(x, ABCIterable):
             return x
+
+        # Default case
         return (x,)
 
     @classmethod
@@ -220,16 +236,8 @@ class IterUtils:
         from fnmatch import fnmatchcase
         import os
 
-        # Handle None values for inc and exc
-        if inc is None:
-            inc = []
-        else:
-            inc = list(cls.make_iterable(inc))
-
-        if exc is None:
-            exc = []
-        else:
-            exc = list(cls.make_iterable(exc))
+        inc = list(cls.make_iterable(inc))
+        exc = list(cls.make_iterable(exc))
 
         def match_item(item: Union[str, int], patterns: List[Union[str, int]]) -> bool:
             for pattern in patterns:
