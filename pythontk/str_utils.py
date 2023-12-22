@@ -6,7 +6,7 @@ from pythontk import iter_utils
 from pythontk import file_utils
 
 
-class StrUtils:
+class StrUtils(core_utils.CoreUtils):
     """ """
 
     @staticmethod

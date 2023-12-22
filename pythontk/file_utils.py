@@ -12,7 +12,7 @@ from pythontk import iter_utils
 from pythontk import str_utils
 
 
-class FileUtils:
+class FileUtils(core_utils.HelpMixin):
     """ """
 
     @staticmethod

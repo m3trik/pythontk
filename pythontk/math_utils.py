@@ -3,14 +3,14 @@
 from typing import List, Tuple
 
 # from this package:
-from pythontk.core_utils import CoreUtils
+from pythontk import core_utils
 
 
-class MathUtils:
+class MathUtils(core_utils.HelpMixin):
     """ """
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @core_utils.CoreUtils.listify(threading=True)
     def move_decimal_point(num, places):
         """Move the decimal place in a given number.
 
@@ -55,7 +55,7 @@ class MathUtils:
         return (b[0] - a[0], b[1] - a[1], b[2] - a[2])
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @core_utils.CoreUtils.listify(threading=True)
     def clamp(n=0.0, minimum=0.0, maximum=1.0):
         """Clamps the value x between min and max.
 

@@ -5,7 +5,7 @@ import importlib
 import pkgutil
 
 __package__ = "pythontk"
-__version__ = "0.7.10"
+__version__ = "0.7.11"
 
 CLASS_TO_MODULE = {}
 METHOD_TO_MODULE = {}

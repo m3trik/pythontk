@@ -15,7 +15,7 @@ from pythontk import file_utils
 from pythontk import iter_utils
 
 
-class ImgUtils:
+class ImgUtils(core_utils.HelpMixin):
     """Helper methods for working with image file formats."""
 
     map_types = {  # Get map type from filename suffix.

@@ -8,9 +8,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 # from this package:
 from pythontk.iter_utils import IterUtils
+from pythontk.core_utils import HelpMixin
 
 
-class CoreUtils:
+class CoreUtils(HelpMixin):
     """ """
 
     @staticmethod
@@ -28,7 +29,7 @@ class CoreUtils:
         """
         from functools import wraps
 
-        attr_name = "_cached_" + func.__name__
+        attr_name = f"_cached_{func.__name__}"
 
         @property
         @wraps(func)
