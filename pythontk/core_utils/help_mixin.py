@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import inspect
+from typing import get_type_hints
 import textwrap
 
 
@@ -19,9 +20,8 @@ class HelpMixin:
                         recognizable section headers for that format.
     Methods:
         help: Display help information for the current class or a specific method.
-        detect_format: Analyze a docstring to detect its format based on predefined templates.
-        format_docstring: Format a given docstring based on its detected format.
-        format_custom_docstring: Special handling for formatting custom-style docstrings.
+        _detect_format: Analyze a docstring to detect its format based on predefined templates.
+        _format_docstring: Format a given docstring based on its detected format.
 
     The `help` method can be used to print formatted help information for any method
     within the class or the class itself, providing a quick and convenient way to access
@@ -58,6 +58,8 @@ class HelpMixin:
             "Example:",
             "Returns:",
             "Raises:",
+            "Notes:",
+            "Usage:",
         ],
     }
 
@@ -69,31 +71,65 @@ class HelpMixin:
             method_name: Optional. The name of the method to get help for.
         """
         entity = cls
-        help_msg = f"Available Methods (use '{cls.__name__}.help('method_name')' for full docstring with examples):"
+        help_msg = f"Class: {cls.__name__}\nInherits from: {', '.join([base.__name__ for base in cls.__bases__])}\n\n"
+        help_msg += f"Available Methods (use '{cls.__name__}.help('method_name')' for full docstring with examples):\n"
+        print(help_msg)
 
         if method_name:
-            # Display help for a specific method
             method = getattr(entity, method_name, None)
-            if method and inspect.isfunction(method) and method.__doc__:
-                doc = textwrap.dedent(method.__doc__).strip()  # Normalize indentation
-                formatted_doc = cls.format_docstring(doc)
-                print(f"Help for method '{method_name}':\n{formatted_doc}")
+            if method and inspect.isfunction(method):
+                cls._display_method_help(method, method_name)
             else:
                 print(f"No help available for method '{method_name}'.")
         else:
-            # Display general help for all methods in the class
-            print(help_msg)
+            # Display general help for methods unique to Switchboard class
             for attr_name in dir(entity):
-                if not attr_name.startswith("_"):  # Filter out private attributes
-                    attr = getattr(entity, attr_name)
-                    if callable(attr) and attr.__doc__:
-                        first_line_doc = (
-                            textwrap.dedent(attr.__doc__).split("\n")[0].strip()
-                        )
-                        print(f"  - {attr_name}: {first_line_doc}")
+                if attr_name.startswith("_") or hasattr(super(cls, entity), attr_name):
+                    continue  # Skip private attributes and inherited methods
+
+                attr = getattr(entity, attr_name)
+                if callable(attr):
+                    try:
+                        signature = inspect.signature(attr)
+                        method_sig = f"{attr_name}{signature}"
+                        first_line_doc = ""
+                        if attr.__doc__:
+                            first_line_doc = (
+                                textwrap.dedent(attr.__doc__).split("\n")[0].strip()
+                            )
+                        print(f"  - {method_sig}:\n\t{first_line_doc}\n")
+                    except (TypeError, ValueError):
+                        print(f"  - {attr_name}: (Method with complex signature)\n")
 
     @classmethod
-    def detect_format(cls, docstring):
+    def _display_method_help(cls, method, method_name):
+        """Display detailed help for a specific method."""
+        doc = textwrap.dedent(method.__doc__).strip() if method.__doc__ else ""
+        formatted_doc = cls._format_docstring(doc)
+
+        # Get method signature and type hints
+        signature = inspect.signature(method)
+        type_hints = get_type_hints(method)
+
+        print(f"Help for method '{method_name}':\n{formatted_doc}")
+        print(f"\nSignature: {method_name}{signature}")
+
+        # Display argument types and default values
+        for param_name, param in signature.parameters.items():
+            param_type = type_hints.get(param_name, "Any")
+            default = (
+                f" = {param.default}"
+                if param.default is not inspect.Parameter.empty
+                else ""
+            )
+            print(f"    {param_name}: {param_type}{default}")
+
+        # Display return type
+        return_type = type_hints.get("return", "None")
+        print(f"Returns: {return_type}")
+
+    @classmethod
+    def _detect_format(cls, docstring):
         """Detect the docstring format.
 
         Parameters:
@@ -108,13 +144,13 @@ class HelpMixin:
         return "custom"
 
     @classmethod
-    def format_docstring(cls, docstring):
+    def _format_docstring(cls, docstring):
         """Format the docstring based on its detected format.
 
         Parameters:
             docstring: The original docstring to format.
         """
-        format_name = cls.detect_format(docstring)
+        format_name = cls._detect_format(docstring)
         headers = cls.FORMATS[format_name]
         formatted_doc = ["\nDescription:"]
         lines = docstring.split("\n")
@@ -132,30 +168,6 @@ class HelpMixin:
             else:
                 formatted_doc.append(f"    {line}")
 
-        return "\n".join(formatted_doc)
-
-    @classmethod
-    def format_custom_docstring(cls, lines, headers):
-        """Special formatting for the custom docstring style.
-
-        Parameters:
-            lines: List of lines in the docstring.
-            headers: List of section headers for the custom format.
-        """
-        formatted_doc = ["Description:\n"]
-        section_header = None
-        for line in lines:
-            line = line.strip()
-            if line in headers:
-                if section_header is None:
-                    # Add divider only for the first section
-                    formatted_doc.append("\n")
-                section_header = line
-                formatted_doc.append(line + "\n")
-            elif section_header:
-                formatted_doc.append("    " + line)
-            else:
-                formatted_doc.append("    " + line)
         return "\n".join(formatted_doc)
 
 
