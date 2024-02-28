@@ -54,7 +54,7 @@ class FileUtils(core_utils.HelpMixin):
     @staticmethod
     def get_dir_contents(
         dirPath,
-        returned_type="file",
+        content="file",
         recursive=False,
         num_threads=1,
         inc_files=[],
@@ -67,7 +67,7 @@ class FileUtils(core_utils.HelpMixin):
 
         Parameters:
             dirPath (str): The path to the directory.
-            returned_type (str/list): Return files and directories. Can be a single string or a list of strings.
+            content (str/list): Return files and directories. Can be a single string or a list of strings.
                                       (valid: 'file'(default), 'filename', 'filepath', 'dir', 'dirpath')
             recursive (bool): When False, return the contents of the root dir only. When True, includes sub-directories.
             num_threads (int): Specifies the number of threads to use for processing directories and files.
@@ -76,20 +76,20 @@ class FileUtils(core_utils.HelpMixin):
             exc_files (str/list): Exclude specific files.
             inc_dirs (str/list): Include only specific child directories.
             exc_dirs (str/list): Exclude specific child directories.
-            group_by_type (bool): When set to True, returns a dictionary where each key corresponds to a 'returned_type',
+            group_by_type (bool): When set to True, returns a dictionary where each key corresponds to a 'content',
                                   and the value is a list of items of that type.
         Returns:
-            list/dict: A list or dictionary containing the results based on the `returned_type` and `group_by_type` parameters.
+            list/dict: A list or dictionary containing the results based on the `content` and `group_by_type` parameters.
 
         Examples:
-            # Example 1: Basic usage with default `returned_type`
+            # Example 1: Basic usage with default `content`
             result = get_dir_contents('/path/to/directory')
 
             # Example 2: Specifying multiple return types
-            result = get_dir_contents('/path/to/directory', returned_type=['filename', 'filepath'])
+            result = get_dir_contents('/path/to/directory', content=['filename', 'filepath'])
 
             # Example 3: Using the `group_by_type` flag
-            result = get_dir_contents('/path/to/directory', returned_type=['filename', 'filepath'], group_by_type=True)
+            result = get_dir_contents('/path/to/directory', content=['filename', 'filepath'], group_by_type=True)
             result['filename']  # ['file1', 'file2', ...],
             result['filepath']  # ['/path/to/file1', '/path/to/file2', ...]
 
@@ -97,7 +97,7 @@ class FileUtils(core_utils.HelpMixin):
         from itertools import chain
 
         path = os.path.expandvars(dirPath)
-        options = iter_utils.IterUtils.make_iterable(returned_type)
+        options = iter_utils.IterUtils.make_iterable(content)
         grouped_result = {opt: [] for opt in options}
 
         def process_directory(root, dirs, files):
@@ -212,14 +212,14 @@ class FileUtils(core_utils.HelpMixin):
             traceback.print_exc()
 
     @classmethod
-    def get_file_info(cls, paths, returned_type, hash_algo=None, force_tuples=False):
+    def get_file_info(cls, paths, info, hash_algo=None, force_tuples=False):
         """Returns file and directory information for a list of files based on specified parameters.
 
-        This method will traverse each path, obtaining information as per the `returned_type` parameter.
+        This method will traverse each path, obtaining information as per the `info` parameter.
 
         Parameters:
             paths (str/list): Path(s) to a file or directory.
-            returned_type (str/list): A single string or a list of strings containing types of information to be returned.
+            info (str/list): A single string or a list of strings containing types of information to be returned.
                  Supported types are as follows:
                  - 'file': Returns the name of the file including extension (if it's a file).
                  - 'filename': Returns the name of the file excluding extension (if it's a file).
@@ -235,11 +235,11 @@ class FileUtils(core_utils.HelpMixin):
                  - 'group': Returns the group ID of the file (if it's a file).
                  - 'hash': Returns the hash of the file using the specified algorithm (if it's a file and hash_algo is provided).
             hash_algo (str, optional): A string specifying the hash algorithm to be used. Supported algorithms are those in Python's hashlib library (e.g., 'md5', 'sha1', 'sha256'). Default is None.
-            force_tuples (bool, optional): If True, ensures that the result is always returned as tuples even if only one item is specified in `returned_type`. If False, returns single values as is without wrapping in a tuple. Default is False.
+            force_tuples (bool, optional): If True, ensures that the result is always returned as tuples even if only one item is specified in `info`. If False, returns single values as is without wrapping in a tuple. Default is False.
 
         Returns:
             list: A list of tuples. Each tuple contains requested information in the same order as the types specified
-                in `returned_type`. If a type of information is not applicable (for instance, requesting 'size' for a directory),
+                in `info`. If a type of information is not applicable (for instance, requesting 'size' for a directory),
                 its place in the tuple will be None.
         """
         import time
@@ -247,7 +247,7 @@ class FileUtils(core_utils.HelpMixin):
         from stat import filemode
         from pathlib import Path
 
-        options = iter_utils.IterUtils.make_iterable(returned_type)
+        options = iter_utils.IterUtils.make_iterable(info)
         results = []
 
         for _path in iter_utils.IterUtils.make_iterable(paths):

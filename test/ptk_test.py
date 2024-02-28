@@ -1408,7 +1408,7 @@ class MathTest(Main, MathUtils):
 
     def test_getDistanceBetweenTwoPoints(self):
         """ """
-        self.assertEqual(self.get_distance((0, 10, 0), (0, 5, 0)), 5.0)
+        self.assertEqual(self.distance_between_points((0, 10, 0), (0, 5, 0)), 5.0)
 
     def test_getCenterPointBetweenTwoPoints(self):
         """ """
