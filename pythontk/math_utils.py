@@ -227,25 +227,30 @@ class MathUtils(core_utils.HelpMixin):
             -dist,
         ]:  # move in pos and neg direction, and determine which is moving closer to the reference point.
             p = cls.move_point_relative(a, i, vect)
-            d = cls.get_distance(p, b)
+            d = cls.distance_between_points(p, b)
             if lowest is None or (d < lowest if toward else d > lowest):
                 result, lowest = (p, d)
 
         return result
 
     @staticmethod
-    def get_distance(a: List[float], b: List[float]) -> float:
-        """
-        Calculate the distance between two points.
+    def distance_between_points(a: Tuple[float, ...], b: Tuple[float, ...]) -> float:
+        """Calculates the Euclidean distance between two points in N-dimensional space.
 
         Parameters:
-            a (List[float]): A list of the first point's coordinates [x, y, z].
-            b (List[float]): A list of the second point's coordinates [x, y, z].
+            a (Tuple[float, ...]): Coordinates of the first point, can be of any dimension.
+            b (Tuple[float, ...]): Coordinates of the second point, must have the same dimension as `a`.
 
         Returns:
-            float: The distance between the two points.
+            float: The Euclidean distance between the two points.
         """
-        return ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 + (b[2] - a[2]) ** 2) ** 0.5
+        import math
+
+        # Utilize zip to pair corresponding coordinates and compute their squared differences
+        squared_diffs = ((p1 - p2) ** 2 for p1, p2 in zip(a, b))
+
+        # Sum the squared differences and take the square root to get the distance
+        return math.sqrt(sum(squared_diffs))
 
     @staticmethod
     def get_center_of_two_points(

@@ -68,14 +68,36 @@ class PkgManagerHelperMixin:
         """
         self.pip(f"install --upgrade {package_name}")
 
-    def package_version(self, package_name):
-        """Get the installed version of a package.
-
-        Example:
-            version = pkg_mgr.package_version("numpy")
-        """
+    def installed_version(self, package_name):
+        """Get the installed version of a package."""
         package_info = self.package_details(package_name)
         return package_info.get("version", "Not installed")
+
+    def latest_version(self, package_name):
+        """Get the latest version of a package from PyPI using the standard library."""
+        import json
+        from urllib.request import Request, urlopen
+        from urllib.error import URLError, HTTPError
+
+        url = f"https://pypi.org/pypi/{package_name}/json"
+        request = Request(url)
+
+        try:
+            with urlopen(request) as response:
+                data = json.loads(response.read().decode())
+                return data["info"]["version"]  # Return the latest version
+        except HTTPError as e:
+            raise RuntimeError(
+                f"HTTP error occurred while fetching the latest version of {package_name}: {e.code} {e.reason}"
+            )
+        except URLError as e:
+            raise RuntimeError(
+                f"URL error occurred while fetching the latest version of {package_name}: {e.reason}"
+            )
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"Failed to parse JSON response for {package_name}: {e.msg}"
+            )
 
     def list_outdated_packages(self):
         """List all outdated packages.

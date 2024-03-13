@@ -241,9 +241,7 @@ class IterUtils(core_utils.HelpMixin):
 
         def match_item(item: Union[str, int], patterns: List[Union[str, int]]) -> bool:
             for pattern in patterns:
-                check_item = (
-                    os.path.basename(str(item)) if basename_only else str(item)
-                )  # Adjusted line
+                check_item = os.path.basename(str(item)) if basename_only else str(item)
                 match_result = (
                     fnmatchcase(check_item, pattern)
                     if isinstance(pattern, str)
