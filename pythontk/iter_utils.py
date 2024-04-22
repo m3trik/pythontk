@@ -176,21 +176,44 @@ class IterUtils(core_utils.HelpMixin):
 
     @staticmethod
     def remove_duplicates(lst, trailing=True):
-        """Remove all duplicated occurences while keeping the either the first or last.
+        """Removes duplicate entries from a list while maintaining the original order of the remaining items.
+        Allows for the choice between preserving the first or the last occurrences of each item.
 
         Parameters:
-            lst (list): The list to remove duplicate elements of.
-            trailing (bool): Remove all trailing occurances while keeping the first, else keep last.
-
+            lst (list): The list from which duplicate elements are to be removed.
+            trailing (bool): Specifies the strategy for which occurrences to keep:
+                             - True (default): Keeps the first occurrence of each item and removes subsequent duplicates.
+                             - False: Keeps the last occurrence of each item by removing earlier duplicates.
         Returns:
-            (list)
+            list: A new list with duplicates removed, preserving either the first or last occurrences of each item based on the `trailing` parameter.
+
+        Example:
+            >>> remove_duplicates([1, 2, 2, 3, 4, 2, 1, 5])
+            [1, 2, 3, 4, 5]
+            >>> remove_duplicates([1, 2, 2, 3, 4, 2, 1, 5], trailing=False)
+            [3, 4, 2, 1, 5]
         """
-        if trailing:
-            return list(dict.fromkeys(lst))
-        else:
-            return list(dict.fromkeys(lst[::-1]))[
-                ::-1
-            ]  # reverse the list when removing from the start of the list.
+        try:
+            if trailing:
+                return list(dict.fromkeys(lst))
+            else:
+                return list(dict.fromkeys(lst[::-1]))[::-1]
+        except TypeError:  # Fallback for unhashable types
+            seen = []
+            result = []
+            # Use reversed list if trailing is False to preserve the last occurrence
+            items = reversed(lst) if not trailing else lst
+
+            for item in items:
+                if item not in seen:
+                    seen.append(item)
+                    result.append(item)
+
+            # Reverse the result list if we were preserving the last occurrences
+            if not trailing:
+                result.reverse()
+
+            return result
 
     @classmethod
     def filter_list(
