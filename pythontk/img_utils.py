@@ -1,5 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
+from pathlib import Path
 from typing import List, Tuple, Dict, Union, Any
 
 try:
@@ -121,7 +122,7 @@ class ImgUtils(core_utils.HelpMixin):
 
         Parameters:
             a (str): A specific PIL image attribute (ie. 'resize')
-                    or if None given; list all available attributes.
+                or if None given; list all available attributes.
         """
         im = Image.new("RGB", (32, 32))
 
@@ -173,7 +174,7 @@ class ImgUtils(core_utils.HelpMixin):
             mode (str): Image color mode. ex. 'I', 'L', 'RGBA'
             size (tuple): Size as x and y coordinates.
             color (int)(tuple): Color values.
-                            'I' mode image color must be int or single-element tuple.
+                    'I' mode image color must be int or single-element tuple.
         Returns:
             (obj) image.
         """
@@ -230,9 +231,9 @@ class ImgUtils(core_utils.HelpMixin):
         Parameters:
             directory (string) = A full path to a directory containing images with the given file_types.
             inc (str): The files to include.
-                            supports using the '*' operator: startswith*, *endswith, *contains*
+                    supports using the '*' operator: startswith*, *endswith, *contains*
             exc (str): The files to exclude.
-                            (exlude take precidence over include)
+                    (exlude take precidence over include)
         Returns:
             (dict) {<full file path>:<image object>}
         """
@@ -281,6 +282,35 @@ class ImgUtils(core_utils.HelpMixin):
             return result
 
     @classmethod
+    def get_base_texture_name(cls, filepath_or_filename):
+        """Extracts the base texture name from a given filename or full filepath,
+        removing known suffixes based on the class attribute `map_types` dynamically,
+        case-insensitively.
+        """
+        import os
+        import re
+
+        filename = os.path.basename(filepath_or_filename)
+
+        # Compile a single regex pattern that matches any known suffix
+        # This pattern now explicitly includes an underscore before the suffix,
+        # matches against the entire list of suffixes, and is case-insensitive
+        suffixes_pattern = "|".join(
+            re.escape(suffix)
+            for suffixes in cls.map_types.values()
+            for suffix in suffixes
+        )
+        pattern = re.compile(f"_(?:{suffixes_pattern})(?=\\.[^.]+$)", re.IGNORECASE)
+
+        # Remove the matched suffix, if any
+        base_name_with_extension = pattern.sub("", filename)
+
+        # Remove the file extension if required
+        base_name, _ = os.path.splitext(base_name_with_extension)
+
+        return base_name
+
+    @classmethod
     def filter_images_by_type(cls, files, types=""):
         """
         Parameters:
@@ -303,11 +333,10 @@ class ImgUtils(core_utils.HelpMixin):
 
         Parameters:
             files (Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]): A list of image filenames, full paths, tuples of (filename, image file),
-                                                                              or a dictionary with filenames as keys and image files as values.
-
+                    or a dictionary with filenames as keys and image files as values.
         Returns:
             Dict[str, List[Union[str, Tuple[str, Any]]]]: A dictionary where each key is a map type. The values are lists that match the input format,
-                                                          containing either just the paths or tuples of (path, file data).
+                    containing either just the paths or tuples of (path, file data).
         """
         if isinstance(files, dict):
             # Convert dictionary to list of tuples
@@ -386,11 +415,11 @@ class ImgUtils(core_utils.HelpMixin):
         """Check if two images are the same.
 
         Parameters:
-                imageA (str/obj): An image or path to an image.
-                imageB (str/obj): An image or path to an image.
+            imageA (str/obj): An image or path to an image.
+            imageB (str/obj): An image or path to an image.
 
         Returns:
-                (bool)
+            (bool)
         """
         imA = cls.ensure_image(imageA)
         imB = cls.ensure_image(imageB)
@@ -525,11 +554,11 @@ class ImgUtils(core_utils.HelpMixin):
     def fill(cls, image, color=(0, 0, 0, 0)):
         """
         Parameters:
-                image (str/obj): An image or path to an image.
-                color (list): RGB or RGBA color values.
+            image (str/obj): An image or path to an image.
+            color (list): RGB or RGBA color values.
 
         Returns:
-                (obj) image.
+            (obj) image.
         """
         im = cls.ensure_image(image)
 
@@ -543,13 +572,13 @@ class ImgUtils(core_utils.HelpMixin):
         """Sample the pixel values of each corner of an image and if they are uniform, return the result.
 
         Parameters:
-                image (str/obj): An image or path to an image.
-                mode (str): The returned image color mode. ex. 'RGBA'
-                                If None is given, the original mode will be returned.
-                average (bool): Average the sampled pixel values.
+            image (str/obj): An image or path to an image.
+            mode (str): The returned image color mode. ex. 'RGBA'
+                    If None is given, the original mode will be returned.
+            average (bool): Average the sampled pixel values.
 
         Returns:
-                (int)(tuple) dependant on mode. ex. 32767 for mode 'I' or (211, 211, 211, 255) for 'RGBA'
+            (int)(tuple) dependant on mode. ex. 32767 for mode 'I' or (211, 211, 211, 255) for 'RGBA'
         """
         im = cls.ensure_image(image)
 
@@ -578,13 +607,13 @@ class ImgUtils(core_utils.HelpMixin):
     ):
         """
         Parameters:
-                image (str/obj): An image or path to an image.
-                from_color (tuple): The starting color. (RGB) or (RGBA)
-                to_color (tuple): The ending color. (RGB) or (RGBA)
-                mode (str): The image is converted to rgba for the operation specify the returned image mode. the original image mode will be returned if None is given. ex. 'RGBA' to return in rgba format.
-
+            image (str/obj): An image or path to an image.
+            from_color (tuple): The starting color. (RGB) or (RGBA)
+            to_color (tuple): The ending color. (RGB) or (RGBA)
+            mode (str): The image is converted to rgba for the operation specify the returned image mode.
+                The original image mode will be returned if None is given. ex. 'RGBA' to return in rgba format.
         Returns:
-                (obj) image.
+            (obj) image.
         """
         im = cls.ensure_image(image)
         mode = mode if mode else im.mode
@@ -608,11 +637,11 @@ class ImgUtils(core_utils.HelpMixin):
     def set_contrast(cls, image, level=255):
         """
         Parameters:
-                image (str/obj): An image or path to an image.
-                level (int): Contrast level from 0-255.
+            image (str/obj): An image or path to an image.
+            level (int): Contrast level from 0-255.
 
         Returns:
-                (obj) image.
+            (obj) image.
         """
         im = cls.ensure_image(image)
 
@@ -629,10 +658,10 @@ class ImgUtils(core_utils.HelpMixin):
         """Convert an RGB Image data array to grayscale.
 
         :Paramters:
-                data (str/obj)(array) = An image, path to an image, or
-                                Image data as numpy array.
+            data (str/obj)(array) = An image, path to an image, or
+                    image data as numpy array.
         Returns:
-                (array)
+            (array)
 
         # gray_data = np.average(data, weights=[0.299, 0.587, 0.114], axis=2)
         # gray_data = (data[:,:,:3] * [0.2989, 0.5870, 0.1140]).sum(axis=2)
@@ -656,10 +685,10 @@ class ImgUtils(core_utils.HelpMixin):
         PNG files cannot be saved as HSV.
 
         Parameters:
-                image (str/obj): An image or path to an image.
+            image (str/obj): An image or path to an image.
 
         Returns:
-                (obj) image.
+            (obj) image.
         """
         import colorsys
 
@@ -681,10 +710,10 @@ class ImgUtils(core_utils.HelpMixin):
         """Convert to 8 bit 'L' grayscale.
 
         Parameters:
-                image (str/obj): An image or path to an image.
+            image (str/obj): An image or path to an image.
 
         Returns:
-                (obj) image.
+            (obj) image.
         """
         im = cls.ensure_image(image)
         data = np.array(im)
@@ -711,13 +740,13 @@ class ImgUtils(core_utils.HelpMixin):
         base_img = cls.ensure_image(image)
         alpha_img = cls.ensure_image(alpha)
 
-        # Convert alpha image to grayscale
-        alpha_img = alpha_img.convert("L")
         # Optionally invert the alpha source image
         if invert_alpha:
             alpha_img = cls.invert_grayscale_image(alpha_img)
 
-        # Convert base image to appropriate mode
+        alpha_img = alpha_img.convert("L")  # Ensure alpha is in grayscale for packing
+
+        # Merge the alpha channel into the base image
         if base_img.mode in ["L", "LA"]:
             base_img = base_img.convert("LA")
             combined_img = Image.merge("LA", (base_img.getchannel(0), alpha_img))
@@ -734,10 +763,60 @@ class ImgUtils(core_utils.HelpMixin):
                     "Output path must be provided when using Image objects directly"
                 )
 
-        # Save the modified base image
         combined_img.save(output_path)
+        return output_path
 
-        return combined_img
+    @classmethod
+    def pack_smoothness_into_metallic(
+        cls,
+        metallic_map_path,
+        alpha_map_path,
+        invert_alpha=False,
+        suffix="_MetallicSmoothness",
+    ):
+        """Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
+
+        Parameters:
+            metallic_map_path (str): Path to the metallic texture map.
+            alpha_map_path (str): Path to the smoothness or roughness texture map.
+            invert_alpha (bool, optional): If True, the alpha (smoothness/roughness) texture will be inverted.
+            suffix (str, optional): Suffix for the output file name, defaulting to '_MetallicSmoothness'.
+
+        Returns:
+            str: The file path of the newly created metallic-smoothness texture map.
+        """
+        output_path = Path(metallic_map_path).with_name(
+            Path(metallic_map_path).stem + suffix + Path(metallic_map_path).suffix
+        )
+        return cls.pack_channel_into_alpha(
+            str(metallic_map_path), alpha_map_path, str(output_path), invert_alpha
+        )
+
+    @classmethod
+    def pack_transparency_into_albedo(
+        cls,
+        albedo_map_path,
+        alpha_map_path,
+        invert_alpha=False,
+        suffix="_AlbedoTransparency",
+    ):
+        """Combines an albedo texture with a transparency map by packing the transparency information into the alpha channel of the albedo texture.
+
+        Parameters:
+            albedo_map_path (str): Path to the albedo (base color) texture map.
+            alpha_map_path (str): Path to the transparency texture map.
+            invert_alpha (bool, optional): If True, the alpha (transparency) texture will be inverted.
+            suffix (str, optional): Suffix for the output file name, defaulting to '_AlbedoTransparency'.
+
+        Returns:
+            str: The file path of the newly created albedo-transparency texture map.
+        """
+        output_path = Path(albedo_map_path).with_name(
+            Path(albedo_map_path).stem + suffix + Path(albedo_map_path).suffix
+        )
+        return cls.pack_channel_into_alpha(
+            str(albedo_map_path), alpha_map_path, str(output_path), invert_alpha
+        )
 
     @classmethod
     def create_dx_from_gl(cls, file):

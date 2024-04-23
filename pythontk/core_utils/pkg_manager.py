@@ -259,7 +259,7 @@ class PkgManager(PkgManagerHelperMixin, help_mixin.HelpMixin):
 # --------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pkg_mgr = PkgManager(r"C:\Program Files\Autodesk\Maya2023\bin\mayapy.exe")
+    pkg_mgr = PkgManager("C:/Program Files/Autodesk/Maya2023/bin/mayapy.exe")
     # output = pkg_mgr.get_installed_packages("")
 
     # Test various pip commands

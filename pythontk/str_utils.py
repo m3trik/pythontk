@@ -282,6 +282,7 @@ class StrUtils(core_utils.CoreUtils):
         An ellipsis will be added to the section trimmed.
 
         Parameters:
+            string (str): The string to truncate.
             length (int): The maximum allowed length before trunicating.
             beginning (bool): Trim starting chars, else; ending.
             insert (str): Chars to add at the trimmed area. (default: ellipsis)
