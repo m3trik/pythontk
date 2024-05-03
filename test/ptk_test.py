@@ -696,13 +696,13 @@ class IterTest(Main, IterUtils):
         self.assertEqual(
             self.filter_list(
                 [
-                    ("bevel_edges", "path/to/bevel_edges.py"),
+                    ("bevel", "path/to/bevel.py"),
                     ("other_file", "path/to/other_file.py"),
                 ],
-                inc=["bevel_edges"],
-                exc=["path/to/bevel_edges.py"],
+                inc=["bevel"],
+                exc=["path/to/bevel.py"],
             ),
-            [("bevel_edges",)],
+            [("bevel",)],
         )
 
     def test_filter_dict(self):
