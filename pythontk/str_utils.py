@@ -1,5 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
+from typing import Union, List
+
 # from this package:
 from pythontk import core_utils
 from pythontk import iter_utils

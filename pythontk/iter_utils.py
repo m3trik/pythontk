@@ -215,6 +215,49 @@ class IterUtils(core_utils.HelpMixin):
 
             return result
 
+    def filter_results(func: Callable) -> Callable:
+        """Decorator to filter the results of a function that returns a list or dictionary.
+
+        This decorator can be applied to functions that return a list or a dictionary. It will
+        filter the results based on inclusion and exclusion criteria using `filter_list`
+        for lists and `filter_dict` for dictionaries.
+
+        Returns:
+            Callable: The decorated function with filtering applied to its result.
+        """
+        import functools
+        import inspect
+
+        @functools.wraps(func)
+        def wrapper_filter_results(*args, **kwargs) -> Any:
+            # Extract filtering arguments
+            filter_keys_list = inspect.signature(IterUtils.filter_list).parameters
+            filter_keys_dict = inspect.signature(IterUtils.filter_dict).parameters
+
+            filter_args_list = {
+                key: kwargs.pop(key, None) for key in filter_keys_list if key in kwargs
+            }
+            filter_args_dict = {
+                key: kwargs.pop(key, None) for key in filter_keys_dict if key in kwargs
+            }
+
+            # Call the original function with remaining kwargs
+            result = func(*args, **kwargs)
+
+            # Determine the type of the result and apply appropriate filtering
+            if isinstance(result, list):
+                filtered_result = IterUtils.filter_list(result, **filter_args_list)
+            elif isinstance(result, dict):
+                filtered_result = IterUtils.filter_dict(result, **filter_args_dict)
+            else:
+                raise TypeError(
+                    f"Unsupported result type: {type(result)}. Only list and dict are supported."
+                )
+
+            return filtered_result
+
+        return wrapper_filter_results
+
     @classmethod
     def filter_list(
         cls,
