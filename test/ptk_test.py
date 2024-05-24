@@ -779,7 +779,7 @@ class FileTest(Main, FileUtils):
                 f"self.format_path(r'{p3}', 'ext')": "json",
                 f"self.format_path(r'{p4}', 'ext')": "ext",
                 f"self.format_path(r'{p5}', 'ext')": "",
-                f"self.format_path(r'{p6}', 'filename')": "programfiles",
+                f"self.format_path(r'{p6}', 'name')": "programfiles",
                 f"self.format_path(r'{p6}', 'path')": "programfiles",
                 f"self.format_path(r'{p7}', 'path')": "programfiles",
                 f"self.format_path({[p1, p2]}, 'dir')": ["dir3", ".vscode"],
