@@ -5,6 +5,7 @@ import os
 import re
 import json
 import traceback
+from typing import Union, List
 
 # from this package:
 from pythontk import core_utils
@@ -295,24 +296,39 @@ class FileUtils(core_utils.HelpMixin):
 
     @staticmethod
     @core_utils.CoreUtils.listify(threading=True)
-    def format_path(p, section="", replace=""):
+    def format_path(
+        p: Union[str, List[str]],
+        section: Union[str, None] = None,
+        replace: Union[str, None] = None,
+    ) -> Union[str, List[str]]:
         """Format a given filepath(s).
         When a section arg is given, the correlating section of the string will be returned.
         If a replace arg is given, the stated section will be replaced by the given value.
 
         Parameters:
             p (str/list): The filepath(s) to be formatted.
-            section (str): The desired subsection of the given path.
+            section (str, optional): The desired subsection of the given path.
                  - path: path minus filename,
                  - dir: directory name,
                  - file: filename plus ext,
                  - name: filename minus ext,
                  - ext: file extension,
-                    (if '' is given, the fullpath will be returned)
+                    (if None is given, the fullpath will be returned)
+            replace (str, optional): The value to replace the section with.
+
         Returns:
             (str/list) List if 'strings' given as list.
+
+        Raises:
+            ValueError: If the section is not valid.
         """
-        if not isinstance(p, (str)):
+        valid_sections = {"path", "dir", "file", "name", "ext", None}
+        if section not in valid_sections:
+            raise ValueError(
+                f"Invalid section: {section}. Valid options are: {', '.join(filter(None, valid_sections))}"
+            )
+
+        if not isinstance(p, str):
             return p
 
         p = os.path.expandvars(p)  # convert any env variables to their values.
@@ -331,23 +347,13 @@ class FileUtils(core_utils.HelpMixin):
         )
         ext = filename.rsplit(".", 1)[-1]
 
-        if section == "path":
-            result = path
-
-        elif section == "dir":
-            result = directory
-
-        elif section == "file":
-            result = filename
-
-        elif section == "name":
-            result = name
-
-        elif section == "ext":
-            result = ext
-
-        else:
-            result = p
+        result = {
+            "path": path,
+            "dir": directory,
+            "file": filename,
+            "name": name,
+            "ext": ext,
+        }.get(section, p)
 
         if replace:
             result = str_utils.StrUtils.rreplace(p, result, replace, 1)
