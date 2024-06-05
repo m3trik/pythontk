@@ -282,10 +282,16 @@ class ImgUtils(core_utils.HelpMixin):
             return result
 
     @classmethod
-    def get_base_texture_name(cls, filepath_or_filename):
+    def get_base_texture_name(cls, filepath_or_filename: str) -> str:
         """Extracts the base texture name from a given filename or full filepath,
         removing known suffixes based on the class attribute `map_types` dynamically,
         case-insensitively.
+
+        Parameters:
+            filepath_or_filename (str): The full file path or just the filename.
+
+        Returns:
+            str: The base name of the texture without the map type suffix.
         """
         import os
         import re

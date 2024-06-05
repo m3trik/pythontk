@@ -462,6 +462,35 @@ class MathUtils(core_utils.HelpMixin):
         """
         return a + (b - a) * t
 
+    def generate_geometric_sequence(
+        base_value: int, terms: int, common_ratio: float = 2.0
+    ) -> List[int]:
+        """Generate a geometric sequence.
+
+        Parameters:
+            base_value (int): The initial value of the sequence.
+            terms (int): The number of terms in the sequence.
+            common_ratio (float, optional): The common ratio of the geometric sequence. Defaults to 2.0.
+
+        Returns:
+            List[int]: A list of values in the geometric sequence.
+
+        Example:
+            >>> generate_geometric_sequence(2, 5)
+            [2, 4, 8, 16, 32]
+
+            >>> generate_geometric_sequence(3, 4, 3.0)
+            [3, 9, 27, 81]
+
+        A geometric sequence is a sequence of numbers where each term after the first is
+        found by multiplying the previous term by a fixed, non-zero number called the
+        common ratio. In this function, the base value is the starting number of the
+        sequence, the terms parameter specifies the number of elements in the sequence,
+        and the common ratio is the fixed multiplier.
+        """
+        sequence = [base_value * common_ratio ** (n - 1) for n in range(1, terms + 1)]
+        return [int(round(value)) for value in sequence]
+
 
 # -----------------------------------------------------------------------------
 

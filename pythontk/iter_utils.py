@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Any, Callable, Iterable, List, Optional, Union
+from typing import Any, Callable, Iterable, List, Dict, Optional, Union
 
 # from this package:
 from pythontk import core_utils
@@ -367,21 +367,17 @@ class IterUtils(core_utils.HelpMixin):
         return result
 
     @classmethod
-    def filter_dict(cls, dct, inc=[], exc=[], keys=False, values=False):
+    def filter_dict(
+        cls, dct: Dict, keys: bool = False, values: bool = False, **kwargs
+    ) -> Dict:
         """Filter the given dictionary.
         Extends `filter_list` to operate on either the given dict's keys or values.
 
         Parameters:
             dct (dict): The dictionary to filter.
-            inc (str/obj/list): The objects(s) to include.
-                    supports using the '*' operator: startswith*, *endswith, *contains*
-                    Will include all items that satisfy ANY of the given search terms.
-                    meaning: '*.png' and '*Normal*' returns all strings ending in '.png' AND all
-                    strings containing 'Normal'. NOT strings satisfying both terms.
-            exc (str/obj/list): The objects(s) to exclude. Similar to include.
-                    exlude take precidence over include.
             keys (bool): Filter the dictionary keys.
             values (bool): Filter the dictionary values.
+            **kwargs: Additional arguments to pass to the filter_list method.
 
         Returns:
             (dict)
@@ -393,11 +389,11 @@ class IterUtils(core_utils.HelpMixin):
             filter_dict(dct, exc=1, keys=True) #returns: {'two': 2, 3: 'three'}
         """
         if keys:
-            filtered = cls.filter_list(dct.keys(), inc, exc)
-            dct = {k: dct[k] for k in filtered}
+            filtered_keys = cls.filter_list(list(dct.keys()), **kwargs)
+            dct = {k: dct[k] for k in filtered_keys}
         if values:
-            filtered = cls.filter_list(dct.values(), inc, exc)
-            dct = {k: v for k, v in dct.items() if v in filtered}
+            filtered_values = cls.filter_list(list(dct.values()), **kwargs)
+            dct = {k: v for k, v in dct.items() if v in filtered_values}
         return dct
 
     @staticmethod
