@@ -148,6 +148,57 @@ class IterUtils(core_utils.HelpMixin):
             return [i + 1 for i, bit in enumerate(bit_array) if bit == 1]
 
     @staticmethod
+    def insert_into_dict(
+        original_dict: Dict[Any, Any],
+        key: Any,
+        value: Any,
+        index: int = 0,
+        in_place: bool = False,
+    ) -> Dict[Any, Any]:
+        """Insert a key-value pair at a specified index in a dictionary.
+
+        This function inserts a key-value pair at the specified index in the dictionary.
+        It can either create a new dictionary or modify the original one in place based
+        on the `in_place` parameter.
+
+        Parameters:
+            original_dict (Dict[Any, Any]): The original dictionary to modify or copy.
+            key (Any): The key of the new key-value pair to insert.
+            value (Any): The value of the new key-value pair to insert.
+            index (int, optional): The index at which to insert the key-value pair.
+                Defaults to 0.
+            in_place (bool, optional): If True, the original dictionary is modified in place.
+                If False, a new dictionary is created. Defaults to False.
+
+        Returns:
+            Dict[Any, Any]: The modified dictionary with the new key-value pair inserted.
+
+        Raises:
+            IndexError: If the specified index is out of range.
+
+        Example:
+            >>> original_dict = {'b': 2, 'c': 3}
+            >>> new_dict = insert_into_dict_at_index(original_dict, 'a', 1)
+            >>> print(new_dict)
+            {'a': 1, 'b': 2, 'c': 3}
+            >>> insert_into_dict_at_index(original_dict, 'd', 4, 2, in_place=True)
+            >>> print(original_dict)
+            {'b': 2, 'c': 3, 'd': 4}
+        """
+        if not (0 <= index <= len(original_dict)):
+            raise IndexError("Index out of range")
+
+        items = list(original_dict.items())
+        items.insert(index, (key, value))
+
+        if in_place:
+            original_dict.clear()
+            original_dict.update(items)
+            return original_dict
+        else:
+            return dict(items)
+
+    @staticmethod
     def rindex(itr, item):
         """Get the index of the first item to match the given item
         starting from the back (right side) of the list.
