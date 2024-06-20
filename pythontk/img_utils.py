@@ -93,26 +93,26 @@ class ImgUtils(core_utils.HelpMixin):
         "1": 1,
         "L": 8,
         "P": 8,
-        "RGB": 24,
-        "RGBA": 32,
-        "CMYK": 32,
-        "YCbCr": 24,
-        "LAB": 24,
-        "HSV": 24,
-        "I": 32,
-        "F": 32,
         "I;16": 16,
         "I;16B": 16,
         "I;16L": 16,
         "I;16S": 16,
         "I;16BS": 16,
         "I;16LS": 16,
+        "RGB": 24,
+        "YCbCr": 24,
+        "LAB": 24,
+        "HSV": 24,
+        "F": 32,
+        "I": 32,
         "I;32": 32,
         "I;32B": 32,
         "I;32L": 32,
         "I;32S": 32,
         "I;32BS": 32,
         "I;32LS": 32,
+        "RGBA": 32,
+        "CMYK": 32,
     }
 
     @staticmethod
@@ -179,21 +179,6 @@ class ImgUtils(core_utils.HelpMixin):
             (obj) image.
         """
         return Image.new(mode, size, color)
-
-    @classmethod
-    def resize_image(cls, image, x, y):
-        """Returns a resized copy of an image. It doesn't modify the original.
-
-        Parameters:
-            image (str/obj): An image or path to an image.
-            x (int): Size in the x coordinate.
-            y (int): Size in the y coordinate.
-
-        Returns:
-            (obj) new image of the given size.
-        """
-        im = cls.ensure_image(image)
-        return im.resize((x, y), Image.Resampling.LANCZOS)
 
     @classmethod
     def save_image(cls, image, name):
@@ -449,6 +434,54 @@ class ImgUtils(core_utils.HelpMixin):
         if np.sum(np.array(ImageChops.difference(imA, imB).getdata())) == 0:
             return True
         return False
+
+    @classmethod
+    def resize_image(cls, image, x, y):
+        """Returns a resized copy of an image. It doesn't modify the original.
+
+        Parameters:
+            image (str/obj): An image or path to an image.
+            x (int): Size in the x coordinate.
+            y (int): Size in the y coordinate.
+
+        Returns:
+            (obj) new image of the given size.
+        """
+        im = cls.ensure_image(image)
+        return im.resize((x, y), Image.Resampling.LANCZOS)
+
+    @classmethod
+    def set_bit_depth(cls, image, map_type: str) -> object:
+        """Sets the bit depth and image mode of an image according to the map type.
+
+        Parameters:
+            image (PIL.Image.Image): The input image.
+            map_type (str): The type of the map to determine the mode and bit depth.
+
+        Returns:
+            PIL.Image.Image: The image with the specified or recommended bit depth and mode.
+        """
+        # Determine the target mode based on map type
+        if map_type in cls.map_modes:
+            target_mode = cls.map_modes[map_type]
+            image = image.convert(target_mode)
+
+        # Adjust bit depth
+        bit_depth_mapping = {v: k for k, v in cls.bit_depth.items()}
+        depth = cls.bit_depth.get(image.mode, 8)
+
+        if depth not in bit_depth_mapping:
+            raise ValueError(f"Unsupported bit depth: {depth}")
+
+        if image.mode != bit_depth_mapping[depth]:
+            image = image.convert(bit_depth_mapping[depth])
+
+        # Handle unsupported modes specifically
+        unsupported_modes = ["HSV", "LAB", "CMYK", "YCbCr"]
+        if image.mode in unsupported_modes:
+            image = image.convert("RGB" if image.mode != "CMYK" else "RGBA")
+
+        return image
 
     @classmethod
     def invert_grayscale_image(cls, image):
@@ -1106,6 +1139,67 @@ class ImgUtils(core_utils.HelpMixin):
 
         specular_image.save(output_path)
         return output_path
+
+    @classmethod
+    def optimize_texture(
+        cls,
+        texture_path: str,
+        output_dir: str = None,
+        output_type="PNG",
+        max_size: int = None,
+        suffix: str = None,
+    ) -> str:
+        """Optimizes a texture by resizing, setting bit depth, and adjusting image type according to the map type.
+
+        Parameters:
+            texture_path (str): Path to the texture file.
+            output_dir (str, optional): Directory path for the optimized texture. If None, the texture will be saved next to the original.
+            output_type (str): The output image type for the optimized texture.
+            max_size (int, optional): Maximum size for the longest dimension of the texture. Defaults to None.
+            suffix (str, optional): Suffix to add to the optimized file name. Defaults to None.
+
+        Returns:
+            str: Path to the optimized texture.
+        """
+        if output_dir is None:
+            output_dir = os.path.dirname(texture_path)
+        elif not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+
+        # Determine the map type
+        map_type = cls.get_map_type_from_filename(texture_path)
+        file_name = os.path.splitext(os.path.basename(texture_path))[0]
+        suffix = suffix or ""
+        output_path = os.path.join(output_dir, f"{file_name}{suffix}.{output_type}")
+
+        # Load the image
+        image = cls.ensure_image(texture_path)
+
+        # Resize the image if larger than max size
+        if max_size and max(image.size) > max_size:
+            image = cls.resize_image(image, max_size, max_size)
+
+        # Adjust bit depth and image mode
+        image = cls.set_bit_depth(image, map_type)
+
+        # Save the optimized image as PNG
+        image.save(output_path, format=output_type)
+        return output_path
+
+    @classmethod
+    def batch_optimize_textures(cls, directory: str, **kwargs):
+        """Batch optimizes all textures in a directory for Unity.
+
+        Parameters:
+            directory (str): Directory containing the textures to optimize.
+            output_dir (str, optional): Directory path for the optimized textures. If None, the textures will be saved next to the originals.
+            max_size (int, optional): Maximum size for the longest dimension of the textures. Defaults to 4096
+        """
+        textures = cls.get_images(directory)
+        print(f"Optimizing textures in: {directory}")
+        for texture_path in textures.keys():
+            cls.optimize_texture(texture_path, **kwargs)
+        print(f"{len(textures)} textures optimized.")
 
 
 # --------------------------------------------------------------------------------------------
