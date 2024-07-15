@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from pathlib import Path
+import os
 from typing import List, Tuple, Dict, Union, Any
 
 try:
@@ -8,7 +8,7 @@ try:
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
 try:
-    from PIL import Image, ImageOps, ImageChops, ImageDraw
+    from PIL import Image, ImageEnhance, ImageOps, ImageFilter, ImageChops, ImageDraw
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
 
@@ -21,18 +21,18 @@ from pythontk import iter_utils
 class ImgUtils(core_utils.HelpMixin):
     """Helper methods for working with image file formats."""
 
-    map_types = {  # Get map type from filename suffix.
+    map_types = {
         "Base_Color": ("Base_Color", "BaseColor", "_BC"),
         "Albedo_Transparency": ("AlbedoTransparency", "Albedo_Transparency", "_AT"),
-        "Roughness": ("Roughness", "Rough", "_R"),
-        "Metallic": ("Metallic", "Metal", "Metalness", "_M"),
+        "Roughness": ("Roughness", "Rough", "RGH", "_R"),
+        "Metallic": ("Metallic", "Metal", "Metalness", "MTL", "_M"),
         "Metallic_Smoothness": ("MetallicSmoothness", "Metallic_Smooth", "_MS"),
-        "Normal": ("Normal", "Norm", "_N"),
-        "Normal_DirectX": ("Normal_DirectX", "NormalDirectX", "NormalDX", "_NDX"),
-        "Normal_OpenGL": ("Normal_OpenGL", "NormalOpenGL", "NormalGL", "_NGL"),
-        "Height": ("Height", "High", "_H"),
-        "Emissive": ("Emissive", "Emit", "_E"),
-        "Diffuse": ("Diffuse", "_DF", "Diff", "Dif", "_D"),
+        "Normal": ("Normal", "Norm", "NRM", "_N"),
+        "Normal_DirectX": ("Normal_DirectX", "NormalDX", "_NDX"),
+        "Normal_OpenGL": ("Normal_OpenGL", "NormalGL", "_NGL"),
+        "Height": ("Height", "High", "HGT", "_H"),
+        "Emissive": ("Emissive", "Emit", "EMI", "_E"),
+        "Diffuse": ("Diffuse", "_DF", "Diff", "DIF", "_D"),
         "Specular": ("Specular", "Spec", "_S"),
         "Glossiness": ("Glossiness", "Gloss", "Glos", "Glo", "_G"),
         "Displacement": ("Displacement", "_DP", "Displace", "Disp", "Dis", "_D"),
@@ -93,26 +93,26 @@ class ImgUtils(core_utils.HelpMixin):
         "1": 1,
         "L": 8,
         "P": 8,
-        "RGB": 24,
-        "RGBA": 32,
-        "CMYK": 32,
-        "YCbCr": 24,
-        "LAB": 24,
-        "HSV": 24,
-        "I": 32,
-        "F": 32,
         "I;16": 16,
         "I;16B": 16,
         "I;16L": 16,
         "I;16S": 16,
         "I;16BS": 16,
         "I;16LS": 16,
+        "RGB": 24,
+        "YCbCr": 24,
+        "LAB": 24,
+        "HSV": 24,
+        "F": 32,
+        "I": 32,
         "I;32": 32,
         "I;32B": 32,
         "I;32L": 32,
         "I;32S": 32,
         "I;32BS": 32,
         "I;32LS": 32,
+        "RGBA": 32,
+        "CMYK": 32,
     }
 
     @staticmethod
@@ -181,21 +181,6 @@ class ImgUtils(core_utils.HelpMixin):
         return Image.new(mode, size, color)
 
     @classmethod
-    def resize_image(cls, image, x, y):
-        """Returns a resized copy of an image. It doesn't modify the original.
-
-        Parameters:
-            image (str/obj): An image or path to an image.
-            x (int): Size in the x coordinate.
-            y (int): Size in the y coordinate.
-
-        Returns:
-            (obj) new image of the given size.
-        """
-        im = cls.ensure_image(image)
-        return im.resize((x, y), Image.Resampling.LANCZOS)
-
-    @classmethod
     def save_image(cls, image, name):
         """
         Parameters:
@@ -247,14 +232,22 @@ class ImgUtils(core_utils.HelpMixin):
         return images
 
     @classmethod
-    def get_image_type_from_filename(cls, file, key=True):
-        """
+    def get_map_type_from_filename(
+        cls, file: str, key: bool = True, validate: str = None
+    ) -> str:
+        """Determine the map type from the filename and optionally validate it.
+
         Parameters:
-            file (str): Image filename, fullpath, or map type suffix.
-            key (bool): Get the corresponding key from the type in 'map_types'.
-                    ie. Base_Color from <filename>_BC or BC. else: _BC from <filename>_BC.
+            file (str): Image filename, full path, or map type suffix.
+            key (bool): If True, get the corresponding key from 'map_types'.
+                        If False, get the abbreviation from 'map_types'.
+            validate (str, optional): If provided, validate the map type against this expected type.
+
         Returns:
-            (str)
+            str: The map type.
+
+        Raises:
+            ValueError: If the map type is not the expected type when 'validate' is provided.
         """
         name = file_utils.FileUtils.format_path(file, "name")
 
@@ -278,14 +271,28 @@ class ImgUtils(core_utils.HelpMixin):
                 ),
                 ("".join(name.split("_")[-1]) if "_" in name else None),
             )
-        if result:
-            return result
+
+        if validate:
+            # Check both keys and values for validation
+            valid_types = [validate] + list(cls.map_types[validate])
+            if result not in valid_types:
+                raise ValueError(
+                    f"Invalid map type '{result}'. Expected type is one of: {valid_types}"
+                )
+
+        return result
 
     @classmethod
-    def get_base_texture_name(cls, filepath_or_filename):
+    def get_base_texture_name(cls, filepath_or_filename: str) -> str:
         """Extracts the base texture name from a given filename or full filepath,
         removing known suffixes based on the class attribute `map_types` dynamically,
         case-insensitively.
+
+        Parameters:
+            filepath_or_filename (str): The full file path or just the filename.
+
+        Returns:
+            str: The base name of the texture without the map type suffix.
         """
         import os
         import re
@@ -323,7 +330,7 @@ class ImgUtils(core_utils.HelpMixin):
             (list)
         """
         types = iter_utils.IterUtils.make_iterable(types)
-        return [f for f in files if cls.get_image_type_from_filename(f) in types]
+        return [f for f in files if cls.get_map_type_from_filename(f) in types]
 
     @classmethod
     def sort_images_by_type(
@@ -348,7 +355,7 @@ class ImgUtils(core_utils.HelpMixin):
             is_tuple = isinstance(file, tuple)
 
             file_path = file[0] if is_tuple else file
-            map_type = cls.get_image_type_from_filename(file_path)
+            map_type = cls.get_map_type_from_filename(file_path)
             if not map_type:
                 continue
 
@@ -384,7 +391,7 @@ class ImgUtils(core_utils.HelpMixin):
             (
                 True
                 for i in files.keys()
-                if cls.get_image_type_from_filename(i) in map_types
+                if cls.get_map_type_from_filename(i) in map_types
             ),
             False,
         )
@@ -401,7 +408,7 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             (bool)
         """
-        typ = cls.get_image_type_from_filename(file)
+        typ = cls.get_map_type_from_filename(file)
         return any(
             (
                 typ in cls.map_types["Normal_DirectX"],
@@ -427,6 +434,54 @@ class ImgUtils(core_utils.HelpMixin):
         if np.sum(np.array(ImageChops.difference(imA, imB).getdata())) == 0:
             return True
         return False
+
+    @classmethod
+    def resize_image(cls, image, x, y):
+        """Returns a resized copy of an image. It doesn't modify the original.
+
+        Parameters:
+            image (str/obj): An image or path to an image.
+            x (int): Size in the x coordinate.
+            y (int): Size in the y coordinate.
+
+        Returns:
+            (obj) new image of the given size.
+        """
+        im = cls.ensure_image(image)
+        return im.resize((x, y), Image.Resampling.LANCZOS)
+
+    @classmethod
+    def set_bit_depth(cls, image, map_type: str) -> object:
+        """Sets the bit depth and image mode of an image according to the map type.
+
+        Parameters:
+            image (PIL.Image.Image): The input image.
+            map_type (str): The type of the map to determine the mode and bit depth.
+
+        Returns:
+            PIL.Image.Image: The image with the specified or recommended bit depth and mode.
+        """
+        # Determine the target mode based on map type
+        if map_type in cls.map_modes:
+            target_mode = cls.map_modes[map_type]
+            image = image.convert(target_mode)
+
+        # Adjust bit depth
+        bit_depth_mapping = {v: k for k, v in cls.bit_depth.items()}
+        depth = cls.bit_depth.get(image.mode, 8)
+
+        if depth not in bit_depth_mapping:
+            raise ValueError(f"Unsupported bit depth: {depth}")
+
+        if image.mode != bit_depth_mapping[depth]:
+            image = image.convert(bit_depth_mapping[depth])
+
+        # Handle unsupported modes specifically
+        unsupported_modes = ["HSV", "LAB", "CMYK", "YCbCr"]
+        if image.mode in unsupported_modes:
+            image = image.convert("RGB" if image.mode != "CMYK" else "RGBA")
+
+        return image
 
     @classmethod
     def invert_grayscale_image(cls, image):
@@ -767,118 +822,384 @@ class ImgUtils(core_utils.HelpMixin):
         return output_path
 
     @classmethod
-    def pack_smoothness_into_metallic(
-        cls,
-        metallic_map_path,
-        alpha_map_path,
-        invert_alpha=False,
-        suffix="_MetallicSmoothness",
-    ):
-        """Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
-
-        Parameters:
-            metallic_map_path (str): Path to the metallic texture map.
-            alpha_map_path (str): Path to the smoothness or roughness texture map.
-            invert_alpha (bool, optional): If True, the alpha (smoothness/roughness) texture will be inverted.
-            suffix (str, optional): Suffix for the output file name, defaulting to '_MetallicSmoothness'.
-
-        Returns:
-            str: The file path of the newly created metallic-smoothness texture map.
-        """
-        output_path = Path(metallic_map_path).with_name(
-            Path(metallic_map_path).stem + suffix + Path(metallic_map_path).suffix
-        )
-        return cls.pack_channel_into_alpha(
-            str(metallic_map_path), alpha_map_path, str(output_path), invert_alpha
-        )
-
-    @classmethod
     def pack_transparency_into_albedo(
         cls,
-        albedo_map_path,
-        alpha_map_path,
-        invert_alpha=False,
-        suffix="_AlbedoTransparency",
-    ):
+        albedo_map_path: str,
+        alpha_map_path: str,
+        output_dir: str = None,
+        suffix: str = "_AlbedoTransparency",
+        invert_alpha: bool = False,
+    ) -> str:
         """Combines an albedo texture with a transparency map by packing the transparency information into the alpha channel of the albedo texture.
 
         Parameters:
             albedo_map_path (str): Path to the albedo (base color) texture map.
             alpha_map_path (str): Path to the transparency texture map.
+            output_dir (str, optional): Directory path for the output. If None, the output directory will be the same as the albedo map path.
             invert_alpha (bool, optional): If True, the alpha (transparency) texture will be inverted.
             suffix (str, optional): Suffix for the output file name, defaulting to '_AlbedoTransparency'.
 
         Returns:
             str: The file path of the newly created albedo-transparency texture map.
         """
-        output_path = Path(albedo_map_path).with_name(
-            Path(albedo_map_path).stem + suffix + Path(albedo_map_path).suffix
+        base_name = cls.get_base_texture_name(albedo_map_path)
+        if output_dir is None:
+            output_dir = os.path.dirname(albedo_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
+
+        success = cls.pack_channel_into_alpha(
+            albedo_map_path, alpha_map_path, output_path, invert_alpha=invert_alpha
         )
-        return cls.pack_channel_into_alpha(
-            str(albedo_map_path), alpha_map_path, str(output_path), invert_alpha
-        )
+
+        if success:
+            return output_path
+        else:
+            raise Exception("Failed to pack transparency into albedo map.")
 
     @classmethod
-    def create_dx_from_gl(cls, file):
-        """Create and save an OpenGL map using a given DirectX image.
-        The new map will be saved next to the existing map.
+    def pack_smoothness_into_metallic(
+        cls,
+        metallic_map_path: str,
+        alpha_map_path: str,
+        output_dir: str = None,
+        suffix: str = "_MetallicSmoothness",
+        invert_alpha: bool = False,
+    ) -> str:
+        """Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
 
         Parameters:
-            file (str): The fullpath to a DirectX normal map file.
+            metallic_map_path (str): Path to the metallic texture map.
+            alpha_map_path (str): Path to the smoothness or roughness texture map.
+            output_dir (str, optional): Directory path for the output. If None, the output directory will be the same as the metallic map path.
+            invert_alpha (bool, optional): If True, the alpha (smoothness/roughness) texture will be inverted.
+            suffix (str, optional): Suffix for the output file name, defaulting to '_MetallicSmoothness'.
 
         Returns:
-            (str) filepath of the new image.
+            str: The file path of the newly created metallic-smoothness texture map.
         """
-        inverted_image = cls.invert_channels(file, "g")
+        base_name = cls.get_base_texture_name(metallic_map_path)
+        if output_dir is None:
+            output_dir = os.path.dirname(metallic_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
 
-        output_dir = file_utils.FileUtils.format_path(file, "path")
-        name = file_utils.FileUtils.format_path(file, "name")
-        ext = file_utils.FileUtils.format_path(file, "ext")
+        output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
 
-        typ = cls.get_image_type_from_filename(file, key=False)
-        try:
-            index = cls.map_types["Normal_OpenGL"].index(typ)
-            new_type = cls.map_types["Normal_DirectX"][index]
-        except (IndexError, ValueError) as error:
-            print("{} in create_dx_from_gl\n\t# Error: {} #".format(__file__, error))
-            new_type = "Normal_DirectX"
+        success = cls.pack_channel_into_alpha(
+            metallic_map_path, alpha_map_path, output_path, invert_alpha=invert_alpha
+        )
 
-        name = name.removesuffix(typ)
-        filepath = "{}/{}{}.{}".format(output_dir, name, new_type, ext)
-        inverted_image.save(filepath)
-
-        return filepath
+        if success:
+            return output_path
+        else:
+            raise Exception("Failed to pack smoothness into metallic map.")
 
     @classmethod
-    def create_gl_from_dx(cls, file):
-        """Create and save an DirectX map using a given OpenGL image.
-        The new map will be saved next to the existing map.
+    def create_dx_from_gl(cls, file: str, output_path: str = None) -> str:
+        """Create and save a DirectX map using a given OpenGL image.
+        The new map will be saved next to the existing map if no output path is provided.
 
         Parameters:
-            file (str): The fullpath to a OpenGL normal map file.
+            file (str): The full path to an OpenGL normal map file.
+            output_path (str, optional): Path to save the resulting DirectX map. If None, saves next to the input map.
 
         Returns:
             (str): filepath of the new image.
+
+        Raises:
+            ValueError: If the map type is not found in the expected map types.
         """
+        # Get and validate the map type from the filename
+        typ = cls.get_map_type_from_filename(file, key=False, validate="Normal_OpenGL")
+
         inverted_image = cls.invert_channels(file, "g")
 
-        output_dir = file_utils.FileUtils.format_path(file, "path")
-        name = file_utils.FileUtils.format_path(file, "name")
-        ext = file_utils.FileUtils.format_path(file, "ext")
+        if output_path is None:
+            output_dir = file_utils.FileUtils.format_path(file, "path")
+            name = file_utils.FileUtils.format_path(file, "name")
+            ext = file_utils.FileUtils.format_path(file, "ext")
 
-        typ = cls.get_image_type_from_filename(file, key=False)
-        try:
-            index = cls.map_types["Normal_DirectX"].index(typ)
-            new_type = cls.map_types["Normal_OpenGL"][index]
-        except IndexError as error:
-            print("{} in create_gl_from_dx\n\t# Error: {} #".format(__file__, error))
-            new_type = "Normal_OpenGL"
+            try:
+                index = cls.map_types["Normal_OpenGL"].index(typ)
+                new_type = cls.map_types["Normal_DirectX"][index]
+            except ValueError:
+                raise ValueError(
+                    f"Type '{typ}' not found in 'Normal_OpenGL' map types."
+                )
 
-        name = name.removesuffix(typ)
-        filepath = "{}/{}{}.{}".format(output_dir, name, new_type, ext)
-        inverted_image.save(filepath)
+            name = name.removesuffix(typ)
+            output_path = f"{output_dir}/{name}{new_type}.{ext}"
 
-        return filepath
+        output_path = os.path.abspath(output_path)
+        inverted_image.save(output_path)
+        return output_path
+
+    @classmethod
+    def create_gl_from_dx(cls, file: str, output_path: str = None) -> str:
+        """Create and save an OpenGL map using a given DirectX image.
+        The new map will be saved next to the existing map if no output path is provided.
+
+        Parameters:
+            file (str): The full path to a DirectX normal map file.
+            output_path (str, optional): Path to save the resulting OpenGL map. If None, saves next to the input map.
+
+        Returns:
+            (str): filepath of the new image.
+
+        Raises:
+            ValueError: If the map type is not found in the expected map types.
+        """
+        # Get and validate the map type from the filename
+        typ = cls.get_map_type_from_filename(file, key=False, validate="Normal_DirectX")
+
+        inverted_image = cls.invert_channels(file, "g")
+
+        if output_path is None:
+            output_dir = file_utils.FileUtils.format_path(file, "path")
+            name = file_utils.FileUtils.format_path(file, "name")
+            ext = file_utils.FileUtils.format_path(file, "ext")
+
+            try:
+                index = cls.map_types["Normal_DirectX"].index(typ)
+                new_type = cls.map_types["Normal_OpenGL"][index]
+            except ValueError:
+                raise ValueError(
+                    f"Type '{typ}' not found in 'Normal_DirectX' map types."
+                )
+
+            name = name.removesuffix(typ)
+            output_path = f"{output_dir}/{name}{new_type}.{ext}"
+
+        output_path = os.path.abspath(output_path)
+        inverted_image.save(output_path)
+        return output_path
+
+    @classmethod
+    def create_roughness_from_spec(
+        cls,
+        specular_map_path: str,
+        output_dir: str = None,
+        suffix: str = "_Roughness",
+        apply_gamma: bool = True,
+        gamma_value: float = 2.2,
+        apply_normalization: bool = True,
+        adjust_contrast: bool = True,
+        contrast_factor: float = 1.2,
+        apply_blur: bool = True,
+        blur_radius: float = 1.0,
+    ) -> str:
+        """Creates a roughness map from a specular map by converting it to grayscale, inverting it, and applying necessary adjustments.
+
+        Parameters:
+            specular_map_path (str): Path to the specular map.
+            output_dir (str, optional): Directory path for the output. If None, the output directory will be the same as the specular map path.
+            suffix (str, optional): Suffix for the output file name, defaulting to '_Roughness'.
+            apply_gamma (bool, optional): Apply gamma correction.
+            gamma_value (float, optional): Gamma value to use.
+            apply_normalization (bool, optional): Apply normalization.
+            adjust_contrast (bool, optional): Adjust contrast.
+            contrast_factor (float, optional): Contrast adjustment factor.
+            apply_blur (bool, optional): Apply blurring.
+            blur_radius (float, optional): Radius for blurring.
+
+        Returns:
+            str: Path to the saved roughness map.
+
+        Raises:
+            ValueError: If the map type is not found in the expected map types.
+        """
+        # Validate the map type
+        cls.get_map_type_from_filename(
+            specular_map_path, key=False, validate="Specular"
+        )
+
+        if output_dir is None:
+            output_dir = os.path.dirname(specular_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        base_name = cls.get_base_texture_name(specular_map_path)
+        output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
+
+        # Load and convert the specular image to grayscale
+        specular_image = cls.ensure_image(specular_map_path).convert("L")
+
+        if apply_gamma:
+            specular_image = ImageEnhance.Brightness(specular_image).enhance(
+                gamma_value
+            )
+
+        if apply_normalization:
+            specular_array = np.array(specular_image)
+            normalized_array = (
+                (specular_array - specular_array.min())
+                / (specular_array.max() - specular_array.min())
+                * 255
+            )
+            specular_image = Image.fromarray(normalized_array.astype(np.uint8))
+
+        if adjust_contrast:
+            enhancer = ImageEnhance.Contrast(specular_image)
+            specular_image = enhancer.enhance(contrast_factor)
+
+        if apply_blur:
+            specular_image = specular_image.filter(
+                ImageFilter.GaussianBlur(blur_radius)
+            )
+
+        # Invert the specular image to create the roughness map
+        roughness_image = ImageOps.invert(specular_image)
+
+        roughness_image.save(output_path)
+        return output_path
+
+    @classmethod
+    def create_metallic_from_spec(
+        cls,
+        specular_map_path: str,
+        output_dir: str = None,
+        suffix: str = "_Metallic",
+        apply_gamma: bool = True,
+        gamma_value: float = 2.2,
+        apply_normalization: bool = True,
+        adjust_contrast: bool = True,
+        contrast_factor: float = 1.2,
+        apply_blur: bool = True,
+        blur_radius: float = 1.0,
+    ) -> str:
+        """Creates a metallic map from a specular map by converting it to grayscale and applying necessary adjustments.
+
+        Parameters:
+            specular_map_path (str): Path to the specular map.
+            output_dir (str, optional): Directory path for the output. If None, the output directory will be the same as the specular map path.
+            suffix (str, optional): Suffix for the output file name, defaulting to '_Metallic'.
+            apply_gamma (bool, optional): Apply gamma correction.
+            gamma_value (float, optional): Gamma value to use.
+            apply_normalization (bool, optional): Apply normalization.
+            adjust_contrast (bool, optional): Adjust contrast.
+            contrast_factor (float, optional): Contrast adjustment factor.
+            apply_blur (bool, optional): Apply blurring.
+            blur_radius (float, optional): Radius for blurring.
+
+        Returns:
+            str: Path to the saved metallic map.
+
+        Raises:
+            ValueError: If the map type is not found in the expected map types.
+        """
+        # Validate the map type
+        cls.get_map_type_from_filename(
+            specular_map_path, key=False, validate="Specular"
+        )
+
+        if output_dir is None:
+            output_dir = os.path.dirname(specular_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        base_name = cls.get_base_texture_name(specular_map_path)
+        output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
+
+        # Load and convert the specular image to grayscale
+        specular_image = cls.ensure_image(specular_map_path).convert("L")
+
+        if apply_gamma:
+            specular_image = ImageEnhance.Brightness(specular_image).enhance(
+                gamma_value
+            )
+
+        if apply_normalization:
+            specular_array = np.array(specular_image)
+            normalized_array = (
+                (specular_array - specular_array.min())
+                / (specular_array.max() - specular_array.min())
+                * 255
+            )
+            specular_image = Image.fromarray(normalized_array.astype(np.uint8))
+
+        if adjust_contrast:
+            enhancer = ImageEnhance.Contrast(specular_image)
+            specular_image = enhancer.enhance(contrast_factor)
+
+        if apply_blur:
+            specular_image = specular_image.filter(
+                ImageFilter.GaussianBlur(blur_radius)
+            )
+
+        specular_image.save(output_path)
+        return output_path
+
+    @classmethod
+    def optimize_texture(
+        cls,
+        texture_path: str,
+        output_dir: str = None,
+        output_type="PNG",
+        max_size: int = None,
+        suffix: str = None,
+    ) -> str:
+        """Optimizes a texture by resizing, setting bit depth, and adjusting image type according to the map type.
+
+        Parameters:
+            texture_path (str): Path to the texture file.
+            output_dir (str, optional): Directory path for the optimized texture. If None, the texture will be saved next to the original.
+            output_type (str): The output image type for the optimized texture.
+            max_size (int, optional): Maximum size for the longest dimension of the texture. Defaults to None.
+            suffix (str, optional): Suffix to add to the optimized file name. Defaults to None.
+
+        Returns:
+            str: Path to the optimized texture.
+        """
+        if output_dir is None:
+            output_dir = os.path.dirname(texture_path)
+        elif not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+
+        # Determine the map type
+        map_type = cls.get_map_type_from_filename(texture_path)
+        file_name = os.path.splitext(os.path.basename(texture_path))[0]
+        suffix = suffix or ""
+        output_path = os.path.join(output_dir, f"{file_name}{suffix}.{output_type}")
+
+        # Load the image
+        image = cls.ensure_image(texture_path)
+
+        # Resize the image if larger than max size
+        if max_size and max(image.size) > max_size:
+            image = cls.resize_image(image, max_size, max_size)
+
+        # Adjust bit depth and image mode
+        image = cls.set_bit_depth(image, map_type)
+
+        # Save the optimized image as PNG
+        image.save(output_path, format=output_type)
+        return output_path
+
+    @classmethod
+    def batch_optimize_textures(cls, directory: str, **kwargs):
+        """Batch optimizes all textures in a directory for Unity.
+
+        Parameters:
+            directory (str): Directory containing the textures to optimize.
+            output_dir (str, optional): Directory path for the optimized textures. If None, the textures will be saved next to the originals.
+            max_size (int, optional): Maximum size for the longest dimension of the textures. Defaults to 4096
+        """
+        textures = cls.get_images(directory)
+        print(f"Optimizing textures in: {directory}")
+        for texture_path in textures.keys():
+            cls.optimize_texture(texture_path, **kwargs)
+        print(f"{len(textures)} textures optimized.")
 
 
 # --------------------------------------------------------------------------------------------

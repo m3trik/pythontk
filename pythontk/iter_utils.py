@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Any, Callable, Iterable, List, Optional, Union
+from typing import Any, Callable, Iterable, List, Dict, Optional, Union
 
 # from this package:
 from pythontk import core_utils
@@ -146,6 +146,57 @@ class IterUtils(core_utils.HelpMixin):
                 return [bit for array in lst for bit in array]
 
             return [i + 1 for i, bit in enumerate(bit_array) if bit == 1]
+
+    @staticmethod
+    def insert_into_dict(
+        original_dict: Dict[Any, Any],
+        key: Any,
+        value: Any,
+        index: int = 0,
+        in_place: bool = False,
+    ) -> Dict[Any, Any]:
+        """Insert a key-value pair at a specified index in a dictionary.
+
+        This function inserts a key-value pair at the specified index in the dictionary.
+        It can either create a new dictionary or modify the original one in place based
+        on the `in_place` parameter.
+
+        Parameters:
+            original_dict (Dict[Any, Any]): The original dictionary to modify or copy.
+            key (Any): The key of the new key-value pair to insert.
+            value (Any): The value of the new key-value pair to insert.
+            index (int, optional): The index at which to insert the key-value pair.
+                Defaults to 0.
+            in_place (bool, optional): If True, the original dictionary is modified in place.
+                If False, a new dictionary is created. Defaults to False.
+
+        Returns:
+            Dict[Any, Any]: The modified dictionary with the new key-value pair inserted.
+
+        Raises:
+            IndexError: If the specified index is out of range.
+
+        Example:
+            >>> original_dict = {'b': 2, 'c': 3}
+            >>> new_dict = insert_into_dict_at_index(original_dict, 'a', 1)
+            >>> print(new_dict)
+            {'a': 1, 'b': 2, 'c': 3}
+            >>> insert_into_dict_at_index(original_dict, 'd', 4, 2, in_place=True)
+            >>> print(original_dict)
+            {'b': 2, 'c': 3, 'd': 4}
+        """
+        if not (0 <= index <= len(original_dict)):
+            raise IndexError("Index out of range")
+
+        items = list(original_dict.items())
+        items.insert(index, (key, value))
+
+        if in_place:
+            original_dict.clear()
+            original_dict.update(items)
+            return original_dict
+        else:
+            return dict(items)
 
     @staticmethod
     def rindex(itr, item):
@@ -367,21 +418,17 @@ class IterUtils(core_utils.HelpMixin):
         return result
 
     @classmethod
-    def filter_dict(cls, dct, inc=[], exc=[], keys=False, values=False):
+    def filter_dict(
+        cls, dct: Dict, keys: bool = False, values: bool = False, **kwargs
+    ) -> Dict:
         """Filter the given dictionary.
         Extends `filter_list` to operate on either the given dict's keys or values.
 
         Parameters:
             dct (dict): The dictionary to filter.
-            inc (str/obj/list): The objects(s) to include.
-                    supports using the '*' operator: startswith*, *endswith, *contains*
-                    Will include all items that satisfy ANY of the given search terms.
-                    meaning: '*.png' and '*Normal*' returns all strings ending in '.png' AND all
-                    strings containing 'Normal'. NOT strings satisfying both terms.
-            exc (str/obj/list): The objects(s) to exclude. Similar to include.
-                    exlude take precidence over include.
             keys (bool): Filter the dictionary keys.
             values (bool): Filter the dictionary values.
+            **kwargs: Additional arguments to pass to the filter_list method.
 
         Returns:
             (dict)
@@ -393,11 +440,11 @@ class IterUtils(core_utils.HelpMixin):
             filter_dict(dct, exc=1, keys=True) #returns: {'two': 2, 3: 'three'}
         """
         if keys:
-            filtered = cls.filter_list(dct.keys(), inc, exc)
-            dct = {k: dct[k] for k in filtered}
+            filtered_keys = cls.filter_list(list(dct.keys()), **kwargs)
+            dct = {k: dct[k] for k in filtered_keys}
         if values:
-            filtered = cls.filter_list(dct.values(), inc, exc)
-            dct = {k: v for k, v in dct.items() if v in filtered}
+            filtered_values = cls.filter_list(list(dct.values()), **kwargs)
+            dct = {k: v for k, v in dct.items() if v in filtered_values}
         return dct
 
     @staticmethod

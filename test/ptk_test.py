@@ -1138,21 +1138,21 @@ class ImgTest(Main, ImgUtils):
     def test_getImageTypeFromFilename(self):
         """ """
         self.assertEqual(
-            self.get_image_type_from_filename("test_files/imgtk_test/im_h.png"),
+            self.get_map_type_from_filename("test_files/imgtk_test/im_h.png"),
             "Height",
         )
         self.assertEqual(
-            self.get_image_type_from_filename(
+            self.get_map_type_from_filename(
                 "test_files/imgtk_test/im_h.png", key=False
             ),
             "_H",
         )
         self.assertEqual(
-            self.get_image_type_from_filename("test_files/imgtk_test/im_n.png"),
+            self.get_map_type_from_filename("test_files/imgtk_test/im_n.png"),
             "Normal",
         )
         self.assertEqual(
-            self.get_image_type_from_filename(
+            self.get_map_type_from_filename(
                 "test_files/imgtk_test/im_n.png", key=False
             ),
             "_N",
