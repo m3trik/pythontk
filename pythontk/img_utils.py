@@ -313,8 +313,7 @@ class ImgUtils(core_utils.HelpMixin):
         base_name_with_extension = pattern.sub("", filename)
 
         # Remove the file extension if required
-        base_name, _ = os.path.splitext(base_name_with_extension)
-
+        base_name = cls.get_base_texture_name(base_name_with_extension)
         return base_name
 
     @classmethod
@@ -1157,7 +1156,7 @@ class ImgUtils(core_utils.HelpMixin):
             output_type (str): The output image type for the optimized texture.
             max_size (int, optional): Maximum size for the longest dimension of the texture. Defaults to None.
             suffix (str, optional): Suffix to add to the optimized file name. Defaults to None.
-
+                                ie.  'name>_normal'  would become '<name>_<suffix>_normal'
         Returns:
             str: Path to the optimized texture.
         """
@@ -1168,9 +1167,10 @@ class ImgUtils(core_utils.HelpMixin):
 
         # Determine the map type
         map_type = cls.get_map_type_from_filename(texture_path)
-        file_name = os.path.splitext(os.path.basename(texture_path))[0]
-        suffix = suffix or ""
-        output_path = os.path.join(output_dir, f"{file_name}{suffix}.{output_type}")
+        base_name = cls.get_base_texture_name(texture_path)
+        suffix = f"_{suffix}" if suffix else ""
+        output_file_name = f"{base_name}{suffix}_{map_type}{output_type.lower()}"
+        output_path = os.path.join(output_dir, output_file_name)
 
         # Load the image
         image = cls.ensure_image(texture_path)
@@ -1188,7 +1188,7 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def batch_optimize_textures(cls, directory: str, **kwargs):
-        """Batch optimizes all textures in a directory for Unity.
+        """Batch optimizes all textures in a directory.
 
         Parameters:
             directory (str): Directory containing the textures to optimize.
