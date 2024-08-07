@@ -22,7 +22,7 @@ class ImgUtils(core_utils.HelpMixin):
     """Helper methods for working with image file formats."""
 
     map_types = {
-        "Base_Color": ("Base_Color", "BaseColor", "_BC"),
+        "Base_Color": ("Base_Color", "BaseColor", "Color", "_BC"),
         "Albedo_Transparency": ("AlbedoTransparency", "Albedo_Transparency", "_AT"),
         "Roughness": ("Roughness", "Rough", "RGH", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "MTL", "_M"),
@@ -34,7 +34,7 @@ class ImgUtils(core_utils.HelpMixin):
         "Emissive": ("Emissive", "Emit", "EMI", "_E"),
         "Diffuse": ("Diffuse", "_DF", "Diff", "DIF", "_D"),
         "Specular": ("Specular", "Spec", "_S"),
-        "Glossiness": ("Glossiness", "Gloss", "Glos", "Glo", "_G"),
+        "Glossiness": ("Glossiness", "Gloss", "Glos", "Gls", "Glo", "_G"),
         "Displacement": ("Displacement", "_DP", "Displace", "Disp", "Dis", "_D"),
         "Refraction": ("Refraction", "IndexofRefraction", "_IOR"),
         "Reflection": ("Reflection", "_RF"),
@@ -249,7 +249,7 @@ class ImgUtils(core_utils.HelpMixin):
         Raises:
             ValueError: If the map type is not the expected type when 'validate' is provided.
         """
-        name = file_utils.FileUtils.format_path(file, "name")
+        filename = file_utils.FileUtils.format_path(file, "name")
 
         if key:
             result = next(
@@ -257,7 +257,7 @@ class ImgUtils(core_utils.HelpMixin):
                     k
                     for k, v in cls.map_types.items()
                     for i in v
-                    if name.lower().endswith(i.lower())
+                    if filename.lower().endswith(i.lower())
                 ),
                 None,
             )
@@ -267,9 +267,9 @@ class ImgUtils(core_utils.HelpMixin):
                     i
                     for v in cls.map_types.values()
                     for i in v
-                    if name.lower().endswith(i.lower())
+                    if filename.lower().endswith(i.lower())
                 ),
-                ("".join(name.split("_")[-1]) if "_" in name else None),
+                ("".join(filename.split("_")[-1]) if "_" in filename else None),
             )
 
         if validate:
@@ -300,8 +300,6 @@ class ImgUtils(core_utils.HelpMixin):
         filename = os.path.basename(filepath_or_filename)
 
         # Compile a single regex pattern that matches any known suffix
-        # This pattern now explicitly includes an underscore before the suffix,
-        # matches against the entire list of suffixes, and is case-insensitive
         suffixes_pattern = "|".join(
             re.escape(suffix)
             for suffixes in cls.map_types.values()
@@ -312,8 +310,8 @@ class ImgUtils(core_utils.HelpMixin):
         # Remove the matched suffix, if any
         base_name_with_extension = pattern.sub("", filename)
 
-        # Remove the file extension if required
-        base_name = cls.get_base_texture_name(base_name_with_extension)
+        # Remove the file extension to get the base name
+        base_name, *_ = os.path.splitext(base_name_with_extension)
         return base_name
 
     @classmethod

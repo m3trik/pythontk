@@ -5,7 +5,7 @@ import os
 import re
 import json
 import traceback
-from typing import Union, List
+from typing import Union, List, Dict, Optional
 
 # from this package:
 from pythontk import core_utils
@@ -294,6 +294,76 @@ class FileUtils(core_utils.HelpMixin):
 
         return results
 
+    def get_metadata(file_path: str, *keys: str) -> Dict[str, Optional[str]]:
+        """Retrieves metadata from a specified file in Windows.
+
+        Parameters:
+            file_path (str): The full path to the file from which metadata will be retrieved.
+            *keys (str): The metadata keys to retrieve.
+
+        Raises:
+            FileNotFoundError: If the specified file does not exist.
+
+        Returns:
+            Dict[str, Optional[str]]: A dictionary containing the requested metadata key-value pairs.
+
+        Example:
+            metadata = get_metadata(
+                "C:\\path\\to\\your\\file.txt",
+                "Custom_PlaneName",
+                "Custom_ModuleType",
+                "Comments"
+            )
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"The file {file_path} does not exist.")
+
+        import win32com.client
+
+        shell = win32com.client.Dispatch("Shell.Application")
+        ns = shell.NameSpace(os.path.dirname(file_path))
+        item = ns.ParseName(os.path.basename(file_path))
+
+        metadata = {}
+        for key in keys:
+            metadata[key] = item.ExtendedProperty(key)
+
+        return metadata
+
+    def set_metadata(file_path: str, **metadata: Dict[str, Optional[str]]) -> None:
+        """Attaches or modifies metadata for a specified file in Windows.
+
+        Parameters:
+            file_path (str): The full path to the file to which metadata will be attached or modified.
+            **metadata (Dict[str, Optional[str]]): Key-value pairs representing the metadata properties and their values.
+                If a value is None, the corresponding metadata property will be removed.
+
+        Raises:
+            FileNotFoundError: If the specified file does not exist.
+
+        Example:
+            set_metadata(
+                "C:\\path\\to\\your\\file.txt",
+                Custom_PlaneName="Boeing 747",
+                Custom_ModuleType="Engine",
+                Comments="This is a sample comment."
+            )
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"The file {file_path} does not exist.")
+
+        import win32com.client
+
+        shell = win32com.client.Dispatch("Shell.Application")
+        ns = shell.NameSpace(os.path.dirname(file_path))
+        item = ns.ParseName(os.path.basename(file_path))
+
+        for key, value in metadata.items():
+            if value is None:  # Clear the metadata property
+                item.ExtendedProperty(key, "")
+            else:
+                item.ExtendedProperty(key, value)
+
     @staticmethod
     @core_utils.CoreUtils.listify(threading=True)
     def format_path(
@@ -359,6 +429,52 @@ class FileUtils(core_utils.HelpMixin):
             result = str_utils.StrUtils.rreplace(p, result, replace, 1)
 
         return result
+
+    @staticmethod
+    @core_utils.CoreUtils.listify(threading=True)
+    def convert_to_relative_path(
+        file_path: str,
+        base_dir: str,
+        prepend_base: bool = True,
+        check_existence: bool = False,
+    ) -> str:
+        """Convert an absolute file path to a relative path based on the given base directory.
+
+        If the file path and the base directory are on different drives,
+        the file path's drive letter is changed to match the base directory's drive letter.
+
+        Parameters:
+            file_path (str): The absolute file path to convert.
+            base_dir (str): The base directory to which the path should be made relative.
+            prepend_base (bool): Whether to prepend the base directory to the relative path.
+            check_existence (bool): Whether to check the existence of the base directory.
+
+        Returns:
+            str: The relative file path.
+
+        Raises:
+            FileNotFoundError: If check_existence is True and the base directory does not exist.
+        """
+        if check_existence and not os.path.exists(base_dir):
+            raise FileNotFoundError(f"The base directory does not exist: {base_dir}")
+
+        # Get drive letters
+        file_drive, file_path_without_drive = os.path.splitdrive(file_path)
+        base_drive, base_path_without_drive = os.path.splitdrive(base_dir)
+
+        # If the drives are different, keep only the file name
+        if file_drive != base_drive:
+            relative_path = os.path.basename(file_path)
+        else:
+            # Calculate the relative path
+            relative_path = os.path.relpath(file_path, base_dir)
+
+        if prepend_base:
+            return os.path.join(os.path.basename(base_dir), relative_path).replace(
+                "\\", "/"
+            )
+
+        return relative_path.replace("\\", "/")
 
     @classmethod
     def append_path(cls, path, **kwargs):
