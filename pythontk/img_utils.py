@@ -23,10 +23,10 @@ class ImgUtils(core_utils.HelpMixin):
 
     map_types = {
         "Base_Color": ("Base_Color", "BaseColor", "Color", "_BC"),
-        "Albedo_Transparency": ("AlbedoTransparency", "Albedo_Transparency", "_AT"),
+        "Albedo_Transparency": ("Albedo_Transparency", "AlbedoTransparency", "_AT"),
         "Roughness": ("Roughness", "Rough", "RGH", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "MTL", "_M"),
-        "Metallic_Smoothness": ("MetallicSmoothness", "Metallic_Smooth", "_MS"),
+        "Metallic_Smoothness": ("Metallic_Smoothness", "MetallicSmoothness", "_MS"),
         "Normal": ("Normal", "Norm", "NRM", "_N"),
         "Normal_DirectX": ("Normal_DirectX", "NormalDX", "_NDX"),
         "Normal_OpenGL": ("Normal_OpenGL", "NormalGL", "_NGL"),
@@ -42,13 +42,13 @@ class ImgUtils(core_utils.HelpMixin):
         "Smoothness": ("Smoothness", "Smooth", "_SM"),
         "Thickness": ("Thickness", "_TH"),
         "Anisotropy": ("Anisotropy", "_AN"),
-        "Subsurface_Scattering": ("SubsurfaceScattering", "SSS", "_SSS"),
+        "Subsurface_Scattering": ("Subsurface_Scattering", "SSS", "_SSS"),
         "Sheen": ("Sheen", "_SH"),
         "Clearcoat": ("Clearcoat", "_CC"),
         "Ambient_Occlusion": (
-            "Mixed_AO",
-            "AmbientOcclusion",
             "Ambient_Occlusion",
+            "AmbientOcclusion",
+            "Mixed_AO",
             "_AO",
         ),
     }
@@ -294,10 +294,12 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             str: The base name of the texture without the map type suffix.
         """
-        import os
         import re
 
         filename = os.path.basename(filepath_or_filename)
+
+        # Extract the base name without the extension
+        base_name, extension = os.path.splitext(filename)
 
         # Compile a single regex pattern that matches any known suffix
         suffixes_pattern = "|".join(
@@ -305,13 +307,18 @@ class ImgUtils(core_utils.HelpMixin):
             for suffixes in cls.map_types.values()
             for suffix in suffixes
         )
-        pattern = re.compile(f"_(?:{suffixes_pattern})(?=\\.[^.]+$)", re.IGNORECASE)
+
+        # Create a regex to match and remove the suffixes at the end of the base name
+        pattern = re.compile(
+            f"(?:_{suffixes_pattern}|{suffixes_pattern})$", re.IGNORECASE
+        )
 
         # Remove the matched suffix, if any
-        base_name_with_extension = pattern.sub("", filename)
+        base_name = pattern.sub("", base_name)
 
-        # Remove the file extension to get the base name
-        base_name, *_ = os.path.splitext(base_name_with_extension)
+        # Remove any trailing underscores
+        base_name = base_name.rstrip("_")
+
         return base_name
 
     @classmethod

@@ -528,53 +528,57 @@ class StrUtils(core_utils.CoreUtils):
 
     @staticmethod
     def format_suffix(
-        string,
-        suffix="",
-        strip="",
-        strip_trailing_ints=False,
-        strip_trailing_alpha=False,
-    ):
+        string: str,
+        suffix: str = "",
+        strip: Union[str, List[str]] = "",
+        strip_trailing_ints: bool = False,
+        strip_trailing_alpha: bool = False,
+    ) -> str:
         """Re-format the suffix for the given string.
 
         Parameters:
             string (str): The string to format.
             suffix (str): Append a new suffix to the given string.
-            strip (str/list): Specific string(s) to strip from the end of the given string.
+            strip (str/list): Specific string(s) or regex pattern(s) to strip from the end of the given string.
             strip_trailing_ints (bool): Strip all trailing integers.
-            strip_trailing_alpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
+            strip_trailing_alpha (bool): Strip all upper-case letters preceded by a non-alphanumeric character.
 
         Returns:
-            (str)
+            (str): The formatted string.
         """
         import re
+
+        def is_regex(pattern: str) -> bool:
+            try:
+                re.compile(pattern)
+                return True
+            except re.error:
+                return False
 
         try:
             s = string.split("|")[-1]
         except Exception:
-            s = string.string().split("|")[-1]
+            s = string.split("|")[-1]
 
-        # strip each set of chars in 'strip' from end of string.
-        if strip:
-            strip = tuple(
-                [i for i in iter_utils.IterUtils.make_iterable(strip) if not i == ""]
-            )  # assure 'strip' is a tuple and does not contain any empty strings.
-            while s.endswith(strip):
-                for chars in strip:
-                    s = s.rstrip(chars)
-
+        if strip:  # Strip each set of chars in 'strip' from end of string.
+            strip_items = iter_utils.IterUtils.make_iterable(strip)
+            for pattern in strip_items:
+                if isinstance(pattern, str) and is_regex(pattern):
+                    s = re.sub(pattern, "", s)
+                else:
+                    while s.endswith(pattern):
+                        s = s.rstrip(pattern)
         while (
             ((s[-1] == "_" or s[-1].isdigit()) and strip_trailing_ints)
             or ("_" in s and (s == "_" or s[-1].isupper()))
             and strip_trailing_alpha
         ):
-            if (
-                s[-1] == "_" or s[-1].isdigit()
-            ) and strip_trailing_ints:  # trailing underscore and integers.
+            # Trailing underscore and integers.
+            if (s[-1] == "_" or s[-1].isdigit()) and strip_trailing_ints:
                 s = re.sub(re.escape(s[-1:]) + "$", "", s)
 
-            if (
-                "_" in s and (s == "_" or s[-1].isupper())
-            ) and strip_trailing_alpha:  # trailing underscore and uppercase alphanumeric char.
+            # Trailing underscore and uppercase alphanumeric char.
+            if ("_" in s and (s == "_" or s[-1].isupper())) and strip_trailing_alpha:
                 s = re.sub(re.escape(s[-1:]) + "$", "", s)
 
         return s + suffix
