@@ -1161,7 +1161,7 @@ class ImgUtils(core_utils.HelpMixin):
             output_type (str): The output image type for the optimized texture.
             max_size (int, optional): Maximum size for the longest dimension of the texture. Defaults to None.
             suffix (str, optional): Suffix to add to the optimized file name. Defaults to None.
-                                ie.  'name>_normal'  would become '<name>_<suffix>_normal'
+                        e.g., '_opt' will result in '<name>_opt_<map_type>.<extension>'
         Returns:
             str: Path to the optimized texture.
         """
@@ -1173,8 +1173,8 @@ class ImgUtils(core_utils.HelpMixin):
         # Determine the map type
         map_type = cls.get_map_type_from_filename(texture_path)
         base_name = cls.get_base_texture_name(texture_path)
-        suffix = f"_{suffix}" if suffix else ""
-        output_file_name = f"{base_name}{suffix}_{map_type}{output_type.lower()}"
+        suffix = suffix if suffix else ""
+        output_file_name = f"{base_name}{suffix}_{map_type}.{output_type.lower()}"
         output_path = os.path.join(output_dir, output_file_name)
 
         # Load the image
@@ -1187,7 +1187,7 @@ class ImgUtils(core_utils.HelpMixin):
         # Adjust bit depth and image mode
         image = cls.set_bit_depth(image, map_type)
 
-        # Save the optimized image as PNG
+        # Save the optimized image
         image.save(output_path, format=output_type)
         return output_path
 
