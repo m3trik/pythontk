@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Union, List
+from typing import Union, List, Optional, Dict, Tuple
 
 # from this package:
 from pythontk import core_utils
@@ -10,6 +10,62 @@ from pythontk import file_utils
 
 class StrUtils(core_utils.CoreUtils):
     """ """
+
+    @staticmethod
+    def sanitize(
+        text: Union[str, List[str]],
+        replacement_char: str = "_",
+        char_map: Optional[Dict[str, str]] = None,
+        preserve_trailing: bool = False,
+        preserve_case: bool = False,
+        allow_consecutive: bool = False,
+        return_original: bool = False,  # Optionally return original string(s)
+    ) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]:
+        """Sanitizes a string or a list of strings by replacing invalid characters.
+
+        Returns:
+            (obj/list) dependant on flags.
+        """
+        import re
+
+        def sanitize_single(text: str) -> Union[str, Tuple[str, str]]:
+            original_text = text
+            txt = text if preserve_case else text.lower()
+
+            # Apply character mappings if provided
+            if char_map:
+                for char, replacement in char_map.items():
+                    txt = txt.replace(char, replacement)
+
+            # Replace all non-alphanumeric characters
+            sanitized_text = re.sub(
+                r"[^a-z0-9_]" if not preserve_case else r"[^A-Za-z0-9_]",
+                replacement_char,
+                txt,
+            )
+
+            # Collapse consecutive replacement characters if allow_consecutive is False
+            if not allow_consecutive:
+                sanitized_text = re.sub(
+                    f"{replacement_char}+", replacement_char, sanitized_text
+                )
+
+            # Optionally remove trailing illegal characters if preserve_trailing is False
+            if not preserve_trailing:
+                sanitized_text = re.sub(f"{replacement_char}+$", "", sanitized_text)
+
+            return (
+                (sanitized_text, original_text) if return_original else sanitized_text
+            )
+
+        # Ensure the input is always iterable using the make_iterable method
+        iterable_text = iter_utils.IterUtils.make_iterable(text)
+
+        # Sanitize each item in the iterable
+        sanitized_list = [sanitize_single(t) for t in iterable_text]
+
+        # Return the appropriate format using format_return
+        return core_utils.CoreUtils.format_return(sanitized_list, orig=text)
 
     @staticmethod
     @core_utils.CoreUtils.listify(threading=True)
@@ -53,6 +109,11 @@ class StrUtils(core_utils.CoreUtils):
         Raises:
             TypeError: If class_input is not a string, a type, or an instance of a class, or if attribute_name is not a string.
             ValueError: If attribute_name does not start with double underscore.
+
+        Example:
+            get_mangled_name("MyClass", "__attribute") -> "_MyClass__attribute"
+            get_mangled_name(MyClass, "__attribute") -> "_MyClass__attribute"
+            get_mangled_name(MyClass(), "__attribute") -> "_MyClass__attribute"
         """
         if not isinstance(attribute_name, str):
             raise TypeError("attribute_name must be a string")
@@ -88,7 +149,7 @@ class StrUtils(core_utils.CoreUtils):
             If as_string is False (default): A generator that yields all matches found in the input string.
             If as_string is True: A single concatenated string containing all matches found in the input string.
 
-        Examples:
+        Example:
             input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
 
             # Get the matches as a generator (default behavior)
