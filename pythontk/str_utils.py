@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Union, List
+from typing import Union, List, Optional, Dict, Tuple
 
 # from this package:
 from pythontk import core_utils
@@ -10,6 +10,62 @@ from pythontk import file_utils
 
 class StrUtils(core_utils.CoreUtils):
     """ """
+
+    @staticmethod
+    def sanitize(
+        text: Union[str, List[str]],
+        replacement_char: str = "_",
+        char_map: Optional[Dict[str, str]] = None,
+        preserve_trailing: bool = False,
+        preserve_case: bool = False,
+        allow_consecutive: bool = False,
+        return_original: bool = False,  # Optionally return original string(s)
+    ) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]:
+        """Sanitizes a string or a list of strings by replacing invalid characters.
+
+        Returns:
+            (obj/list) dependant on flags.
+        """
+        import re
+
+        def sanitize_single(text: str) -> Union[str, Tuple[str, str]]:
+            original_text = text
+            txt = text if preserve_case else text.lower()
+
+            # Apply character mappings if provided
+            if char_map:
+                for char, replacement in char_map.items():
+                    txt = txt.replace(char, replacement)
+
+            # Replace all non-alphanumeric characters
+            sanitized_text = re.sub(
+                r"[^a-z0-9_]" if not preserve_case else r"[^A-Za-z0-9_]",
+                replacement_char,
+                txt,
+            )
+
+            # Collapse consecutive replacement characters if allow_consecutive is False
+            if not allow_consecutive:
+                sanitized_text = re.sub(
+                    f"{replacement_char}+", replacement_char, sanitized_text
+                )
+
+            # Optionally remove trailing illegal characters if preserve_trailing is False
+            if not preserve_trailing:
+                sanitized_text = re.sub(f"{replacement_char}+$", "", sanitized_text)
+
+            return (
+                (sanitized_text, original_text) if return_original else sanitized_text
+            )
+
+        # Ensure the input is always iterable using the make_iterable method
+        iterable_text = iter_utils.IterUtils.make_iterable(text)
+
+        # Sanitize each item in the iterable
+        sanitized_list = [sanitize_single(t) for t in iterable_text]
+
+        # Return the appropriate format using format_return
+        return core_utils.CoreUtils.format_return(sanitized_list, orig=text)
 
     @staticmethod
     @core_utils.CoreUtils.listify(threading=True)
@@ -53,6 +109,11 @@ class StrUtils(core_utils.CoreUtils):
         Raises:
             TypeError: If class_input is not a string, a type, or an instance of a class, or if attribute_name is not a string.
             ValueError: If attribute_name does not start with double underscore.
+
+        Example:
+            get_mangled_name("MyClass", "__attribute") -> "_MyClass__attribute"
+            get_mangled_name(MyClass, "__attribute") -> "_MyClass__attribute"
+            get_mangled_name(MyClass(), "__attribute") -> "_MyClass__attribute"
         """
         if not isinstance(attribute_name, str):
             raise TypeError("attribute_name must be a string")
@@ -88,7 +149,7 @@ class StrUtils(core_utils.CoreUtils):
             If as_string is False (default): A generator that yields all matches found in the input string.
             If as_string is True: A single concatenated string containing all matches found in the input string.
 
-        Examples:
+        Example:
             input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
 
             # Get the matches as a generator (default behavior)
@@ -528,53 +589,57 @@ class StrUtils(core_utils.CoreUtils):
 
     @staticmethod
     def format_suffix(
-        string,
-        suffix="",
-        strip="",
-        strip_trailing_ints=False,
-        strip_trailing_alpha=False,
-    ):
+        string: str,
+        suffix: str = "",
+        strip: Union[str, List[str]] = "",
+        strip_trailing_ints: bool = False,
+        strip_trailing_alpha: bool = False,
+    ) -> str:
         """Re-format the suffix for the given string.
 
         Parameters:
             string (str): The string to format.
             suffix (str): Append a new suffix to the given string.
-            strip (str/list): Specific string(s) to strip from the end of the given string.
+            strip (str/list): Specific string(s) or regex pattern(s) to strip from the end of the given string.
             strip_trailing_ints (bool): Strip all trailing integers.
-            strip_trailing_alpha (bool): Strip all upper-case letters preceeded by a non alphanumeric character.
+            strip_trailing_alpha (bool): Strip all upper-case letters preceded by a non-alphanumeric character.
 
         Returns:
-            (str)
+            (str): The formatted string.
         """
         import re
+
+        def is_regex(pattern: str) -> bool:
+            try:
+                re.compile(pattern)
+                return True
+            except re.error:
+                return False
 
         try:
             s = string.split("|")[-1]
         except Exception:
-            s = string.string().split("|")[-1]
+            s = string.split("|")[-1]
 
-        # strip each set of chars in 'strip' from end of string.
-        if strip:
-            strip = tuple(
-                [i for i in iter_utils.IterUtils.make_iterable(strip) if not i == ""]
-            )  # assure 'strip' is a tuple and does not contain any empty strings.
-            while s.endswith(strip):
-                for chars in strip:
-                    s = s.rstrip(chars)
-
+        if strip:  # Strip each set of chars in 'strip' from end of string.
+            strip_items = iter_utils.IterUtils.make_iterable(strip)
+            for pattern in strip_items:
+                if isinstance(pattern, str) and is_regex(pattern):
+                    s = re.sub(pattern, "", s)
+                else:
+                    while s.endswith(pattern):
+                        s = s.rstrip(pattern)
         while (
             ((s[-1] == "_" or s[-1].isdigit()) and strip_trailing_ints)
             or ("_" in s and (s == "_" or s[-1].isupper()))
             and strip_trailing_alpha
         ):
-            if (
-                s[-1] == "_" or s[-1].isdigit()
-            ) and strip_trailing_ints:  # trailing underscore and integers.
+            # Trailing underscore and integers.
+            if (s[-1] == "_" or s[-1].isdigit()) and strip_trailing_ints:
                 s = re.sub(re.escape(s[-1:]) + "$", "", s)
 
-            if (
-                "_" in s and (s == "_" or s[-1].isupper())
-            ) and strip_trailing_alpha:  # trailing underscore and uppercase alphanumeric char.
+            # Trailing underscore and uppercase alphanumeric char.
+            if ("_" in s and (s == "_" or s[-1].isupper())) and strip_trailing_alpha:
                 s = re.sub(re.escape(s[-1:]) + "$", "", s)
 
         return s + suffix

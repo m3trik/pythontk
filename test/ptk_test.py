@@ -55,8 +55,8 @@ class Main(unittest.TestCase):
                 (str) The string representation of the object with all memory addresses replaced.
 
         Example:
-                >>> replace_mem_address("<class 'str'> <PySide2.QtWidgets.QWidget(0x1ebe2677e80, name='MayaWindow') at 0x000001EBE6D48500>")
-                "<class 'str'> <PySide2.QtWidgets.QWidget(0x00000000000, name='MayaWindow') at 0x00000000000>"
+                >>> replace_mem_address("<class 'str'> <qtpy.QtWidgets.QWidget(0x1ebe2677e80, name='MayaWindow') at 0x000001EBE6D48500>")
+                "<class 'str'> <qtpy.QtWidgets.QWidget(0x00000000000, name='MayaWindow') at 0x00000000000>"
         """
         import re
 
@@ -279,8 +279,7 @@ class StrTest(Main, StrUtils):
     def test_get_mangled_name(self):
         """ """
 
-        class DummyClass:
-            ...
+        class DummyClass: ...
 
         dummy_instance = DummyClass()
 
@@ -521,8 +520,7 @@ class IterTest(Main, IterUtils):
 
     def test_make_iterable(self):
         # Test an object that isn't a string, list, tuple, set, dict, range, map, filter, or zip
-        class ExampleClass:
-            ...
+        class ExampleClass: ...
 
         class ExampleClassWithAttr:
             __apimfn__ = True

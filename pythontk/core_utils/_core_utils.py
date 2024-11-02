@@ -3,7 +3,7 @@
 import functools
 import inspect
 import collections.abc
-from typing import Any, Callable
+from typing import Any, Callable, Tuple, Union
 from concurrent.futures import ThreadPoolExecutor
 
 # from this package:
@@ -272,12 +272,15 @@ class CoreUtils(HelpMixin):
             are_similar(1, 10, 9)" #returns: True
             are_similar(1, 10, 8)" #returns: False
         """
-        func = (
-            lambda a, b: abs(a - b) <= tolerance
+        func = lambda a, b: (
+            abs(a - b) <= tolerance
             if isinstance(a, (int, float))
-            else True
-            if isinstance(a, (list, set, tuple)) and cls.are_similar(a, b, tolerance)
-            else a == b
+            else (
+                True
+                if isinstance(a, (list, set, tuple))
+                and cls.are_similar(a, b, tolerance)
+                else a == b
+            )
         )
         return all(map(func, IterUtils.make_iterable(a), IterUtils.make_iterable(b)))
 
@@ -304,6 +307,24 @@ class CoreUtils(HelpMixin):
         randomized = random.sample(lst, int(normalized))
 
         return randomized
+
+    def parse_method_args(args: Tuple) -> Tuple[Union[Any, None], Tuple]:
+        """Parse method arguments to determine if the function is an instance method or static method.
+
+        Parameters:
+            args (Tuple): The arguments passed to the decorated function.
+
+        Returns:
+            Tuple[Union[Any, None], Tuple]: A tuple containing the instance (if applicable) and the remaining arguments.
+        """
+        if len(args) > 0 and inspect.ismethod(args[0]):
+            instance = args[0]
+            node_args = args[1:]
+        else:
+            instance = None
+            node_args = args
+
+        return instance, node_args
 
 
 # -----------------------------------------------------------------------------
