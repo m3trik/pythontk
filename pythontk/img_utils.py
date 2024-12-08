@@ -53,11 +53,12 @@ class ImgUtils(core_utils.HelpMixin):
         ),
     }
 
-    map_backgrounds = {  # Get default map backgrounds in RGBA format from map type.
+    map_backgrounds = {  # Default map backgrounds in RGBA format by map type.
         "Base_Color": (127, 127, 127, 255),
+        "Albedo_Transparency": (0, 0, 0, 255),
         "Roughness": (255, 255, 255, 255),
         "Metallic": (0, 0, 0, 255),
-        "Ambient_Occlusion": (255, 255, 255, 255),
+        "Metallic_Smoothness": (255, 255, 255, 255),
         "Normal": (127, 127, 255, 255),
         "Normal_DirectX": (127, 127, 255, 255),
         "Normal_OpenGL": (127, 127, 255, 255),
@@ -69,24 +70,41 @@ class ImgUtils(core_utils.HelpMixin):
         "Displacement": (0, 0, 0, 255),
         "Refraction": (0, 0, 0, 255),
         "Reflection": (0, 0, 0, 255),
+        "Opacity": (0, 0, 0, 255),
+        "Smoothness": (255, 255, 255, 255),
+        "Thickness": (0, 0, 0, 255),
+        "Anisotropy": (127, 127, 127, 255),
+        "Subsurface_Scattering": (255, 255, 255, 255),
+        "Sheen": (127, 127, 127, 255),
+        "Clearcoat": (127, 127, 127, 255),
+        "Ambient_Occlusion": (255, 255, 255, 255),
     }
 
-    map_modes = {  # Get default map mode from map type.
-        "Base_Color": "RGB",
-        "Roughness": "L",
-        "Metallic": "L",
-        "Ambient_Occlusion": "L",
-        "Normal": "RGB",
-        "Normal_DirectX": "RGB",
-        "Normal_OpenGL": "RGB",
-        "Height": "I",  # I 32bit mode conversion from rgb not currently working.
-        "Emissive": "L",
-        "Diffuse": "RGB",
-        "Specular": "L",
-        "Glossiness": "L",
-        "Displacement": "L",
-        "Refraction": "L",
-        "Reflection": "L",
+    map_modes = {  # Default map mode by map type with comments.
+        "Base_Color": "RGB",  # Full color map representing the object's base color.
+        "Albedo_Transparency": "RGBA",  # Color map with transparency in the alpha channel.
+        "Roughness": "L",  # Grayscale map defining surface roughness.
+        "Metallic": "L",  # Grayscale map defining metallic properties.
+        "Metallic_Smoothness": "RGB",  # Multi-channel map for metallic and smoothness.
+        "Normal": "RGB",  # Full color normal map.
+        "Normal_DirectX": "RGB",  # DirectX normal map with Y-axis inversion.
+        "Normal_OpenGL": "RGB",  # OpenGL normal map with standard Y-axis.
+        "Height": "I",  # Integer mode for height, often 16 or 32-bit.
+        "Emissive": "RGB",  # Full color map for self-illumination.
+        "Diffuse": "RGB",  # Full color map for diffuse properties.
+        "Specular": "L",  # Grayscale map for specular highlights.
+        "Glossiness": "L",  # Grayscale map for surface glossiness.
+        "Displacement": "L",  # Grayscale map for displacement mapping.
+        "Refraction": "L",  # Grayscale map for light refraction.
+        "Reflection": "L",  # Grayscale map for reflection intensity.
+        "Opacity": "L",  # Grayscale map for transparency.
+        "Smoothness": "L",  # Grayscale map for smoothness level.
+        "Thickness": "L",  # Grayscale map for thickness of subsurface scattering.
+        "Anisotropy": "L",  # Grayscale map for anisotropic reflections.
+        "Subsurface_Scattering": "RGB",  # Multi-channel for SSS color and depth.
+        "Sheen": "L",  # Grayscale map for fabric-like reflection layer.
+        "Clearcoat": "L",  # Grayscale map for extra clear coating.
+        "Ambient_Occlusion": "L",  # Grayscale map for ambient occlusion shading.
     }
 
     bit_depth = {  # Get bit depth from mode.

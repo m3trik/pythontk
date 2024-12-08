@@ -1,5 +1,7 @@
+# !/usr/bin/python
+# coding=utf-8
 import logging as internal_logging
-from typing import Optional, Any
+from typing import Any
 
 
 class LoggingNamespace:
