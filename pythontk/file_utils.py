@@ -214,7 +214,7 @@ class FileUtils(core_utils.HelpMixin):
 
     @classmethod
     def get_file_info(cls, paths, info, hash_algo=None, force_tuples=False):
-        """Returns file and directory information for a list of files based on specified parameters.
+        """Returns file and directory information for a list of file strings based on specified parameters.
 
         This method will traverse each path, obtaining information as per the `info` parameter.
 
@@ -499,9 +499,8 @@ class FileUtils(core_utils.HelpMixin):
         return appended_paths
 
     @staticmethod
-    def get_object_path(obj, inc_filename=False):
+    def get_object_path(obj, inc_filename: bool = False) -> str:
         """Retrieve the absolute file path associated with a Python object.
-
         This method can take different Python objects such as modules, classes, callable objects, or even
         the built-in __file__ variable, and tries to extract the file path associated with the object.
 
@@ -513,14 +512,22 @@ class FileUtils(core_utils.HelpMixin):
         Returns:
             str: The absolute file path associated with the input object. If the input is a string, the absolute path of the string is returned.
                 If include_filename is set to False, only the directory containing the file is returned.
-                Returns None if the file path cannot be determined.
+        Raises:
+            ValueError: If the file path for the given object cannot be determined.
         """
         from types import ModuleType
+        import os
         import inspect
         import importlib
 
+        def fail_msg(obj):
+            return ValueError(
+                f"\nUnable to determine the file path for the given object: {obj} Type: {type(obj)}"
+                f"\nPerhaps the object is not a module, class, function, or was run from an interactive source."
+            )
+
         if obj is None:
-            return ""
+            filepath = None
 
         elif isinstance(obj, str):
             filepath = obj
@@ -533,37 +540,65 @@ class FileUtils(core_utils.HelpMixin):
             else:
                 filepath = None
 
-        else:
-            clss = obj if callable(obj) else obj.__class__
+        else:  # Handle class or function objects
             try:
-                filepath = inspect.getfile(clss)
-            except TypeError:
-                filepath = ""
+                clss = obj if callable(obj) else obj.__class__
+            except AttributeError:
+                raise fail_msg(obj)
+
+            # Attempt to get the module directly
+            mod_name = clss.__module__
+
+            # If module is in sys.modules, retrieve file
+            if mod_name in sys.modules:
+                module = sys.modules[mod_name]
+                filepath = getattr(module, "__file__", None)
+
+            # Handle __main__ case
+            if filepath is None and mod_name == "__main__":
+                main_file = getattr(sys.modules["__main__"], "__file__", None)
+                if main_file:
+                    filepath = main_file
+
+            # If we still don't have a filepath, scan the stack trace
+            if not filepath:
                 for frame_record in inspect.stack():
-                    if filepath:
-                        break
                     frame = frame_record[0]
                     _filepath = inspect.getframeinfo(frame).filename
                     mod_name = os.path.splitext(os.path.basename(_filepath))[0]
-                    spec = importlib.util.spec_from_file_location(mod_name, _filepath)
-                    if spec:
-                        mod = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(mod)
-                        filepath = next(
-                            (
-                                _filepath
-                                for cls_name, _ in inspect.getmembers(
-                                    mod, inspect.isclass
-                                )
-                                if cls_name == clss.__name__
-                            ),
-                            "",
+
+                    # Ignore interactive execution sources
+                    if (
+                        not _filepath
+                        or _filepath.startswith("<")
+                        and _filepath.endswith(">")
+                    ):
+                        continue
+
+                    if _filepath in sys.modules:
+                        mod = sys.modules[_filepath]
+                    else:
+                        spec = importlib.util.spec_from_file_location(
+                            mod_name, _filepath
                         )
+                        if not spec or not spec.loader:
+                            continue
+
+                        try:
+                            mod = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(mod)
+                            sys.modules[_filepath] = mod  # Cache it for consistency
+                        except Exception as e:
+                            continue
+
+                    # Try to find the class in the loaded module
+                    class_members = inspect.getmembers(mod, inspect.isclass)
+                    if clss.__name__ in [cls_name for cls_name, _ in class_members]:
+                        filepath = _filepath
+                        break
 
         if filepath is None:
-            raise ValueError(
-                f"Unable to determine the file path for the given object: {obj}"
-            )
+            raise fail_msg(obj)
 
         if not inc_filename:
             filepath = os.path.dirname(filepath)

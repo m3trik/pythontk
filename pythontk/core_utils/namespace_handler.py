@@ -1,67 +1,115 @@
-from typing import Callable, Dict, Optional, Any
+from typing import Callable, Optional, Any
 from pythontk.core_utils import LoggingMixin
 
 
-class NamespaceHandler:
-    """A NamespaceHandler that manages its own internal dictionary without
-    attaching attributes directly to the owner object."""
+class NamespaceHandler(LoggingMixin):
+    """A NamespaceHandler that manages its own internal dictionary without attaching
+    attributes directly to the owner object.
+
+    Parameters:
+        owner (Any): The owner object that the namespace is attached to.
+        identifier (str, optional): An identifier for logging or tracking purposes.
+        resolver (Callable[[str], Any], optional): A function that resolves attribute names.
+        log_level (str, optional): The logging level for the logger. Defaults to "DEBUG".
+    """
 
     def __init__(
         self,
         owner: Any,
-        namespace_attr: str,
+        identifier: str = None,
         resolver: Optional[Callable[[str], Any]] = None,
+        log_level: str = "DEBUG",
     ):
-        print(f"[NamespaceHandler] Initializing for '{namespace_attr}'")
+        # Set logger level
+        self.logger.setLevel(log_level)
+        self.logger.debug(f"Initializing for '{identifier}'")
 
-        # Store reference attributes internally without triggering owner setattr/getattr
-        self.__dict__["_namespace"] = {}
+        # Store identifier for logging or tracking
+        self.__dict__["_identifier"] = identifier
+
+        # Assign attributes directly to __dict__ to avoid infinite recursion
+        self.__dict__["_attributes"] = {}
         self.__dict__["_resolver"] = resolver
         self.__dict__["_owner"] = owner
 
-        print(f"[NamespaceHandler] Initialized with internal namespace.")
-
     def __getattr__(self, name: str) -> Any:
-        print(f"[NamespaceHandler] __getattr__ called for '{name}'")
+        """
+        Handles dynamic attribute resolution with recursion prevention.
+        """
+        self.logger.debug(
+            f"[{self.__dict__.get('_identifier')}] __getattr__ called for '{name}'"
+        )
 
-        # Access the internal namespace directly to avoid owner interaction
-        if name in self._namespace:
-            return self._namespace[name]
+        # Prevent recursion for internal attributes
+        if name.startswith("_"):
+            raise AttributeError(
+                f"{self.__class__.__name__} object has no attribute '{name}'"
+            )
 
-        if self._resolver:
-            resolved_value = self._resolver(name)
+        attributes = self.__dict__.get("_attributes", {})
+
+        # Return if cached
+        if name in attributes:
+            self.logger.debug(
+                f"[{self.__dict__.get('_identifier')}] Returning cached '{name}'"
+            )
+            return attributes[name]
+
+        # Attempt resolution
+        if self.__dict__["_resolver"]:
+            self.logger.debug(
+                f"[{self.__dict__.get('_identifier')}] Attempting to resolve '{name}' via resolver..."
+            )
+            resolved_value = self.__dict__["_resolver"](name)
             if resolved_value is not None:
-                self._namespace[name] = resolved_value
+                attributes[name] = resolved_value  # Cache successful resolution
+                self.logger.debug(
+                    f"[{self.__dict__.get('_identifier')}] Resolved and cached '{name}'"
+                )
                 return resolved_value
 
+        self.logger.debug(
+            f"[{self.__dict__.get('_identifier')}] Attribute '{name}' not found."
+        )
         raise AttributeError(
             f"{self.__class__.__name__} object has no attribute '{name}'"
         )
 
     def __setattr__(self, name: str, value: Any):
+        """
+        Handles setting attributes safely without causing recursion.
+        """
         if name.startswith("_"):
-            # Handle internal attributes directly
-            self.__dict__[name] = value
+            self.__dict__[name] = value  # Directly set internal attributes
         else:
-            # Set value in the internal namespace dictionary
-            self._namespace[name] = value
+            self.__dict__["_attributes"][name] = value  # Store in attributes
 
     def __getitem__(self, key: str) -> Any:
-        print(f"[NamespaceHandler] __getitem__ called for '{key}'")
-        return self._namespace[key]
+        self.logger.debug(
+            f"[{self.__dict__.get('_identifier')}] __getitem__ called for '{key}'"
+        )
+        return self.__dict__["_attributes"][key]
 
     def __setitem__(self, key: str, value: Any):
-        print(f"[NamespaceHandler] __setitem__ called for '{key}' with value '{value}'")
-        self._namespace[key] = value
+        self.logger.debug(
+            f"[{self.__dict__.get('_identifier')}] __setitem__ called for '{key}' with value '{value}'"
+        )
+        self.__dict__["_attributes"][key] = value
+
+    def setdefault(self, name: str, default: Any = None) -> Any:
+        """
+        Optional helper method to demonstrate setdefault usage.
+        """
+        return self.__dict__["_attributes"].setdefault(name, default)
 
     def items(self):
-        return self._namespace.items()
+        return self.__dict__["_attributes"].items()
 
     def keys(self):
-        return self._namespace.keys()
+        return self.__dict__["_attributes"].keys()
 
     def values(self):
-        return self._namespace.values()
+        return self.__dict__["_attributes"].values()
 
 
 # --------------------------------------------------------------------------------------------
@@ -71,32 +119,62 @@ if __name__ == "__main__":
     import unittest
 
     class TestNamespaceHandler(unittest.TestCase):
-        def test_namespace_handler(self):
+        def setUp(self):
             class Owner:
                 pass
 
-            owner = Owner()
-            resolver = lambda name: f"Resolved {name}"
-            handler = NamespaceHandler(owner, "namespace", resolver)
-            owner.namespace = {"existing": "value"}
+            def test_resolver(name):
+                return f"Resolved {name}" if name != "unknown_attr" else None
 
-            # Ensure the namespace has been properly initialized with the existing attribute
-            handler._namespace = owner.namespace
+            self.owner = Owner()
+            self.handler = NamespaceHandler(
+                owner=self.owner, identifier="example_namespace", resolver=test_resolver
+            )
 
-            self.assertEqual(handler.existing, "value")
-            self.assertEqual(handler["existing"], "value")
-            self.assertEqual(list(handler.items()), [("existing", "value")])
-            self.assertEqual(list(handler.keys()), ["existing"])
-            self.assertEqual(list(handler.values()), ["value"])
+        def test_identifier_logging(self):
+            """
+            Ensures the identifier is stored and used in debug logs.
+            """
+            self.assertEqual(self.handler._identifier, "example_namespace")
 
-            # Test resolving a new attribute
-            self.assertEqual(handler.new_attr, "Resolved new_attr")
+        def test_existing_attribute(self):
+            self.handler._attributes["existing"] = "value"
+            self.assertEqual(self.handler.existing, "value")
+            self.assertEqual(self.handler["existing"], "value")
 
-    # Use TextTestRunner to run tests to prevent SystemExit issue.
+        def test_resolver_success(self):
+            self.assertEqual(self.handler.new_attr, "Resolved new_attr")
+
+        def test_resolver_failure(self):
+            with self.assertRaises(AttributeError) as context:
+                _ = self.handler.unknown_attr
+
+            self.assertIn(
+                "NamespaceHandler object has no attribute 'unknown_attr'",
+                str(context.exception),
+            )
+
+        def test_set_and_get(self):
+            self.handler.dynamic_attr = "Dynamic Value"
+            self.assertEqual(self.handler.dynamic_attr, "Dynamic Value")
+
+        def test_dict_access(self):
+            self.handler["key"] = "Dict Value"
+            self.assertEqual(self.handler["key"], "Dict Value")
+
+        def test_items_keys_values(self):
+            self.handler._attributes["a"] = 1
+            self.handler._attributes["b"] = 2
+            self.assertEqual(list(self.handler.items()), [("a", 1), ("b", 2)])
+            self.assertEqual(list(self.handler.keys()), ["a", "b"])
+            self.assertEqual(list(self.handler.values()), [1, 2])
+
+    # Run the tests
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromTestCase(TestNamespaceHandler)
     runner = unittest.TextTestRunner()
     runner.run(suite)
+
 
 # --------------------------------------------------------------------------------------------
 # Notes
