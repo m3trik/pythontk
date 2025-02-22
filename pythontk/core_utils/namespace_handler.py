@@ -18,7 +18,7 @@ class NamespaceHandler(LoggingMixin):
         owner: Any,
         identifier: str = None,
         resolver: Optional[Callable[[str], Any]] = None,
-        log_level: str = "DEBUG",
+        log_level: str = "WARNING",
     ):
         # Set logger level
         self.logger.setLevel(log_level)
