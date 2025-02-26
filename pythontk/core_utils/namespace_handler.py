@@ -33,9 +33,7 @@ class NamespaceHandler(LoggingMixin):
         self.__dict__["_owner"] = owner
 
     def __getattr__(self, name: str) -> Any:
-        """
-        Handles dynamic attribute resolution with recursion prevention.
-        """
+        """Handles dynamic attribute resolution with recursion prevention."""
         self.logger.debug(
             f"[{self.__dict__.get('_identifier')}] __getattr__ called for '{name}'"
         )
