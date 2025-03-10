@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import List, Tuple, Union, Callable, Any, Optional
+from typing import List, Tuple, Union, Callable, Sequence, Any, Optional
 
 # from this package:
 from pythontk import core_utils
@@ -653,6 +653,64 @@ class MathUtils(core_utils.HelpMixin):
             sorted_points.append(sorted_points[0])
 
         return sorted_points
+
+    @staticmethod
+    def smooth_points(
+        points: Sequence[Union[tuple, object]], window_size: int = 1
+    ) -> list:
+        """Apply a moving average to smooth a sequence of 3D points.
+
+        Parameters:
+            points: A sequence of (x, y, z) tuples or dt.Point objects.
+            window_size: The number of points to include in each averaging window.
+
+        Returns:
+            A list of smoothed points in the same format as the input.
+        """
+        if not points or window_size <= 1:
+            return list(points)
+
+        n = len(points)
+        window_size = min(window_size, n)
+        smoothed_points = []
+
+        is_dt_point = hasattr(points[0], "__add__") and hasattr(
+            points[0], "__truediv__"
+        )
+
+        # Initialize running sum
+        running_sum = points[0] * 0 if is_dt_point else (0.0, 0.0, 0.0)
+        count = 0
+
+        for i in range(n):
+            # Add new point to the running sum
+            new_point = points[i]
+            running_sum = (
+                running_sum + new_point
+                if is_dt_point
+                else tuple(running_sum[j] + new_point[j] for j in range(3))
+            )
+            count += 1
+
+            # Remove the old point when window slides forward
+            if i >= window_size:
+                old_point = points[i - window_size]
+                running_sum = (
+                    running_sum - old_point
+                    if is_dt_point
+                    else tuple(running_sum[j] - old_point[j] for j in range(3))
+                )
+                count -= 1
+
+            # Compute and store the smoothed point
+            avg_point = (
+                running_sum / count
+                if is_dt_point
+                else tuple(v / count for v in running_sum)
+            )
+            smoothed_points.append(avg_point)
+
+        return smoothed_points
 
 
 # -----------------------------------------------------------------------------
