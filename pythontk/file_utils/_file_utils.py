@@ -212,6 +212,55 @@ class FileUtils(core_utils.HelpMixin):
         except OSError:
             traceback.print_exc()
 
+    @staticmethod
+    def move_file(
+        file_path: str,
+        destination: str,
+        new_name: str = None,
+        overwrite: bool = True,
+        create_dir: bool = True,
+    ) -> str:
+        """Moves a file to a specified folder, ensuring the folder exists.
+
+        Parameters:
+            file_path (str): The path to the file to be moved.
+            destination (str): The folder where the file should be moved.
+            new_name (str, optional): Rename the file during the move. Defaults to keeping the original name.
+            overwrite (bool, optional): Whether to overwrite an existing file in the destination. Defaults to True.
+            create_dir (bool, optional): Whether to create the folder if it doesn't exist. Defaults to True.
+
+        Returns:
+            str: The new path of the moved file.
+
+        Raises:
+            FileNotFoundError: If the source file does not exist.
+            FileExistsError: If overwrite=False and the destination file already exists.
+        """
+        import shutil
+
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Ensure the destination folder exists
+        if create_dir:
+            os.makedirs(destination, exist_ok=True)
+
+        # Determine new file path
+        file_name = new_name if new_name else os.path.basename(file_path)
+        destination_path = os.path.join(destination, file_name)
+
+        # Handle overwriting behavior
+        if os.path.exists(destination_path):
+            if overwrite:
+                os.remove(destination_path)
+            else:
+                raise FileExistsError(f"File already exists: {destination_path}")
+
+        # Move the file
+        shutil.move(file_path, destination_path)
+
+        return destination_path
+
     @classmethod
     def get_file_info(cls, paths, info, hash_algo=None, force_tuples=False):
         """Returns file and directory information for a list of file strings based on specified parameters.

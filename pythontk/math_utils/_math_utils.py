@@ -712,6 +712,34 @@ class MathUtils(core_utils.HelpMixin):
 
         return smoothed_points
 
+    @staticmethod
+    def nearest_power_of_two(value: int) -> int:
+        """Finds the nearest power of two for a given integer without using the math module.
+
+        Parameters:
+            value (int): The input value.
+
+        Returns:
+            int: The nearest power of two.
+        """
+        if value <= 0:
+            return 1  # Default to smallest power of two (avoid errors)
+
+        # Start with the smallest power of two
+        lower_power = 1
+        while lower_power * 2 <= value:
+            lower_power *= 2  # Double until reaching or exceeding the value
+
+        # Find the next higher power of two
+        upper_power = lower_power * 2
+
+        # Return the closest of the two
+        return (
+            lower_power
+            if (value - lower_power) < (upper_power - value)
+            else upper_power
+        )
+
 
 # -----------------------------------------------------------------------------
 

@@ -15,6 +15,13 @@ class LoggingMixin:
     _logger = None
     _class_logger = None
 
+    def __getattr__(self, name):
+        """Allows access to the instance/class attribute first, then to logging."""
+        try:
+            return object.__getattribute__(self, name)
+        except AttributeError:
+            return getattr(internal_logging, name)
+
     @ClassProperty
     def logger(cls) -> internal_logging.Logger:
         """Completely isolate each logger to avoid cross-level changes."""
@@ -45,10 +52,6 @@ class LoggingMixin:
     def logging(self):
         """Allows instance-level access to logging."""
         return self
-
-    def __getattr__(self, name):
-        """Allows access to internal logging attributes."""
-        return getattr(internal_logging, name)
 
     def add_file_handler(
         self, filename: str, level: int = internal_logging.DEBUG
