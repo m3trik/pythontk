@@ -237,6 +237,30 @@ class MapConverterSlots(ImgUtils):
             print(f"Spec/Gloss to PBR conversion complete for {base_name}.")
             self.source_dir = FileUtils.format_path(specular_map, "path")
 
+    def b005(self):
+        """Extract Gloss map from Specular map."""
+        spec_map_path = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select a specular map to extract gloss from:",
+            start_dir=self.source_dir,
+            allow_multiple=False,
+        )
+        if not spec_map_path:
+            return
+
+        print(f"Extracting gloss from {spec_map_path} ..")
+        gloss_image = self.extract_gloss_from_spec(spec_map_path)
+
+        # Resolve the correct gloss texture filename
+        gloss_map_path = self.resolve_texture_filename(
+            spec_map_path, "Gloss", ext="PNG"
+        )
+        # Save gloss map
+        gloss_image.save(gloss_map_path, format="PNG")
+
+        print(f"// Result: {gloss_map_path}")
+        self.source_dir = FileUtils.format_path(gloss_map_path, "path")
+
     def b006(self):
         """Optimize a texture map(s)"""
         texture_paths = self.sb.file_dialog(
@@ -264,11 +288,17 @@ class MapConverterSlots(ImgUtils):
 class MapConverterUi:
     def __new__(self):
         """Get the Map Converter UI."""
-        import os
-        from mayatk.ui_utils.ui_manager import UiManager
+        from uitk import Switchboard
 
-        ui_file = os.path.join(os.path.dirname(__file__), "map_converter.ui")
-        ui = UiManager.get_ui(ui_source=ui_file, slot_source=MapConverterSlots)
+        sb = Switchboard(ui_source="map_converter.ui", slot_source=MapConverterSlots)
+        ui = sb.loaded_ui.map_converter
+
+        ui.set_attributes(WA_TranslucentBackground=True)
+        ui.set_flags(FramelessWindowHint=True, WindowStaysOnTopHint=True)
+        ui.set_style(theme="dark", style_class="translucentBgWithBorder")
+        ui.header.configure_buttons(
+            menu_button=True, minimize_button=True, hide_button=True
+        )
         return ui
 
 

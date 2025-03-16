@@ -234,6 +234,31 @@ Converts Specular Glossiness map(s) to &lt;b&gt;PBR&lt;/b&gt; format.&lt;br&gt;&
           </widget>
          </item>
          <item>
+          <widget class="QPushButton" name="b005">
+           <property name="enabled">
+            <bool>true</bool>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>20</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>20</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Extract Glossiness from Specular&lt;/span&gt;&lt;br/&gt;Extracts the Glossiness map from the Specular map's alpha channel.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;Specular &lt;/span&gt;map.&lt;br/&gt;&lt;br/&gt;- If extraction fails, the &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map will be approximated using the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+           </property>
+           <property name="text">
+            <string>Extract Gloss from Spec</string>
+           </property>
+          </widget>
+         </item>
+         <item>
           <widget class="QPushButton" name="b006">
            <property name="enabled">
             <bool>true</bool>
