@@ -1,78 +1,92 @@
+# !/usr/bin/python
+# coding=utf-8
 import logging as internal_logging
-from typing import Optional, Any
+from typing import Any
+from pythontk.core_utils import ClassProperty
 
 
-class LoggingNamespace:
-    def __init__(self, logger: internal_logging.Logger):
-        self._logger = logger
+class LoggingMixin:
+    """Mixin class for logging utilities.
+
+    Provides a logger for each class and a shared class logger across instances.
+    Includes methods for setting log levels, adding handlers, and redirecting logs.
+    """
+
+    _logger = None
+    _class_logger = None
 
     def __getattr__(self, name):
-        return getattr(internal_logging, name)
+        """Allows access to the instance/class attribute first, then to logging."""
+        try:
+            return object.__getattribute__(self, name)
+        except AttributeError:
+            return getattr(internal_logging, name)
+
+    @ClassProperty
+    def logger(cls) -> internal_logging.Logger:
+        """Completely isolate each logger to avoid cross-level changes."""
+        if not cls._logger:
+            # Create a brand-new Logger instance (bypasses getLogger).
+            unique_name = f"{cls.__module__}.{cls.__qualname__}"
+            cls._logger = internal_logging.Logger(unique_name, internal_logging.DEBUG)
+            cls._logger.propagate = False
+            cls._logger.parent = None  # Ensures no parent-level interactions
+        return cls._logger
+
+    @ClassProperty
+    def class_logger(cls) -> internal_logging.Logger:
+        """Use a distinct name for the class-level logger."""
+        if not cls._class_logger:
+            logger_name = f"{cls.__module__}.{cls.__name__}.class"
+            cls._class_logger = internal_logging.getLogger(logger_name)
+            cls._class_logger.setLevel(internal_logging.DEBUG)
+            cls._class_logger.propagate = False
+        return cls._class_logger
+
+    @ClassProperty
+    def log_level(cls) -> int:
+        """Get the log level of the class logger."""
+        return cls.logger.level
+
+    @property
+    def logging(self):
+        """Allows instance-level access to logging."""
+        return self
 
     def add_file_handler(
         self, filename: str, level: int = internal_logging.DEBUG
     ) -> None:
+        """Adds a file handler to the logger."""
         handler = internal_logging.FileHandler(filename)
         handler.setLevel(level)
-        self._logger.addHandler(handler)
-        self._logger.debug(f"Added file handler: {filename}")
+        self.logger.addHandler(handler)  # ✅ FIX: Use self.logger
+        self.logger.debug(f"Added file handler: {filename}")
 
     def add_stream_handler(
         self, stream=None, level: int = internal_logging.DEBUG
     ) -> None:
+        """Adds a stream handler to the logger."""
         handler = internal_logging.StreamHandler(stream)
         handler.setLevel(level)
-        self._logger.addHandler(handler)
-        self._logger.debug(f"Added stream handler: {stream}")
+        self.logger.addHandler(handler)  # ✅ FIX: Use self.logger
+        self.logger.debug(f"Added stream handler: {stream}")
 
     def add_text_widget_handler(self, text_widget: object) -> None:
+        """Adds a text widget handler for logging output."""
         text_edit_handler = TextEditHandler(text_widget)
         text_edit_handler.setFormatter(
             internal_logging.Formatter("%(levelname)s - %(message)s")
         )
-        self._logger.addHandler(text_edit_handler)
-        self._logger.debug("Added text widget handler")
+        self.logger.addHandler(text_edit_handler)  # ✅ FIX: Use self.logger
+        self.logger.debug("Added text widget handler")
 
     def setup_logging_redirect(
         self, widget: object, level: int = internal_logging.INFO
     ) -> None:
         handler = TextEditHandler(widget)
         handler.setFormatter(internal_logging.Formatter("%(levelname)s - %(message)s"))
-        root_logger = internal_logging.getLogger()
-        root_logger.addHandler(handler)
-        root_logger.setLevel(level)
-
-
-class LoggingMixin:
-    _loggers = {}
-
-    @property
-    def logging(self) -> Any:
-        class_name = self.__class__.__name__
-        if class_name not in self._loggers:
-            self._loggers[class_name] = self._init_logging_namespace()
-        return self._loggers[class_name]
-
-    @property
-    def logger(self) -> internal_logging.Logger:
-        return self.logging._logger
-
-    def _init_logging_namespace(self) -> LoggingNamespace:
-        class_name = self.__class__.__name__
-        logger = internal_logging.getLogger(class_name)
-        logger.setLevel(internal_logging.DEBUG)
-
-        if not logger.hasHandlers():
-            stream_handler = internal_logging.StreamHandler()
-            stream_handler.setLevel(internal_logging.DEBUG)
-            formatter = internal_logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-            stream_handler.setFormatter(formatter)
-            logger.addHandler(stream_handler)
-            logger.debug(f"Logger initialized for class: {class_name}")
-
-        return LoggingNamespace(logger)
+        self.logger.addHandler(handler)
+        self.logger.setLevel(level)
 
 
 class TextEditHandler(internal_logging.Handler):

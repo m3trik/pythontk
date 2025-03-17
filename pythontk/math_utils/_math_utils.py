@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import List, Tuple
+from typing import List, Tuple, Union, Callable, Sequence, Any, Optional
 
 # from this package:
 from pythontk import core_utils
@@ -490,6 +490,255 @@ class MathUtils(core_utils.HelpMixin):
         """
         sequence = [base_value * common_ratio ** (n - 1) for n in range(1, terms + 1)]
         return [int(round(value)) for value in sequence]
+
+    @staticmethod
+    def remap(
+        value: Union[float, List[Any], Tuple[Any, ...], "np.ndarray"],
+        old_range: Tuple[float, float],
+        new_range: Tuple[float, float],
+        clamp: bool = False,
+    ) -> Union[float, List[Any], Tuple[Any, ...], "np.ndarray"]:
+        """Remaps a value, list, or tuple of varying sizes from one range to another.
+
+        Parameters:
+            value: The value to remap.
+            old_range: The original range of the value.
+            new_range: The new range to remap the value to.
+            clamp: Whether to clamp the remapped value within the new range.
+
+        Returns:
+            The remapped value, list, or tuple.
+        """
+        import numpy as np
+
+        old_min, old_max = map(float, old_range)
+        new_min, new_max = map(float, new_range)
+
+        if old_min == old_max:
+            raise ValueError(
+                "[remap] old_range min and max cannot be the same (division by zero)."
+            )
+
+        scale = (new_max - new_min) / (old_max - old_min)
+        offset = new_min - old_min * scale
+
+        def process_element(element: Any) -> Any:
+            """Recursively remaps individual elements while preserving structure."""
+            if isinstance(element, (int, float)):  # Single number
+                remapped = element * scale + offset
+                return max(min(remapped, new_max), new_min) if clamp else remapped
+            elif isinstance(element, np.ndarray):  # NumPy array fix
+                remapped = element.astype(np.float64) * scale + offset
+                return np.clip(remapped, new_min, new_max) if clamp else remapped
+            elif isinstance(element, (list, tuple)):  # Nested list or tuple
+                return type(element)(process_element(e) for e in element)
+            return element  # Return unchanged if not a number
+
+        return process_element(value)
+
+    @staticmethod
+    def calculate_curve_length(centerline_points: List[List[float]]) -> float:
+        """Calculates the total length of the centerline path.
+
+        Parameters:
+            centerline_points (List[List[float]]): The list of points along the centerline.
+
+        Returns:
+            float: The total length of the centerline path.
+        """
+        length = 0
+        for i in range(1, len(centerline_points)):
+            p1 = centerline_points[i - 1]
+            p2 = centerline_points[i]
+            length += sum([(p2[j] - p1[j]) ** 2 for j in range(3)]) ** 0.5
+        return length
+
+    @staticmethod
+    def get_point_on_centerline(
+        centerline_points: List[List[float]], param: float
+    ) -> List[float]:
+        """Returns the interpolated point along the centerline.
+
+        Parameters:
+            centerline_points (List[List[float]]): The list of points along the centerline.
+            param (float): The parameter value along the centerline path.
+
+        Returns:
+            List[float]: The interpolated point along the centerline.
+        """
+        total_length = len(centerline_points) - 1  # Total number of segments
+        param = max(0, min(param, 1))  # Clamp the param value between 0 and 1
+        index = int(param * total_length)
+
+        if index == total_length:
+            return centerline_points[-1]
+
+        p1 = centerline_points[index]
+        p2 = centerline_points[index + 1]
+        interp_point = [
+            p1[0] + (p2[0] - p1[0]) * (param * (len(centerline_points) - 1) - index),
+            p1[1] + (p2[1] - p1[1]) * (param * (len(centerline_points) - 1) - index),
+            p1[2] + (p2[2] - p1[2]) * (param * (len(centerline_points) - 1) - index),
+        ]
+        return interp_point
+
+    @classmethod
+    def dist_points_along_centerline(
+        cls,
+        centerline: List[List[float]],
+        num_points: int,
+        reverse: bool = False,
+        interpolation: Callable[[List[List[float]], float], List[float]] = None,
+        start_offset: float = 0.0,
+        end_offset: float = 0.0,
+    ) -> List[List[float]]:
+        """Distributes points evenly along the centerline with optional offsets and custom interpolation.
+
+        Parameters:
+            centerline (List[List[float]]): The list of points along the centerline.
+            num_points (int): The number of points to distribute along the centerline.
+            reverse (bool): Reverse the order of the points.
+            interpolation (Callable): The interpolation function to use.
+            start_offset (float): The offset from the start of the centerline.
+            end_offset (float): The offset from the end of the centerline.
+
+        Returns:
+            List[List[float]]: The evenly distributed points along the centerline.
+        """
+        if start_offset < 0 or end_offset < 0 or start_offset + end_offset >= 1:
+            raise ValueError("Invalid start or end offset values.")
+
+        if interpolation is None:
+            interpolation = cls.get_point_on_centerline
+
+        positions = [
+            interpolation(
+                centerline,
+                cls.remap(i, (0, num_points - 1), (start_offset, 1 - end_offset)),
+            )
+            for i in range(num_points)
+        ]
+        return positions[::-1] if reverse else positions
+
+    @staticmethod
+    def arrange_points_as_path(
+        points: List[List[float]],
+        closed_path: bool = False,
+        distance_metric: Optional[Callable[[List[float], List[float]], float]] = None,
+    ) -> List[List[float]]:
+        """Orders a list of points to form a continuous path.
+
+        Parameters:
+            points (List): The list of points to order.
+            closed_path (bool): Whether to treat the path as a closed loop.
+            distance_metric
+
+        Returns:
+            List[pm.datatypes.Point]: Ordered list of points forming a continuous path.
+        """
+        if not points:
+            return []
+
+        if distance_metric is None:
+            distance_metric = lambda p1, p2: (p1 - p2).length()
+
+        sorted_points = [points.pop(0)]
+        while points:
+            last_point = sorted_points[-1]
+            next_point = min(points, key=lambda p: distance_metric(p, last_point))
+            sorted_points.append(next_point)
+            points.remove(next_point)
+
+        if closed_path:
+            sorted_points.append(sorted_points[0])
+
+        return sorted_points
+
+    @staticmethod
+    def smooth_points(
+        points: Sequence[Union[tuple, object]], window_size: int = 1
+    ) -> list:
+        """Apply a moving average to smooth a sequence of 3D points.
+
+        Parameters:
+            points: A sequence of (x, y, z) tuples or dt.Point objects.
+            window_size: The number of points to include in each averaging window.
+
+        Returns:
+            A list of smoothed points in the same format as the input.
+        """
+        if not points or window_size <= 1:
+            return list(points)
+
+        n = len(points)
+        window_size = min(window_size, n)
+        smoothed_points = []
+
+        is_dt_point = hasattr(points[0], "__add__") and hasattr(
+            points[0], "__truediv__"
+        )
+
+        # Initialize running sum
+        running_sum = points[0] * 0 if is_dt_point else (0.0, 0.0, 0.0)
+        count = 0
+
+        for i in range(n):
+            # Add new point to the running sum
+            new_point = points[i]
+            running_sum = (
+                running_sum + new_point
+                if is_dt_point
+                else tuple(running_sum[j] + new_point[j] for j in range(3))
+            )
+            count += 1
+
+            # Remove the old point when window slides forward
+            if i >= window_size:
+                old_point = points[i - window_size]
+                running_sum = (
+                    running_sum - old_point
+                    if is_dt_point
+                    else tuple(running_sum[j] - old_point[j] for j in range(3))
+                )
+                count -= 1
+
+            # Compute and store the smoothed point
+            avg_point = (
+                running_sum / count
+                if is_dt_point
+                else tuple(v / count for v in running_sum)
+            )
+            smoothed_points.append(avg_point)
+
+        return smoothed_points
+
+    @staticmethod
+    def nearest_power_of_two(value: int) -> int:
+        """Finds the nearest power of two for a given integer without using the math module.
+
+        Parameters:
+            value (int): The input value.
+
+        Returns:
+            int: The nearest power of two.
+        """
+        if value <= 0:
+            return 1  # Default to smallest power of two (avoid errors)
+
+        # Start with the smallest power of two
+        lower_power = 1
+        while lower_power * 2 <= value:
+            lower_power *= 2  # Double until reaching or exceeding the value
+
+        # Find the next higher power of two
+        upper_power = lower_power * 2
+
+        # Return the closest of the two
+        return (
+            lower_power
+            if (value - lower_power) < (upper_power - value)
+            else upper_power
+        )
 
 
 # -----------------------------------------------------------------------------
