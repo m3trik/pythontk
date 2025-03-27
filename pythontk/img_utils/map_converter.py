@@ -296,7 +296,7 @@ class MapConverterUi:
         ui.set_attributes(WA_TranslucentBackground=True)
         ui.set_flags(FramelessWindowHint=True, WindowStaysOnTopHint=True)
         ui.set_style(theme="dark", style_class="translucentBgWithBorder")
-        ui.header.configure_buttons(
+        ui.header.config_buttons(
             menu_button=True, minimize_button=True, hide_button=True
         )
         return ui

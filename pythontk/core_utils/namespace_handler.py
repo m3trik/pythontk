@@ -32,6 +32,10 @@ class NamespaceHandler(LoggingMixin):
         self.__dict__["_resolver"] = resolver
         self.__dict__["_owner"] = owner
 
+    def __contains__(self, key: str) -> bool:
+        """Explicit containment check for NamespaceHandler."""
+        return key in self.__dict__["_attributes"]
+
     def __getattr__(self, name: str) -> Any:
         """Handles dynamic attribute resolution with recursion prevention."""
         self.logger.debug(
@@ -83,10 +87,13 @@ class NamespaceHandler(LoggingMixin):
             self.__dict__["_attributes"][name] = value  # Store in attributes
 
     def __getitem__(self, key: str) -> Any:
-        self.logger.debug(
-            f"[{self.__dict__.get('_identifier')}] __getitem__ called for '{key}'"
-        )
-        return self.__dict__["_attributes"][key]
+        try:
+            return self.__dict__["_attributes"][key]
+        except KeyError:
+            available = list(self.keys())
+            err = f"Namespace '{self.__dict__.get('_identifier')}' has no key '{key}'. Available keys: {available}"
+            self.logger.error(err)
+            raise KeyError(err)
 
     def __setitem__(self, key: str, value: Any):
         self.logger.debug(

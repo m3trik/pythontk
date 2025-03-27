@@ -213,6 +213,45 @@ class FileUtils(core_utils.HelpMixin):
             traceback.print_exc()
 
     @staticmethod
+    def copy_file(
+        file_path: str,
+        destination: str,
+        new_name: Optional[str] = None,
+        overwrite: bool = True,
+        create_dir: bool = True,
+    ) -> str:
+        """Copies a file to a specified folder, ensuring the folder exists.
+
+        Parameters:
+            file_path (str): Path to the file to be copied.
+            destination (str): Target directory.
+            new_name (str, optional): New name for the copied file.
+            overwrite (bool, optional): Allow overwriting an existing file.
+            create_dir (bool, optional): Auto-create destination dir.
+
+        Returns:
+            str: Path to the copied file.
+        """
+        import shutil
+
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        if create_dir:
+            os.makedirs(destination, exist_ok=True)
+
+        file_name = new_name or os.path.basename(file_path)
+        destination_path = os.path.join(destination, file_name)
+
+        if os.path.exists(destination_path):
+            if not overwrite:
+                raise FileExistsError(f"File already exists: {destination_path}")
+            os.remove(destination_path)
+
+        shutil.copy2(file_path, destination_path)
+        return destination_path
+
+    @staticmethod
     def move_file(
         file_path: str,
         destination: str,

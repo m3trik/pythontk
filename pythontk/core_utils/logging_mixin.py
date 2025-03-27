@@ -15,28 +15,18 @@ class LoggingMixin:
     _logger = None
     _class_logger = None
 
-    def __getattr__(self, name):
-        """Allows access to the instance/class attribute first, then to logging."""
-        try:
-            return object.__getattribute__(self, name)
-        except AttributeError:
-            return getattr(internal_logging, name)
-
     @ClassProperty
     def logger(cls) -> internal_logging.Logger:
-        """Completely isolate each logger to avoid cross-level changes."""
-        if not cls._logger:
-            # Create a brand-new Logger instance (bypasses getLogger).
+        if cls.__dict__.get("_logger") is None:
             unique_name = f"{cls.__module__}.{cls.__qualname__}"
             cls._logger = internal_logging.Logger(unique_name, internal_logging.DEBUG)
             cls._logger.propagate = False
-            cls._logger.parent = None  # Ensures no parent-level interactions
+            cls._logger.parent = None
         return cls._logger
 
     @ClassProperty
     def class_logger(cls) -> internal_logging.Logger:
-        """Use a distinct name for the class-level logger."""
-        if not cls._class_logger:
+        if cls.__dict__.get("_class_logger") is None:
             logger_name = f"{cls.__module__}.{cls.__name__}.class"
             cls._class_logger = internal_logging.getLogger(logger_name)
             cls._class_logger.setLevel(internal_logging.DEBUG)
@@ -44,14 +34,9 @@ class LoggingMixin:
         return cls._class_logger
 
     @ClassProperty
-    def log_level(cls) -> int:
-        """Get the log level of the class logger."""
-        return cls.logger.level
-
-    @property
-    def logging(self):
-        """Allows instance-level access to logging."""
-        return self
+    def logging(cls):
+        """Access to Python's internal logging module (aliased)."""
+        return internal_logging
 
     def add_file_handler(
         self, filename: str, level: int = internal_logging.DEBUG
@@ -59,17 +44,19 @@ class LoggingMixin:
         """Adds a file handler to the logger."""
         handler = internal_logging.FileHandler(filename)
         handler.setLevel(level)
-        self.logger.addHandler(handler)  # ✅ FIX: Use self.logger
+        self.logger.addHandler(handler)
         self.logger.debug(f"Added file handler: {filename}")
 
-    def add_stream_handler(
-        self, stream=None, level: int = internal_logging.DEBUG
-    ) -> None:
-        """Adds a stream handler to the logger."""
-        handler = internal_logging.StreamHandler(stream)
-        handler.setLevel(level)
-        self.logger.addHandler(handler)  # ✅ FIX: Use self.logger
-        self.logger.debug(f"Added stream handler: {stream}")
+    def add_stream_handler(self, level: int = internal_logging.DEBUG) -> None:
+        if not any(
+            isinstance(h, internal_logging.StreamHandler) for h in self.logger.handlers
+        ):
+            handler = internal_logging.StreamHandler()
+            handler.setLevel(level)
+            formatter = internal_logging.Formatter("%(levelname)s - %(message)s")
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+            self.logger.debug("Stream handler attached.")
 
     def add_text_widget_handler(self, text_widget: object) -> None:
         """Adds a text widget handler for logging output."""
@@ -77,7 +64,7 @@ class LoggingMixin:
         text_edit_handler.setFormatter(
             internal_logging.Formatter("%(levelname)s - %(message)s")
         )
-        self.logger.addHandler(text_edit_handler)  # ✅ FIX: Use self.logger
+        self.logger.addHandler(text_edit_handler)
         self.logger.debug("Added text widget handler")
 
     def setup_logging_redirect(
@@ -122,89 +109,67 @@ if __name__ == "__main__":
 
             self.test_instance = TestClass()
 
-        def test_logging_initialization(self):
+        def test_logger_initialization(self):
             logger = self.test_instance.logger
-
-            # Ensure logger is initialized
             self.assertIsInstance(logger, internal_logging.Logger)
-
-            # Ensure default log level is DEBUG
             self.assertEqual(logger.level, internal_logging.DEBUG)
 
-            # Ensure the logger name is correct
-            self.assertEqual(logger.name, f"{__name__}.Logging")
+            expected_name = (
+                f"{self.test_instance.__class__.__module__}."
+                f"{self.test_instance.__class__.__qualname__}"
+            )
+            self.assertEqual(logger.name, expected_name)
 
-        def test_logging_namespace(self):
-            logging_ns = self.test_instance.logging
-
-            # Ensure logging namespace is initialized
-            self.assertTrue(hasattr(logging_ns, "_log_file"))
-            self.assertTrue(hasattr(logging_ns, "_hide_log_file"))
-            self.assertTrue(hasattr(logging_ns, "_text_widget"))
-
-            # Ensure default attributes
-            self.assertIsNone(logging_ns._log_file)
-            self.assertFalse(logging_ns._hide_log_file)
-            self.assertIsNone(logging_ns._text_widget)
+        def test_logging_property(self):
+            self.assertIs(self.test_instance.logging, internal_logging)
 
         def test_add_stream_handler(self):
-            self.test_instance.logging.add_stream_handler()
-            logger = self.test_instance.logger
-
-            # Ensure stream handler is added
-            self.assertTrue(
-                any(
-                    isinstance(h, internal_logging.StreamHandler)
-                    for h in logger.handlers
-                )
-            )
+            self.test_instance.add_stream_handler()
+            stream_handlers = [
+                h
+                for h in self.test_instance.logger.handlers
+                if isinstance(h, internal_logging.StreamHandler)
+            ]
+            self.assertTrue(stream_handlers, "Stream handler not added")
 
         def test_add_file_handler(self):
-            self.test_instance.logging.add_file_handler("test.log")
-            logger = self.test_instance.logger
-
-            # Ensure file handler is added
-            self.assertTrue(
-                any(
-                    isinstance(h, internal_logging.FileHandler) for h in logger.handlers
-                )
-            )
+            self.test_instance.add_file_handler("test.log")
+            file_handlers = [
+                h
+                for h in self.test_instance.logger.handlers
+                if isinstance(h, internal_logging.FileHandler)
+            ]
+            self.assertTrue(file_handlers, "File handler not added")
 
         def test_add_text_widget_handler(self):
             class MockWidget:
                 def append(self, text):
                     pass
 
-            self.test_instance.logging.add_text_widget_handler(MockWidget())
+            self.test_instance.add_text_widget_handler(MockWidget())
+            widget_handlers = [
+                h
+                for h in self.test_instance.logger.handlers
+                if isinstance(h, TextEditHandler)
+            ]
+            self.assertTrue(widget_handlers, "Text widget handler not added")
+
+        def test_log_message_capture_with_memory_handler(self):
             logger = self.test_instance.logger
-
-            # Ensure text widget handler is added
-            self.assertTrue(
-                any(isinstance(h, TextEditHandler) for h in logger.handlers)
-            )
-
-        def test_logging_namespace_handler_logging(self):
-            # Ensure the logger is initialized first
-            logger = self.test_instance.logger
-
-            # Add a memory handler to capture the logs
             memory_handler = MemoryHandler(
                 capacity=10000, flushLevel=internal_logging.DEBUG
             )
             logger.addHandler(memory_handler)
 
-            with self.assertLogs(f"{__name__}.Logging", level="DEBUG") as cm:
-                self.test_instance.logging
-                logger.debug("Test log message to verify capture")
-
-            # Flush the memory handler to capture logs
+            logger.debug("Test log message to verify capture")
             memory_handler.flush()
-            logger.removeHandler(memory_handler)
 
-            self.assertIn(
-                "DEBUG:__main__.Logging:Test log message to verify capture",
-                cm.output,
+            captured = any(
+                "Test log message to verify capture" in record.getMessage()
+                for record in memory_handler.buffer
             )
+            logger.removeHandler(memory_handler)
+            self.assertTrue(captured, "Expected log message not captured")
 
     # Use TextTestRunner to run tests to prevent SystemExit issue.
     loader = unittest.TestLoader()
