@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>200</width>
-    <height>216</height>
+    <height>218</height>
    </rect>
   </property>
   <property name="tabShape">
@@ -202,7 +202,7 @@ Combines a &lt;b&gt;Smoothness&lt;/b&gt; or &lt;b&gt;Roughness&lt;/b&gt; map int
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="b004">
+          <widget class="PushButton" name="tb001">
            <property name="enabled">
             <bool>true</bool>
            </property>
@@ -259,7 +259,7 @@ Converts Specular Glossiness map(s) to &lt;b&gt;PBR&lt;/b&gt; format.&lt;br&gt;&
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="b006">
+          <widget class="PushButton" name="tb000">
            <property name="enabled">
             <bool>true</bool>
            </property>
@@ -316,6 +316,11 @@ with the original file moved to an &lt;i&gt;old&lt;/i&gt; folder.
    <class>Header</class>
    <extends>QLabel</extends>
    <header>uitk.widgets.header.Header.h</header>
+  </customwidget>
+  <customwidget>
+   <class>PushButton</class>
+   <extends>QPushButton</extends>
+   <header>widgets.pushbutton.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

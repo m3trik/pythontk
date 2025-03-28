@@ -171,7 +171,7 @@ class MapConverterSlots(ImgUtils):
             )
 
         print(
-            f"Packing {'smoothness' if not invert_alpha else 'roughness'} from {alpha_map_path} into {metallic_map_path} .."
+            f"Packing {'roughness' if invert_alpha else 'smoothness'} from: {alpha_map_path}\n\tinto: {metallic_map_path} .."
         )
         metallic_smoothness_map_path = self.pack_smoothness_into_metallic(
             metallic_map_path, alpha_map_path, invert_alpha=invert_alpha
@@ -179,7 +179,82 @@ class MapConverterSlots(ImgUtils):
         print(f"// Result: {metallic_smoothness_map_path}")
         self.source_dir = FileUtils.format_path(metallic_smoothness_map_path, "path")
 
-    def b004(self):
+    def b005(self):
+        """Extract Gloss map from Specular map."""
+        spec_map_path = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select a specular map to extract gloss from:",
+            start_dir=self.source_dir,
+            allow_multiple=False,
+        )
+        if not spec_map_path:
+            return
+
+        print(f"Extracting gloss from {spec_map_path} ..")
+        gloss_image = self.extract_gloss_from_spec(spec_map_path)
+
+        # Resolve the correct gloss texture filename
+        gloss_map_path = self.resolve_texture_filename(
+            spec_map_path, "Gloss", ext="PNG"
+        )
+        # Save gloss map
+        gloss_image.save(gloss_map_path, format="PNG")
+
+        print(f"// Result: {gloss_map_path}")
+        self.source_dir = FileUtils.format_path(gloss_map_path, "path")
+
+    def tb000_init(self, widget):
+        """ """
+        widget.menu.add(
+            "QComboBox",
+            setObjectName="cmb001",
+            setToolTip="Set the output file type.",
+        )
+
+        widget.menu.cmb001.addItems(["PNG", "TGA", "BMP", "JPG", "TIF", "EXR", "HDR"])
+        widget.menu.add(
+            "QComboBox",
+            setObjectName="cmb000",
+            setToolTip="Set the maximum texture size.",
+        )
+        widget.menu.cmb000.addItems(["256", "512", "1024", "2048", "4096", "8192"])
+
+    def tb000(self):
+        """Optimize a texture map(s)"""
+        texture_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select texture map(s) to optimize:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not texture_paths:
+            return
+
+        file_type = self.ui.menu.cmb001.currentText()
+        max_size = int(self.ui.menu.cmb000.currentText())
+
+        for texture_path in texture_paths:
+            print(f"Optimizing: {texture_path} ..")
+            optimized_map_path = self.optimize_texture(
+                texture_path,
+                output_type=file_type,
+                max_size=max_size,
+                old_files_folder="old",
+                optimize_bit_depth=True,
+            )
+            print(f"// Result: {optimized_map_path}")
+        self.source_dir = FileUtils.format_path(texture_paths[0], "path")
+
+    def tb001_init(self, widget):
+        """ """
+        widget.menu.add(
+            "QCheckBox",
+            setText="Create MetallicSmoothness map",
+            setObjectName="chk000",
+            setToolTip="Also create a MetallicSmoothness map.",
+        )
+
+    def tb001(self):
         """Batch converts Spec/Gloss maps to PBR Metal/Rough.
 
         User selects multiple texture sets. The function groups them per base name
@@ -195,6 +270,8 @@ class MapConverterSlots(ImgUtils):
         )
         if not spec_map_paths:
             return
+
+        create_metallic_smoothness = self.ui.menu.chk000.isChecked()
 
         # **Group maps by set using base names**
         texture_sets = self.group_textures_by_set(spec_map_paths)
@@ -226,7 +303,7 @@ class MapConverterSlots(ImgUtils):
                     glossiness_map = self.create_roughness_from_spec(specular_map)
 
             # Convert to PBR Metal/Rough
-            self.convert_spec_gloss_to_pbr(
+            base_color, metallic, roughness = self.convert_spec_gloss_to_pbr(
                 specular_map,
                 glossiness_map,
                 diffuse_map,
@@ -234,55 +311,16 @@ class MapConverterSlots(ImgUtils):
                 image_size=4096,
                 optimize_bit_depth=True,
             )
+
+            if create_metallic_smoothness:
+                # Create MetallicSmoothness map
+                metallic_smoothness_map_path = self.pack_smoothness_into_metallic(
+                    metallic, roughness, invert_alpha=True
+                )
+                print(f"// Result: {metallic_smoothness_map_path}")
+
             print(f"Spec/Gloss to PBR conversion complete for {base_name}.")
             self.source_dir = FileUtils.format_path(specular_map, "path")
-
-    def b005(self):
-        """Extract Gloss map from Specular map."""
-        spec_map_path = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select a specular map to extract gloss from:",
-            start_dir=self.source_dir,
-            allow_multiple=False,
-        )
-        if not spec_map_path:
-            return
-
-        print(f"Extracting gloss from {spec_map_path} ..")
-        gloss_image = self.extract_gloss_from_spec(spec_map_path)
-
-        # Resolve the correct gloss texture filename
-        gloss_map_path = self.resolve_texture_filename(
-            spec_map_path, "Gloss", ext="PNG"
-        )
-        # Save gloss map
-        gloss_image.save(gloss_map_path, format="PNG")
-
-        print(f"// Result: {gloss_map_path}")
-        self.source_dir = FileUtils.format_path(gloss_map_path, "path")
-
-    def b006(self):
-        """Optimize a texture map(s)"""
-        texture_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select texture map(s) to optimize:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
-        )
-        if not texture_paths:
-            return
-
-        for texture_path in texture_paths:
-            print(f"Optimizing: {texture_path} ..")
-            optimized_map_path = self.optimize_texture(
-                texture_path,
-                output_type="PNG",
-                max_size=4096,
-                old_files_folder="old",
-                optimize_bit_depth=True,
-            )
-            print(f"// Result: {optimized_map_path}")
-        self.source_dir = FileUtils.format_path(texture_paths[0], "path")
 
 
 class MapConverterUi:
