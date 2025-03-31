@@ -219,7 +219,7 @@ class MapConverterSlots(ImgUtils):
         )
         widget.menu.cmb000.addItems(["256", "512", "1024", "2048", "4096", "8192"])
 
-    def tb000(self):
+    def tb000(self, widget):
         """Optimize a texture map(s)"""
         texture_paths = self.sb.file_dialog(
             file_types=self.texture_file_types,
@@ -230,8 +230,8 @@ class MapConverterSlots(ImgUtils):
         if not texture_paths:
             return
 
-        file_type = self.ui.menu.cmb001.currentText()
-        max_size = int(self.ui.menu.cmb000.currentText())
+        file_type = widget.menu.cmb001.currentText()
+        max_size = int(widget.menu.cmb000.currentText())
 
         for texture_path in texture_paths:
             print(f"Optimizing: {texture_path} ..")
@@ -254,7 +254,7 @@ class MapConverterSlots(ImgUtils):
             setToolTip="Also create a MetallicSmoothness map.",
         )
 
-    def tb001(self):
+    def tb001(self, widget):
         """Batch converts Spec/Gloss maps to PBR Metal/Rough.
 
         User selects multiple texture sets. The function groups them per base name
@@ -271,7 +271,7 @@ class MapConverterSlots(ImgUtils):
         if not spec_map_paths:
             return
 
-        create_metallic_smoothness = self.ui.menu.chk000.isChecked()
+        create_metallic_smoothness = widget.menu.chk000.isChecked()
 
         # **Group maps by set using base names**
         texture_sets = self.group_textures_by_set(spec_map_paths)
@@ -310,6 +310,7 @@ class MapConverterSlots(ImgUtils):
                 output_type="PNG",
                 image_size=4096,
                 optimize_bit_depth=True,
+                write_files=True,
             )
 
             if create_metallic_smoothness:

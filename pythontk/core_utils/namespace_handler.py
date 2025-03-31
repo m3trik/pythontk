@@ -10,7 +10,16 @@ class NamespaceHandler(LoggingMixin):
         owner (Any): The owner object that the namespace is attached to.
         identifier (str, optional): An identifier for logging or tracking purposes.
         resolver (Callable[[str], Any], optional): A function that resolves attribute names.
-        log_level (str, optional): The logging level for the logger. Defaults to "DEBUG".
+        log_level (str, optional): The logging level for the logger.
+
+    Example:
+        def resolver(name: str) -> Any:
+            # Custom resolver logic here
+            return f"Resolved {name}" if name != "unknown_attr" else None
+
+        handler = NamespaceHandler(owner=my_object, identifier="example", resolver=resolver)
+        print(handler.some_attr)  # Calls the resolver if not cached
+        handler.some_attr = "New Value"  # Sets the attribute directly
     """
 
     def __init__(
@@ -91,9 +100,10 @@ class NamespaceHandler(LoggingMixin):
             return self.__dict__["_attributes"][key]
         except KeyError:
             available = list(self.keys())
-            err = f"Namespace '{self.__dict__.get('_identifier')}' has no key '{key}'. Available keys: {available}"
-            self.logger.error(err)
-            raise KeyError(err)
+            self.logger.debug(
+                f"Namespace '{self.__dict__.get('_identifier')}' has no key '{key}'.\n\tAvailable keys: {available}"
+            )
+            raise
 
     def __setitem__(self, key: str, value: Any):
         self.logger.debug(

@@ -5,9 +5,9 @@ import os
 import re
 import json
 import traceback
-from typing import Union, List, Dict, Optional
+from typing import Union, List, Dict, Tuple, Optional
 
-# from this package:
+# From this package:
 from pythontk import core_utils
 from pythontk import iter_utils
 from pythontk import str_utils
@@ -563,6 +563,59 @@ class FileUtils(core_utils.HelpMixin):
             )
 
         return relative_path.replace("\\", "/")
+
+    @staticmethod
+    def remap_file_paths(
+        source_paths: List[str], target_dir: str, base_dir: str
+    ) -> List[Tuple[str, str, str]]:
+        """
+        Remap a list of file paths to a new directory while preserving their relative
+        structure with respect to a base directory.
+
+        Parameters:
+            source_paths (List[str]): List of original file paths.
+            target_dir (str): Target root directory to remap files into.
+            base_dir (str): Directory to compute relative paths from.
+
+        Returns:
+            List[Tuple[str, str, str]]: List of tuples:
+                (lookup_key, new_full_path, relative_path_or_mapped_path)
+                - lookup_key: Lowercased relative path (if under base_dir) or filename
+                - new_full_path: Full remapped file path under the target_dir
+                - relative_path_or_mapped_path: Relative path for Maya or similar use
+        """
+        results = []
+
+        base_dir_norm = os.path.normpath(base_dir).replace("\\", "/")
+        base_dir_name = os.path.basename(base_dir_norm)
+
+        for original_path in source_paths:
+            original_norm = os.path.normpath(original_path).replace("\\", "/")
+
+            if original_norm.lower().startswith(base_dir_norm.lower()):
+                rel_path = os.path.relpath(original_norm, base_dir_norm).replace(
+                    "\\", "/"
+                )
+                lookup_key = rel_path.lower()
+                new_path = os.path.join(target_dir, rel_path).replace("\\", "/")
+            else:
+                filename = os.path.basename(original_norm)
+                lookup_key = filename.lower()
+                new_path = os.path.join(target_dir, filename).replace("\\", "/")
+
+            new_path_norm = os.path.normpath(new_path).replace("\\", "/")
+
+            if new_path_norm.lower().startswith(base_dir_norm.lower()):
+                rel_path = os.path.relpath(new_path_norm, base_dir_norm).replace(
+                    "\\", "/"
+                )
+                mapped_path = f"{base_dir_name}/{rel_path}"
+            else:
+                mapped_path = new_path_norm
+
+            results.append((lookup_key, new_path_norm, mapped_path))
+
+        return results
 
     @classmethod
     def append_path(cls, path, **kwargs):

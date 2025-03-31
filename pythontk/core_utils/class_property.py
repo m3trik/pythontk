@@ -1,8 +1,26 @@
+# !/usr/bin/python
+# coding=utf-8
 from typing import Dict, Optional, Any
 
 
 class ClassProperty:
-    """A descriptor for class-level properties (replaces @classmethod @property)."""
+    """A descriptor for class-level properties (replaces @classmethod @property).
+
+    This decorator allows you to define a property that can be accessed directly on the class,
+    rather than on an instance of the class. This is useful for defining properties that are
+    related to the class itself rather than to a specific instance.
+
+    Example:
+        class MyClass:
+            _value = 42
+
+            @ClassProperty
+            def value(cls):
+                return cls._value
+
+        print(MyClass.value)  # Output: 42
+        MyClass._value = 100
+    """
 
     def __init__(self, getter):
         self.getter = getter
@@ -17,20 +35,20 @@ class ClassProperty:
 if __name__ == "__main__":
     import unittest
 
-    class TestNamespaceHandler(unittest.TestCase):
+    class TestClassProperty(unittest.TestCase):
+        class MyClass:
+            _value = 42
+
+            @ClassProperty
+            def value(cls):
+                return cls._value
+
         def test_class_property(self):
-            class TestClass:
-                _instance: Optional[Dict[str, Any]] = None
+            self.assertEqual(self.MyClass.value, 42)
 
-                @ClassProperty
-                def instance(cls) -> Dict[str, Any]:
-                    if cls._instance is None:
-                        cls._instance = {}
-                    return cls._instance
-
-            self.assertEqual(TestClass.instance, {})
-            TestClass.instance["key"] = "value"
-            self.assertEqual(TestClass.instance, {"key": "value"})
+        def test_class_property_setter(self):
+            self.MyClass._value = 100
+            self.assertEqual(self.MyClass.value, 100)
 
     unittest.main(exit=False)
 

@@ -24,7 +24,7 @@ class ImgUtils(core_utils.HelpMixin):
     map_types = {
         "Base_Color": ("Base_Color", "BaseColor", "Color", "_BC"),
         "Albedo_Transparency": ("Albedo_Transparency", "AlbedoTransparency", "_AT"),
-        "Roughness": ("Roughness", "Rough", "RGH", "_R"),
+        "Roughness": ("Roughness", "Rough", "Ruff", "RGH", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "MTL", "_M"),
         "Metallic_Smoothness": ("Metallic_Smoothness", "MetallicSmoothness", "_MS"),
         "Normal": ("Normal", "Norm", "NRM", "_N"),
@@ -346,42 +346,37 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def get_base_texture_name(cls, filepath_or_filename: str) -> str:
-        """Extracts the base texture name from a given filename or full filepath,
-        removing known suffixes based on the class attribute `map_types` dynamically,
-        case-insensitively.
+        """Extracts the base texture name from a filename or path,
+        removing known suffixes (e.g., _normal, _roughness) case-insensitively.
 
         Parameters:
-            filepath_or_filename (str): The full file path or just the filename.
+            filepath_or_filename (str): A texture path or name.
 
         Returns:
-            str: The base name of the texture without the map type suffix.
+            str: The base name without map-type suffix.
         """
         import re
 
-        filename = os.path.basename(filepath_or_filename)
+        if not isinstance(filepath_or_filename, (str, bytes, os.PathLike)):
+            raise TypeError(
+                f"Expected str, bytes, or os.PathLike, got {type(filepath_or_filename).__name__}"
+            )
 
-        # Extract the base name without the extension
-        base_name, extension = os.path.splitext(filename)
+        filename = os.path.basename(str(filepath_or_filename))
+        base_name, _ = os.path.splitext(filename)
 
-        # Compile a single regex pattern that matches any known suffix
         suffixes_pattern = "|".join(
             re.escape(suffix)
             for suffixes in cls.map_types.values()
             for suffix in suffixes
         )
 
-        # Create a regex to match and remove the suffixes at the end of the base name
         pattern = re.compile(
             f"(?:_{suffixes_pattern}|{suffixes_pattern})$", re.IGNORECASE
         )
 
-        # Remove the matched suffix, if any
         base_name = pattern.sub("", base_name)
-
-        # Remove any trailing underscores
-        base_name = base_name.rstrip("_")
-
-        return base_name
+        return base_name.rstrip("_")
 
     @classmethod
     def group_textures_by_set(cls, image_paths: List[str]) -> Dict[str, List[str]]:
@@ -1106,11 +1101,12 @@ class ImgUtils(core_utils.HelpMixin):
         glossiness_map: Union[str, Image.Image],
         diffuse_map: Union[str, Image.Image] = None,
         output_dir: str = None,
-        convert_diffuse_to_albedo: bool = False,  # Uses correct albedo conversion
-        output_type: str = None,  # Keeps original format if None
-        image_size: bool = False,  # Resize images to the same dimensions
-        optimize_bit_depth: bool = True,  # Adjust bit depth for optimal storage
-    ):
+        convert_diffuse_to_albedo: bool = False,
+        output_type: str = None,
+        image_size: bool = False,
+        optimize_bit_depth: bool = True,
+        write_files: bool = False,
+    ) -> Union[Tuple[Image.Image, Image.Image, Image.Image], Tuple[str, str, str]]:
         """Converts Specular/Glossiness maps to PBR Metal/Rough.
 
         Parameters:
@@ -1122,34 +1118,35 @@ class ImgUtils(core_utils.HelpMixin):
             output_type: (Optional) Desired output format (e.g., PNG, TGA). If None, keeps original.
             image_size: (Optional) If True, resizes images to the same dimensions.
             optimize_bit_depth: (Optional) If True, adjusts bit depth based on the map type.
+            write_files: (Optional) If True, saves the images and returns file paths.
 
-        Saves:
-            - BaseColor.png (default) OR Albedo.png (if `convert_diffuse_to_albedo` is True)
-            - Metallic.png
-            - Roughness.png
+        Returns:
+            Tuple of (BaseColor, Metallic, Roughness) images or file paths depending on `write_files`.
         """
-        # Ensure all inputs are PIL images
         spec = cls.ensure_image(specular_map, "RGB")
-        gloss = cls.ensure_image(glossiness_map, "L")  # Ensure grayscale
+        gloss = cls.ensure_image(glossiness_map, "L")
         diffuse = cls.ensure_image(diffuse_map, "RGB") if diffuse_map else None
 
-        # Compute Metalness
         metallic = cls.create_metallic_from_spec(specular_map)
-        # Compute Base Color
         base_color = cls.create_base_color_from_spec(diffuse, spec, metallic)
-        # Compute Roughness
         roughness = cls.create_roughness_from_spec(spec, gloss)
-        # Convert Base Color to Albedo if requested
+
         if convert_diffuse_to_albedo:
             base_color = cls.convert_base_color_to_albedo(base_color, metallic)
 
-        # Optimize bit depth if enabled
         if optimize_bit_depth:
             base_color = cls.set_bit_depth(base_color, "Base_Color")
             metallic = cls.set_bit_depth(metallic, "Metallic")
             roughness = cls.set_bit_depth(roughness, "Roughness")
 
-        # Ensure output directory exists
+        if image_size and max(base_color.size) > image_size:
+            base_color = cls.resize_image(base_color, image_size, image_size)
+            metallic = cls.resize_image(metallic, image_size, image_size)
+            roughness = cls.resize_image(roughness, image_size, image_size)
+
+        if not write_files:
+            return base_color, metallic, roughness
+
         if output_dir is None:
             output_dir = (
                 os.path.dirname(specular_map)
@@ -1161,7 +1158,6 @@ class ImgUtils(core_utils.HelpMixin):
                 f"The specified output directory '{output_dir}' is not valid."
             )
 
-        # Format filenames
         base_color_type = "Albedo" if convert_diffuse_to_albedo else "Base_Color"
         base_color_file = cls.resolve_texture_filename(
             specular_map, base_color_type, ext=output_type
@@ -1173,12 +1169,6 @@ class ImgUtils(core_utils.HelpMixin):
             specular_map, "Roughness", ext=output_type
         )
 
-        if image_size and max(base_color.size) > image_size:
-            base_color = cls.resize_image(base_color, image_size, image_size)
-            metallic = cls.resize_image(metallic, image_size, image_size)
-            roughness = cls.resize_image(roughness, image_size, image_size)
-
-        # Save the maps
         base_color.save(base_color_file)
         metallic.save(metallic_file)
         roughness.save(roughness_file)
@@ -1186,7 +1176,7 @@ class ImgUtils(core_utils.HelpMixin):
         print(
             f"PBR Conversion complete. Files saved:\n- {base_color_file}\n- {metallic_file}\n- {roughness_file}"
         )
-        return base_color, metallic, roughness
+        return base_color_file, metallic_file, roughness_file
 
     @classmethod
     def create_base_color_from_spec(
