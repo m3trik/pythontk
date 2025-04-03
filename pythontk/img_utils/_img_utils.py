@@ -26,7 +26,16 @@ class ImgUtils(core_utils.HelpMixin):
         "Albedo_Transparency": ("Albedo_Transparency", "AlbedoTransparency", "_AT"),
         "Roughness": ("Roughness", "Rough", "Ruff", "RGH", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "MTL", "_M"),
-        "Metallic_Smoothness": ("Metallic_Smoothness", "MetallicSmoothness", "_MS"),
+        "Metallic_Smoothness": (
+            "Metallic_Smoothness",
+            "MetallicSmoothness",
+            "MetalSmooth",
+            "Metal_Smooth",
+            "Metal_Smoothness",
+            "_MS",
+            "_MetalSmooth",
+            "_MetallicSmoothness",
+        ),
         "Normal": ("Normal", "Norm", "NRM", "_N"),
         "Normal_DirectX": ("Normal_DirectX", "NormalDX", "_NDX"),
         "Normal_OpenGL": ("Normal_OpenGL", "NormalGL", "_NGL"),
@@ -85,14 +94,14 @@ class ImgUtils(core_utils.HelpMixin):
         "Albedo_Transparency": "RGBA",  # Color map with transparency in the alpha channel.
         "Roughness": "L",  # Grayscale map defining surface roughness.
         "Metallic": "L",  # Grayscale map defining metallic properties.
-        "Metallic_Smoothness": "RGB",  # Multi-channel map for metallic and smoothness.
+        "Metallic_Smoothness": "RGBA",  # Multi-channel map for metallic and smoothness.
         "Normal": "RGB",  # Full color normal map.
         "Normal_DirectX": "RGB",  # DirectX normal map with Y-axis inversion.
         "Normal_OpenGL": "RGB",  # OpenGL normal map with standard Y-axis.
         "Height": "I",  # Integer mode for height, often 16 or 32-bit.
         "Emissive": "RGB",  # Full color map for self-illumination.
         "Diffuse": "RGB",  # Full color map for diffuse properties.
-        "Specular": "L",  # Grayscale map for specular highlights.
+        "Specular": "RGB",  # Full color map for specular highlights.
         "Glossiness": "L",  # Grayscale map for surface glossiness.
         "Displacement": "L",  # Grayscale map for displacement mapping.
         "Refraction": "L",  # Grayscale map for light refraction.
@@ -391,10 +400,9 @@ class ImgUtils(core_utils.HelpMixin):
                 - Values are lists of associated texture files.
         """
         texture_sets = {}
-
         for path in image_paths:
             base_name = cls.get_base_texture_name(path)  # Extract base texture name
-
+            print(f"[grouping] {path} → {base_name}")
             if base_name not in texture_sets:
                 texture_sets[base_name] = []
 
@@ -857,30 +865,44 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def pack_channel_into_alpha(
-        cls, image, alpha, output_path=None, invert_alpha=False
-    ):
+        cls,
+        image: Union[str, Image.Image],
+        alpha: Union[str, Image.Image],
+        output_path: str = None,
+        invert_alpha: bool = False,
+        resize_alpha: bool = True,
+    ) -> str:
         """Packs a channel from the alpha source image into the alpha channel of the base image.
         Optionally inverts the alpha source image.
 
         Parameters:
-            image (str/PIL.Image.Image): File path or image object for the base texture map.
-            alpha (str/PIL.Image.Image): File path or image object for the texture map to pack into the alpha channel.
-            output_path (str, optional): File path to save the modified base texture map with the alpha packed.
-            invert_alpha (bool, optional): If True, inverts the alpha source image before packing.
+            image (str/Image.Image): Base texture map.
+            alpha (str/Image.Image): Map to pack into the alpha channel.
+            output_path (str, optional): Path to save the result. Defaults to overwrite if image is a path.
+            invert_alpha (bool): Invert the alpha source image before packing.
+            resize_alpha (bool): If True, auto-resizes alpha map to match base.
 
         Returns:
-            PIL.Image.Image: The modified base image with the alpha packed into its alpha channel.
+            str: Path to the saved image with alpha channel packed.
         """
         base_img = cls.ensure_image(image)
         alpha_img = cls.ensure_image(alpha)
 
-        # Optionally invert the alpha source image
         if invert_alpha:
             alpha_img = cls.invert_grayscale_image(alpha_img)
 
-        alpha_img = alpha_img.convert("L")  # Ensure alpha is in grayscale for packing
+        alpha_img = alpha_img.convert("L")
 
-        # Merge the alpha channel into the base image
+        if resize_alpha and base_img.size != alpha_img.size:
+            print(
+                f"// Resizing alpha from {alpha_img.size} to match base {base_img.size}"
+            )
+            alpha_img = alpha_img.resize(base_img.size, Image.Resampling.LANCZOS)
+        elif base_img.size != alpha_img.size:
+            raise ValueError(
+                f"Alpha image size {alpha_img.size} does not match base {base_img.size} and resize is disabled."
+            )
+
         if base_img.mode in ["L", "LA"]:
             base_img = base_img.convert("LA")
             combined_img = Image.merge("LA", (base_img.getchannel(0), alpha_img))
@@ -888,10 +910,9 @@ class ImgUtils(core_utils.HelpMixin):
             base_img = base_img.convert("RGBA")
             combined_img = Image.merge("RGBA", (*base_img.split()[:3], alpha_img))
 
-        # Determine the output path if not provided
         if not output_path:
             if isinstance(image, str):
-                output_path = image  # Use the base image path
+                output_path = image
             else:
                 raise ValueError(
                     "Output path must be provided when using Image objects directly"
