@@ -24,9 +24,18 @@ class ImgUtils(core_utils.HelpMixin):
     map_types = {
         "Base_Color": ("Base_Color", "BaseColor", "Color", "_BC"),
         "Albedo_Transparency": ("Albedo_Transparency", "AlbedoTransparency", "_AT"),
-        "Roughness": ("Roughness", "Rough", "RGH", "_R"),
+        "Roughness": ("Roughness", "Rough", "Ruff", "RGH", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "MTL", "_M"),
-        "Metallic_Smoothness": ("Metallic_Smoothness", "MetallicSmoothness", "_MS"),
+        "Metallic_Smoothness": (
+            "Metallic_Smoothness",
+            "MetallicSmoothness",
+            "MetalSmooth",
+            "Metal_Smooth",
+            "Metal_Smoothness",
+            "_MS",
+            "_MetalSmooth",
+            "_MetallicSmoothness",
+        ),
         "Normal": ("Normal", "Norm", "NRM", "_N"),
         "Normal_DirectX": ("Normal_DirectX", "NormalDX", "_NDX"),
         "Normal_OpenGL": ("Normal_OpenGL", "NormalGL", "_NGL"),
@@ -85,14 +94,14 @@ class ImgUtils(core_utils.HelpMixin):
         "Albedo_Transparency": "RGBA",  # Color map with transparency in the alpha channel.
         "Roughness": "L",  # Grayscale map defining surface roughness.
         "Metallic": "L",  # Grayscale map defining metallic properties.
-        "Metallic_Smoothness": "RGB",  # Multi-channel map for metallic and smoothness.
+        "Metallic_Smoothness": "RGBA",  # Multi-channel map for metallic and smoothness.
         "Normal": "RGB",  # Full color normal map.
         "Normal_DirectX": "RGB",  # DirectX normal map with Y-axis inversion.
         "Normal_OpenGL": "RGB",  # OpenGL normal map with standard Y-axis.
         "Height": "I",  # Integer mode for height, often 16 or 32-bit.
         "Emissive": "RGB",  # Full color map for self-illumination.
         "Diffuse": "RGB",  # Full color map for diffuse properties.
-        "Specular": "L",  # Grayscale map for specular highlights.
+        "Specular": "RGB",  # Full color map for specular highlights.
         "Glossiness": "L",  # Grayscale map for surface glossiness.
         "Displacement": "L",  # Grayscale map for displacement mapping.
         "Refraction": "L",  # Grayscale map for light refraction.
@@ -346,42 +355,37 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def get_base_texture_name(cls, filepath_or_filename: str) -> str:
-        """Extracts the base texture name from a given filename or full filepath,
-        removing known suffixes based on the class attribute `map_types` dynamically,
-        case-insensitively.
+        """Extracts the base texture name from a filename or path,
+        removing known suffixes (e.g., _normal, _roughness) case-insensitively.
 
         Parameters:
-            filepath_or_filename (str): The full file path or just the filename.
+            filepath_or_filename (str): A texture path or name.
 
         Returns:
-            str: The base name of the texture without the map type suffix.
+            str: The base name without map-type suffix.
         """
         import re
 
-        filename = os.path.basename(filepath_or_filename)
+        if not isinstance(filepath_or_filename, (str, bytes, os.PathLike)):
+            raise TypeError(
+                f"Expected str, bytes, or os.PathLike, got {type(filepath_or_filename).__name__}"
+            )
 
-        # Extract the base name without the extension
-        base_name, extension = os.path.splitext(filename)
+        filename = os.path.basename(str(filepath_or_filename))
+        base_name, _ = os.path.splitext(filename)
 
-        # Compile a single regex pattern that matches any known suffix
         suffixes_pattern = "|".join(
             re.escape(suffix)
             for suffixes in cls.map_types.values()
             for suffix in suffixes
         )
 
-        # Create a regex to match and remove the suffixes at the end of the base name
         pattern = re.compile(
             f"(?:_{suffixes_pattern}|{suffixes_pattern})$", re.IGNORECASE
         )
 
-        # Remove the matched suffix, if any
         base_name = pattern.sub("", base_name)
-
-        # Remove any trailing underscores
-        base_name = base_name.rstrip("_")
-
-        return base_name
+        return base_name.rstrip("_")
 
     @classmethod
     def group_textures_by_set(cls, image_paths: List[str]) -> Dict[str, List[str]]:
@@ -396,10 +400,9 @@ class ImgUtils(core_utils.HelpMixin):
                 - Values are lists of associated texture files.
         """
         texture_sets = {}
-
         for path in image_paths:
             base_name = cls.get_base_texture_name(path)  # Extract base texture name
-
+            print(f"[grouping] {path} → {base_name}")
             if base_name not in texture_sets:
                 texture_sets[base_name] = []
 
@@ -570,7 +573,7 @@ class ImgUtils(core_utils.HelpMixin):
         return image
 
     @classmethod
-    def invert_grayscale_image(cls, image):
+    def invert_grayscale_image(cls, image: Union[str, Image.Image]) -> Image.Image:
         """Inverts a grayscale image. This method ensures the input is a grayscale image before inverting.
 
         Parameters:
@@ -579,10 +582,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             PIL.Image.Image: The inverted grayscale image.
         """
-        im = cls.ensure_image(image)
-        if im.mode != "L":
-            raise ValueError("Image must be in grayscale ('L') mode to invert.")
-        return ImageOps.invert(im)
+        image = cls.ensure_image(image, "L")
+        return ImageOps.invert(image)
 
     @classmethod
     def invert_channels(cls, image, channels="RGBA"):
@@ -864,30 +865,44 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def pack_channel_into_alpha(
-        cls, image, alpha, output_path=None, invert_alpha=False
-    ):
+        cls,
+        image: Union[str, Image.Image],
+        alpha: Union[str, Image.Image],
+        output_path: str = None,
+        invert_alpha: bool = False,
+        resize_alpha: bool = True,
+    ) -> str:
         """Packs a channel from the alpha source image into the alpha channel of the base image.
         Optionally inverts the alpha source image.
 
         Parameters:
-            image (str/PIL.Image.Image): File path or image object for the base texture map.
-            alpha (str/PIL.Image.Image): File path or image object for the texture map to pack into the alpha channel.
-            output_path (str, optional): File path to save the modified base texture map with the alpha packed.
-            invert_alpha (bool, optional): If True, inverts the alpha source image before packing.
+            image (str/Image.Image): Base texture map.
+            alpha (str/Image.Image): Map to pack into the alpha channel.
+            output_path (str, optional): Path to save the result. Defaults to overwrite if image is a path.
+            invert_alpha (bool): Invert the alpha source image before packing.
+            resize_alpha (bool): If True, auto-resizes alpha map to match base.
 
         Returns:
-            PIL.Image.Image: The modified base image with the alpha packed into its alpha channel.
+            str: Path to the saved image with alpha channel packed.
         """
         base_img = cls.ensure_image(image)
         alpha_img = cls.ensure_image(alpha)
 
-        # Optionally invert the alpha source image
         if invert_alpha:
             alpha_img = cls.invert_grayscale_image(alpha_img)
 
-        alpha_img = alpha_img.convert("L")  # Ensure alpha is in grayscale for packing
+        alpha_img = alpha_img.convert("L")
 
-        # Merge the alpha channel into the base image
+        if resize_alpha and base_img.size != alpha_img.size:
+            print(
+                f"// Resizing alpha from {alpha_img.size} to match base {base_img.size}"
+            )
+            alpha_img = alpha_img.resize(base_img.size, Image.Resampling.LANCZOS)
+        elif base_img.size != alpha_img.size:
+            raise ValueError(
+                f"Alpha image size {alpha_img.size} does not match base {base_img.size} and resize is disabled."
+            )
+
         if base_img.mode in ["L", "LA"]:
             base_img = base_img.convert("LA")
             combined_img = Image.merge("LA", (base_img.getchannel(0), alpha_img))
@@ -895,10 +910,9 @@ class ImgUtils(core_utils.HelpMixin):
             base_img = base_img.convert("RGBA")
             combined_img = Image.merge("RGBA", (*base_img.split()[:3], alpha_img))
 
-        # Determine the output path if not provided
         if not output_path:
             if isinstance(image, str):
-                output_path = image  # Use the base image path
+                output_path = image
             else:
                 raise ValueError(
                     "Output path must be provided when using Image objects directly"
@@ -1068,33 +1082,38 @@ class ImgUtils(core_utils.HelpMixin):
         return output_path
 
     @classmethod
-    def extract_gloss_from_spec(cls, specular_map: str) -> Union[Image.Image, None]:
-        """Extracts gloss from specular by checking:
+    def extract_gloss_from_spec(
+        cls, specular_map: str, channel: str = "A"
+    ) -> Union[Image.Image, None]:
+        """Extracts gloss from a specific channel in the specular map.
 
-        1. Alpha channel first.
-        2. If missing, normalize grayscale before extracting contrast.
+        Attempts:
+        1. Extracts specified channel (default: Alpha).
+        2. If missing or empty, normalizes grayscale and enhances contrast.
 
         Parameters:
             specular_map: File path to the specular map.
+            channel: One of "R", "G", "B", "A".
 
         Returns:
-            Glossiness map (grayscale) if found, else None.
+            Grayscale gloss map (L mode) if extracted, else None.
         """
         spec = cls.ensure_image(specular_map)
 
-        # Prefer alpha channel if available
-        if spec.mode == "RGBA":
-            gloss = spec.split()[3]  # Extract alpha
-            if gloss.getextrema() != (0, 0):  # If alpha is non-empty
+        # Attempt channel extraction
+        if channel.upper() in spec.getbands():
+            gloss = spec.getchannel(channel.upper())
+            if gloss.getextrema() != (0, 0):  # Ensure non-empty
                 return gloss.convert("L")
 
-        # Optional: Normalize grayscale spec before contrast extraction
-        print("// Warning: No gloss found in alpha; normalizing specular grayscale...")
+        print(
+            f"// Warning: No gloss found in '{channel}' channel; using normalized grayscale..."
+        )
         spec_gray = spec.convert("L")
-        spec_gray = ImageEnhance.Brightness(spec_gray).enhance(
-            1.2
-        )  # Normalize grayscale
-        return ImageOps.autocontrast(spec_gray)  # Extract gloss via contrast
+        spec_gray = ImageEnhance.Brightness(spec_gray).enhance(1.2)
+        gloss = ImageOps.autocontrast(spec_gray)
+
+        return gloss.convert("L")
 
     @classmethod
     def convert_spec_gloss_to_pbr(
@@ -1103,11 +1122,12 @@ class ImgUtils(core_utils.HelpMixin):
         glossiness_map: Union[str, Image.Image],
         diffuse_map: Union[str, Image.Image] = None,
         output_dir: str = None,
-        convert_diffuse_to_albedo: bool = False,  # Uses correct albedo conversion
-        output_type: str = None,  # Keeps original format if None
-        image_size: bool = False,  # Resize images to the same dimensions
-        optimize_bit_depth: bool = True,  # Adjust bit depth for optimal storage
-    ):
+        convert_diffuse_to_albedo: bool = False,
+        output_type: str = None,
+        image_size: bool = False,
+        optimize_bit_depth: bool = True,
+        write_files: bool = False,
+    ) -> Union[Tuple[Image.Image, Image.Image, Image.Image], Tuple[str, str, str]]:
         """Converts Specular/Glossiness maps to PBR Metal/Rough.
 
         Parameters:
@@ -1119,34 +1139,35 @@ class ImgUtils(core_utils.HelpMixin):
             output_type: (Optional) Desired output format (e.g., PNG, TGA). If None, keeps original.
             image_size: (Optional) If True, resizes images to the same dimensions.
             optimize_bit_depth: (Optional) If True, adjusts bit depth based on the map type.
+            write_files: (Optional) If True, saves the images and returns file paths.
 
-        Saves:
-            - BaseColor.png (default) OR Albedo.png (if `convert_diffuse_to_albedo` is True)
-            - Metallic.png
-            - Roughness.png
+        Returns:
+            Tuple of (BaseColor, Metallic, Roughness) images or file paths depending on `write_files`.
         """
-        # Ensure all inputs are PIL images
         spec = cls.ensure_image(specular_map, "RGB")
-        gloss = cls.ensure_image(glossiness_map, "L")  # Ensure grayscale
+        gloss = cls.ensure_image(glossiness_map, "L")
         diffuse = cls.ensure_image(diffuse_map, "RGB") if diffuse_map else None
 
-        # Compute Metalness
-        metalness = cls.convert_spec_to_metalness(spec)
-        # Compute Base Color
-        base_color = cls.create_base_color_from_spec(diffuse, spec, metalness)
-        # Compute Roughness
-        roughness = cls.convert_gloss_to_roughness(gloss, metalness)
-        # Convert Base Color to Albedo if requested
-        if convert_diffuse_to_albedo:
-            base_color = cls.convert_base_color_to_albedo(base_color, metalness)
+        metallic = cls.create_metallic_from_spec(specular_map)
+        base_color = cls.create_base_color_from_spec(diffuse, spec, metallic)
+        roughness = cls.create_roughness_from_spec(spec, gloss)
 
-        # Optimize bit depth if enabled
+        if convert_diffuse_to_albedo:
+            base_color = cls.convert_base_color_to_albedo(base_color, metallic)
+
         if optimize_bit_depth:
             base_color = cls.set_bit_depth(base_color, "Base_Color")
-            metalness = cls.set_bit_depth(metalness, "Metallic")
+            metallic = cls.set_bit_depth(metallic, "Metallic")
             roughness = cls.set_bit_depth(roughness, "Roughness")
 
-        # Ensure output directory exists
+        if image_size and max(base_color.size) > image_size:
+            base_color = cls.resize_image(base_color, image_size, image_size)
+            metallic = cls.resize_image(metallic, image_size, image_size)
+            roughness = cls.resize_image(roughness, image_size, image_size)
+
+        if not write_files:
+            return base_color, metallic, roughness
+
         if output_dir is None:
             output_dir = (
                 os.path.dirname(specular_map)
@@ -1158,31 +1179,25 @@ class ImgUtils(core_utils.HelpMixin):
                 f"The specified output directory '{output_dir}' is not valid."
             )
 
-        # Format filenames
         base_color_type = "Albedo" if convert_diffuse_to_albedo else "Base_Color"
-        base_color_name = cls.resolve_texture_filename(
+        base_color_file = cls.resolve_texture_filename(
             specular_map, base_color_type, ext=output_type
         )
-        metalness_name = cls.resolve_texture_filename(
+        metallic_file = cls.resolve_texture_filename(
             specular_map, "Metallic", ext=output_type
         )
-        roughness_name = cls.resolve_texture_filename(
+        roughness_file = cls.resolve_texture_filename(
             specular_map, "Roughness", ext=output_type
         )
 
-        if image_size and max(base_color.size) > image_size:
-            base_color = cls.resize_image(base_color, image_size, image_size)
-            metalness = cls.resize_image(metalness, image_size, image_size)
-            roughness = cls.resize_image(roughness, image_size, image_size)
-
-        # Save the maps
-        base_color.save(base_color_name)
-        metalness.save(metalness_name)
-        roughness.save(roughness_name)
+        base_color.save(base_color_file)
+        metallic.save(metallic_file)
+        roughness.save(roughness_file)
 
         print(
-            f"PBR Conversion complete. Files saved:\n- {base_color_name}\n- {metalness_name}\n- {roughness_name}"
+            f"PBR Conversion complete. Files saved:\n- {base_color_file}\n- {metallic_file}\n- {roughness_file}"
         )
+        return base_color_file, metallic_file, roughness_file
 
     @classmethod
     def create_base_color_from_spec(
@@ -1233,76 +1248,49 @@ class ImgUtils(core_utils.HelpMixin):
         return Image.fromarray((base_color * 255).astype(np.uint8), mode="RGB")
 
     @classmethod
-    def convert_spec_to_metalness(
-        cls,
-        specular_map: Union[str, Image.Image],
-        threshold: int = 55,
-        softness: float = 0.2,
-    ) -> Image.Image:
-        """Converts a Specular map to a Metalness map."""
-        spec = cls.ensure_image(specular_map, "L")
-        spec_gray = np.array(spec, dtype=np.float32) / 255.0
-        metalness = np.clip((spec_gray - (threshold / 255.0)) / softness, 0.0, 1.0)
-        return Image.fromarray((metalness * 255).astype(np.uint8), mode="L")
-
-    @classmethod
     def create_metallic_from_spec(
         cls,
         specular_map: Union[str, Image.Image],
         glossiness_map: Union[str, Image.Image] = None,
+        threshold: int = 55,
+        softness: float = 0.2,
     ) -> Image.Image:
-        """Extracts metallic data from a specular map.
+        """Creates a metallic map from a specular (and optional glossiness) map.
 
         Steps:
-        1. **If glossiness_map is provided, use it directly**.
-        2. **If gloss is not provided, attempt to extract it from the spec map**.
-        3. **Compute metalness from the spec map using adaptive thresholding**.
-        4. **Refine metalness using gloss (if available)**.
-
-        Parameters:
-            specular_map (str/Image.Image): Specular texture file or image.
-            glossiness_map (str/Image.Image, optional): Glossiness texture file or image.
+        1. Use gloss map if provided, or extract from spec.
+        2. Compute metallic from spec using soft threshold.
+        3. Refine metallic using gloss (if available).
 
         Returns:
-            Image.Image: Metallic map (L mode grayscale).
+            Image.Image: Metallic map (L mode).
         """
-        spec = cls.ensure_image(specular_map, "RGB")
+        spec_rgb = cls.ensure_image(specular_map, "RGB")
+        spec_lum = np.array(spec_rgb.convert("L"), dtype=np.float32) / 255.0
 
-        # Step 1: Use provided gloss map or extract from specular
-        gloss = (
-            cls.ensure_image(glossiness_map, "L")
-            if glossiness_map
-            else cls.extract_gloss_from_spec(specular_map)
-        )
-        # Step 2: Compute metalness from the specular map
-        metalness = cls.convert_spec_to_metalness(spec)
-
-        if gloss:
+        # Step 1: Get gloss
+        if glossiness_map:
+            gloss = (
+                np.array(cls.ensure_image(glossiness_map, "L"), dtype=np.float32)
+                / 255.0
+            )
             print("// Using gloss map to refine metallic computation.")
-            metalness = np.array(metalness, dtype=np.float32) / 255.0
-            gloss = np.array(gloss, dtype=np.float32) / 255.0
-
-            # Metals should have **low gloss** (high roughness)
-            refined_metalness = metalness * (
-                1.0 - gloss
-            )  # Reduce false metallic reflections
-            metallic = Image.fromarray(
-                (refined_metalness * 255).astype(np.uint8), mode="L"
-            )
-
         else:
-            print(
-                "// No valid gloss map found; estimating metallic directly from spec."
-            )
-            # Adaptive soft thresholding for metal detection
-            spec_gray = np.array(spec.convert("L"), dtype=np.float32) / 255.0
-            metal_threshold = 0.55  # Industry-accepted threshold for metal
-            softness = 0.2  # Soft blending for smoother transitions
-            metallic = np.clip((spec_gray - metal_threshold) / softness, 0.0, 1.0)
+            gloss_img = cls.extract_gloss_from_spec(specular_map)
+            gloss = np.array(gloss_img, dtype=np.float32) / 255.0 if gloss_img else None
+            if gloss is not None:
+                print("// Extracted gloss from specular map.")
+            else:
+                print("// No valid gloss map found; using spec only.")
 
-            metallic = Image.fromarray((metallic * 255).astype(np.uint8), mode="L")
+        # Step 2: Base metallic estimate
+        metallic = np.clip((spec_lum - (threshold / 255.0)) / softness, 0.0, 1.0)
 
-        return metallic
+        # Step 3: Refine with gloss
+        if gloss is not None:
+            metallic *= 1.0 - gloss  # Reduce metallic in high-gloss regions
+
+        return Image.fromarray((metallic * 255).astype(np.uint8), mode="L")
 
     @classmethod
     def create_roughness_from_spec(
@@ -1351,65 +1339,6 @@ class ImgUtils(core_utils.HelpMixin):
         roughness = np.clip(roughness, 0.0, 1.0)
 
         return Image.fromarray((roughness * 255).astype(np.uint8), mode="L")
-
-    @classmethod
-    def create_metallic_from_spec(
-        cls, specular_map: Union[str, Image.Image]
-    ) -> Image.Image:
-        """Extracts metallic data from a specular map.
-
-        Steps:
-        1. **Extract gloss** from the alpha channel (if available).
-        2. **If no gloss is found**, attempt grayscale contrast normalization.
-        3. **Compute metalness** from the spec map using adaptive thresholding.
-        4. **Refine metalness using gloss (if available)**.
-        5. **If no valid gloss exists, estimate metallic directly from spec.**
-
-        Parameters:
-            specular_map (str/Image.Image): Specular texture file or image.
-
-        Returns:
-            Image.Image: Metallic map (L mode grayscale).
-        """
-        spec = cls.ensure_image(specular_map, "RGB")
-
-        # Step 1: Attempt to extract gloss from the alpha channel
-        gloss = cls.extract_gloss_from_spec(specular_map)
-
-        if gloss:
-            print("// Using extracted gloss map for metallic computation.")
-            # Step 2: Compute metalness from the specular map
-            metalness = cls.convert_spec_to_metalness(spec)
-
-            # Step 3: Refine metalness using gloss
-            metalness = np.array(metalness, dtype=np.float32) / 255.0
-            gloss = np.array(gloss, dtype=np.float32) / 255.0
-
-            # Adaptive refinement: Metals should have low gloss (high roughness)
-            refined_metalness = metalness * (
-                1.0 - gloss
-            )  # Metals are not highly glossy
-
-            metallic = Image.fromarray(
-                (refined_metalness * 255).astype(np.uint8), mode="L"
-            )
-
-        else:
-            print(
-                "// No valid gloss map found; estimating metallic directly from spec."
-            )
-
-            # Embedded Fallback: Estimate metalness from spec directly
-            spec_gray = np.array(spec.convert("L"), dtype=np.float32) / 255.0
-
-            # Adaptive soft thresholding for metal detection
-            metal_threshold = 0.55  # Industry-accepted threshold for metal
-            softness = 0.2  # Soft blending for smoother transitions
-            metallic = np.clip((spec_gray - metal_threshold) / softness, 0.0, 1.0)
-
-            metallic = Image.fromarray((metallic * 255).astype(np.uint8), mode="L")
-
-        return metallic
 
     @classmethod
     def convert_base_color_to_albedo(

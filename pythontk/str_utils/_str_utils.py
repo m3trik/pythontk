@@ -423,59 +423,45 @@ class StrUtils(core_utils.CoreUtils):
             find_str('*Weight*', lst) #find any element that contains the string 'Weight'.
             find_str('Weight$|Weights$', lst, regex=True) #find any element that endswith 'Weight' or 'Weights'.
         """
-        if regex:  # search using a regular expression.
+        if regex:
             import re
 
             try:
                 if ignore_case:
-                    result = [i for i in strings if re.search(find, i, re.IGNORECASE)]
-                else:
-                    result = [i for i in strings if re.search(find, i)]
+                    return [i for i in strings if re.search(find, i, re.IGNORECASE)]
+                return [i for i in strings if re.search(find, i)]
             except Exception as e:
-                print("# Error find_str: in {}: {}. #".format(find, e))
-                result = []
+                print(f"# Error find_str: in {find}: {e}. #")
+                return []
 
-        else:  # search using wildcards.
-            result = []
-            for w in find.split("|"):  # split at pipe chars.
-                w_ = w.strip("*").rstrip(
-                    "*"
-                )  # remove any modifiers from the left and right end chars.
+        result = []
+        find_parts = find.split("|")  # Split multiple search terms
 
-                # modifiers
-                if w.startswith("*") and w.endswith("*"):  # contains
-                    if ignore_case:
-                        result += [
-                            i for i in strings if w_.lower() in i.lower()
-                        ]  # case insensitive.
-                    else:
-                        result += [i for i in strings if w_ in i]
+        for w in find_parts:
+            w_ = w.strip("*").rstrip("*")  # Remove wildcard modifiers
 
-                elif w.startswith("*"):  # prefix
-                    if ignore_case:
-                        result += [
-                            i for i in strings if i.lower().endswith(w_.lower())
-                        ]  # case insensitive.
-                    else:
-                        result += [i for i in strings if i.endswith(w_)]
+            # Apply wildcard search with case-insensitivity while maintaining order
+            for i in strings:
+                check = i.lower() if ignore_case else i
+                term = w_.lower() if ignore_case else w_
 
-                elif w.endswith("*"):  # suffix
-                    if ignore_case:
-                        result += [
-                            i for i in strings if i.lower().startswith(w_.lower())
-                        ]  # case insensitive.
-                    else:
-                        result += [i for i in strings if i.startswith(w_)]
+                if w.startswith("*") and w.endswith("*"):  # Contains
+                    if term in check and i not in result:
+                        result.append(i)
 
-                else:  # exact match
-                    if ignore_case:
-                        result += [
-                            i for i in strings if i.lower() == w_.lower()
-                        ]  # case insensitive.
-                    else:
-                        result += [i for i in strings if i == w_]
+                elif w.startswith("*"):  # Endswith
+                    if check.endswith(term) and i not in result:
+                        result.append(i)
 
-        return result
+                elif w.endswith("*"):  # Startswith
+                    if check.startswith(term) and i not in result:
+                        result.append(i)
+
+                else:  # Exact match
+                    if check == term and i not in result:
+                        result.append(i)
+
+        return result  # Order is now preserved
 
     @classmethod
     def find_str_and_format(

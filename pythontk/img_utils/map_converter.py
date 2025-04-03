@@ -68,118 +68,193 @@ class MapConverterSlots(ImgUtils):
         self.source_dir = FileUtils.format_path(dx_map_path, "path")
 
     def b002(self):
-        """Pack Transparency into Albedo, converting Base Color if necessary."""
+        """Batch pack Transparency into Albedo or converted Base Color."""
         paths = self.sb.file_dialog(
             file_types=self.texture_file_types,
-            title="Select an Albedo (or Base Color) map and a Transparency map:",
+            title="Select one or more sets of Albedo/Base Color and Transparency maps:",
             start_dir=self.source_dir,
             allow_multiple=True,
         )
         if not paths:
             return
-        if len(paths) < 2:
-            raise ValueError(
-                "Please select both an Albedo (or Base Color) map and a Transparency map."
-            )
 
-        albedo_map_path = None
-        alpha_map_path = None
-        base_color_path = None
+        texture_sets = self.group_textures_by_set(paths)
 
-        # Determine file types
-        for path in paths:
-            map_type = self.resolve_map_type(path)
-            if map_type == "Base_Color":
-                base_color_path = path
-            elif map_type == "Albedo_Transparency":
-                albedo_map_path = path
-            elif map_type == "Opacity":
-                alpha_map_path = (
-                    path  # Ensure we correctly identify the transparency map
+        for base_name, files in texture_sets.items():
+            sorted_maps = self.sort_images_by_type(files)
+
+            base_color_path = sorted_maps.get("Base_Color", [None])[0]
+            albedo_map_path = sorted_maps.get("Albedo_Transparency", [None])[0]
+            alpha_map_path = sorted_maps.get("Opacity", [None])[0]
+
+            if not alpha_map_path:
+                print(f"Skipping {base_name}: No Transparency (Opacity) map found.")
+                continue
+
+            if not albedo_map_path and base_color_path:
+                print(
+                    f"Converting {base_color_path} to Albedo before packing transparency..."
                 )
-        if not alpha_map_path:
-            raise FileNotFoundError(
-                "Transparency (Opacity) map not found in the selected files."
-            )
-        # If only Base Color is given, convert it to Albedo
-        if not albedo_map_path and base_color_path:
+                albedo_image = self.ensure_image(base_color_path)
+                metalness_path = self.resolve_texture_filename(
+                    base_color_path, "Metallic"
+                )
+
+                try:
+                    metalness_image = self.ensure_image(metalness_path)
+                    albedo_image = self.convert_base_color_to_albedo(
+                        albedo_image, metalness_image
+                    )
+                except Exception as e:
+                    print(f"// Warning: Could not convert to Albedo: {e}")
+                    albedo_image = albedo_image  # fallback to unconverted
+
+                albedo_map_path = self.resolve_texture_filename(
+                    base_color_path, "Albedo_Transparency"
+                )
+                albedo_image.save(albedo_map_path)
+                print(f"Saved new Albedo map: {albedo_map_path}")
+
+            if not albedo_map_path:
+                print(f"Skipping {base_name}: No Albedo or Base Color map found.")
+                continue
+
             print(
-                f"Converting {base_color_path} to Albedo before packing transparency..."
+                f"Packing transparency from {alpha_map_path} into {albedo_map_path} .."
             )
-            albedo_image = self.ensure_image(base_color_path)
-            metalness_map = self.resolve_texture_filename(base_color_path, "Metallic")
+            packed_path = self.pack_transparency_into_albedo(
+                albedo_map_path, alpha_map_path
+            )
+            print(f"// Result: {packed_path}")
 
-            # Convert Base Color to Albedo using our helper method
-            albedo_image = self.convert_base_color_to_albedo(
-                albedo_image, self.ensure_image(metalness_map)
-            )
-
-            # Save the new Albedo map
-            albedo_map_path = self.resolve_texture_filename(
-                base_color_path, "Albedo_Transparency"
-            )
-            albedo_image.save(albedo_map_path)
-            print(f"Converted Base Color to Albedo: {albedo_map_path}")
-
-        if not albedo_map_path:
-            raise FileNotFoundError(
-                "Neither Albedo nor Base Color map found in the selected files."
-            )
-        print(f"Packing transparency from {alpha_map_path} into {albedo_map_path} ..")
-        # Pack Transparency into Albedo
-        albedo_transparency_map_path = self.pack_transparency_into_albedo(
-            albedo_map_path, alpha_map_path
-        )
-        print(f"// Result: {albedo_transparency_map_path}")
-        self.source_dir = FileUtils.format_path(albedo_transparency_map_path, "path")
+        try:
+            self.source_dir = FileUtils.format_path(paths[0], "path")
+        except Exception:
+            pass
 
     def b003(self):
-        """Pack Smoothness or Roughness into Metallic"""
+        """Batch pack Smoothness or Roughness into Metallic across texture sets."""
         paths = self.sb.file_dialog(
             file_types=self.texture_file_types,
-            title="Select a metallic map and a smoothness or roughness map:",
+            title="Select one or more sets of metallic and smoothness/roughness maps:",
             start_dir=self.source_dir,
             allow_multiple=True,
         )
         if not paths:
             return
-        elif len(paths) < 2:
-            raise ValueError(
-                "Please select both a metallic map and a smoothness or roughness map."
+
+        texture_sets = self.group_textures_by_set(paths)
+
+        for base_name, files in texture_sets.items():
+            sorted_maps = self.sort_images_by_type(files)
+
+            metallic_map_path = sorted_maps.get("Metallic", [None])[0]
+            smooth_map_path = sorted_maps.get("Smoothness", [None])[0]
+            rough_map_path = sorted_maps.get("Roughness", [None])[0]
+
+            if not metallic_map_path:
+                print(f"Skipping {base_name}: No Metallic map found.")
+                continue
+
+            alpha_map_path = smooth_map_path or rough_map_path
+            invert_alpha = rough_map_path is not None
+
+            if not alpha_map_path:
+                print(f"Skipping {base_name}: No Smoothness or Roughness map found.")
+                continue
+
+            print(
+                f"Packing {'Roughness' if invert_alpha else 'Smoothness'} from: {alpha_map_path}\n\tinto: {metallic_map_path} .."
             )
 
-        metallic_map_path = None
-        alpha_map_path = None
-        invert_alpha = False
-
-        for path in paths:
-            map_type = self.resolve_map_type(path)
-            if map_type == "Metallic":
-                metallic_map_path = path
-            elif map_type == "Smoothness":
-                alpha_map_path = path
-                invert_alpha = False
-            elif map_type == "Roughness" and alpha_map_path is None:
-                alpha_map_path = path
-                invert_alpha = True
-
-        if not metallic_map_path:
-            raise FileNotFoundError("Metallic map not found in the selected files.")
-        if not alpha_map_path:
-            raise FileNotFoundError(
-                "Smoothness or Roughness map not found in the selected files."
+            packed_path = self.pack_smoothness_into_metallic(
+                metallic_map_path,
+                alpha_map_path,
+                invert_alpha=invert_alpha,
             )
+            print(f"// Result: {packed_path}")
 
-        print(
-            f"Packing {'smoothness' if not invert_alpha else 'roughness'} from {alpha_map_path} into {metallic_map_path} .."
-        )
-        metallic_smoothness_map_path = self.pack_smoothness_into_metallic(
-            metallic_map_path, alpha_map_path, invert_alpha=invert_alpha
-        )
-        print(f"// Result: {metallic_smoothness_map_path}")
-        self.source_dir = FileUtils.format_path(metallic_smoothness_map_path, "path")
+        try:
+            self.source_dir = FileUtils.format_path(paths[0], "path")
+        except Exception:
+            pass
 
-    def b004(self):
+    def b005(self):
+        """Extract Gloss map from Specular map."""
+        spec_map_path = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select a specular map to extract gloss from:",
+            start_dir=self.source_dir,
+            allow_multiple=False,
+        )
+        if not spec_map_path:
+            return
+
+        print(f"Extracting gloss from {spec_map_path} ..")
+        gloss_image = self.extract_gloss_from_spec(spec_map_path)
+
+        # Resolve the correct gloss texture filename
+        gloss_map_path = self.resolve_texture_filename(
+            spec_map_path, "Gloss", ext="PNG"
+        )
+        # Save gloss map
+        gloss_image.save(gloss_map_path, format="PNG")
+
+        print(f"// Result: {gloss_map_path}")
+        self.source_dir = FileUtils.format_path(gloss_map_path, "path")
+
+    def tb000_init(self, widget):
+        """ """
+        widget.menu.add(
+            "QComboBox",
+            setObjectName="cmb001",
+            setToolTip="Set the output file type.",
+        )
+
+        widget.menu.cmb001.addItems(["PNG", "TGA", "BMP", "JPG", "TIF", "EXR", "HDR"])
+        widget.menu.add(
+            "QComboBox",
+            setObjectName="cmb000",
+            setToolTip="Set the maximum texture size.",
+        )
+        widget.menu.cmb000.addItems(["256", "512", "1024", "2048", "4096", "8192"])
+
+    def tb000(self, widget):
+        """Optimize a texture map(s)"""
+        texture_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select texture map(s) to optimize:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not texture_paths:
+            return
+
+        file_type = widget.menu.cmb001.currentText()
+        max_size = int(widget.menu.cmb000.currentText())
+
+        for texture_path in texture_paths:
+            print(f"Optimizing: {texture_path} ..")
+            optimized_map_path = self.optimize_texture(
+                texture_path,
+                output_type=file_type,
+                max_size=max_size,
+                old_files_folder="old",
+                optimize_bit_depth=True,
+            )
+            print(f"// Result: {optimized_map_path}")
+        self.source_dir = FileUtils.format_path(texture_paths[0], "path")
+
+    def tb001_init(self, widget):
+        """ """
+        widget.menu.add(
+            "QCheckBox",
+            setText="Create MetallicSmoothness map",
+            setObjectName="chk000",
+            setToolTip="Also create a MetallicSmoothness map.",
+        )
+
+    def tb001(self, widget):
         """Batch converts Spec/Gloss maps to PBR Metal/Rough.
 
         User selects multiple texture sets. The function groups them per base name
@@ -196,10 +271,17 @@ class MapConverterSlots(ImgUtils):
         if not spec_map_paths:
             return
 
+        create_metallic_smoothness = widget.menu.chk000.isChecked()
+
         # **Group maps by set using base names**
         texture_sets = self.group_textures_by_set(spec_map_paths)
+        print(f"Found {len(texture_sets)} texture sets:")
+        for key in texture_sets:
+            print(f" - {key}: {texture_sets[key]}")
 
         for base_name, texture_paths in texture_sets.items():
+            print(f"Processing set: {base_name} with {len(texture_paths)} files")
+
             sorted_maps = self.sort_images_by_type(texture_paths)
 
             # Required maps for conversion
@@ -226,63 +308,29 @@ class MapConverterSlots(ImgUtils):
                     glossiness_map = self.create_roughness_from_spec(specular_map)
 
             # Convert to PBR Metal/Rough
-            self.convert_spec_gloss_to_pbr(
+            base_color, metallic, roughness = self.convert_spec_gloss_to_pbr(
                 specular_map,
                 glossiness_map,
                 diffuse_map,
                 output_type="PNG",
                 image_size=4096,
                 optimize_bit_depth=True,
+                write_files=True,
             )
+
+            if create_metallic_smoothness:
+                # Create MetallicSmoothness map
+                metallic_smoothness_map_path = self.pack_smoothness_into_metallic(
+                    metallic, roughness, invert_alpha=True
+                )
+                print(f"// Result: {metallic_smoothness_map_path}")
+
             print(f"Spec/Gloss to PBR conversion complete for {base_name}.")
+
+        try:
             self.source_dir = FileUtils.format_path(specular_map, "path")
-
-    def b005(self):
-        """Extract Gloss map from Specular map."""
-        spec_map_path = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select a specular map to extract gloss from:",
-            start_dir=self.source_dir,
-            allow_multiple=False,
-        )
-        if not spec_map_path:
-            return
-
-        print(f"Extracting gloss from {spec_map_path} ..")
-        gloss_image = self.extract_gloss_from_spec(spec_map_path)
-
-        # Resolve the correct gloss texture filename
-        gloss_map_path = self.resolve_texture_filename(
-            spec_map_path, "Gloss", ext="PNG"
-        )
-        # Save gloss map
-        gloss_image.save(gloss_map_path, format="PNG")
-
-        print(f"// Result: {gloss_map_path}")
-        self.source_dir = FileUtils.format_path(gloss_map_path, "path")
-
-    def b006(self):
-        """Optimize a texture map(s)"""
-        texture_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select texture map(s) to optimize:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
-        )
-        if not texture_paths:
-            return
-
-        for texture_path in texture_paths:
-            print(f"Optimizing: {texture_path} ..")
-            optimized_map_path = self.optimize_texture(
-                texture_path,
-                output_type="PNG",
-                max_size=4096,
-                old_files_folder="old",
-                optimize_bit_depth=True,
-            )
-            print(f"// Result: {optimized_map_path}")
-        self.source_dir = FileUtils.format_path(texture_paths[0], "path")
+        except Exception:
+            pass
 
 
 class MapConverterUi:
@@ -296,7 +344,7 @@ class MapConverterUi:
         ui.set_attributes(WA_TranslucentBackground=True)
         ui.set_flags(FramelessWindowHint=True, WindowStaysOnTopHint=True)
         ui.set_style(theme="dark", style_class="translucentBgWithBorder")
-        ui.header.configure_buttons(
+        ui.header.config_buttons(
             menu_button=True, minimize_button=True, hide_button=True
         )
         return ui
