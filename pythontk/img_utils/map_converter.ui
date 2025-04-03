@@ -160,13 +160,7 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
             </size>
            </property>
            <property name="toolTip">
-            <string>&lt;b&gt;Pack Transparency into Albedo&lt;/b&gt;&lt;br&gt;
-Combines a &lt;b&gt;Transparency (Opacity)&lt;/b&gt; map into the &lt;b&gt;Albedo&lt;/b&gt; map.&lt;br&gt;&lt;br&gt;
-&lt;b&gt;Usage:&lt;/b&gt; Select an &lt;b&gt;Albedo&lt;/b&gt; and an &lt;b&gt;Opacity&lt;/b&gt; map.&lt;br&gt;&lt;br&gt;
-- If an existing &lt;b&gt;Albedo Transparency&lt;/b&gt; map of the same name is found, it will be &lt;b&gt;overwritten&lt;/b&gt;.&lt;br&gt;
-- If a &lt;b&gt;BaseColor&lt;/b&gt; map is provided, it will be converted to &lt;b&gt;Albedo&lt;/b&gt;.
-
-</string>
+            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Pack Transparency into Albedo&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=&quot; font-weight:600;&quot;&gt;Transparency (Opacity)&lt;/span&gt; map into the &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select an &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt; and an &lt;span style=&quot; font-weight:600;&quot;&gt;Opacity&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo Transparency&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;br/&gt;- If a &lt;span style=&quot; font-weight:600;&quot;&gt;BaseColor&lt;/span&gt; map is provided, it will be converted to &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
            </property>
            <property name="text">
             <string>Albedo Transparency</string>
@@ -191,10 +185,7 @@ Combines a &lt;b&gt;Transparency (Opacity)&lt;/b&gt; map into the &lt;b&gt;Albed
             </size>
            </property>
            <property name="toolTip">
-            <string>&lt;b&gt;Pack Smoothness or Roughness into Metallic&lt;/b&gt;&lt;br&gt;
-Combines a &lt;b&gt;Smoothness&lt;/b&gt; or &lt;b&gt;Roughness&lt;/b&gt; map into the &lt;b&gt;Metallic&lt;/b&gt; map.&lt;br&gt;&lt;br&gt;
-&lt;b&gt;Usage:&lt;/b&gt; Select a &lt;b&gt;Roughness&lt;/b&gt; and a &lt;b&gt;Metallic&lt;/b&gt; map.&lt;br&gt;&lt;br&gt;
-- If an existing &lt;b&gt;Metallic Smoothness&lt;/b&gt; map of the same name is found, it will be &lt;b&gt;overwritten&lt;/b&gt;.</string>
+            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Pack Smoothness or Roughness into Metallic&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=&quot; font-weight:600;&quot;&gt;Smoothness&lt;/span&gt; or &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map into the &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; and a &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
            </property>
            <property name="text">
             <string>Metallic Smoothness</string>
@@ -219,14 +210,7 @@ Combines a &lt;b&gt;Smoothness&lt;/b&gt; or &lt;b&gt;Roughness&lt;/b&gt; map int
             </size>
            </property>
            <property name="toolTip">
-            <string>&lt;b&gt;Convert Specular Glossiness to PBR&lt;/b&gt;&lt;br&gt;
-Converts Specular Glossiness map(s) to &lt;b&gt;PBR&lt;/b&gt; format.&lt;br&gt;&lt;br&gt;
-&lt;b&gt;Usage:&lt;/b&gt; Select &lt;b&gt;Diffuse, Specular,&lt;/b&gt; and &lt;b&gt;Glossiness&lt;/b&gt; maps.&lt;br&gt;&lt;br&gt;
-- If no &lt;b&gt;Glossiness&lt;/b&gt; map is provided, it will attempt to extract it from the &lt;b&gt;Specular&lt;/b&gt; map.&lt;br&gt;
-- If extraction fails, the &lt;b&gt;Roughness&lt;/b&gt; map will be approximated using the &lt;b&gt;Specular&lt;/b&gt; map.&lt;br&gt;
-- If existing &lt;b&gt;BaseColor, Metallic,&lt;/b&gt; and &lt;b&gt;Roughness&lt;/b&gt; maps of the same name are found, they will be &lt;b&gt;overwritten&lt;/b&gt;.
-
-</string>
+            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Convert Specular Glossiness to PBR&lt;/span&gt;&lt;br/&gt;Converts Specular Glossiness map(s) to &lt;span style=&quot; font-weight:600;&quot;&gt;PBR&lt;/span&gt; format.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select &lt;span style=&quot; font-weight:600;&quot;&gt;Diffuse, Specular,&lt;/span&gt; and &lt;span style=&quot; font-weight:600;&quot;&gt;Glossiness&lt;/span&gt; maps.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If no &lt;span style=&quot; font-weight:600;&quot;&gt;Glossiness&lt;/span&gt; map is provided, it will attempt to extract it from the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If extraction fails, the &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map will be approximated using the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If existing &lt;span style=&quot; font-weight:600;&quot;&gt;BaseColor, Metallic,&lt;/span&gt; and &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; maps of the same name exist, they will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
            </property>
            <property name="text">
             <string>Spec Gloss to PBR</string>
