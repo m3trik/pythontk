@@ -17,22 +17,24 @@ class FileUtils(core_utils.HelpMixin):
     """ """
 
     @staticmethod
-    def is_valid(filepath: str) -> list:
-        """Determine if the given file or dir is valid.
+    def is_valid(filepath: str, expected_type: Optional[str] = None) -> bool:
+        """Check if a path is valid, optionally requiring a specific type ('file' or 'dir').
 
         Parameters:
-            filepath (str): The path to a file.
+            filepath (str): Path to check.
+            expected_type (str, optional): Required type ('file' or 'dir').
 
         Returns:
-            (str) The path type (ie. 'file' or 'dir') or None.
+            bool: True if valid (and matches type if given), False otherwise.
         """
-        fp = os.path.expandvars(filepath)  # convert any env variables to their values.
+        fp = os.path.expandvars(filepath)
 
-        if os.path.isfile(fp):
-            return "file"
-        elif os.path.isdir(fp):
-            return "dir"
-        return None
+        if expected_type == "file":
+            return os.path.isfile(fp)
+        elif expected_type == "dir":
+            return os.path.isdir(fp)
+        else:
+            return os.path.exists(fp)
 
     @staticmethod
     def create_dir(filepath: str) -> None:
@@ -251,54 +253,73 @@ class FileUtils(core_utils.HelpMixin):
         shutil.copy2(file_path, destination_path)
         return destination_path
 
-    @staticmethod
+    @classmethod
     def move_file(
-        file_path: str,
+        cls,
+        file_path: Union[str, List[Union[str, Tuple[str, str]]]],
         destination: str,
-        new_name: str = None,
+        new_name: Optional[str] = None,
         overwrite: bool = True,
         create_dir: bool = True,
-    ) -> str:
-        """Moves a file to a specified folder, ensuring the folder exists.
+        verbose: bool = False,
+    ) -> Union[str, List[str]]:
+        """Moves one or more files to a specified folder.
 
         Parameters:
-            file_path (str): The path to the file to be moved.
-            destination (str): The folder where the file should be moved.
-            new_name (str, optional): Rename the file during the move. Defaults to keeping the original name.
-            overwrite (bool, optional): Whether to overwrite an existing file in the destination. Defaults to True.
-            create_dir (bool, optional): Whether to create the folder if it doesn't exist. Defaults to True.
+            file_path (str | list): File path or list of file paths (or (dir, filename) tuples).
+            destination (str): Folder to move files into.
+            new_name (str, optional): Rename a single file. Ignored when moving multiple files.
+            overwrite (bool): Whether to overwrite existing files.
+            create_dir (bool): Create the destination folder if it doesn't exist.
+            verbose (bool): Print each move result.
 
         Returns:
-            str: The new path of the moved file.
-
-        Raises:
-            FileNotFoundError: If the source file does not exist.
-            FileExistsError: If overwrite=False and the destination file already exists.
+            str | list: New file path(s).
         """
         import shutil
 
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+        file_paths = iter_utils.IterUtils.make_iterable(file_path)
+        results = []
 
-        # Ensure the destination folder exists
         if create_dir:
             os.makedirs(destination, exist_ok=True)
 
-        # Determine new file path
-        file_name = new_name if new_name else os.path.basename(file_path)
-        destination_path = os.path.join(destination, file_name)
-
-        # Handle overwriting behavior
-        if os.path.exists(destination_path):
-            if overwrite:
-                os.remove(destination_path)
+        for entry in file_paths:
+            if isinstance(entry, tuple):
+                dir_path, filename = entry
+                src_path = os.path.join(dir_path, filename).replace("\\", "/")
             else:
-                raise FileExistsError(f"File already exists: {destination_path}")
+                src_path = entry.replace("\\", "/")
 
-        # Move the file
-        shutil.move(file_path, destination_path)
+            if not os.path.exists(src_path):
+                raise FileNotFoundError(f"File not found: {src_path}")
 
-        return destination_path
+            name = (
+                new_name
+                if isinstance(file_path, str) and new_name
+                else os.path.basename(src_path)
+            )
+            dst_path = os.path.join(destination, name)
+
+            if os.path.exists(dst_path):
+                if overwrite:
+                    os.remove(dst_path)
+                else:
+                    raise FileExistsError(f"File already exists: {dst_path}")
+
+            shutil.move(src_path, dst_path)
+            dst_path = dst_path.replace("\\", "/")
+
+            if verbose:
+                print(f"Moved: {src_path} -> {dst_path}")
+
+            results.append(dst_path)
+
+        return (
+            results[0]
+            if isinstance(file_path, str) and not isinstance(file_path, (list, tuple))
+            else results
+        )
 
     @classmethod
     def get_file_info(cls, paths, info, hash_algo=None, force_tuples=False):

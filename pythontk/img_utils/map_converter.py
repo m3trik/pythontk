@@ -68,7 +68,7 @@ class MapConverterSlots(ImgUtils):
         self.source_dir = FileUtils.format_path(dx_map_path, "path")
 
     def b002(self):
-        """Batch pack Transparency into Albedo or converted Base Color."""
+        """Batch pack Transparency into Albedo across texture sets."""
         paths = self.sb.file_dialog(
             file_types=self.texture_file_types,
             title="Select one or more sets of Albedo/Base Color and Transparency maps:",
@@ -83,47 +83,28 @@ class MapConverterSlots(ImgUtils):
         for base_name, files in texture_sets.items():
             sorted_maps = self.sort_images_by_type(files)
 
-            base_color_path = sorted_maps.get("Base_Color", [None])[0]
             albedo_map_path = sorted_maps.get("Albedo_Transparency", [None])[0]
-            alpha_map_path = sorted_maps.get("Opacity", [None])[0]
+            base_color_path = sorted_maps.get("Base_Color", [None])[0]
+            opacity_map_path = sorted_maps.get("Opacity", [None])[0]
 
-            if not alpha_map_path:
-                print(f"Skipping {base_name}: No Transparency (Opacity) map found.")
-                continue
-
-            if not albedo_map_path and base_color_path:
-                print(
-                    f"Converting {base_color_path} to Albedo before packing transparency..."
-                )
-                albedo_image = self.ensure_image(base_color_path)
-                metalness_path = self.resolve_texture_filename(
-                    base_color_path, "Metallic"
-                )
-
-                try:
-                    metalness_image = self.ensure_image(metalness_path)
-                    albedo_image = self.convert_base_color_to_albedo(
-                        albedo_image, metalness_image
-                    )
-                except Exception as e:
-                    print(f"// Warning: Could not convert to Albedo: {e}")
-                    albedo_image = albedo_image  # fallback to unconverted
-
-                albedo_map_path = self.resolve_texture_filename(
-                    base_color_path, "Albedo_Transparency"
-                )
-                albedo_image.save(albedo_map_path)
-                print(f"Saved new Albedo map: {albedo_map_path}")
-
-            if not albedo_map_path:
+            if not (albedo_map_path or base_color_path):
                 print(f"Skipping {base_name}: No Albedo or Base Color map found.")
                 continue
 
+            if not opacity_map_path:
+                print(f"Skipping {base_name}: No Transparency (Opacity) map found.")
+                continue
+
+            rgb_map_path = albedo_map_path or base_color_path
+
             print(
-                f"Packing transparency from {alpha_map_path} into {albedo_map_path} .."
+                f"Packing Transparency from: {opacity_map_path}\n\tinto: {rgb_map_path} .."
             )
+
             packed_path = self.pack_transparency_into_albedo(
-                albedo_map_path, alpha_map_path
+                rgb_map_path,
+                opacity_map_path,
+                invert_alpha=False,
             )
             print(f"// Result: {packed_path}")
 
@@ -342,7 +323,7 @@ class MapConverterUi:
         ui = sb.loaded_ui.map_converter
 
         ui.set_attributes(WA_TranslucentBackground=True)
-        ui.set_flags(FramelessWindowHint=True, WindowStaysOnTopHint=True)
+        ui.set_flags(FramelessWindowHint=True)
         ui.set_style(theme="dark", style_class="translucentBgWithBorder")
         ui.header.config_buttons(
             menu_button=True, minimize_button=True, hide_button=True

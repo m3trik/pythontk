@@ -23,6 +23,10 @@ class SingletonMixin:
 
     _instances = {}
 
+    def __init__(self, *args, **kwargs):
+        # Avoid calling object.__init__ with extra args
+        pass
+
     def __new__(cls, *args, **kwargs):
         if cls not in cls._instances:
             instance = super().__new__(cls)

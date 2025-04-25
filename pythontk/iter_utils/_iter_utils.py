@@ -10,34 +10,30 @@ class IterUtils(core_utils.HelpMixin):
     """ """
 
     @staticmethod
-    def make_iterable(x: Any) -> Iterable:
+    def make_iterable(x: Any, snapshot: bool = False) -> Iterable:
         """Convert the given object to an iterable, unless it's a string, bytes, or bytearray.
 
         Parameters:
-            x (Any): The object to convert to an iterable if not already a list, set, tuple, dict_values or range.
+            x (Any): The object to convert to an iterable.
+            snapshot (bool): If True, return a list snapshot to avoid modification during iteration.
 
         Returns:
-            Iterable: An iterable representation of the input.
+            Iterable: An iterable or snapshot of the input.
         """
         from collections.abc import Iterable as ABCIterable
 
-        # Handle None case
         if x is None:
             return ()
 
-        # Check for special types
         if hasattr(x, "__apimfn__") or isinstance(x, (str, bytes, bytearray)):
             return (x,)
 
-        # Convert map, filter, zip to list
-        elif isinstance(x, (map, filter, zip)):
+        if isinstance(x, (map, filter, zip)):
             return list(x)
 
-        # Return if already iterable
-        elif isinstance(x, ABCIterable):
-            return x
+        if isinstance(x, ABCIterable):
+            return list(x) if snapshot else x
 
-        # Default case
         return (x,)
 
     @classmethod

@@ -1,7 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import os
-from typing import List, Tuple, Dict, Union, Any
+from typing import List, Tuple, Dict, Union, Any, Optional
 
 try:
     import numpy as np
@@ -868,24 +868,25 @@ class ImgUtils(core_utils.HelpMixin):
         cls,
         image: Union[str, Image.Image],
         alpha: Union[str, Image.Image],
-        output_path: str = None,
+        output_path: Optional[str] = None,
         invert_alpha: bool = False,
         resize_alpha: bool = True,
+        preserve_existing_alpha: bool = False,
     ) -> str:
         """Packs a channel from the alpha source image into the alpha channel of the base image.
-        Optionally inverts the alpha source image.
 
         Parameters:
-            image (str/Image.Image): Base texture map.
-            alpha (str/Image.Image): Map to pack into the alpha channel.
-            output_path (str, optional): Path to save the result. Defaults to overwrite if image is a path.
-            invert_alpha (bool): Invert the alpha source image before packing.
-            resize_alpha (bool): If True, auto-resizes alpha map to match base.
+            image (str | Image.Image): Base texture (albedo).
+            alpha (str | Image.Image): Transparency map to pack into the alpha channel.
+            output_path (str, optional): Output path. If None, overwrites the input image path.
+            invert_alpha (bool): Invert the alpha source before packing.
+            resize_alpha (bool): Resize the alpha to match the base if needed.
+            preserve_existing_alpha (bool): If True, multiply existing alpha with the new alpha.
 
         Returns:
-            str: Path to the saved image with alpha channel packed.
+            str: Path to the saved image.
         """
-        base_img = cls.ensure_image(image)
+        base_img = cls.ensure_image(image, mode="RGB")
         alpha_img = cls.ensure_image(alpha)
 
         if invert_alpha:
@@ -903,19 +904,22 @@ class ImgUtils(core_utils.HelpMixin):
                 f"Alpha image size {alpha_img.size} does not match base {base_img.size} and resize is disabled."
             )
 
-        if base_img.mode in ["L", "LA"]:
-            base_img = base_img.convert("LA")
-            combined_img = Image.merge("LA", (base_img.getchannel(0), alpha_img))
+        base_img = base_img.convert("RGBA")
+        r, g, b, existing_alpha = base_img.split()
+
+        if preserve_existing_alpha:
+            alpha_combined = ImageChops.multiply(existing_alpha, alpha_img)
         else:
-            base_img = base_img.convert("RGBA")
-            combined_img = Image.merge("RGBA", (*base_img.split()[:3], alpha_img))
+            alpha_combined = alpha_img
+
+        combined_img = Image.merge("RGBA", (r, g, b, alpha_combined))
 
         if not output_path:
             if isinstance(image, str):
                 output_path = image
             else:
                 raise ValueError(
-                    "Output path must be provided when using Image objects directly"
+                    "Output path must be provided when using Image objects directly."
                 )
 
         combined_img.save(output_path)
@@ -926,23 +930,24 @@ class ImgUtils(core_utils.HelpMixin):
         cls,
         albedo_map_path: str,
         alpha_map_path: str,
-        output_dir: str = None,
-        suffix: str = "_AlbedoTransparency",
+        output_dir: Optional[str] = None,
+        suffix: Optional[str] = "_AlbedoTransparency",
         invert_alpha: bool = False,
     ) -> str:
-        """Combines an albedo texture with a transparency map by packing the transparency information into the alpha channel of the albedo texture.
+        """Combines an albedo texture with a transparency map by packing the transparency into the alpha channel.
 
         Parameters:
             albedo_map_path (str): Path to the albedo (base color) texture map.
-            alpha_map_path (str): Path to the transparency texture map.
-            output_dir (str, optional): Directory path for the output. If None, the output directory will be the same as the albedo map path.
-            invert_alpha (bool, optional): If True, the alpha (transparency) texture will be inverted.
-            suffix (str, optional): Suffix for the output file name, defaulting to '_AlbedoTransparency'.
+            alpha_map_path (str): Path to the transparency (alpha) texture map.
+            output_dir (str, optional): Output directory. If None, uses the albedo map directory.
+            suffix (str, optional): Suffix for the output file name. Defaults to '_AlbedoTransparency'.
+            invert_alpha (bool, optional): If True, inverts the alpha texture.
 
         Returns:
-            str: The file path of the newly created albedo-transparency texture map.
+            str: The output file path.
         """
         base_name = cls.get_base_texture_name(albedo_map_path)
+
         if output_dir is None:
             output_dir = os.path.dirname(albedo_map_path)
         elif not os.path.isdir(output_dir):
@@ -953,7 +958,10 @@ class ImgUtils(core_utils.HelpMixin):
         output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
 
         success = cls.pack_channel_into_alpha(
-            albedo_map_path, alpha_map_path, output_path, invert_alpha=invert_alpha
+            albedo_map_path,
+            alpha_map_path,
+            output_path,
+            invert_alpha=invert_alpha,
         )
 
         if success:
