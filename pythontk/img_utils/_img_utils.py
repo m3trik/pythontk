@@ -127,6 +127,8 @@ class ImgUtils(core_utils.HelpMixin):
         "I;16BS": 16,
         "I;16LS": 16,
         "RGB": 24,
+        "RGBA": 32,
+        "CMYK": 32,
         "YCbCr": 24,
         "LAB": 24,
         "HSV": 24,
@@ -138,8 +140,6 @@ class ImgUtils(core_utils.HelpMixin):
         "I;32S": 32,
         "I;32BS": 32,
         "I;32LS": 32,
-        "RGBA": 32,
-        "CMYK": 32,
     }
 
     @staticmethod
