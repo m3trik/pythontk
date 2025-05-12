@@ -5,7 +5,7 @@ import os
 import re
 import json
 import traceback
-from typing import Union, List, Dict, Tuple, Optional
+from typing import Union, List, Dict, Tuple, Optional, Any
 
 # From this package:
 from pythontk import core_utils
@@ -782,21 +782,20 @@ class FileUtils(core_utils.HelpMixin):
         Parameters:
             path (str): The path to the directory or Python file to scan for classes.
             returned_type (str/list): A single string or a list of strings representing the type of information to return.
-                 Supported options are:
-                 - classname: Returns the name of the class.
-                 - classobj: Returns the class object.
-                 - file: Returns the name of the file including extension (if it's a file).
-                 - filename: Returns the name of the file excluding extension (if it's a file).
-                 - filepath: Returns the file path of the Python file where the class is defined.
-                 - module: Returns the module object where the class is defined.
+                Supported options are:
+                - classname: Returns the name of the class.
+                - classobj: Returns the class object.
+                - file: Returns the name of the file including extension (if it's a file).
+                - filename: Returns the name of the file excluding extension (if it's a file).
+                - filepath: Returns the file path of the Python file where the class is defined.
+                - module: Returns the module object where the class is defined.
             inc (list, optional): A list of class names to include in the results.
             exc (list, optional): A list of class names to exclude from the results.
-            top_level_only (bool, optional): If True, only retrieves top-level classes. If False, retrieves all classes within the specified path. Default is True.
-            force_tuples (bool, optional): If True, ensures that the result is always returned as tuples even if only one item is specified in `returned_type`. If False, returns single values as is without wrapping in a tuple. Default is False.
+            top_level_only (bool, optional): If True, only retrieves top-level classes. If False, retrieves all classes within the specified path.
+            force_tuples (bool, optional): If True, ensures that the result is always returned as tuples even if only one item is specified in `returned_type`.
 
         Returns:
             list: A list of tuples, where each tuple contains information about a class found in the Python files in the directory or Python file.
-            The types of information in each tuple are determined by the `returned_type` parameter. If `force_tuples` is False and only one item is specified in `returned_type`, the results may be returned as single values instead of tuples.
 
         Raises:
             FileNotFoundError: If the provided path does not exist or is not a directory or Python file.
@@ -804,6 +803,8 @@ class FileUtils(core_utils.HelpMixin):
         """
         import ast
         import importlib.util
+        import sys
+        from pathlib import Path
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"Path {path} doesn't exist")
@@ -849,7 +850,7 @@ class FileUtils(core_utils.HelpMixin):
                         if isinstance(node, ast.ClassDef)
                     ]
 
-            module_name = filename.rstrip(".py")
+            module_name = Path(filename).stem
             spec = importlib.util.spec_from_file_location(module_name, filepath)
             module_obj = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module_obj
