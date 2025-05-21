@@ -864,6 +864,73 @@ class ImgUtils(core_utils.HelpMixin):
         return Image.fromarray(data)
 
     @classmethod
+    def pack_channels(
+        cls,
+        channel_files: dict[str, str | Image.Image],
+        channels: list[str] = None,
+        out_mode: str = None,
+        fill_values: dict[str, int] = None,
+        output_path: str = None,
+        output_format: str = "PNG",
+    ) -> str | Image.Image:
+        """
+        Packs up to 4 grayscale images into R, G, B, A channels of a single image.
+
+        Parameters:
+            channel_files (dict): {"R": image, "G": image, "B": image, "A": image} (values can be None).
+            channels (list): Channel order, default ["R","G","B","A"].
+            out_mode (str): "RGB" or "RGBA". If None, uses "RGBA" if "A" present, else "RGB".
+            fill_values (dict): Per-channel fallback, default: 0 for RGB, 255 for A.
+            output_path (str): If given, saves image and returns path.
+            output_format (str): Save format, e.g., "png", "tga".
+
+        Returns:
+            str: Output path if saving, else PIL.Image.Image.
+        """
+        if channels is None:
+            channels = ["R", "G", "B", "A"]
+        if fill_values is None:
+            fill_values = {ch: 0 for ch in "RGB"}
+            fill_values["A"] = 255
+
+        # Determine if we need alpha
+        has_alpha = bool(channel_files.get("A"))
+        out_mode = out_mode or ("RGBA" if has_alpha else "RGB")
+        n_channels = 4 if out_mode == "RGBA" else 3
+
+        # Get first valid image for sizing
+        first_file = next(
+            (f for f in (channel_files.get(ch) for ch in channels) if f), None
+        )
+        if first_file is None:
+            raise ValueError("No input images provided")
+        size = cls.ensure_image(first_file).size
+
+        # Build bands with best practice: if only R present, copy to G/B
+        bands = []
+        r_img = (
+            cls.ensure_image(channel_files.get("R"), mode="L").resize(size)
+            if channel_files.get("R")
+            else None
+        )
+        for idx, ch in enumerate(channels[:n_channels]):
+            img = channel_files.get(ch)
+            if img:
+                band = cls.ensure_image(img, mode="L").resize(size)
+            elif ch in "GB" and r_img is not None:
+                # Copy R into G/B if missing
+                band = r_img
+            else:
+                band = cls.create_image("L", size, color=fill_values.get(ch, 0))
+            bands.append(band)
+        img = Image.merge(out_mode, bands)
+
+        if output_path:
+            img.save(output_path, format=output_format)
+            return output_path
+        return img
+
+    @classmethod
     def pack_channel_into_alpha(
         cls,
         image: Union[str, Image.Image],
@@ -1505,6 +1572,50 @@ class ImgUtils(core_utils.HelpMixin):
             f"Saved optimized texture: {optimized_texture_path} ({image.size[0]}x{image.size[1]})"
         )
         return optimized_texture_path
+
+    @staticmethod
+    def get_converted_map(map_type: str, available: dict) -> Optional[Any]:
+        """Get the converted map based on the given map type and available maps.
+
+        Parameters:
+            map_type (str): The type of map to convert.
+            available (dict): A dictionary of available maps.
+                Keys are map types and values are the corresponding images.
+                Example: {"Base_Color": image, "Roughness": image, ...}
+        Returns:
+            Optional[Any]: The converted map or None if not available.
+        """
+        # Smoothness <-> Roughness
+        if map_type == "Smoothness" and "Roughness" in available:
+            rough = available["Roughness"]
+            return ImgUtils.invert_grayscale_image(rough)
+        if map_type == "Roughness" and "Smoothness" in available:
+            smooth = available["Smoothness"]
+            return ImgUtils.invert_grayscale_image(smooth)
+        # Glossiness <-> Roughness
+        if map_type == "Glossiness" and "Roughness" in available:
+            rough = available["Roughness"]
+            return ImgUtils.invert_grayscale_image(rough)
+        if map_type == "Roughness" and "Glossiness" in available:
+            gloss = available["Glossiness"]
+            return ImgUtils.invert_grayscale_image(gloss)
+        # Glossiness <-> Smoothness
+        if map_type == "Smoothness" and "Glossiness" in available:
+            gloss = available["Glossiness"]
+            return ImgUtils.invert_grayscale_image(gloss)
+        if map_type == "Glossiness" and "Smoothness" in available:
+            smooth = available["Smoothness"]
+            return ImgUtils.invert_grayscale_image(smooth)
+        # AO from Base_Color
+        if map_type == "Ambient_Occlusion" and "Base_Color" in available:
+            color = available["Base_Color"]
+            return ImgUtils.ensure_image(color, "L")
+        # Normal DirectX <-> OpenGL
+        if map_type == "Normal_DirectX" and "Normal_OpenGL" in available:
+            return ImgUtils.create_dx_from_gl(available["Normal_OpenGL"])
+        if map_type == "Normal_OpenGL" and "Normal_DirectX" in available:
+            return ImgUtils.create_gl_from_dx(available["Normal_DirectX"])
+        return None
 
 
 # --------------------------------------------------------------------------------------------

@@ -315,6 +315,7 @@ class IterUtils(core_utils.HelpMixin):
         check_unmapped: bool = False,
         nested_as_unit: bool = False,
         basename_only: bool = False,
+        ignore_case: bool = False,
     ) -> List:
         """Filters the given list based on inclusion/exclusion criteria using shell-style wildcards. This method can also apply
         the filter to nested structures like lists, tuples, or sets. If 'nested_as_unit' is True, then the entire structure is
@@ -342,6 +343,8 @@ class IterUtils(core_utils.HelpMixin):
             nested_as_unit (bool, optional): Whether to consider the entire nested structure as a single entity for filtering.
                 If True, the entire nested structure will be included or excluded if any of its elements match the inclusion or exclusion criteria.
             basename_only (bool, optional): Use only the base name of the file paths when filtering.
+            ignore_case (bool, optional): If True, the matching will be case-insensitive.
+                This applies to string patterns in both `inc` and `exc` lists.
 
         Returns:
             list: The filtered list.
@@ -355,11 +358,22 @@ class IterUtils(core_utils.HelpMixin):
         def match_item(item: Union[str, int], patterns: List[Union[str, int]]) -> bool:
             for pattern in patterns:
                 check_item = os.path.basename(str(item)) if basename_only else str(item)
+
+                # Safe case normalization only if both are strings
+                if (
+                    ignore_case
+                    and isinstance(pattern, str)
+                    and isinstance(check_item, str)
+                ):
+                    check_item = check_item.lower()
+                    pattern = pattern.lower()
+
                 match_result = (
                     fnmatchcase(check_item, pattern)
                     if isinstance(pattern, str)
                     else item == pattern
                 )
+
                 if match_result:
                     return True
             return False
