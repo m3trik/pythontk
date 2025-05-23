@@ -1,3 +1,4 @@
+import weakref
 from typing import Callable, Optional, Any
 from pythontk.core_utils import LoggingMixin
 
@@ -27,19 +28,18 @@ class NamespaceHandler(LoggingMixin):
         owner: Any,
         identifier: str = None,
         resolver: Optional[Callable[[str], Any]] = None,
+        use_weakref: bool = False,
         log_level: str = "WARNING",
     ):
-        # Set logger level
         self.logger.setLevel(log_level)
-        self.logger.debug(f"Initializing for '{identifier}'")
-
-        # Store identifier for logging or tracking
         self.__dict__["_identifier"] = identifier
-
-        # Assign attributes directly to __dict__ to avoid infinite recursion
-        self.__dict__["_attributes"] = {}
         self.__dict__["_resolver"] = resolver
         self.__dict__["_owner"] = owner
+        self.__dict__["_use_weakref"] = use_weakref
+        if use_weakref:
+            self.__dict__["_attributes"] = weakref.WeakValueDictionary()
+        else:
+            self.__dict__["_attributes"] = {}
 
     def __contains__(self, key: str) -> bool:
         """Explicit containment check for NamespaceHandler."""
@@ -87,13 +87,21 @@ class NamespaceHandler(LoggingMixin):
         )
 
     def __setattr__(self, name: str, value: Any):
-        """
-        Handles setting attributes safely without causing recursion.
-        """
         if name.startswith("_"):
-            self.__dict__[name] = value  # Directly set internal attributes
+            self.__dict__[name] = value
         else:
-            self.__dict__["_attributes"][name] = value  # Store in attributes
+            if self.__dict__.get("_use_weakref", False):
+                try:
+                    self.__dict__["_attributes"][name] = value
+                except TypeError:
+                    # Not weakref-able; store as strong reference
+                    self.logger.debug(
+                        f"{type(value)} is not weakref-able, storing strong ref."
+                    )
+                    # WeakValueDictionary stores refs in .data attribute
+                    self.__dict__["_attributes"].data[name] = value
+            else:
+                self.__dict__["_attributes"][name] = value
 
     def __getitem__(self, key: str) -> Any:
         try:
@@ -106,10 +114,7 @@ class NamespaceHandler(LoggingMixin):
             raise
 
     def __setitem__(self, key: str, value: Any):
-        self.logger.debug(
-            f"[{self.__dict__.get('_identifier')}] __setitem__ called for '{key}' with value '{value}'"
-        )
-        self.__dict__["_attributes"][key] = value
+        self.__setattr__(key, value)
 
     def setdefault(self, name: str, default: Any = None) -> Any:
         """
