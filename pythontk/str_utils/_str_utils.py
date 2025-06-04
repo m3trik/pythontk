@@ -602,31 +602,31 @@ class StrUtils(core_utils.CoreUtils):
             except re.error:
                 return False
 
-        try:
-            s = string.split("|")[-1]
-        except Exception:
-            s = string.split("|")[-1]
+        # Always operate on the last pipe segment (Maya naming)
+        s = string.split("|")[-1]
 
-        if strip:  # Strip each set of chars in 'strip' from end of string.
+        if strip:
             strip_items = iter_utils.IterUtils.make_iterable(strip)
             for pattern in strip_items:
-                if isinstance(pattern, str) and is_regex(pattern):
+                if isinstance(pattern, str) and is_regex(pattern) and len(pattern) > 1:
+                    # Only treat as regex if it is a pattern (not a simple suffix string)
                     s = re.sub(pattern, "", s)
                 else:
+                    # Standard: strip all occurrences of this suffix from the end
                     while s.endswith(pattern):
-                        s = s.rstrip(pattern)
-        while (
-            ((s[-1] == "_" or s[-1].isdigit()) and strip_trailing_ints)
-            or ("_" in s and (s == "_" or s[-1].isupper()))
-            and strip_trailing_alpha
-        ):
-            # Trailing underscore and integers.
-            if (s[-1] == "_" or s[-1].isdigit()) and strip_trailing_ints:
-                s = re.sub(re.escape(s[-1:]) + "$", "", s)
+                        s = s[: -len(pattern)]
 
-            # Trailing underscore and uppercase alphanumeric char.
-            if ("_" in s and (s == "_" or s[-1].isupper())) and strip_trailing_alpha:
-                s = re.sub(re.escape(s[-1:]) + "$", "", s)
+        # Strip trailing ints or uppercase alphas if requested
+        while True:
+            stripped = False
+            if strip_trailing_ints and s and s[-1].isdigit():
+                s = re.sub(r"\d+$", "", s)
+                stripped = True
+            if strip_trailing_alpha and s and s[-1].isupper():
+                s = re.sub(r"[A-Z]+$", "", s)
+                stripped = True
+            if not stripped:
+                break
 
         return s + suffix
 

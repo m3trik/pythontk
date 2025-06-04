@@ -194,6 +194,22 @@ class ImgUtils(core_utils.HelpMixin):
         return image.convert(mode) if mode else image
 
     @staticmethod
+    def assert_pathlike(obj: object, name: str = "argument") -> None:
+        """Assert that the given object is a valid path-like object.
+
+        Parameters:
+            obj (object): The object to check.
+            name (str): The name of the argument for error messages.
+
+        Raises:
+            TypeError: If obj is not str, bytes, or os.PathLike.
+        """
+        if not isinstance(obj, (str, bytes, os.PathLike)):
+            raise TypeError(
+                f"Expected {name} as str, bytes, or os.PathLike, got {type(obj).__name__}"
+            )
+
+    @staticmethod
     def create_image(mode, size=(4096, 4096), color=None):
         """Create a new image.
 
@@ -231,6 +247,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             (PIL.Image.Image) A copy of the loaded image object.
         """
+        cls.assert_pathlike(filepath, "filepath")
+
         with Image.open(filepath) as im:
             return im.copy()
 
@@ -252,6 +270,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             (dict) {<full file path>:<image object>}
         """
+        cls.assert_pathlike(directory, "directory")
+
         images = {}
         for f in file_utils.FileUtils.get_dir_contents(
             directory, "filepath", inc_files=inc, exc_files=exc
@@ -277,6 +297,7 @@ class ImgUtils(core_utils.HelpMixin):
         Raises:
             ValueError: If the map type is not the expected type when 'validate' is provided.
         """
+        cls.assert_pathlike(file, "file")
         filename = file_utils.FileUtils.format_path(file, "name")
 
         if key:
@@ -317,7 +338,7 @@ class ImgUtils(core_utils.HelpMixin):
         map_type: str,
         prefix: str = None,
         suffix: str = None,
-        ext: str = None,  # Changed from output_type to ext
+        ext: str = None,
     ) -> str:
         """Generates a correctly formatted filename while preserving the original suffix and file extension.
 
@@ -331,6 +352,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             str: The resolved output file path.
         """
+        cls.assert_pathlike(texture_path, "texture_path")
+
         # Extract sections from the given path
         directory = file_utils.FileUtils.format_path(texture_path, "path")
         base_name = cls.get_base_texture_name(texture_path)
@@ -366,10 +389,7 @@ class ImgUtils(core_utils.HelpMixin):
         """
         import re
 
-        if not isinstance(filepath_or_filename, (str, bytes, os.PathLike)):
-            raise TypeError(
-                f"Expected str, bytes, or os.PathLike, got {type(filepath_or_filename).__name__}"
-            )
+        cls.assert_pathlike(filepath_or_filename, "filepath_or_filename")
 
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
@@ -1013,6 +1033,9 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             str: The output file path.
         """
+        cls.assert_pathlike(albedo_map_path, "albedo_map_path")
+        cls.assert_pathlike(alpha_map_path, "alpha_map_path")
+
         base_name = cls.get_base_texture_name(albedo_map_path)
 
         if output_dir is None:
@@ -1057,6 +1080,9 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             str: The file path of the newly created metallic-smoothness texture map.
         """
+        cls.assert_pathlike(metallic_map_path, "metallic_map_path")
+        cls.assert_pathlike(alpha_map_path, "alpha_map_path")
+
         base_name = cls.get_base_texture_name(metallic_map_path)
         if output_dir is None:
             output_dir = os.path.dirname(metallic_map_path)
@@ -1091,6 +1117,8 @@ class ImgUtils(core_utils.HelpMixin):
         Raises:
             ValueError: If the map type is not found in the expected map types.
         """
+        cls.assert_pathlike(file, "file")
+
         # Get and validate the map type from the filename
         typ = cls.resolve_map_type(file, key=False, validate="Normal_OpenGL")
 
@@ -1131,6 +1159,8 @@ class ImgUtils(core_utils.HelpMixin):
         Raises:
             ValueError: If the map type is not found in the expected map types.
         """
+        cls.assert_pathlike(file, "file")
+
         # Get and validate the map type from the filename
         typ = cls.resolve_map_type(file, key=False, validate="Normal_DirectX")
 
@@ -1479,6 +1509,8 @@ class ImgUtils(core_utils.HelpMixin):
             output_dir (str, optional): Directory path for the optimized textures. If None, the textures will be saved next to the originals.
             max_size (int, optional): Maximum size for the longest dimension of the textures. Defaults to 4096
         """
+        cls.assert_pathlike(directory, "directory")
+
         textures = cls.get_images(directory)
         print(f"Optimizing textures in: {directory}")
         for texture_path in textures.keys():
@@ -1514,6 +1546,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             str: Path to the optimized texture.
         """
+        cls.assert_pathlike(texture_path, "texture_path")
+
         if output_dir is None:
             output_dir = os.path.dirname(texture_path)
         os.makedirs(output_dir, exist_ok=True)
