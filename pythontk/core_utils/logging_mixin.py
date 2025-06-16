@@ -123,6 +123,13 @@ class LoggerExt:
         self, widget: object, level: int = logging.INFO
     ) -> None:
         handler_cls = LoggerExt._get_text_handler()
+
+        # Prevent duplicate handlers for same widget
+        for h in self.handlers:
+            if isinstance(h, handler_cls) and getattr(h, "widget", None) is widget:
+                self.debug("Text widget handler already registered")
+                return
+
         handler = handler_cls(widget)
         handler.setFormatter(self._formatter_selector(level))
         self.addHandler(handler)
