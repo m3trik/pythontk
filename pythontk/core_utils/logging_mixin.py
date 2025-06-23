@@ -313,7 +313,7 @@ class LoggingMixin:
     def logger(cls) -> internal_logging.Logger:
         if cls.__dict__.get("_logger") is None:
             name = f"{cls.__module__}.{cls.__qualname__}"
-            logger = internal_logging.Logger(name, internal_logging.WARNING)
+            logger = internal_logging.Logger(name, internal_logging.NOTSET)  # CHANGED
             logger.propagate = False
             logger.parent = None
             LoggerExt.patch(logger)
@@ -329,22 +329,12 @@ class LoggingMixin:
 
         return cls._logger
 
-    @classmethod
-    def set_log_level(cls, level: int | str):
-        """Set log level for the class logger and its handlers."""
-        if isinstance(level, str):
-            level = getattr(internal_logging, level.upper(), internal_logging.WARNING)
-
-        cls.logger.setLevel(level)
-        for handler in cls.logger.handlers:
-            handler.setLevel(level)
-
     @ClassProperty
     def class_logger(cls) -> internal_logging.Logger:
         if cls.__dict__.get("_class_logger") is None:
             name = f"{cls.__module__}.{cls.__name__}.class"
             logger = internal_logging.getLogger(name)
-            logger.setLevel(internal_logging.DEBUG)
+            logger.setLevel(internal_logging.NOTSET)  # CHANGED
             logger.propagate = False
             LoggerExt.patch(logger)
             cls._class_logger = logger
@@ -354,6 +344,16 @@ class LoggingMixin:
     def logging(cls):
         """Access to Python's internal logging module (aliased)."""
         return internal_logging
+
+    @classmethod
+    def set_log_level(cls, level: int | str):
+        """Set log level for the class logger and its handlers."""
+        if isinstance(level, str):
+            level = getattr(internal_logging, level.upper(), internal_logging.WARNING)
+
+        cls.logger.setLevel(level)
+        for handler in cls.logger.handlers:
+            handler.setLevel(level)
 
 
 # -------------------------------------------------------------------------------
