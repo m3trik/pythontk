@@ -20,48 +20,42 @@ class LoggerExt:
     @classmethod
     def patch(cls, logger: logging.Logger) -> None:
         """Patch the logger with additional methods and setup."""
+        if getattr(logger, "_logger_ext_patched", False):
+            return
+        logger._logger_ext_patched = True
 
-        # Register custom log levels
+        # Register custom levels
         logging.addLevelName(cls.SUCCESS, "SUCCESS")
         logging.addLevelName(cls.RESULT, "RESULT")
         logging.addLevelName(cls.NOTICE, "NOTICE")
 
         if not hasattr(logger, "setLevel_orig"):
             logger.setLevel_orig = logger.setLevel
-        logger.setLevel = LoggerExt._set_level.__get__(logger)
+        logger.setLevel = cls._set_level.__get__(logger)
+        logger.add_file_handler = cls._add_file_handler.__get__(logger)
+        logger.add_stream_handler = cls._add_stream_handler.__get__(logger)
+        logger.add_text_widget_handler = cls._add_text_widget_handler.__get__(logger)
+        logger.setup_logging_redirect = cls._setup_logging_redirect.__get__(logger)
+        logger.set_text_handler = cls._set_text_handler
+        logger.get_text_handler = cls._get_text_handler.__get__(logger)
 
-        logger.add_file_handler = LoggerExt._add_file_handler.__get__(logger)
-        logger.add_stream_handler = LoggerExt._add_stream_handler.__get__(logger)
-        logger.add_text_widget_handler = LoggerExt._add_text_widget_handler.__get__(
-            logger
-        )
-        logger.setup_logging_redirect = LoggerExt._setup_logging_redirect.__get__(
-            logger
-        )
+        # Custom levels
+        logger.success = cls._success.__get__(logger)
+        logger.result = cls._result.__get__(logger)
+        logger.notice = cls._notice.__get__(logger)
 
-        logger.set_text_handler = LoggerExt._set_text_handler
-        logger.get_text_handler = LoggerExt._get_text_handler.__get__(logger)
+        # Patch internal methods
+        cls._patch_logger(logger)
 
-        # Core methods for logging
-        logger.log_raw = LoggerExt._log_raw.__get__(logger)
-        LoggerExt._patch_logger(logger)
-
-        # Public methods
-        logger.success = LoggerExt._success.__get__(logger)
-        logger.result = LoggerExt._result.__get__(logger)
-        logger.notice = LoggerExt._notice.__get__(logger)
-
-        # Set global log formatters
         logger.log_format = "[%(levelname)s] %(message)s"
         logger.debug_log_format = "[%(levelname)s] %(name)s: %(message)s"
-        logger._formatter_selector = LoggerExt._select_formatter.__get__(logger)
+        logger._formatter_selector = cls._select_formatter.__get__(logger)
 
         if not logger.handlers:
             logger.add_stream_handler()
 
     @staticmethod
-    def _patch_logger(logger: internal_logging.Logger) -> None:
-        """Bind all LoggerExt log methods except _log_raw."""
+    def _patch_logger(logger: logging.Logger) -> None:
         for name in dir(LoggerExt):
             if name.startswith("_log_") and name != "_log_raw":
                 func = getattr(LoggerExt, name)
@@ -94,7 +88,7 @@ class LoggerExt:
         self.setLevel_orig(level)
 
     @staticmethod
-    def _add_stream_handler(self, level: int = logging.DEBUG) -> None:
+    def _add_stream_handler(self, level: int = logging.WARNING) -> None:
         if not any(isinstance(h, logging.StreamHandler) for h in self.handlers):
             handler = logging.StreamHandler()
             handler.setLevel(level)
@@ -103,7 +97,7 @@ class LoggerExt:
             self.debug("Stream handler attached")
 
     @staticmethod
-    def _add_file_handler(self, filename: str, level: int = logging.DEBUG) -> None:
+    def _add_file_handler(self, filename: str, level: int = logging.WARNING) -> None:
         handler = logging.FileHandler(filename)
         handler.setLevel(level)
         handler.setFormatter(self._formatter_selector(level))
@@ -111,10 +105,12 @@ class LoggerExt:
         self.debug(f"File handler added: {filename}")
 
     @staticmethod
-    def _add_text_widget_handler(self, text_widget: object) -> None:
+    def _add_text_widget_handler(
+        self, text_widget: object, level: int = logging.WARNING
+    ) -> None:
         handler_cls = LoggerExt._get_text_handler()
         handler = handler_cls(text_widget)
-        handler.setFormatter(self._formatter_selector(logging.DEBUG))
+        handler.setFormatter(self._formatter_selector(level))
         self.addHandler(handler)
         self.debug("Text widget handler added")
 
@@ -372,7 +368,7 @@ if __name__ == "__main__":
         def test_logger_initialization(self):
             logger = self.test_instance.logger
             self.assertIsInstance(logger, internal_logging.Logger)
-            self.assertEqual(logger.level, internal_logging.DEBUG)
+            self.assertEqual(logger.level, internal_logging.WARNING)
 
             expected_name = (
                 f"{self.test_instance.__class__.__module__}."

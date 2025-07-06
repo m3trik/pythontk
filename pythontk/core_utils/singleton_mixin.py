@@ -4,47 +4,34 @@ from typing import Dict, Optional, Any
 
 
 class SingletonMixin:
-    """A mixin class that provides singleton behavior.
+    """Reusable singleton mixin that supports optional key-based instances."""
 
-    This mixin ensures that only one instance of a class is created. If an instance already exists,
-    the existing instance is returned. This is useful for classes that should only have a single
-    instance throughout the application, such as configuration managers or resource loaders.
-
-    Example:
-        class MyClass(SingletonMixin):
-            def __init__(self, value):
-                self.value = value
-
-        MyClass.instance(42)  # Creates an instance with value 42
-        instance1 = MyClass.instance()  # Returns the same instance
-        instance2 = MyClass.instance()
-        assert instance1 is instance2  # True, both are the same instance
-    """
-
-    _instances = {}
+    _instances: Dict[Any, Any] = {}
 
     def __init__(self, *args, **kwargs):
-        # Avoid calling object.__init__ with extra args
+        """Prevent object.__init__() from being called with arguments."""
         pass
 
-    def __new__(cls, *args, **kwargs):
-        if cls not in cls._instances:
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        key: Any = kwargs.pop("singleton_key", cls)
+        if key not in cls._instances:
             instance = super().__new__(cls)
-            cls._instances[cls] = instance
-        return cls._instances[cls]
+            cls._instances[key] = instance
+        return cls._instances[key]
 
     @classmethod
-    def instance(cls, *args, **kwargs):
+    def instance(cls, *args: Any, **kwargs: Any) -> Any:
         return cls(*args, **kwargs)
 
     @classmethod
-    def has_instance(cls):
-        return cls in cls._instances
+    def has_instance(cls, singleton_key: Optional[Any] = None) -> bool:
+        return (
+            singleton_key in cls._instances if singleton_key else cls in cls._instances
+        )
 
     @classmethod
-    def reset_instance(cls):
-        if cls in cls._instances:
-            del cls._instances[cls]
+    def reset_instance(cls, singleton_key: Optional[Any] = None) -> None:
+        cls._instances.pop(singleton_key or cls, None)
 
 
 # --------------------------------------------------------------------------------------------

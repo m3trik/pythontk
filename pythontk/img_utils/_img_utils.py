@@ -22,7 +22,14 @@ class ImgUtils(core_utils.HelpMixin):
     """Helper methods for working with image file formats."""
 
     map_types = {
-        "Base_Color": ("Base_Color", "BaseColor", "Color", "_BC"),
+        "Base_Color": (
+            "Base_Color",
+            "BaseColor",
+            "BaseMap",
+            "ColorMap",
+            "Color",
+            "_BC",
+        ),
         "Albedo_Transparency": ("Albedo_Transparency", "AlbedoTransparency", "_AT"),
         "Roughness": ("Roughness", "Rough", "Ruff", "RGH", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "MTL", "_M"),
