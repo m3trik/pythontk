@@ -43,6 +43,14 @@ class ImgUtils(core_utils.HelpMixin):
             "_MetalSmooth",
             "_MetallicSmoothness",
         ),
+        "Metallic_SmoothnessAO": (
+            "Metallic_SmoothnessAO",
+            "MetallicSmoothnessAmbientOcclusion",
+            "MetallicSmoothAO",
+            "MetallicSmoothnessAO",
+            "_MSA",
+            "_MSAO",
+        ),
         "Normal": ("Normal", "Norm", "NRM", "_N"),
         "Normal_DirectX": ("Normal_DirectX", "NormalDX", "_NDX"),
         "Normal_OpenGL": ("Normal_OpenGL", "NormalGL", "_NGL"),
@@ -899,9 +907,9 @@ class ImgUtils(core_utils.HelpMixin):
         fill_values: dict[str, int] = None,
         output_path: str = None,
         output_format: str = "PNG",
+        grayscale_to_rgb: bool = False,
     ) -> str | Image.Image:
-        """
-        Packs up to 4 grayscale images into R, G, B, A channels of a single image.
+        """Packs up to 4 grayscale images into R, G, B, A channels of a single image.
 
         Parameters:
             channel_files (dict): {"R": image, "G": image, "B": image, "A": image} (values can be None).
@@ -910,9 +918,11 @@ class ImgUtils(core_utils.HelpMixin):
             fill_values (dict): Per-channel fallback, default: 0 for RGB, 255 for A.
             output_path (str): If given, saves image and returns path.
             output_format (str): Save format, e.g., "png", "tga".
+            grayscale_to_rgb (bool): If True and only one RGB channel is assigned,
+                                    its image will be duplicated across R, G, B.
 
         Returns:
-            str: Output path if saving, else PIL.Image.Image.
+            str | Image.Image: Output path if saving, else the PIL image object.
         """
         if channels is None:
             channels = ["R", "G", "B", "A"]
@@ -920,7 +930,6 @@ class ImgUtils(core_utils.HelpMixin):
             fill_values = {ch: 0 for ch in "RGB"}
             fill_values["A"] = 255
 
-        # Determine if we need alpha
         has_alpha = bool(channel_files.get("A"))
         out_mode = out_mode or ("RGBA" if has_alpha else "RGB")
         n_channels = 4 if out_mode == "RGBA" else 3
@@ -933,23 +942,33 @@ class ImgUtils(core_utils.HelpMixin):
             raise ValueError("No input images provided")
         size = cls.ensure_image(first_file).size
 
-        # Build bands with best practice: if only R present, copy to G/B
-        bands = []
+        # Determine if we should replicate grayscale to RGB (duplicate if only one RGB channel is used)
+        used_rgb_channels = [ch for ch in "RGB" if channel_files.get(ch)]
+        allow_duplicate = grayscale_to_rgb and len(used_rgb_channels) == 1
         r_img = (
             cls.ensure_image(channel_files.get("R"), mode="L").resize(size)
             if channel_files.get("R")
             else None
         )
-        for idx, ch in enumerate(channels[:n_channels]):
+
+        bands = []
+        for ch in channels[:n_channels]:
             img = channel_files.get(ch)
             if img:
                 band = cls.ensure_image(img, mode="L").resize(size)
-            elif ch in "GB" and r_img is not None:
-                # Copy R into G/B if missing
+            elif ch == "G" and not channel_files.get("G"):
+                # Ensure the green channel stays empty
+                band = cls.create_image("L", size, color=fill_values.get("G", 0))
+            elif ch == "B" and not channel_files.get("B"):
+                # Ensure the blue channel stays empty
+                band = cls.create_image("L", size, color=fill_values.get("B", 0))
+            elif ch in "GB" and allow_duplicate and r_img is not None:
+                # Duplicate R into G/B if only R is used
                 band = r_img
             else:
                 band = cls.create_image("L", size, color=fill_values.get(ch, 0))
             bands.append(band)
+
         img = Image.merge(out_mode, bands)
 
         if output_path:
@@ -1111,23 +1130,12 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def create_dx_from_gl(cls, file: str, output_path: str = None) -> str:
-        """Create and save a DirectX map using a given OpenGL image.
-        The new map will be saved next to the existing map if no output path is provided.
-
-        Parameters:
-            file (str): The full path to an OpenGL normal map file.
-            output_path (str, optional): Path to save the resulting DirectX map. If None, saves next to the input map.
-
-        Returns:
-            (str): filepath of the new image.
-
-        Raises:
-            ValueError: If the map type is not found in the expected map types.
-        """
         cls.assert_pathlike(file, "file")
 
-        # Get and validate the map type from the filename
-        typ = cls.resolve_map_type(file, key=False, validate="Normal_OpenGL")
+        try:
+            typ = cls.resolve_map_type(file, key=False, validate="Normal_OpenGL")
+        except ValueError:
+            typ = cls.resolve_map_type(file, key=False, validate="Normal")
 
         inverted_image = cls.invert_channels(file, "g")
 
@@ -1139,10 +1147,8 @@ class ImgUtils(core_utils.HelpMixin):
             try:
                 index = cls.map_types["Normal_OpenGL"].index(typ)
                 new_type = cls.map_types["Normal_DirectX"][index]
-            except ValueError:
-                raise ValueError(
-                    f"Type '{typ}' not found in 'Normal_OpenGL' map types."
-                )
+            except (ValueError, IndexError):
+                new_type = cls.map_types["Normal_DirectX"][0]
 
             name = name.removesuffix(typ)
             output_path = f"{output_dir}/{name}{new_type}.{ext}"
@@ -1153,23 +1159,12 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def create_gl_from_dx(cls, file: str, output_path: str = None) -> str:
-        """Create and save an OpenGL map using a given DirectX image.
-        The new map will be saved next to the existing map if no output path is provided.
-
-        Parameters:
-            file (str): The full path to a DirectX normal map file.
-            output_path (str, optional): Path to save the resulting OpenGL map. If None, saves next to the input map.
-
-        Returns:
-            (str): filepath of the new image.
-
-        Raises:
-            ValueError: If the map type is not found in the expected map types.
-        """
         cls.assert_pathlike(file, "file")
 
-        # Get and validate the map type from the filename
-        typ = cls.resolve_map_type(file, key=False, validate="Normal_DirectX")
+        try:
+            typ = cls.resolve_map_type(file, key=False, validate="Normal_DirectX")
+        except ValueError:
+            typ = cls.resolve_map_type(file, key=False, validate="Normal")
 
         inverted_image = cls.invert_channels(file, "g")
 
@@ -1181,10 +1176,8 @@ class ImgUtils(core_utils.HelpMixin):
             try:
                 index = cls.map_types["Normal_DirectX"].index(typ)
                 new_type = cls.map_types["Normal_OpenGL"][index]
-            except ValueError:
-                raise ValueError(
-                    f"Type '{typ}' not found in 'Normal_DirectX' map types."
-                )
+            except (ValueError, IndexError):
+                new_type = cls.map_types["Normal_OpenGL"][0]
 
             name = name.removesuffix(typ)
             output_path = f"{output_dir}/{name}{new_type}.{ext}"

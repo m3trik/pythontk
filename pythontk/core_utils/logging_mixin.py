@@ -6,9 +6,6 @@ from typing import Union, List, Optional
 from pythontk.core_utils import ClassProperty
 
 
-import logging
-
-
 class LoggerExt:
     _text_handler = None  # Can be instance or class
 
@@ -17,120 +14,194 @@ class LoggerExt:
     RESULT = 35
     NOTICE = 45
 
+    # Base log formats
+    BASE_FORMATS = {
+        "default": "[%(levelname)s] %(name)s: %(message)s",
+        "debug": "[%(levelname)s] %(name)s: %(message)s",
+        "success": "[%(levelname)s] %(message)s",
+        "result": "[%(levelname)s] %(message)s",
+        "notice": "[%(levelname)s] %(message)s",
+    }
+
     @classmethod
-    def patch(cls, logger: logging.Logger) -> None:
+    def patch(cls, logger: internal_logging.Logger) -> None:
         """Patch the logger with additional methods and setup."""
         if getattr(logger, "_logger_ext_patched", False):
             return
         logger._logger_ext_patched = True
 
+        # Preserve the original setLevel method
+        if not hasattr(logger, "internal_setLevel"):
+            logger.internal_setLevel = logger.setLevel
+
         # Register custom levels
-        logging.addLevelName(cls.SUCCESS, "SUCCESS")
-        logging.addLevelName(cls.RESULT, "RESULT")
-        logging.addLevelName(cls.NOTICE, "NOTICE")
+        cls._register_custom_levels()
 
-        if not hasattr(logger, "setLevel_orig"):
-            logger.setLevel_orig = logger.setLevel
-        logger.setLevel = cls._set_level.__get__(logger)
-        logger.add_file_handler = cls._add_file_handler.__get__(logger)
-        logger.add_stream_handler = cls._add_stream_handler.__get__(logger)
-        logger.add_text_widget_handler = cls._add_text_widget_handler.__get__(logger)
-        logger.setup_logging_redirect = cls._setup_logging_redirect.__get__(logger)
-        logger.set_text_handler = cls._set_text_handler
-        logger.get_text_handler = cls._get_text_handler.__get__(logger)
+        # Patch logger methods
+        cls._patch_logger_methods(logger)
 
-        # Custom levels
-        logger.success = cls._success.__get__(logger)
-        logger.result = cls._result.__get__(logger)
-        logger.notice = cls._notice.__get__(logger)
-
-        # Patch internal methods
-        cls._patch_logger(logger)
-
-        logger.log_format = "[%(levelname)s] %(message)s"
-        logger.debug_log_format = "[%(levelname)s] %(name)s: %(message)s"
+        # Initialize log formats and formatter selector
         logger._formatter_selector = cls._select_formatter.__get__(logger)
+        logger.set_log_prefix = cls._set_log_prefix.__get__(logger)
+        logger.set_log_suffix = cls._set_log_suffix.__get__(logger)
+        logger._log_prefix = ""
+        logger._log_suffix = ""
 
+        # Add default handlers if none exist
         if not logger.handlers:
-            logger.add_stream_handler()
+            cls._add_handler(logger, handler_type="stream")
 
     @staticmethod
-    def _patch_logger(logger: logging.Logger) -> None:
-        for name in dir(LoggerExt):
-            if name.startswith("_log_") and name != "_log_raw":
-                func = getattr(LoggerExt, name)
-                if callable(func):
-                    setattr(logger, name[1:], func.__get__(logger))
+    def _register_custom_levels() -> None:
+        """Register custom log levels."""
+        levels = {
+            LoggerExt.SUCCESS: "SUCCESS",
+            LoggerExt.RESULT: "RESULT",
+            LoggerExt.NOTICE: "NOTICE",
+        }
+        for level, name in levels.items():
+            internal_logging.addLevelName(level, name)
 
     @staticmethod
-    def _select_formatter(self, level: int) -> logging.Formatter:
+    def _patch_logger_methods(logger: internal_logging.Logger) -> None:
+        """Patch logger with additional methods."""
+        # Handle methods that don't need self (take no args or non-self first arg)
+        direct_methods = {
+            "set_text_handler": LoggerExt._set_text_handler,
+            "get_text_handler": LoggerExt._get_text_handler,
+        }
+        for name, method in direct_methods.items():
+            setattr(logger, name, method)
+
+        # Handle methods that need self as first argument
+        def make_method_wrapper(method):
+            def wrapper(*args, **kwargs):
+                return method(logger, *args, **kwargs)
+
+            return wrapper
+
+        wrapped_methods = {
+            "setLevel": LoggerExt._set_level,
+            "add_file_handler": LoggerExt._add_file_handler,
+            "add_stream_handler": LoggerExt._add_stream_handler,
+            "add_text_widget_handler": LoggerExt._add_text_widget_handler,
+            "setup_logging_redirect": LoggerExt._setup_logging_redirect,
+            "success": LoggerExt._success,
+            "result": LoggerExt._result,
+            "notice": LoggerExt._notice,
+        }
+
+        for name, method in wrapped_methods.items():
+            setattr(logger, name, make_method_wrapper(method))
+
+    @staticmethod
+    def _select_formatter(self, level: int) -> internal_logging.Formatter:
         """Select formatter based on the log level."""
+        prefix = getattr(self, "_log_prefix", "")
+        suffix = getattr(self, "_log_suffix", "")
+        base_format = LoggerExt._get_base_format(level)
+        format_string = base_format.replace(
+            "%(message)s", f"{prefix}%(message)s{suffix}"
+        )
+        return internal_logging.Formatter(format_string)
+
+    @staticmethod
+    def _get_base_format(level: int) -> str:
+        """Return the base format string based on the log level."""
         if level == LoggerExt.SUCCESS:
-            return logging.Formatter(
-                "[%(levelname)s] %(message)s"
-            )  # Example for SUCCESS
+            return LoggerExt.BASE_FORMATS["success"]
         elif level == LoggerExt.RESULT:
-            return logging.Formatter(
-                "[%(levelname)s] %(message)s"
-            )  # Example for RESULT
+            return LoggerExt.BASE_FORMATS["result"]
         elif level == LoggerExt.NOTICE:
-            return logging.Formatter(
-                "[%(levelname)s] %(message)s"
-            )  # Example for NOTICE
-        elif level <= logging.DEBUG:
-            return logging.Formatter(self.debug_log_format)
-        return logging.Formatter(self.log_format)
+            return LoggerExt.BASE_FORMATS["notice"]
+        elif level <= internal_logging.DEBUG:
+            return LoggerExt.BASE_FORMATS["debug"]
+        return LoggerExt.BASE_FORMATS["default"]
 
     @staticmethod
-    def _set_level(self, level: Union[int, str]) -> None:
-        if isinstance(level, str):
-            level = logging._nameToLevel.get(level.upper(), logging.INFO)
-        self.setLevel_orig(level)
+    def _add_handler(
+        logger: internal_logging.Logger, handler_type: str, **kwargs
+    ) -> None:
+        """Add a handler to the logger."""
+        handler = None
+        if handler_type == "stream":
+            handler = internal_logging.StreamHandler()
+        elif handler_type == "file":
+            handler = internal_logging.FileHandler(
+                kwargs.get("filename", "logfile.log")
+            )
+        elif handler_type == "text_widget":
+            handler_cls = LoggerExt._get_text_handler()
+            handler = handler_cls(kwargs.get("widget"))
 
-    @staticmethod
-    def _add_stream_handler(self, level: int = logging.WARNING) -> None:
-        if not any(isinstance(h, logging.StreamHandler) for h in self.handlers):
-            handler = logging.StreamHandler()
+        if handler:
+            level = kwargs.get("level", internal_logging.WARNING)
             handler.setLevel(level)
-            handler.setFormatter(self._formatter_selector(level))
-            self.addHandler(handler)
-            self.debug("Stream handler attached")
+            handler.setFormatter(logger._formatter_selector(level))
+            logger.addHandler(handler)
+            logger.debug(f"{handler_type.capitalize()} handler added")
 
     @staticmethod
-    def _add_file_handler(self, filename: str, level: int = logging.WARNING) -> None:
-        handler = logging.FileHandler(filename)
-        handler.setLevel(level)
-        handler.setFormatter(self._formatter_selector(level))
-        self.addHandler(handler)
-        self.debug(f"File handler added: {filename}")
+    def _add_file_handler(
+        self, filename: str = "logfile.log", level: int = internal_logging.WARNING
+    ) -> None:
+        """Add a file handler to the logger."""
+        LoggerExt._add_handler(
+            self, handler_type="file", filename=filename, level=level
+        )
+
+    @staticmethod
+    def _add_stream_handler(self, level: int = internal_logging.WARNING) -> None:
+        """Add a stream handler to the logger."""
+        LoggerExt._add_handler(self, handler_type="stream", level=level)
 
     @staticmethod
     def _add_text_widget_handler(
-        self, text_widget: object, level: int = logging.WARNING
+        self, text_widget: object, level: int = internal_logging.WARNING
     ) -> None:
-        handler_cls = LoggerExt._get_text_handler()
-        handler = handler_cls(text_widget)
-        handler.setFormatter(self._formatter_selector(level))
-        self.addHandler(handler)
-        self.debug("Text widget handler added")
+        """Add a text widget handler to the logger."""
+        LoggerExt._add_handler(
+            self, handler_type="text_widget", widget=text_widget, level=level
+        )
 
     @staticmethod
-    def _setup_logging_redirect(
-        self, widget: object, level: int = logging.INFO
-    ) -> None:
-        handler_cls = LoggerExt._get_text_handler()
+    def _set_log_prefix(self, prefix: str) -> None:
+        """Set a prefix that will appear before all log messages."""
+        self._log_prefix = prefix
+        LoggerExt._update_handler_formatters(self)
 
-        # Prevent duplicate handlers for same widget
-        for h in self.handlers:
-            if isinstance(h, handler_cls) and getattr(h, "widget", None) is widget:
-                self.debug("Text widget handler already registered")
-                return
+    @staticmethod
+    def _set_log_suffix(self, suffix: str) -> None:
+        """Set a suffix that will appear after all log messages."""
+        self._log_suffix = suffix
+        LoggerExt._update_handler_formatters(self)
 
-        handler = handler_cls(widget)
-        handler.setFormatter(self._formatter_selector(level))
-        self.addHandler(handler)
-        self.setLevel(level)
-        self.debug("Redirected logging output to widget")
+    @staticmethod
+    def _update_handler_formatters(logger: internal_logging.Logger) -> None:
+        """Update all handler formatters with the current prefix/suffix."""
+        for handler in logger.handlers:
+            handler.setFormatter(logger._formatter_selector(handler.level))
+
+    @staticmethod
+    def _set_level(self, level: Union[int, str]) -> None:
+        """Set the log level."""
+        if isinstance(level, str):
+            level = internal_logging._nameToLevel.get(
+                level.upper(), internal_logging.INFO
+            )
+        self.internal_setLevel(level)  # Call the preserved original method
+
+    @staticmethod
+    def _success(self, msg: str, *args, **kwargs) -> None:
+        self.log(LoggerExt.SUCCESS, msg, *args, **kwargs)
+
+    @staticmethod
+    def _result(self, msg: str, *args, **kwargs) -> None:
+        self.log(LoggerExt.RESULT, msg, *args, **kwargs)
+
+    @staticmethod
+    def _notice(self, msg: str, *args, **kwargs) -> None:
+        self.log(LoggerExt.NOTICE, msg, *args, **kwargs)
 
     @staticmethod
     def _set_text_handler(handler: Union[type, object]) -> None:
@@ -161,7 +232,7 @@ class LoggerExt:
                 try:
                     record = self.makeRecord(
                         name=self.name,
-                        level=logging.INFO,
+                        level=internal_logging.INFO,
                         fn="",
                         lno=0,
                         msg=message,
@@ -220,21 +291,61 @@ class LoggerExt:
     @staticmethod
     def _success(self, msg: str, *args, **kwargs) -> None:
         # Call the original log method to avoid recursion
-        logging.Logger.__dict__["log"](
+        internal_logging.Logger.__dict__["log"](
             self, LoggerExt.SUCCESS, f"{msg}", *args, **kwargs
         )
 
     @staticmethod
     def _result(self, msg: str, *args, **kwargs) -> None:
-        logging.Logger.__dict__["log"](
+        internal_logging.Logger.__dict__["log"](
             self, LoggerExt.RESULT, f"{msg}", *args, **kwargs
         )
 
     @staticmethod
     def _notice(self, msg: str, *args, **kwargs) -> None:
-        logging.Logger.__dict__["log"](
+        internal_logging.Logger.__dict__["log"](
             self, LoggerExt.NOTICE, f"{msg}", *args, **kwargs
         )
+
+    @staticmethod
+    def _set_log_prefix(self, prefix: str) -> None:
+        """Set a prefix that will appear before all log messages."""
+        self._log_prefix = prefix
+        # Update all existing handlers with the new prefix
+        for handler in self.handlers:
+            handler.setFormatter(self._formatter_selector(handler.level))
+
+    @staticmethod
+    def _set_log_suffix(self, suffix: str) -> None:
+        """Set a suffix that will appear after all log messages."""
+        self._log_suffix = suffix
+        # Update all existing handlers with the new suffix
+        for handler in self.handlers:
+            handler.setFormatter(self._formatter_selector(handler.level))
+
+    @staticmethod
+    def _setup_logging_redirect(
+        self, target: Union[str, object], level: int = internal_logging.INFO
+    ) -> None:
+        """
+        Redirect logging output to a specified target.
+        :param target: Can be a filename (str), a stream (e.g., sys.stdout), or a widget (object).
+        :param level: The log level for the redirection.
+        """
+        if isinstance(target, str):
+            # Redirect to a file
+            self.add_file_handler(filename=target, level=level)
+        elif hasattr(target, "write"):
+            # Redirect to a stream
+            stream_handler = internal_logging.StreamHandler(stream=target)
+            stream_handler.setLevel(level)
+            stream_handler.setFormatter(self._formatter_selector(level))
+            self.addHandler(stream_handler)
+        elif hasattr(target, "append"):
+            # Redirect to a widget
+            self.add_text_widget_handler(text_widget=target, level=level)
+        else:
+            raise ValueError("Unsupported target type for logging redirection.")
 
 
 class DefaultTextLogHandler(internal_logging.Handler):
