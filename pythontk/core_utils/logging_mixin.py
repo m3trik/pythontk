@@ -46,6 +46,17 @@ class LoggerExt:
         logger.set_log_suffix = cls._set_log_suffix.__get__(logger)
         logger._log_prefix = ""
         logger._log_suffix = ""
+        logger._log_timestamp = "%H:%M:%S"  # Default to time only
+
+        # Add property for log_timestamp that updates formatters
+        def get_log_timestamp(self):
+            return getattr(self, "_log_timestamp", "%H:%M:%S")
+
+        def set_log_timestamp(self, value):
+            self._log_timestamp = value
+            LoggerExt._update_handler_formatters(self)
+
+        logger.__class__.log_timestamp = property(get_log_timestamp, set_log_timestamp)
 
         # Add default handlers if none exist
         if not logger.handlers:
@@ -103,7 +114,13 @@ class LoggerExt:
         format_string = base_format.replace(
             "%(message)s", f"{prefix}%(message)s{suffix}"
         )
-        return internal_logging.Formatter(format_string)
+        log_timestamp = getattr(self, "_log_timestamp", "%H:%M:%S")
+        if log_timestamp:
+            format_string = "[%(asctime)s] " + format_string
+            formatter = internal_logging.Formatter(format_string, datefmt=log_timestamp)
+        else:
+            formatter = internal_logging.Formatter(format_string)
+        return formatter
 
     @staticmethod
     def _get_base_format(level: int) -> str:
