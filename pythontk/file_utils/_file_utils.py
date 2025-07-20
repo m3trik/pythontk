@@ -1093,6 +1093,10 @@ class FileUtils(core_utils.HelpMixin):
                              If a relative path is given, it's relative to the caller's directory.
             inc (str/list, optional): Patterns or objects to include in the update.
             exc (str/list, optional): Patterns or objects to exclude from the update.
+
+        Returns:
+            list: A list of updated requirements with their versions.
+            example: ['package1==1.0.0', 'package2==2.3.4']
         """
         import inspect
         import pkg_resources
@@ -1136,13 +1140,17 @@ class FileUtils(core_utils.HelpMixin):
         except FileNotFoundError:
             print(f"File not found: {file_path}")
 
-        return updated_lines
+        return [
+            line.strip()
+            for line in updated_lines
+            if line.strip() and not line.startswith("#")
+        ]
 
 
 # --------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pass
+    ...
 
 # --------------------------------------------------------------------------------------------
 # Notes
