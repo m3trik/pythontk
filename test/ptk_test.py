@@ -791,8 +791,8 @@ class FileTest(Main, FileUtils):
 
         self.perform_test(
             {
-                f"self.is_valid(r'{file}')": "file",
-                f"self.is_valid(r'{path}')": "dir",
+                f"self.is_valid(r'{file}', 'file')": True,
+                f"self.is_valid(r'{path}', 'dir')": True,
             }
         )
 
@@ -1140,9 +1140,7 @@ class ImgTest(Main, ImgUtils):
             "Height",
         )
         self.assertEqual(
-            self.resolve_map_type(
-                "test_files/imgtk_test/im_h.png", key=False
-            ),
+            self.resolve_map_type("test_files/imgtk_test/im_h.png", key=False),
             "_H",
         )
         self.assertEqual(
@@ -1150,9 +1148,7 @@ class ImgTest(Main, ImgUtils):
             "Normal",
         )
         self.assertEqual(
-            self.resolve_map_type(
-                "test_files/imgtk_test/im_n.png", key=False
-            ),
+            self.resolve_map_type("test_files/imgtk_test/im_n.png", key=False),
             "_N",
         )
 

@@ -1,5 +1,40 @@
-from typing import Callable, Optional, Any
+import weakref
+from functools import partial
+from typing import Callable, Optional, Any, Type
 from pythontk.core_utils import LoggingMixin
+
+
+class Placeholder:
+    def __init__(
+        self,
+        class_type: Type,
+        factory: Optional[Callable] = None,
+        *,
+        args: Optional[tuple] = (),
+        kwargs: Optional[dict] = None,
+        meta: Optional[dict] = None,
+    ):
+        self.class_type = class_type
+        self.factory = factory
+        self.args = args or ()
+        self.kwargs = kwargs or {}
+        self.meta = meta or {}
+
+    def info(self) -> dict:
+        return {
+            "type": self.class_type.__name__,
+            "factory": self.factory.__name__ if self.factory else None,
+            "args": self.args,
+            "kwargs": self.kwargs,
+            "meta": self.meta,
+        }
+
+    def create(self, *args, **kwargs):
+        ctor = self.factory or self.class_type
+        return ctor(*self.args, *args, **{**self.kwargs, **kwargs})
+
+    def __repr__(self):
+        return f"<Placeholder for {self.class_type.__name__}>"
 
 
 class NamespaceHandler(LoggingMixin):
@@ -27,104 +62,214 @@ class NamespaceHandler(LoggingMixin):
         owner: Any,
         identifier: str = None,
         resolver: Optional[Callable[[str], Any]] = None,
+        use_weakref: bool = False,
         log_level: str = "WARNING",
     ):
-        # Set logger level
         self.logger.setLevel(log_level)
-        self.logger.debug(f"Initializing for '{identifier}'")
 
-        # Store identifier for logging or tracking
+        self.__dict__["Placeholder"] = Placeholder
         self.__dict__["_identifier"] = identifier
-
-        # Assign attributes directly to __dict__ to avoid infinite recursion
-        self.__dict__["_attributes"] = {}
         self.__dict__["_resolver"] = resolver
         self.__dict__["_owner"] = owner
+        self.__dict__["set"] = self.__setitem__
+        self.__dict__["get"] = partial(
+            lambda self, k, d=None, resolve_placeholders=True: self.resolve(
+                k, d, resolve_placeholders
+            ),
+            self,
+        )
+        self.__dict__["raw"] = self.raw
+        self.__dict__["_use_weakref"] = use_weakref
+        if use_weakref:
+            self.__dict__["_attributes"] = weakref.WeakValueDictionary()
+        else:
+            self.__dict__["_attributes"] = {}
+        self.__dict__["_placeholders"] = {}
+
+    @property
+    def placeholders(self) -> dict[str, Any]:
+        return self._placeholders
+
+    def is_placeholder(self, value: Any) -> bool:
+        return isinstance(value, self.Placeholder)
+
+    def get_placeholder(self, key: str) -> Optional[Placeholder]:
+        return self._placeholders.get(key)
+
+    def set_placeholder(self, key: str, placeholder: Placeholder):
+        self.logger.debug(f"[{self._identifier}] Set placeholder for: {key}")
+        self._placeholders[key] = placeholder
+
+    def resolve_all_placeholders(self):
+        for key in list(self._placeholders):
+            _ = self[key]  # Triggers resolution
+
+    def has_placeholder(self, key: str) -> bool:
+        return key in self._placeholders
+
+    def __repr__(self):
+        return (
+            f"<NamespaceHandler id='{self._identifier}' keys={list(self.keys(True))}>"
+        )
 
     def __contains__(self, key: str) -> bool:
-        """Explicit containment check for NamespaceHandler."""
-        return key in self.__dict__["_attributes"]
+        return key in self._attributes or key in self._placeholders
 
     def __getattr__(self, name: str) -> Any:
-        """Handles dynamic attribute resolution with recursion prevention."""
-        self.logger.debug(
-            f"[{self.__dict__.get('_identifier')}] __getattr__ called for '{name}'"
-        )
-
-        # Prevent recursion for internal attributes
         if name.startswith("_"):
-            raise AttributeError(
-                f"{self.__class__.__name__} object has no attribute '{name}'"
-            )
+            raise AttributeError(f"{self.__class__.__name__} has no attribute '{name}'")
 
-        attributes = self.__dict__.get("_attributes", {})
+        # Check actual attributes
+        if name in self._attributes:
+            return self._attributes[name]
 
-        # Return if cached
-        if name in attributes:
-            self.logger.debug(
-                f"[{self.__dict__.get('_identifier')}] Returning cached '{name}'"
-            )
-            return attributes[name]
+        # Check placeholders
+        if name in self._placeholders:
+            return self._placeholders[name]
 
-        # Attempt resolution
-        if self.__dict__["_resolver"]:
-            self.logger.debug(
-                f"[{self.__dict__.get('_identifier')}] Attempting to resolve '{name}' via resolver..."
-            )
-            resolved_value = self.__dict__["_resolver"](name)
-            if resolved_value is not None:
-                attributes[name] = resolved_value  # Cache successful resolution
-                self.logger.debug(
-                    f"[{self.__dict__.get('_identifier')}] Resolved and cached '{name}'"
-                )
-                return resolved_value
-
-        self.logger.debug(
-            f"[{self.__dict__.get('_identifier')}] Attribute '{name}' not found."
-        )
-        raise AttributeError(
-            f"{self.__class__.__name__} object has no attribute '{name}'"
-        )
+        try:
+            return self._resolve_and_cache(name)
+        except KeyError:
+            self.logger.debug(f"[{self._identifier}] Attribute '{name}' not found.")
+            raise AttributeError(f"{self.__class__.__name__} has no attribute '{name}'")
 
     def __setattr__(self, name: str, value: Any):
-        """
-        Handles setting attributes safely without causing recursion.
-        """
         if name.startswith("_"):
-            self.__dict__[name] = value  # Directly set internal attributes
-        else:
-            self.__dict__["_attributes"][name] = value  # Store in attributes
+            self.__dict__[name] = value
+            return
 
-    def __getitem__(self, key: str) -> Any:
-        try:
-            return self.__dict__["_attributes"][key]
-        except KeyError:
-            available = list(self.keys())
-            self.logger.debug(
-                f"Namespace '{self.__dict__.get('_identifier')}' has no key '{key}'.\n\tAvailable keys: {available}"
-            )
-            raise
+        if isinstance(value, self.Placeholder):
+            self._placeholders[name] = value
+            self._attributes.pop(name, None)
+            return
+
+        self._placeholders.pop(name, None)
+
+        if self._use_weakref:
+            try:
+                self._attributes[name] = value
+            except TypeError:
+                self._attributes.data[name] = value
+        else:
+            self._attributes[name] = value
+
+    def __getitem__(self, key: str, resolve_placeholders: bool = True) -> Any:
+        if key in self._attributes:
+            return self._attributes[key]
+
+        if key in self._placeholders:
+            if not resolve_placeholders:
+                return self._placeholders[key]
+            return self._resolve_placeholder(key)
+
+        return self._resolve_and_cache(key)
 
     def __setitem__(self, key: str, value: Any):
-        self.logger.debug(
-            f"[{self.__dict__.get('_identifier')}] __setitem__ called for '{key}' with value '{value}'"
-        )
-        self.__dict__["_attributes"][key] = value
+        if isinstance(value, self.Placeholder):
+            self._placeholders[key] = value
+            self._attributes.pop(key, None)  # Ensure not duplicated
+            return
 
-    def setdefault(self, name: str, default: Any = None) -> Any:
-        """
-        Optional helper method to demonstrate setdefault usage.
-        """
-        return self.__dict__["_attributes"].setdefault(name, default)
+        self._placeholders.pop(key, None)  # Clean up any previous placeholder
 
-    def items(self):
-        return self.__dict__["_attributes"].items()
+        if self._use_weakref:
+            try:
+                self._attributes[key] = value
+            except TypeError:
+                self._attributes.data[key] = value
+        else:
+            self._attributes[key] = value
 
-    def keys(self):
-        return self.__dict__["_attributes"].keys()
+    def __delitem__(self, key: str):
+        self._attributes.pop(key, None)
+        self._placeholders.pop(key, None)
 
-    def values(self):
-        return self.__dict__["_attributes"].values()
+    def keys(self, inc_placeholders=False):
+        keys = set(self._attributes.keys())
+        if inc_placeholders:
+            keys.update(self._placeholders.keys())
+        return keys
+
+    def items(self, inc_placeholders=False):
+        combined = dict(self._attributes)
+        if inc_placeholders:
+            combined.update(self._placeholders)
+        return combined.items()
+
+    def values(self, inc_placeholders=False):
+        values = list(self._attributes.values())
+        if inc_placeholders:
+            values += list(self._placeholders.values())
+        return values
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        if key in self:
+            return self[key]
+        self[key] = default
+        return default
+
+    def has(self, key: str) -> bool:
+        return key in self._attributes
+
+    def raw(self, key: str) -> Optional[Any]:
+        if key in self._attributes:
+            return self._attributes[key]
+        if key in self._placeholders:
+            return self._placeholders[key]
+        return None
+
+    def resolve(
+        self, key: str, default: Any = None, resolve_placeholders: bool = True
+    ) -> Any:
+        try:
+            return self.__getitem__(key, resolve_placeholders=resolve_placeholders)
+        except KeyError:
+            return default
+
+    def is_resolving(self, key: str) -> bool:
+        """Returns True if this key is currently being resolved (to prevent recursion)."""
+        return getattr(self, f"__resolving__{key}", False)
+
+    def _resolve_placeholder(self, key: str) -> Any:
+        placeholder = self._placeholders[key]
+        self.logger.debug(f"[{self._identifier}] Resolving placeholder: {key}")
+        value = placeholder.create()
+        self[key] = value
+        del self._placeholders[key]
+        return value
+
+    def _resolve_and_cache(self, key: str) -> Any:
+        attributes = self.__dict__["_attributes"]
+        if key in attributes:
+            return attributes[key]
+
+        # Prevent recursion
+        guard_key = f"__resolving__{key}"
+        if getattr(self, guard_key, False):
+            raise RuntimeError(f"Recursive resolution detected for key: '{key}'")
+        setattr(self, guard_key, True)
+
+        try:
+            resolver = self.__dict__.get("_resolver")
+            if resolver:
+                resolved = resolver(key)
+                if resolved is not None:
+                    if self._use_weakref:
+                        try:
+                            attributes[key] = resolved
+                        except TypeError:
+                            attributes.data[key] = resolved
+                            self.logger.debug(
+                                f"[{self._identifier}] Not weakref-able, stored strong ref for: {key}"
+                            )
+                    else:
+                        attributes[key] = resolved
+                    return resolved
+        finally:
+            if hasattr(self, guard_key):
+                delattr(self, guard_key)
+
+        raise KeyError(key)
 
 
 # --------------------------------------------------------------------------------------------
@@ -165,7 +310,7 @@ if __name__ == "__main__":
                 _ = self.handler.unknown_attr
 
             self.assertIn(
-                "NamespaceHandler object has no attribute 'unknown_attr'",
+                "NamespaceHandler has no attribute 'unknown_attr'",
                 str(context.exception),
             )
 
@@ -180,9 +325,9 @@ if __name__ == "__main__":
         def test_items_keys_values(self):
             self.handler._attributes["a"] = 1
             self.handler._attributes["b"] = 2
-            self.assertEqual(list(self.handler.items()), [("a", 1), ("b", 2)])
-            self.assertEqual(list(self.handler.keys()), ["a", "b"])
-            self.assertEqual(list(self.handler.values()), [1, 2])
+            self.assertCountEqual(list(self.handler.items()), [("a", 1), ("b", 2)])
+            self.assertCountEqual(list(self.handler.keys()), ["a", "b"])
+            self.assertCountEqual(list(self.handler.values()), [1, 2])
 
     # Run the tests
     loader = unittest.TestLoader()

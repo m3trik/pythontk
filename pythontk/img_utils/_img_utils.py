@@ -1,7 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import os
-from typing import List, Tuple, Dict, Union, Any
+from typing import List, Tuple, Dict, Union, Any, Optional
 
 try:
     import numpy as np
@@ -22,7 +22,14 @@ class ImgUtils(core_utils.HelpMixin):
     """Helper methods for working with image file formats."""
 
     map_types = {
-        "Base_Color": ("Base_Color", "BaseColor", "Color", "_BC"),
+        "Base_Color": (
+            "Base_Color",
+            "BaseColor",
+            "BaseMap",
+            "ColorMap",
+            "Color",
+            "_BC",
+        ),
         "Albedo_Transparency": ("Albedo_Transparency", "AlbedoTransparency", "_AT"),
         "Roughness": ("Roughness", "Rough", "Ruff", "RGH", "_R"),
         "Metallic": ("Metallic", "Metal", "Metalness", "MTL", "_M"),
@@ -35,6 +42,14 @@ class ImgUtils(core_utils.HelpMixin):
             "_MS",
             "_MetalSmooth",
             "_MetallicSmoothness",
+        ),
+        "Metallic_SmoothnessAO": (
+            "Metallic_SmoothnessAO",
+            "MetallicSmoothnessAmbientOcclusion",
+            "MetallicSmoothAO",
+            "MetallicSmoothnessAO",
+            "_MSA",
+            "_MSAO",
         ),
         "Normal": ("Normal", "Norm", "NRM", "_N"),
         "Normal_DirectX": ("Normal_DirectX", "NormalDX", "_NDX"),
@@ -127,6 +142,8 @@ class ImgUtils(core_utils.HelpMixin):
         "I;16BS": 16,
         "I;16LS": 16,
         "RGB": 24,
+        "RGBA": 32,
+        "CMYK": 32,
         "YCbCr": 24,
         "LAB": 24,
         "HSV": 24,
@@ -138,8 +155,6 @@ class ImgUtils(core_utils.HelpMixin):
         "I;32S": 32,
         "I;32BS": 32,
         "I;32LS": 32,
-        "RGBA": 32,
-        "CMYK": 32,
     }
 
     @staticmethod
@@ -194,6 +209,22 @@ class ImgUtils(core_utils.HelpMixin):
         return image.convert(mode) if mode else image
 
     @staticmethod
+    def assert_pathlike(obj: object, name: str = "argument") -> None:
+        """Assert that the given object is a valid path-like object.
+
+        Parameters:
+            obj (object): The object to check.
+            name (str): The name of the argument for error messages.
+
+        Raises:
+            TypeError: If obj is not str, bytes, or os.PathLike.
+        """
+        if not isinstance(obj, (str, bytes, os.PathLike)):
+            raise TypeError(
+                f"Expected {name} as str, bytes, or os.PathLike, got {type(obj).__name__}"
+            )
+
+    @staticmethod
     def create_image(mode, size=(4096, 4096), color=None):
         """Create a new image.
 
@@ -231,6 +262,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             (PIL.Image.Image) A copy of the loaded image object.
         """
+        cls.assert_pathlike(filepath, "filepath")
+
         with Image.open(filepath) as im:
             return im.copy()
 
@@ -252,6 +285,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             (dict) {<full file path>:<image object>}
         """
+        cls.assert_pathlike(directory, "directory")
+
         images = {}
         for f in file_utils.FileUtils.get_dir_contents(
             directory, "filepath", inc_files=inc, exc_files=exc
@@ -277,6 +312,7 @@ class ImgUtils(core_utils.HelpMixin):
         Raises:
             ValueError: If the map type is not the expected type when 'validate' is provided.
         """
+        cls.assert_pathlike(file, "file")
         filename = file_utils.FileUtils.format_path(file, "name")
 
         if key:
@@ -317,7 +353,7 @@ class ImgUtils(core_utils.HelpMixin):
         map_type: str,
         prefix: str = None,
         suffix: str = None,
-        ext: str = None,  # Changed from output_type to ext
+        ext: str = None,
     ) -> str:
         """Generates a correctly formatted filename while preserving the original suffix and file extension.
 
@@ -331,6 +367,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             str: The resolved output file path.
         """
+        cls.assert_pathlike(texture_path, "texture_path")
+
         # Extract sections from the given path
         directory = file_utils.FileUtils.format_path(texture_path, "path")
         base_name = cls.get_base_texture_name(texture_path)
@@ -366,10 +404,7 @@ class ImgUtils(core_utils.HelpMixin):
         """
         import re
 
-        if not isinstance(filepath_or_filename, (str, bytes, os.PathLike)):
-            raise TypeError(
-                f"Expected str, bytes, or os.PathLike, got {type(filepath_or_filename).__name__}"
-            )
+        cls.assert_pathlike(filepath_or_filename, "filepath_or_filename")
 
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
@@ -864,28 +899,107 @@ class ImgUtils(core_utils.HelpMixin):
         return Image.fromarray(data)
 
     @classmethod
+    def pack_channels(
+        cls,
+        channel_files: dict[str, str | Image.Image],
+        channels: list[str] = None,
+        out_mode: str = None,
+        fill_values: dict[str, int] = None,
+        output_path: str = None,
+        output_format: str = "PNG",
+        grayscale_to_rgb: bool = False,
+    ) -> str | Image.Image:
+        """Packs up to 4 grayscale images into R, G, B, A channels of a single image.
+
+        Parameters:
+            channel_files (dict): {"R": image, "G": image, "B": image, "A": image} (values can be None).
+            channels (list): Channel order, default ["R","G","B","A"].
+            out_mode (str): "RGB" or "RGBA". If None, uses "RGBA" if "A" present, else "RGB".
+            fill_values (dict): Per-channel fallback, default: 0 for RGB, 255 for A.
+            output_path (str): If given, saves image and returns path.
+            output_format (str): Save format, e.g., "png", "tga".
+            grayscale_to_rgb (bool): If True and only one RGB channel is assigned,
+                                    its image will be duplicated across R, G, B.
+
+        Returns:
+            str | Image.Image: Output path if saving, else the PIL image object.
+        """
+        if channels is None:
+            channels = ["R", "G", "B", "A"]
+        if fill_values is None:
+            fill_values = {ch: 0 for ch in "RGB"}
+            fill_values["A"] = 255
+
+        has_alpha = bool(channel_files.get("A"))
+        out_mode = out_mode or ("RGBA" if has_alpha else "RGB")
+        n_channels = 4 if out_mode == "RGBA" else 3
+
+        # Get first valid image for sizing
+        first_file = next(
+            (f for f in (channel_files.get(ch) for ch in channels) if f), None
+        )
+        if first_file is None:
+            raise ValueError("No input images provided")
+        size = cls.ensure_image(first_file).size
+
+        # Determine if we should replicate grayscale to RGB (duplicate if only one RGB channel is used)
+        used_rgb_channels = [ch for ch in "RGB" if channel_files.get(ch)]
+        allow_duplicate = grayscale_to_rgb and len(used_rgb_channels) == 1
+        r_img = (
+            cls.ensure_image(channel_files.get("R"), mode="L").resize(size)
+            if channel_files.get("R")
+            else None
+        )
+
+        bands = []
+        for ch in channels[:n_channels]:
+            img = channel_files.get(ch)
+            if img:
+                band = cls.ensure_image(img, mode="L").resize(size)
+            elif ch == "G" and not channel_files.get("G"):
+                # Ensure the green channel stays empty
+                band = cls.create_image("L", size, color=fill_values.get("G", 0))
+            elif ch == "B" and not channel_files.get("B"):
+                # Ensure the blue channel stays empty
+                band = cls.create_image("L", size, color=fill_values.get("B", 0))
+            elif ch in "GB" and allow_duplicate and r_img is not None:
+                # Duplicate R into G/B if only R is used
+                band = r_img
+            else:
+                band = cls.create_image("L", size, color=fill_values.get(ch, 0))
+            bands.append(band)
+
+        img = Image.merge(out_mode, bands)
+
+        if output_path:
+            img.save(output_path, format=output_format)
+            return output_path
+        return img
+
+    @classmethod
     def pack_channel_into_alpha(
         cls,
         image: Union[str, Image.Image],
         alpha: Union[str, Image.Image],
-        output_path: str = None,
+        output_path: Optional[str] = None,
         invert_alpha: bool = False,
         resize_alpha: bool = True,
+        preserve_existing_alpha: bool = False,
     ) -> str:
         """Packs a channel from the alpha source image into the alpha channel of the base image.
-        Optionally inverts the alpha source image.
 
         Parameters:
-            image (str/Image.Image): Base texture map.
-            alpha (str/Image.Image): Map to pack into the alpha channel.
-            output_path (str, optional): Path to save the result. Defaults to overwrite if image is a path.
-            invert_alpha (bool): Invert the alpha source image before packing.
-            resize_alpha (bool): If True, auto-resizes alpha map to match base.
+            image (str | Image.Image): Base texture (albedo).
+            alpha (str | Image.Image): Transparency map to pack into the alpha channel.
+            output_path (str, optional): Output path. If None, overwrites the input image path.
+            invert_alpha (bool): Invert the alpha source before packing.
+            resize_alpha (bool): Resize the alpha to match the base if needed.
+            preserve_existing_alpha (bool): If True, multiply existing alpha with the new alpha.
 
         Returns:
-            str: Path to the saved image with alpha channel packed.
+            str: Path to the saved image.
         """
-        base_img = cls.ensure_image(image)
+        base_img = cls.ensure_image(image, mode="RGB")
         alpha_img = cls.ensure_image(alpha)
 
         if invert_alpha:
@@ -903,19 +1017,22 @@ class ImgUtils(core_utils.HelpMixin):
                 f"Alpha image size {alpha_img.size} does not match base {base_img.size} and resize is disabled."
             )
 
-        if base_img.mode in ["L", "LA"]:
-            base_img = base_img.convert("LA")
-            combined_img = Image.merge("LA", (base_img.getchannel(0), alpha_img))
+        base_img = base_img.convert("RGBA")
+        r, g, b, existing_alpha = base_img.split()
+
+        if preserve_existing_alpha:
+            alpha_combined = ImageChops.multiply(existing_alpha, alpha_img)
         else:
-            base_img = base_img.convert("RGBA")
-            combined_img = Image.merge("RGBA", (*base_img.split()[:3], alpha_img))
+            alpha_combined = alpha_img
+
+        combined_img = Image.merge("RGBA", (r, g, b, alpha_combined))
 
         if not output_path:
             if isinstance(image, str):
                 output_path = image
             else:
                 raise ValueError(
-                    "Output path must be provided when using Image objects directly"
+                    "Output path must be provided when using Image objects directly."
                 )
 
         combined_img.save(output_path)
@@ -926,23 +1043,27 @@ class ImgUtils(core_utils.HelpMixin):
         cls,
         albedo_map_path: str,
         alpha_map_path: str,
-        output_dir: str = None,
-        suffix: str = "_AlbedoTransparency",
+        output_dir: Optional[str] = None,
+        suffix: Optional[str] = "_AlbedoTransparency",
         invert_alpha: bool = False,
     ) -> str:
-        """Combines an albedo texture with a transparency map by packing the transparency information into the alpha channel of the albedo texture.
+        """Combines an albedo texture with a transparency map by packing the transparency into the alpha channel.
 
         Parameters:
             albedo_map_path (str): Path to the albedo (base color) texture map.
-            alpha_map_path (str): Path to the transparency texture map.
-            output_dir (str, optional): Directory path for the output. If None, the output directory will be the same as the albedo map path.
-            invert_alpha (bool, optional): If True, the alpha (transparency) texture will be inverted.
-            suffix (str, optional): Suffix for the output file name, defaulting to '_AlbedoTransparency'.
+            alpha_map_path (str): Path to the transparency (alpha) texture map.
+            output_dir (str, optional): Output directory. If None, uses the albedo map directory.
+            suffix (str, optional): Suffix for the output file name. Defaults to '_AlbedoTransparency'.
+            invert_alpha (bool, optional): If True, inverts the alpha texture.
 
         Returns:
-            str: The file path of the newly created albedo-transparency texture map.
+            str: The output file path.
         """
+        cls.assert_pathlike(albedo_map_path, "albedo_map_path")
+        cls.assert_pathlike(alpha_map_path, "alpha_map_path")
+
         base_name = cls.get_base_texture_name(albedo_map_path)
+
         if output_dir is None:
             output_dir = os.path.dirname(albedo_map_path)
         elif not os.path.isdir(output_dir):
@@ -953,7 +1074,10 @@ class ImgUtils(core_utils.HelpMixin):
         output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
 
         success = cls.pack_channel_into_alpha(
-            albedo_map_path, alpha_map_path, output_path, invert_alpha=invert_alpha
+            albedo_map_path,
+            alpha_map_path,
+            output_path,
+            invert_alpha=invert_alpha,
         )
 
         if success:
@@ -982,6 +1106,9 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             str: The file path of the newly created metallic-smoothness texture map.
         """
+        cls.assert_pathlike(metallic_map_path, "metallic_map_path")
+        cls.assert_pathlike(alpha_map_path, "alpha_map_path")
+
         base_name = cls.get_base_texture_name(metallic_map_path)
         if output_dir is None:
             output_dir = os.path.dirname(metallic_map_path)
@@ -1003,21 +1130,12 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def create_dx_from_gl(cls, file: str, output_path: str = None) -> str:
-        """Create and save a DirectX map using a given OpenGL image.
-        The new map will be saved next to the existing map if no output path is provided.
+        cls.assert_pathlike(file, "file")
 
-        Parameters:
-            file (str): The full path to an OpenGL normal map file.
-            output_path (str, optional): Path to save the resulting DirectX map. If None, saves next to the input map.
-
-        Returns:
-            (str): filepath of the new image.
-
-        Raises:
-            ValueError: If the map type is not found in the expected map types.
-        """
-        # Get and validate the map type from the filename
-        typ = cls.resolve_map_type(file, key=False, validate="Normal_OpenGL")
+        try:
+            typ = cls.resolve_map_type(file, key=False, validate="Normal_OpenGL")
+        except ValueError:
+            typ = cls.resolve_map_type(file, key=False, validate="Normal")
 
         inverted_image = cls.invert_channels(file, "g")
 
@@ -1029,10 +1147,8 @@ class ImgUtils(core_utils.HelpMixin):
             try:
                 index = cls.map_types["Normal_OpenGL"].index(typ)
                 new_type = cls.map_types["Normal_DirectX"][index]
-            except ValueError:
-                raise ValueError(
-                    f"Type '{typ}' not found in 'Normal_OpenGL' map types."
-                )
+            except (ValueError, IndexError):
+                new_type = cls.map_types["Normal_DirectX"][0]
 
             name = name.removesuffix(typ)
             output_path = f"{output_dir}/{name}{new_type}.{ext}"
@@ -1043,21 +1159,12 @@ class ImgUtils(core_utils.HelpMixin):
 
     @classmethod
     def create_gl_from_dx(cls, file: str, output_path: str = None) -> str:
-        """Create and save an OpenGL map using a given DirectX image.
-        The new map will be saved next to the existing map if no output path is provided.
+        cls.assert_pathlike(file, "file")
 
-        Parameters:
-            file (str): The full path to a DirectX normal map file.
-            output_path (str, optional): Path to save the resulting OpenGL map. If None, saves next to the input map.
-
-        Returns:
-            (str): filepath of the new image.
-
-        Raises:
-            ValueError: If the map type is not found in the expected map types.
-        """
-        # Get and validate the map type from the filename
-        typ = cls.resolve_map_type(file, key=False, validate="Normal_DirectX")
+        try:
+            typ = cls.resolve_map_type(file, key=False, validate="Normal_DirectX")
+        except ValueError:
+            typ = cls.resolve_map_type(file, key=False, validate="Normal")
 
         inverted_image = cls.invert_channels(file, "g")
 
@@ -1069,10 +1176,8 @@ class ImgUtils(core_utils.HelpMixin):
             try:
                 index = cls.map_types["Normal_DirectX"].index(typ)
                 new_type = cls.map_types["Normal_OpenGL"][index]
-            except ValueError:
-                raise ValueError(
-                    f"Type '{typ}' not found in 'Normal_DirectX' map types."
-                )
+            except (ValueError, IndexError):
+                new_type = cls.map_types["Normal_OpenGL"][0]
 
             name = name.removesuffix(typ)
             output_path = f"{output_dir}/{name}{new_type}.{ext}"
@@ -1404,6 +1509,8 @@ class ImgUtils(core_utils.HelpMixin):
             output_dir (str, optional): Directory path for the optimized textures. If None, the textures will be saved next to the originals.
             max_size (int, optional): Maximum size for the longest dimension of the textures. Defaults to 4096
         """
+        cls.assert_pathlike(directory, "directory")
+
         textures = cls.get_images(directory)
         print(f"Optimizing textures in: {directory}")
         for texture_path in textures.keys():
@@ -1439,6 +1546,8 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             str: Path to the optimized texture.
         """
+        cls.assert_pathlike(texture_path, "texture_path")
+
         if output_dir is None:
             output_dir = os.path.dirname(texture_path)
         os.makedirs(output_dir, exist_ok=True)
@@ -1497,6 +1606,50 @@ class ImgUtils(core_utils.HelpMixin):
             f"Saved optimized texture: {optimized_texture_path} ({image.size[0]}x{image.size[1]})"
         )
         return optimized_texture_path
+
+    @staticmethod
+    def get_converted_map(map_type: str, available: dict) -> Optional[Any]:
+        """Get the converted map based on the given map type and available maps.
+
+        Parameters:
+            map_type (str): The type of map to convert.
+            available (dict): A dictionary of available maps.
+                Keys are map types and values are the corresponding images.
+                Example: {"Base_Color": image, "Roughness": image, ...}
+        Returns:
+            Optional[Any]: The converted map or None if not available.
+        """
+        # Smoothness <-> Roughness
+        if map_type == "Smoothness" and "Roughness" in available:
+            rough = available["Roughness"]
+            return ImgUtils.invert_grayscale_image(rough)
+        if map_type == "Roughness" and "Smoothness" in available:
+            smooth = available["Smoothness"]
+            return ImgUtils.invert_grayscale_image(smooth)
+        # Glossiness <-> Roughness
+        if map_type == "Glossiness" and "Roughness" in available:
+            rough = available["Roughness"]
+            return ImgUtils.invert_grayscale_image(rough)
+        if map_type == "Roughness" and "Glossiness" in available:
+            gloss = available["Glossiness"]
+            return ImgUtils.invert_grayscale_image(gloss)
+        # Glossiness <-> Smoothness
+        if map_type == "Smoothness" and "Glossiness" in available:
+            gloss = available["Glossiness"]
+            return ImgUtils.invert_grayscale_image(gloss)
+        if map_type == "Glossiness" and "Smoothness" in available:
+            smooth = available["Smoothness"]
+            return ImgUtils.invert_grayscale_image(smooth)
+        # AO from Base_Color
+        if map_type == "Ambient_Occlusion" and "Base_Color" in available:
+            color = available["Base_Color"]
+            return ImgUtils.ensure_image(color, "L")
+        # Normal DirectX <-> OpenGL
+        if map_type == "Normal_DirectX" and "Normal_OpenGL" in available:
+            return ImgUtils.create_dx_from_gl(available["Normal_OpenGL"])
+        if map_type == "Normal_OpenGL" and "Normal_DirectX" in available:
+            return ImgUtils.create_gl_from_dx(available["Normal_DirectX"])
+        return None
 
 
 # --------------------------------------------------------------------------------------------
