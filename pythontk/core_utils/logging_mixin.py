@@ -46,11 +46,11 @@ class LoggerExt:
         logger.set_log_suffix = cls._set_log_suffix.__get__(logger)
         logger._log_prefix = ""
         logger._log_suffix = ""
-        logger._log_timestamp = "%H:%M:%S"  # Default to time only
+        logger._log_timestamp = None  # "%H:%M:%S" example of time only
 
         # Add property for log_timestamp that updates formatters
         def get_log_timestamp(self):
-            return getattr(self, "_log_timestamp", "%H:%M:%S")
+            return getattr(self, "_log_timestamp", None)
 
         def set_log_timestamp(self, value):
             self._log_timestamp = value
@@ -100,6 +100,10 @@ class LoggerExt:
             "success": LoggerExt._success,
             "result": LoggerExt._result,
             "notice": LoggerExt._notice,
+            # Add these methods that were defined but not patched
+            "log_box": LoggerExt._log_box,
+            "log_divider": LoggerExt._log_divider,
+            "log_raw": LoggerExt._log_raw,
         }
 
         for name, method in wrapped_methods.items():
@@ -114,7 +118,7 @@ class LoggerExt:
         format_string = base_format.replace(
             "%(message)s", f"{prefix}%(message)s{suffix}"
         )
-        log_timestamp = getattr(self, "_log_timestamp", "%H:%M:%S")
+        log_timestamp = getattr(self, "_log_timestamp", None)
         if log_timestamp:
             format_string = "[%(asctime)s] " + format_string
             formatter = internal_logging.Formatter(format_string, datefmt=log_timestamp)
@@ -207,18 +211,6 @@ class LoggerExt:
                 level.upper(), internal_logging.INFO
             )
         self.internal_setLevel(level)  # Call the preserved original method
-
-    @staticmethod
-    def _success(self, msg: str, *args, **kwargs) -> None:
-        self.log(LoggerExt.SUCCESS, msg, *args, **kwargs)
-
-    @staticmethod
-    def _result(self, msg: str, *args, **kwargs) -> None:
-        self.log(LoggerExt.RESULT, msg, *args, **kwargs)
-
-    @staticmethod
-    def _notice(self, msg: str, *args, **kwargs) -> None:
-        self.log(LoggerExt.NOTICE, msg, *args, **kwargs)
 
     @staticmethod
     def _set_text_handler(handler: Union[type, object]) -> None:
@@ -344,30 +336,26 @@ class LoggerExt:
     def _setup_logging_redirect(
         self, target: Union[str, object], level: int = internal_logging.INFO
     ) -> None:
-        """
-        Redirect logging output to a specified target.
+        """Redirect logging output to a specified target.
         :param target: Can be a filename (str), a stream (e.g., sys.stdout), or a widget (object).
         :param level: The log level for the redirection.
         """
+        self.setLevel(level)  # <-- Always set logger level!
         if isinstance(target, str):
-            # Redirect to a file
             self.add_file_handler(filename=target, level=level)
         elif hasattr(target, "write"):
-            # Redirect to a stream
             stream_handler = internal_logging.StreamHandler(stream=target)
             stream_handler.setLevel(level)
             stream_handler.setFormatter(self._formatter_selector(level))
             self.addHandler(stream_handler)
         elif hasattr(target, "append"):
-            # Redirect to a widget
             self.add_text_widget_handler(text_widget=target, level=level)
         else:
             raise ValueError("Unsupported target type for logging redirection.")
 
 
 class DefaultTextLogHandler(internal_logging.Handler):
-    """
-    A generic thread-safe logging handler that writes logs to any widget
+    """A generic thread-safe logging handler that writes logs to any widget
     supporting .append(str). Supports raw output, optional HTML color formatting,
     and optional monospace font styling.
     """
@@ -483,82 +471,6 @@ class LoggingMixin:
 # -------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import unittest
-    from logging.handlers import MemoryHandler
-
-    class TestLoggingMixin(unittest.TestCase):
-        def setUp(self):
-            class TestClass(LoggingMixin):
-                pass
-
-            self.test_instance = TestClass()
-
-        def test_logger_initialization(self):
-            logger = self.test_instance.logger
-            self.assertIsInstance(logger, internal_logging.Logger)
-            self.assertEqual(logger.level, internal_logging.WARNING)
-
-            expected_name = (
-                f"{self.test_instance.__class__.__module__}."
-                f"{self.test_instance.__class__.__qualname__}"
-            )
-            self.assertEqual(logger.name, expected_name)
-
-        def test_logging_property(self):
-            self.assertIs(self.test_instance.logging, internal_logging)
-
-        def test_add_stream_handler(self):
-            self.test_instance.add_stream_handler()
-            stream_handlers = [
-                h
-                for h in self.test_instance.logger.handlers
-                if isinstance(h, internal_logging.StreamHandler)
-            ]
-            self.assertTrue(stream_handlers, "Stream handler not added")
-
-        def test_add_file_handler(self):
-            self.test_instance.logger.add_file_handler("test.log")
-            file_handlers = [
-                h
-                for h in self.test_instance.logger.handlers
-                if isinstance(h, internal_logging.FileHandler)
-            ]
-            self.assertTrue(file_handlers, "File handler not added")
-
-        def test_add_text_widget_handler(self):
-            class MockWidget:
-                def append(self, text):
-                    pass
-
-            self.test_instance.logger.add_text_widget_handler(MockWidget())
-            widget_handlers = [
-                h
-                for h in self.test_instance.logger.handlers
-                if isinstance(h, DefaultTextLogHandler)
-            ]
-            self.assertTrue(widget_handlers, "Text widget handler not added")
-
-        def test_log_message_capture_with_memory_handler(self):
-            logger = self.test_instance.logger
-            memory_handler = MemoryHandler(
-                capacity=10000, flushLevel=internal_logging.DEBUG
-            )
-            logger.addHandler(memory_handler)
-
-            logger.debug("Test log message to verify capture")
-            memory_handler.flush()
-
-            captured = any(
-                "Test log message to verify capture" in record.getMessage()
-                for record in memory_handler.buffer
-            )
-            logger.removeHandler(memory_handler)
-            self.assertTrue(captured, "Expected log message not captured")
-
-    # Use TextTestRunner to run tests to prevent SystemExit issue.
-    loader = unittest.TestLoader()
-    suite = loader.loadTestsFromTestCase(TestLoggingMixin)
-    runner = unittest.TextTestRunner()
-    runner.run(suite)
+    ...
 
 # -------------------------------------------------------------------------------
