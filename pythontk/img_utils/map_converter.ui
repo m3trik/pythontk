@@ -260,14 +260,7 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
             </size>
            </property>
            <property name="toolTip">
-            <string>&lt;b&gt;Optimize Texture&lt;/b&gt;&lt;br&gt;
-Optimizes a texture by clamping the maximum size to &lt;b&gt;4K&lt;/b&gt; and adjusting the image 
-(such as setting bit depth) according to the map type.&lt;br&gt;&lt;br&gt;
-&lt;b&gt;Usage:&lt;/b&gt; Select the texture map(s) to optimize.&lt;br&gt;&lt;br&gt;
-The optimized texture will be created in the same directory, 
-with the original file moved to an &lt;i&gt;old&lt;/i&gt; folder.
-
-</string>
+            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Optimize Texture&lt;/span&gt;&lt;br/&gt;Optimizes a texture by clamping the maximum size and adjusting the image (such as setting bit depth) according to the map type.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select the texture map(s) to optimize.&lt;br/&gt;&lt;br/&gt;The optimized texture will be created in the same directory, with the original file moved to an &lt;span style=&quot; font-style:italic;&quot;&gt;old&lt;/span&gt; folder. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
            </property>
            <property name="text">
             <string>Optimize</string>

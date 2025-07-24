@@ -55,21 +55,26 @@ class IterUtils(core_utils.HelpMixin):
         return d + 1
 
     @classmethod
-    def flatten(cls, lst):
+    def flatten(cls, lst, return_type: Optional[type] = None):
         """Flatten arbitrarily nested lists.
 
         Parameters:
-                lst (list): A list with potentially nested lists.
+            lst (list): A list with potentially nested lists.
+            return_type (type, optional): If provided, cast the result to this type (e.g., list, tuple, set).
 
         Returns:
-                (generator)
+            (iterable or specified type): Flattened iterable or container of flattened values.
         """
-        for i in lst:
-            if isinstance(i, (list, tuple, set)):
-                for ii in cls.flatten(i):
-                    yield ii
-            else:
-                yield i
+
+        def _flatten_gen(x):
+            for i in x:
+                if isinstance(i, (list, tuple, set)):
+                    yield from cls.flatten(i)
+                else:
+                    yield i
+
+        result = _flatten_gen(lst)
+        return return_type(result) if return_type else result
 
     @staticmethod
     def collapse_integer_sequence(lst, limit=None, compress=True, to_string=True):
