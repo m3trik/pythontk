@@ -100,10 +100,10 @@ class LoggerExt:
             "success": LoggerExt._success,
             "result": LoggerExt._result,
             "notice": LoggerExt._notice,
-            # Add these methods that were defined but not patched
             "log_box": LoggerExt._log_box,
             "log_divider": LoggerExt._log_divider,
             "log_raw": LoggerExt._log_raw,
+            "hide_logger_name": LoggerExt._hide_logger_name,
         }
 
         for name, method in wrapped_methods.items():
@@ -114,7 +114,9 @@ class LoggerExt:
         """Select formatter based on the log level."""
         prefix = getattr(self, "_log_prefix", "")
         suffix = getattr(self, "_log_suffix", "")
-        base_format = LoggerExt._get_base_format(level)
+        base_format = LoggerExt._get_base_format(
+            level, logger=self
+        )  # Pass self as logger here
         format_string = base_format.replace(
             "%(message)s", f"{prefix}%(message)s{suffix}"
         )
@@ -127,17 +129,26 @@ class LoggerExt:
         return formatter
 
     @staticmethod
-    def _get_base_format(level: int) -> str:
+    def _get_base_format(level: int, logger=None) -> str:
         """Return the base format string based on the log level."""
+        # Get the original format based on level
         if level == LoggerExt.SUCCESS:
-            return LoggerExt.BASE_FORMATS["success"]
+            fmt = LoggerExt.BASE_FORMATS["success"]
         elif level == LoggerExt.RESULT:
-            return LoggerExt.BASE_FORMATS["result"]
+            fmt = LoggerExt.BASE_FORMATS["result"]
         elif level == LoggerExt.NOTICE:
-            return LoggerExt.BASE_FORMATS["notice"]
+            fmt = LoggerExt.BASE_FORMATS["notice"]
         elif level <= internal_logging.DEBUG:
-            return LoggerExt.BASE_FORMATS["debug"]
-        return LoggerExt.BASE_FORMATS["default"]
+            fmt = LoggerExt.BASE_FORMATS["debug"]
+        else:
+            fmt = LoggerExt.BASE_FORMATS["default"]
+
+        # If we have a logger instance and it has _hide_logger_name set to False,
+        # strip the name from the format
+        if logger and hasattr(logger, "_hide_logger_name") and logger._hide_logger_name:
+            fmt = fmt.replace("%(name)s: ", "")
+
+        return fmt
 
     @staticmethod
     def _add_handler(
@@ -352,6 +363,17 @@ class LoggerExt:
             self.add_text_widget_handler(text_widget=target, level=level)
         else:
             raise ValueError("Unsupported target type for logging redirection.")
+
+    @staticmethod
+    def _hide_logger_name(self, show: bool = False) -> None:
+        """Control whether the logger name is displayed in log messages.
+
+        Args:
+            show: If True (default), include the logger name in messages.
+                  If False, omit the name portion for cleaner output.
+        """
+        self._hide_logger_name = show
+        LoggerExt._update_handler_formatters(self)
 
 
 class DefaultTextLogHandler(internal_logging.Handler):
