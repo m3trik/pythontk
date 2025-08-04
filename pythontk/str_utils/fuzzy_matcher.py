@@ -11,7 +11,7 @@ class FuzzyMatcher:
     def get_base_name(name: str) -> str:
         """Remove trailing digits from name to get base name.
 
-        Args:
+        Parameters:
             name: Input string that may have trailing digits
 
         Returns:
@@ -31,7 +31,7 @@ class FuzzyMatcher:
     ) -> Optional[Tuple[str, float]]:
         """Find best fuzzy match for target name from available candidates.
 
-        Args:
+        Parameters:
             target_name: Name to find a match for
             available_names: List of candidate names to match against
             score_threshold: Minimum similarity score (0.0-1.0) to consider a match
@@ -67,7 +67,7 @@ class FuzzyMatcher:
     ) -> Dict[str, Tuple[str, float]]:
         """Find fuzzy matches for multiple target names.
 
-        Args:
+        Parameters:
             target_names: List of names to find matches for
             available_names: List of candidate names to match against
             score_threshold: Minimum similarity score to consider a match
@@ -93,7 +93,7 @@ class FuzzyMatcher:
         This is useful for matching objects that have been renamed with different numbering
         but are otherwise identical (e.g., "mesh_01" vs "mesh_02").
 
-        Args:
+        Parameters:
             missing_paths: List of paths that are missing
             extra_paths: List of paths that are extra/unexpected
             path_separator: Character used to separate hierarchy levels
@@ -155,7 +155,7 @@ class FuzzyMatcher:
     def _calculate_similarity(name1: str, name2: str) -> float:
         """Calculate similarity score between two names using multiple strategies.
 
-        Args:
+        Parameters:
             name1: First name to compare
             name2: Second name to compare
 
@@ -166,9 +166,14 @@ class FuzzyMatcher:
         base1 = FuzzyMatcher.get_base_name(name1)
         base2 = FuzzyMatcher.get_base_name(name2)
 
-        if base1 == base2 and base1 != name1 and base1 != name2:
-            # Both have trailing digits and same base - high score
-            return 0.9
+        if base1 == base2 and base1:
+            # Same base name - check if at least one has trailing digits
+            if base1 != name1 or base1 != name2:
+                # At least one has trailing digits and same base - high score
+                return 0.9
+            # Both names are identical to base (no trailing digits) - perfect match
+            elif name1 == name2:
+                return 1.0
 
         # Strategy 2: Substring matching
         if name1 in name2 or name2 in name1:
@@ -191,7 +196,7 @@ class FuzzyMatcher:
     def calculate_levenshtein_distance(s1: str, s2: str) -> int:
         """Calculate Levenshtein (edit) distance between two strings.
 
-        Args:
+        Parameters:
             s1: First string
             s2: Second string
 
@@ -220,7 +225,7 @@ class FuzzyMatcher:
     def similarity_from_distance(s1: str, s2: str) -> float:
         """Calculate similarity score from Levenshtein distance.
 
-        Args:
+        Parameters:
             s1: First string
             s2: Second string
 

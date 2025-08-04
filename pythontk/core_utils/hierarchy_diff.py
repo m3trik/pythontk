@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 import json
 
 
-class HierarchyDiffResult:
+class HierarchyDiff:
     """Generic data class to hold hierarchical difference results.
 
     This class can be used for any hierarchical structure comparison,
@@ -87,14 +87,14 @@ class HierarchyDiffResult:
             json.dump(self.as_dict(), f, indent=indent)
 
     @classmethod
-    def load_from_file(cls, filepath: str) -> "HierarchyDiffResult":
+    def load_from_file(cls, filepath: str) -> "HierarchyDiff":
         """Load diff result from JSON file.
 
         Parameters:
             filepath: Path to the JSON file
 
         Returns:
-            HierarchyDiffResult instance
+            HierarchyDiff instance
         """
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -118,11 +118,11 @@ class HierarchyDiffResult:
         self.fuzzy_matches.clear()
         self.metadata.clear()
 
-    def merge(self, other: "HierarchyDiffResult") -> None:
+    def merge(self, other: "HierarchyDiff") -> None:
         """Merge another diff result into this one.
 
         Parameters:
-            other: Another HierarchyDiffResult to merge
+            other: Another HierarchyDiff to merge
         """
         self.missing.extend(other.missing)
         self.extra.extend(other.extra)
@@ -176,7 +176,7 @@ class HierarchyDiffResult:
         """String representation of diff result."""
         summary = self.get_summary()
         return (
-            f"HierarchyDiffResult(missing={summary['missing']}, "
+            f"HierarchyDiff(missing={summary['missing']}, "
             f"extra={summary['extra']}, renamed={summary['renamed']}, "
             f"reparented={summary['reparented']})"
         )
@@ -190,10 +190,10 @@ class HierarchyDiffResult:
 
 if __name__ == "__main__":
     # Example usage
-    print("=== HierarchyDiffResult Example ===")
+    print("=== HierarchyDiff Example ===")
 
     # Create a diff result
-    diff = HierarchyDiffResult()
+    diff = HierarchyDiff()
     diff.missing = ["item1", "item2"]
     diff.extra = ["item3"]
     diff.renamed = ["item4"]
@@ -211,7 +211,7 @@ if __name__ == "__main__":
 
     # Save and load example
     # diff.save_to_file("hierarchy_diff.json")
-    # loaded_diff = HierarchyDiffResult.load_from_file("hierarchy_diff.json")
+    # loaded_diff = HierarchyDiff.load_from_file("hierarchy_diff.json")
 
 # --------------------------------------------------------------------------------------------
 # Notes
