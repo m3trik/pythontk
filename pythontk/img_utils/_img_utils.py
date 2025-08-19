@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import os
+import re
 from typing import List, Tuple, Dict, Union, Any, Optional
 
 try:
@@ -1129,6 +1130,95 @@ class ImgUtils(core_utils.HelpMixin):
             raise Exception("Failed to pack smoothness into metallic map.")
 
     @classmethod
+    def unpack_metallic_smoothness(
+        cls,
+        metallic_smoothness_map_path: str,
+        output_dir: str = None,
+        metallic_suffix: str = "_Metallic",
+        smoothness_suffix: str = "_Smoothness",
+        invert_smoothness: bool = False,
+    ) -> Tuple[str, str]:
+        """Unpacks metallic and smoothness maps from a combined metallic-smoothness texture.
+
+        The metallic channel is extracted from RGB channels (typically Red channel),
+        and the smoothness channel is extracted from the Alpha channel.
+
+        Parameters:
+            metallic_smoothness_map_path (str): Path to the metallic-smoothness texture map.
+            output_dir (str, optional): Directory path for the output. If None, the output directory will be the same as the input map path.
+            metallic_suffix (str, optional): Suffix for the metallic output file name, defaulting to '_Metallic'.
+            smoothness_suffix (str, optional): Suffix for the smoothness output file name, defaulting to '_Smoothness'.
+            invert_smoothness (bool, optional): If True, the smoothness channel will be inverted to create a roughness map.
+
+        Returns:
+            Tuple[str, str]: A tuple containing the file paths of the extracted metallic and smoothness texture maps.
+
+        Raises:
+            ValueError: If the input path is invalid.
+            FileNotFoundError: If the input file does not exist.
+        """
+        cls.assert_pathlike(
+            metallic_smoothness_map_path, "metallic_smoothness_map_path"
+        )
+
+        if not os.path.exists(metallic_smoothness_map_path):
+            raise FileNotFoundError(
+                f"Input file not found: {metallic_smoothness_map_path}"
+            )
+
+        # Load the combined texture
+        combined_image = cls.ensure_image(metallic_smoothness_map_path)
+
+        # Get base name for output files
+        base_name = cls.get_base_texture_name(metallic_smoothness_map_path)
+
+        # Determine output directory
+        if output_dir is None:
+            output_dir = os.path.dirname(metallic_smoothness_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        # Extract metallic channel (typically from RGB channels)
+        # For metallic maps, we usually use the red channel or convert to grayscale
+        if combined_image.mode in ("RGBA", "RGB"):
+            metallic_channel = combined_image.getchannel("R").convert("L")
+        else:
+            metallic_channel = combined_image.convert("L")
+
+        # Extract smoothness channel from alpha
+        if combined_image.mode in ("RGBA", "LA"):
+            smoothness_channel = combined_image.getchannel("A").convert("L")
+        else:
+            # If no alpha channel, use a default smoothness (white = smooth)
+            smoothness_channel = Image.new("L", combined_image.size, 255)
+            print(
+                f"// Warning: No alpha channel found in {metallic_smoothness_map_path}, using default smoothness."
+            )
+
+        # Invert smoothness if requested (to create roughness)
+        if invert_smoothness:
+            smoothness_channel = ImageOps.invert(smoothness_channel)
+            # Update suffix if inverted
+            if smoothness_suffix == "_Smoothness":
+                smoothness_suffix = "_Roughness"
+
+        # Create output file paths
+        metallic_output_path = os.path.join(
+            output_dir, f"{base_name}{metallic_suffix}.png"
+        )
+        smoothness_output_path = os.path.join(
+            output_dir, f"{base_name}{smoothness_suffix}.png"
+        )
+
+        # Save the extracted maps
+        metallic_channel.save(metallic_output_path, format="PNG")
+        smoothness_channel.save(smoothness_output_path, format="PNG")
+
+        return metallic_output_path, smoothness_output_path
+
+    @classmethod
     def create_dx_from_gl(cls, file: str, output_path: str = None) -> str:
         cls.assert_pathlike(file, "file")
 
@@ -1219,6 +1309,95 @@ class ImgUtils(core_utils.HelpMixin):
         gloss = ImageOps.autocontrast(spec_gray)
 
         return gloss.convert("L")
+
+    @classmethod
+    def unpack_specular_gloss(
+        cls,
+        specular_gloss_map_path: str,
+        output_dir: str = None,
+        specular_suffix: str = "_Specular",
+        gloss_suffix: str = "_Gloss",
+        gloss_channel: str = "A",
+    ) -> Tuple[str, str]:
+        """Unpacks specular and gloss maps from a combined specular-gloss texture.
+
+        The specular data is extracted from RGB channels, and the gloss data is
+        extracted from the specified channel (typically Alpha channel).
+
+        Parameters:
+            specular_gloss_map_path (str): Path to the specular-gloss texture map.
+            output_dir (str, optional): Directory path for the output. If None, the output directory will be the same as the input map path.
+            specular_suffix (str, optional): Suffix for the specular output file name, defaulting to '_Specular'.
+            gloss_suffix (str, optional): Suffix for the gloss output file name, defaulting to '_Gloss'.
+            gloss_channel (str, optional): Channel to extract gloss from ("R", "G", "B", "A"), defaulting to "A".
+
+        Returns:
+            Tuple[str, str]: A tuple containing the file paths of the extracted specular and gloss texture maps.
+
+        Raises:
+            ValueError: If the input path is invalid.
+            FileNotFoundError: If the input file does not exist.
+        """
+        cls.assert_pathlike(specular_gloss_map_path, "specular_gloss_map_path")
+
+        if not os.path.exists(specular_gloss_map_path):
+            raise FileNotFoundError(f"Input file not found: {specular_gloss_map_path}")
+
+        # Load the combined texture
+        combined_image = cls.ensure_image(specular_gloss_map_path)
+
+        # Get base name for output files
+        base_name = cls.get_base_texture_name(specular_gloss_map_path)
+
+        # Determine output directory
+        if output_dir is None:
+            output_dir = os.path.dirname(specular_gloss_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        # Extract specular channel (RGB channels)
+        if combined_image.mode in ("RGBA", "RGB"):
+            # Convert to RGB to remove alpha for specular map
+            specular_channel = combined_image.convert("RGB")
+        else:
+            specular_channel = combined_image.convert("RGB")
+
+        # Extract gloss channel using existing method logic
+        gloss_channel_upper = gloss_channel.upper()
+        if gloss_channel_upper in combined_image.getbands():
+            gloss_map = combined_image.getchannel(gloss_channel_upper)
+            if gloss_map.getextrema() != (0, 0):  # Ensure non-empty
+                gloss_map = gloss_map.convert("L")
+            else:
+                # Use normalized grayscale fallback
+                print(
+                    f"// Warning: No gloss found in '{gloss_channel}' channel; using normalized grayscale..."
+                )
+                spec_gray = combined_image.convert("L")
+                spec_gray = ImageEnhance.Brightness(spec_gray).enhance(1.2)
+                gloss_map = ImageOps.autocontrast(spec_gray)
+        else:
+            # Use normalized grayscale fallback
+            print(
+                f"// Warning: '{gloss_channel}' channel not found; using normalized grayscale..."
+            )
+            spec_gray = combined_image.convert("L")
+            spec_gray = ImageEnhance.Brightness(spec_gray).enhance(1.2)
+            gloss_map = ImageOps.autocontrast(spec_gray)
+
+        # Create output file paths
+        specular_output_path = os.path.join(
+            output_dir, f"{base_name}{specular_suffix}.png"
+        )
+        gloss_output_path = os.path.join(output_dir, f"{base_name}{gloss_suffix}.png")
+
+        # Save the extracted maps
+        specular_channel.save(specular_output_path, format="PNG")
+        gloss_map.save(gloss_output_path, format="PNG")
+
+        return specular_output_path, gloss_output_path
 
     @classmethod
     def convert_spec_gloss_to_pbr(

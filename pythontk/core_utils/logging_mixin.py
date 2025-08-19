@@ -37,6 +37,11 @@ class LoggerExt:
         # Register custom levels
         cls._register_custom_levels()
 
+        # Initialize error spam prevention
+        logger._error_cache = {}
+        logger._spam_prevention_enabled = True
+        logger._cache_duration = 300  # 5 minutes default
+
         # Patch logger methods
         cls._patch_logger_methods(logger)
 
@@ -104,6 +109,10 @@ class LoggerExt:
             "log_divider": LoggerExt._log_divider,
             "log_raw": LoggerExt._log_raw,
             "hide_logger_name": LoggerExt._hide_logger_name,
+            "error_once": LoggerExt._error_once,
+            "warning_once": LoggerExt._warning_once,
+            "set_spam_prevention": LoggerExt._set_spam_prevention,
+            "clear_error_cache": LoggerExt._clear_error_cache,
         }
 
         for name, method in wrapped_methods.items():
@@ -374,6 +383,93 @@ class LoggerExt:
         """
         self._hide_logger_name = show
         LoggerExt._update_handler_formatters(self)
+
+    @staticmethod
+    def _should_log_error(
+        logger: internal_logging.Logger, message: str, cache_key: Optional[str] = None
+    ) -> tuple[bool, str]:
+        """Check if an error should be logged to prevent spam."""
+        if not getattr(logger, "_spam_prevention_enabled", True):
+            return True, ""
+
+        import time
+
+        # Generate cache key if not provided
+        if cache_key is None:
+            import hashlib
+
+            cache_key = hashlib.md5(message.encode()).hexdigest()[:12]
+
+        current_time = time.time()
+        cache_duration = getattr(logger, "_cache_duration", 300)
+        error_cache = getattr(logger, "_error_cache", {})
+
+        # Check if we've seen this error recently
+        if cache_key in error_cache:
+            last_time, count = error_cache[cache_key]
+
+            # If within cache duration, increment count and skip logging
+            if current_time - last_time < cache_duration:
+                error_cache[cache_key] = (last_time, count + 1)
+                return (
+                    False,
+                    f" (suppressed {count} similar error{'s' if count != 1 else ''})",
+                )
+
+        # Log the error and cache it
+        error_cache[cache_key] = (current_time, 1)
+        return True, ""
+
+    @staticmethod
+    def _error_once(
+        logger: internal_logging.Logger,
+        message: str,
+        *args,
+        cache_key: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Log an error with automatic spam prevention."""
+        should_log, suffix = LoggerExt._should_log_error(logger, message, cache_key)
+
+        if should_log:
+            # Log the full error with suffix
+            full_message = f"{message}{suffix}"
+            logger.error(full_message, *args, **kwargs)
+        else:
+            # Log a brief debug message for suppressed errors
+            logger.debug(f"Suppressed duplicate error: {message[:50]}...")
+
+    @staticmethod
+    def _warning_once(
+        logger: internal_logging.Logger,
+        message: str,
+        *args,
+        cache_key: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Log a warning with automatic spam prevention."""
+        should_log, suffix = LoggerExt._should_log_error(logger, message, cache_key)
+
+        if should_log:
+            full_message = f"{message}{suffix}"
+            logger.warning(full_message, *args, **kwargs)
+        else:
+            logger.debug(f"Suppressed duplicate warning: {message[:50]}...")
+
+    @staticmethod
+    def _set_spam_prevention(
+        logger: internal_logging.Logger, enabled: bool = True, cache_duration: int = 300
+    ) -> None:
+        """Configure spam prevention settings."""
+        logger._spam_prevention_enabled = enabled
+        logger._cache_duration = cache_duration
+        if not enabled:
+            logger._error_cache.clear()
+
+    @staticmethod
+    def _clear_error_cache(logger: internal_logging.Logger) -> None:
+        """Clear the error cache."""
+        logger._error_cache.clear()
 
 
 class DefaultTextLogHandler(internal_logging.Handler):

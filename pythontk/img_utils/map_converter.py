@@ -18,9 +18,10 @@ class MapConverterSlots(ImgUtils):
         "*.exr",
     ]
 
-    def __init__(self, **kwargs):
+    def __init__(self, switchboard, **kwargs):
         super().__init__()
-        self.sb = kwargs.get("switchboard")
+
+        self.sb = switchboard
         self.ui = self.sb.loaded_ui.map_converter
 
         self._source_dir = kwargs.get("source_dir", "")
@@ -160,29 +161,66 @@ class MapConverterSlots(ImgUtils):
         except Exception:
             pass
 
-    def b005(self):
-        """Extract Gloss map from Specular map."""
-        spec_map_path = self.sb.file_dialog(
+    def b004(self):
+        """Unpack Metallic and Smoothness maps from MetallicSmoothness textures."""
+        print("Unpacking Metallic and Smoothness maps ..")
+        metallic_smoothness_paths = self.sb.file_dialog(
             file_types=self.texture_file_types,
-            title="Select a specular map to extract gloss from:",
+            title="Select MetallicSmoothness maps to unpack:",
             start_dir=self.source_dir,
-            allow_multiple=False,
+            allow_multiple=True,
         )
-        if not spec_map_path:
+        if not metallic_smoothness_paths:
             return
 
-        print(f"Extracting gloss from {spec_map_path} ..")
-        gloss_image = self.extract_gloss_from_spec(spec_map_path)
+        for metallic_smoothness_path in metallic_smoothness_paths:
+            print(f"Unpacking: {metallic_smoothness_path} ..")
 
-        # Resolve the correct gloss texture filename
-        gloss_map_path = self.resolve_texture_filename(
-            spec_map_path, "Gloss", ext="PNG"
+            try:
+                metallic_path, smoothness_path = self.unpack_metallic_smoothness(
+                    metallic_smoothness_path
+                )
+                print(f"// Metallic map: {metallic_path}")
+                print(f"// Smoothness map: {smoothness_path}")
+
+            except Exception as e:
+                print(f"// Error unpacking {metallic_smoothness_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(
+                metallic_smoothness_paths[0], "path"
+            )
+        except Exception:
+            pass
+
+    def b005(self):
+        """Unpack Specular and Gloss maps from SpecularGloss textures."""
+        specular_gloss_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select SpecularGloss maps to unpack:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
         )
-        # Save gloss map
-        gloss_image.save(gloss_map_path, format="PNG")
+        if not specular_gloss_paths:
+            return
 
-        print(f"// Result: {gloss_map_path}")
-        self.source_dir = FileUtils.format_path(gloss_map_path, "path")
+        for specular_gloss_path in specular_gloss_paths:
+            print(f"Unpacking: {specular_gloss_path} ..")
+
+            try:
+                specular_path, gloss_path = self.unpack_specular_gloss(
+                    specular_gloss_path
+                )
+                print(f"// Specular map: {specular_path}")
+                print(f"// Gloss map: {gloss_path}")
+
+            except Exception as e:
+                print(f"// Error unpacking {specular_gloss_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(specular_gloss_paths[0], "path")
+        except Exception:
+            pass
 
     def tb000_init(self, widget):
         """ """
