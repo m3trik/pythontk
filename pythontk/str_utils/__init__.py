@@ -2,6 +2,7 @@
 # coding=utf-8
 
 from pythontk.str_utils._str_utils import StrUtils
+from pythontk.str_utils.fuzzy_matcher import FuzzyMatcher
 
 
 # --------------------------------------------------------------------------------------------

@@ -423,6 +423,12 @@ class StrUtils(core_utils.CoreUtils):
             find_str('*Weight*', lst) #find any element that contains the string 'Weight'.
             find_str('Weight$|Weights$', lst, regex=True) #find any element that endswith 'Weight' or 'Weights'.
         """
+        # Filter out non-string values
+        strings = [s for s in strings if isinstance(s, str)]
+
+        if not find:  # Handle empty search string
+            return []
+
         if regex:
             import re
 
@@ -495,6 +501,9 @@ class StrUtils(core_utils.CoreUtils):
         """
         import re
 
+        # Filter out non-string values
+        strings = [s for s in strings if isinstance(s, str)]
+
         # if 'fltr' is not an empty string; fltr 'strings' for matches using 'fltr'.
         if fltr:
             strings = cls.find_str(fltr, strings, regex=regex, ignore_case=ignore_case)
@@ -508,61 +517,114 @@ class StrUtils(core_utils.CoreUtils):
         for orig_str in strings:
             # modifiers
             if to.startswith("*") and to.endswith("*"):  # replace chars
-                if ignore_case:
-                    # remove frm_ from the string (case in-sensitive).
-                    s = re.sub(frm_, to_, orig_str, flags=re.IGNORECASE)
+                if frm_:  # Only if frm_ is not empty
+                    if ignore_case and not regex:
+                        # remove frm_ from the string (case in-sensitive).
+                        s = re.sub(re.escape(frm_), to_, orig_str, flags=re.IGNORECASE)
+                    else:
+                        s = orig_str.replace(frm_, to_)
                 else:
-                    s = orig_str.replace(frm_, to_)
+                    s = orig_str  # No change if no filter pattern
 
             elif to.startswith("**"):  # append suffix
                 s = orig_str + to_
 
             elif to.startswith("*"):  # replace suffix
-                if ignore_case:
-                    # get the starting index of 'frm_'.
-                    index = re.search(frm_, orig_str, flags=re.IGNORECASE).start()
-                    s = orig_str[:index] + to_
+                if frm_:  # Only if frm_ is not empty
+                    if ignore_case and not regex:
+                        # get the starting index of 'frm_'.
+                        try:
+                            index = re.search(
+                                re.escape(frm_), orig_str, flags=re.IGNORECASE
+                            ).start()
+                            s = orig_str[:index] + to_
+                        except (AttributeError, re.error):
+                            s = orig_str + to_  # Fallback: append if pattern not found
+                    else:
+                        try:
+                            s = orig_str.split(frm_)[0] + to_
+                        except ValueError:  # empty separator
+                            s = orig_str + to_  # Fallback: append
                 else:
-                    s = orig_str.split(frm_)[0] + to_
+                    s = orig_str + to_  # Append if no filter pattern
 
             elif to.endswith("**"):  # append prefix
                 s = to_ + orig_str
 
             elif to.endswith("*"):  # replace prefix
-                if ignore_case:
-                    # get the ending index of 'frm_'.
-                    index = re.search(frm_, orig_str, flags=re.IGNORECASE).end()
-                    s = to_ + orig_str[index:]
+                if frm_:  # Only if frm_ is not empty
+                    if ignore_case and not regex:
+                        # get the ending index of 'frm_'.
+                        try:
+                            index = re.search(
+                                re.escape(frm_), orig_str, flags=re.IGNORECASE
+                            ).end()
+                            s = to_ + orig_str[index:]
+                        except (AttributeError, re.error):
+                            s = to_ + orig_str  # Fallback: prepend if pattern not found
+                    else:
+                        try:
+                            parts = orig_str.split(frm_)
+                            if len(parts) > 1:
+                                s = to_ + frm_ + orig_str.split(frm_)[-1]
+                            else:
+                                s = to_ + orig_str
+                        except ValueError:  # empty separator
+                            s = to_ + orig_str  # Fallback: prepend
                 else:
-                    s = to_ + frm_ + orig_str.split(frm_)[-1]
+                    s = to_ + orig_str  # Prepend if no filter pattern
 
             elif not to_:  # if 'to_' is an empty string:
-                if fltr.endswith("*") and not fltr.startswith(
-                    "*"
-                ):  # strip only beginning chars.
-                    if ignore_case:
-                        # remove the first instance of frm_ from the string (case in-sensitive).
-                        s = re.sub(frm_, "", orig_str, 1, flags=re.IGNORECASE)
-                    else:
-                        # remove first instance of frm_ from the string.
-                        s = orig_str.replace(frm_, "", 1)
+                if frm_:  # Only process if there's something to remove
+                    if fltr.endswith("*") and not fltr.startswith(
+                        "*"
+                    ):  # strip only beginning chars.
+                        if ignore_case and not regex:
+                            # remove the first instance of frm_ from the string (case in-sensitive).
+                            s = re.sub(
+                                re.escape(frm_), "", orig_str, 1, flags=re.IGNORECASE
+                            )
+                        else:
+                            # remove first instance of frm_ from the string.
+                            s = orig_str.replace(frm_, "", 1)
 
-                elif fltr.startswith("*") and not fltr.endswith(
-                    "*"
-                ):  # strip only ending chars.
-                    if ignore_case:
-                        # remove the last instance of frm_ from the string (case in-sensitive).
-                        s = re.sub(r"(.*)" + frm_, r"\1", orig_str, flags=re.IGNORECASE)
-                    else:
-                        # remove last instance of frm_ from the string.
-                        s = "".join(orig_str.rsplit(frm_, 1))
+                    elif fltr.startswith("*") and not fltr.endswith(
+                        "*"
+                    ):  # strip only ending chars.
+                        if ignore_case and not regex:
+                            # remove the last instance of frm_ from the string (case in-sensitive).
+                            try:
+                                s = re.sub(
+                                    r"(.*)" + re.escape(frm_),
+                                    r"\1",
+                                    orig_str,
+                                    flags=re.IGNORECASE,
+                                )
+                            except re.error:
+                                s = orig_str  # Fallback if regex fails
+                        else:
+                            # remove last instance of frm_ from the string.
+                            try:
+                                s = "".join(orig_str.rsplit(frm_, 1))
+                            except ValueError:
+                                s = orig_str  # Fallback if empty separator
 
+                    else:
+                        if ignore_case and not regex:
+                            # remove frm_ from the string (case in-sensitive).
+                            try:
+                                s = re.sub(
+                                    re.escape(frm_), "", orig_str, flags=re.IGNORECASE
+                                )
+                            except re.error:
+                                s = orig_str  # Fallback if regex fails
+                        else:
+                            s = orig_str.replace(
+                                frm_, ""
+                            )  # remove frm_ from the string.
                 else:
-                    if ignore_case:
-                        # remove frm_ from the string (case in-sensitive).
-                        s = re.sub(frm_, "", orig_str, flags=re.IGNORECASE)
-                    else:
-                        s = orig_str.replace(frm_, "")  # remove frm_ from the string.
+                    s = orig_str  # No change if no filter pattern
+
             else:  # else; replace whole string.
                 s = to_
 

@@ -29,11 +29,14 @@ class MapPackerSlots(ImgUtils):
         "Displacement",
     ]
 
-    def __init__(self, **kwargs):
+    def __init__(self, switchboard, **kwargs):
         super().__init__()
-        self.sb = kwargs.get("switchboard")
+
+        self.sb = switchboard
         self.ui = self.sb.loaded_ui.map_packer
+
         self._source_dir = kwargs.get("source_dir", "")
+
         self._init_ui_comboboxes()
         self._set_channel_label_colors()
         self.ui.b001.setEnabled(False)  # Disable the open output dir button
