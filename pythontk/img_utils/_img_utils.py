@@ -1,7 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
 import os
-import re
 from typing import List, Tuple, Dict, Union, Any, Optional
 
 try:
