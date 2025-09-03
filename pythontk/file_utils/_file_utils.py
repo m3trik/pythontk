@@ -183,19 +183,20 @@ class FileUtils(core_utils.HelpMixin):
             traceback.print_exc()
 
     @staticmethod
-    def get_file_contents(filepath: str, as_list=False) -> None:
+    def get_file_contents(filepath: str, as_list=False, encoding="utf-8") -> None:
         """Get each line of a text file as indices of a list.
         Will create a file if one doesn't exist.
 
         Parameters:
             filepath (str): The path to an existing text based file.
             as_list (bool): Return as a list or a string.
+            encoding (str): The encoding to use when reading the file.
 
         Returns:
             (list)
         """
         try:
-            with open(filepath, "r") as f:
+            with open(filepath, "r", encoding=encoding, errors="replace") as f:
                 return f.readlines() if as_list else f.read()
         except OSError:
             traceback.print_exc()
