@@ -403,8 +403,9 @@ class StrTest(Main, StrUtils):
         self.perform_test(
             {
                 "self.truncate('12345678', 4)": "..5678",
-                "self.truncate('12345678', 4, False)": "1234..",
-                "self.truncate('12345678', 4, False, '--')": "1234--",
+                "self.truncate('12345678', 4, 'end')": "1234..",
+                "self.truncate('12345678', 4, 'end', '--')": "1234--",
+                "self.truncate('12345678', 6, 'middle')": "12..78",
                 "self.truncate(None, 4)": None,
             }
         )

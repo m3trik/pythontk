@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import os
+from contextlib import contextmanager
 from typing import List, Tuple, Dict, Union, Any, Optional
 
 try:
@@ -54,6 +55,8 @@ class ImgUtils(core_utils.HelpMixin):
         "Normal": ("Normal", "Norm", "NRM", "_N"),
         "Normal_DirectX": ("Normal_DirectX", "NormalDX", "_NDX"),
         "Normal_OpenGL": ("Normal_OpenGL", "NormalGL", "_NGL"),
+        # Common height/bump-style grayscale maps. Height already exists; add explicit Bump aliases.
+        "Bump": ("Bump", "BumpMap", "_Bump", "_BP", "_B"),
         "Height": ("Height", "High", "HGT", "_H"),
         "Emissive": ("Emissive", "Emit", "EMI", "_E"),
         "Diffuse": ("Diffuse", "_DF", "Diff", "DIF", "_D"),
@@ -86,6 +89,7 @@ class ImgUtils(core_utils.HelpMixin):
         "Normal": (127, 127, 255, 255),
         "Normal_DirectX": (127, 127, 255, 255),
         "Normal_OpenGL": (127, 127, 255, 255),
+        "Bump": (127, 127, 127, 255),
         "Height": (127, 127, 127, 255),
         "Emissive": (0, 0, 0, 255),
         "Diffuse": (0, 0, 0, 255),
@@ -113,6 +117,7 @@ class ImgUtils(core_utils.HelpMixin):
         "Normal": "RGB",  # Full color normal map.
         "Normal_DirectX": "RGB",  # DirectX normal map with Y-axis inversion.
         "Normal_OpenGL": "RGB",  # OpenGL normal map with standard Y-axis.
+        "Bump": "L",  # Grayscale bump map.
         "Height": "I",  # Integer mode for height, often 16 or 32-bit.
         "Emissive": "RGB",  # Full color map for self-illumination.
         "Diffuse": "RGB",  # Full color map for diffuse properties.
@@ -179,22 +184,79 @@ class ImgUtils(core_utils.HelpMixin):
         del im
 
     @classmethod
+    @contextmanager
+    def allow_large_images(cls):
+        """Context manager to safely load very large images.
+
+        Temporarily disables Pillow's MAX_IMAGE_PIXELS guard and suppresses
+        DecompressionBombWarning only within the context.
+        Restores original settings afterward.
+        """
+        import warnings
+
+        # Localize warning filters to this context only
+        with warnings.catch_warnings():
+            if hasattr(Image, "DecompressionBombWarning"):
+                warnings.simplefilter("ignore", category=Image.DecompressionBombWarning)
+
+            orig_max_pixels = getattr(Image, "MAX_IMAGE_PIXELS", None)
+            if hasattr(Image, "MAX_IMAGE_PIXELS"):
+                Image.MAX_IMAGE_PIXELS = None
+            try:
+                yield
+            finally:
+                if hasattr(Image, "MAX_IMAGE_PIXELS"):
+                    Image.MAX_IMAGE_PIXELS = orig_max_pixels
+
+    @classmethod
     def ensure_image(
-        cls, input_image: Union[str, Image.Image], mode: str = None
+        cls,
+        input_image: Union[str, Image.Image],
+        mode: str = None,
+        *,
+        max_pixels: Optional[int] = 268_435_456,
     ) -> Image.Image:
         """Ensures the input is a valid PIL Image. Supports optional mode conversion.
 
         Parameters:
             input_image (str | PIL.Image.Image): Image file path or loaded Image.
             mode (str, optional): Converts the image to the given mode (e.g., "L", "RGB").
+            max_pixels (int | None, optional): Combined control for large-image behavior.
+                - > 0: Temporarily set Pillow's MAX_IMAGE_PIXELS to this value and suppress
+                  DecompressionBombWarning while loading (enables large image handling).
+                - 0: Do not override MAX_IMAGE_PIXELS and do not suppress warnings.
+                - None: Keep current global behavior unchanged.
 
         Returns:
             PIL.Image.Image: Valid image object, optionally converted to `mode`.
         """
         if isinstance(input_image, str):
             try:
-                image = Image.open(input_image)
-                image.load()  # Force read the image (PIL is lazy)
+                # Manage large image safety at call-site granularity
+                import warnings
+
+                with warnings.catch_warnings():
+                    if (max_pixels is not None and max_pixels > 0) and hasattr(
+                        Image, "DecompressionBombWarning"
+                    ):
+                        warnings.simplefilter(
+                            "ignore", category=Image.DecompressionBombWarning
+                        )
+
+                    orig_max = getattr(Image, "MAX_IMAGE_PIXELS", None)
+                    try:
+                        if max_pixels is not None and hasattr(
+                            Image, "MAX_IMAGE_PIXELS"
+                        ):
+                            # 0 means no override (keep current guard), >0 apply the provided cap
+                            if max_pixels > 0:
+                                Image.MAX_IMAGE_PIXELS = max_pixels
+                            # else leave as-is
+                        image = Image.open(input_image)
+                        image.load()  # Force read the image (PIL is lazy)
+                    finally:
+                        if hasattr(Image, "MAX_IMAGE_PIXELS"):
+                            Image.MAX_IMAGE_PIXELS = orig_max
             except IOError as e:
                 raise IOError(
                     f"Unable to load image from path '{input_image}'. Error: {e}"
@@ -1276,6 +1338,262 @@ class ImgUtils(core_utils.HelpMixin):
         return output_path
 
     @classmethod
+    def convert_bump_to_normal(
+        cls,
+        bump_map: Union[str, Image.Image],
+        output_path: str = None,
+        intensity: float = 1.0,
+        output_format: str = "opengl",
+        smooth_filter: bool = True,
+        filter_radius: float = 0.5,
+        edge_wrap: bool = False,
+    ) -> str:
+        """Convert a bump/height map to a tangent-space normal map.
+
+        This method follows industry best practices from Substance, Marmoset, and V-Ray
+        for generating high-quality normal maps from height data.
+
+        Parameters:
+            bump_map (str | PIL.Image.Image): Input bump/height map file path or image.
+            output_path (str, optional): Output file path. If None, generates based on input.
+            intensity (float): Height depth multiplier (0.1 = subtle, 2.0+ = dramatic).
+                               Controls how "deep" the height values are interpreted.
+            output_format (str): Target normal map format - "opengl" or "directx".
+                               Affects Y-channel (green) orientation.
+            smooth_filter (bool): Apply smoothing to reduce aliasing artifacts.
+            filter_radius (float): Radius for smoothing filter (0.1-2.0 range).
+            edge_wrap (bool): Whether to wrap edges for seamless tiling.
+
+        Returns:
+            str: Path to the generated normal map file.
+
+        Notes:
+            - Uses Sobel operator for gradient calculation (industry standard)
+            - OpenGL: Y+ points up (green channel positive = surface pointing up)
+            - DirectX: Y+ points down (green channel inverted from OpenGL)
+            - Intensity should be scaled based on real-world height units
+            - Pre-filtering reduces mipmap artifacts in final rendering
+        """
+        # Load and ensure grayscale; validate path only when a path is provided
+        if isinstance(bump_map, str):
+            cls.assert_pathlike(bump_map, "bump_map")
+        image = cls.ensure_image(bump_map, "L")
+
+        # Apply smoothing filter to reduce aliasing if requested
+        if smooth_filter and filter_radius > 0:
+            # Use Gaussian blur to smooth height data before gradient calculation
+            image = image.filter(ImageFilter.GaussianBlur(radius=filter_radius))
+
+        # Convert to numpy array for gradient calculations
+        height_srgb = np.asarray(image, dtype=np.float32) / 255.0
+
+        # Convert sRGB grayscale to linear before computing derivatives (safer filtering/derivatives)
+        height_lin = cls._srgb_to_linear_np(height_srgb)
+
+        # Calculate gradients using Sobel operator (industry standard)
+        # Sobel X kernel: [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]
+        # Sobel Y kernel: [[-1, -2, -1], [0, 0, 0], [1, 2, 1]]
+        if edge_wrap:
+            # Pad with wrapped edges for seamless tiling
+            padded = np.pad(height_lin, 1, mode="wrap")
+        else:
+            # Pad with edge values
+            padded = np.pad(height_lin, 1, mode="edge")
+
+        # Sobel X gradient (horizontal edges)
+        grad_x = (
+            -1 * padded[:-2, :-2]
+            + 1 * padded[:-2, 2:]
+            + -2 * padded[1:-1, :-2]
+            + 2 * padded[1:-1, 2:]
+            + -1 * padded[2:, :-2]
+            + 1 * padded[2:, 2:]
+        ) / 8.0
+
+        # Sobel Y gradient (vertical edges)
+        grad_y = (
+            -1 * padded[:-2, :-2]
+            + -2 * padded[:-2, 1:-1]
+            + -1 * padded[:-2, 2:]
+            + 1 * padded[2:, :-2]
+            + 2 * padded[2:, 1:-1]
+            + 1 * padded[2:, 2:]
+        ) / 8.0
+
+        # Scale gradients by intensity
+        grad_x *= intensity
+        grad_y *= intensity
+
+        # Calculate normal vectors
+        # The cross product of tangent (1,0,grad_x) and bitangent (0,1,grad_y)
+        # gives us the surface normal (-grad_x, -grad_y, 1)
+        normal_x = -grad_x
+        normal_y = -grad_y
+        normal_z = np.ones_like(grad_x)
+
+        # Normalize the normal vectors (with epsilon to avoid division by zero)
+        length = np.sqrt(normal_x**2 + normal_y**2 + normal_z**2)
+        length = np.maximum(length, 1e-8)
+        normal_x /= length
+        normal_y /= length
+        normal_z /= length
+
+        # Handle DirectX vs OpenGL Y-channel orientation
+        if output_format.lower() == "directx":
+            # DirectX expects Y+ to point down, so invert Y component
+            normal_y = -normal_y
+        # OpenGL is the default (Y+ points up)
+
+        # Convert from [-1,1] to [0,255] range for RGB channels
+        # R = X component, G = Y component, B = Z component
+        red_f = (normal_x + 1.0) * 127.5
+        green_f = (normal_y + 1.0) * 127.5
+        blue_f = (normal_z + 1.0) * 127.5
+
+        # Clamp to valid [0,255] range before casting
+        red = np.clip(red_f, 0, 255).astype(np.uint8)
+        green = np.clip(green_f, 0, 255).astype(np.uint8)
+        blue = np.clip(blue_f, 0, 255).astype(np.uint8)
+
+        # Create RGB image from normal components
+        normal_array = np.stack([red, green, blue], axis=-1)
+        normal_image = Image.fromarray(normal_array, "RGB")
+
+        # Generate output path if not provided
+        if output_path is None:
+            if isinstance(bump_map, str):
+                base_path = bump_map
+            else:
+                # If PIL Image was passed, create generic output name
+                base_path = "bump_map.png"
+
+            format_suffix = (
+                "DirectX" if output_format.lower() == "directx" else "OpenGL"
+            )
+            output_path = cls.resolve_texture_filename(
+                base_path,
+                f"Normal_{format_suffix}",
+                suffix=(
+                    f"_intensity{intensity}".replace(".", "p")
+                    if intensity != 1.0
+                    else None
+                ),
+            )
+
+        # Save the normal map
+        normal_image.save(output_path)
+
+        return output_path
+
+    @staticmethod
+    def _srgb_to_linear_np(arr):
+        """Convert sRGB values to linear.
+
+        Accepts a NumPy array or array-like. Values can be either 0-255 or 0-1.
+        Returns float32 in [0,1]. Alpha channel (if present) is preserved.
+        """
+        a = np.asarray(arr)
+        # Convert to float32 for calculation
+        if a.dtype != np.float32 and a.dtype != np.float64:
+            a = a.astype(np.float32)
+
+        alpha = None
+        if a.ndim == 3 and a.shape[-1] == 4:
+            alpha = a[..., 3:4]
+            a = a[..., :3]
+
+        # Normalize to [0,1] if needed
+        if a.max() > 1.0:
+            a = a / 255.0
+
+        a = np.clip(a, 0.0, 1.0)
+        k0 = 0.04045
+        out = np.empty_like(a, dtype=np.float32)
+        low = a <= k0
+        out[low] = a[low] / 12.92
+        out[~low] = ((a[~low] + 0.055) / 1.055) ** 2.4
+
+        if alpha is not None:
+            out = np.concatenate([out, alpha], axis=-1)
+        return out
+
+    @staticmethod
+    def _linear_to_srgb_np(arr):
+        """Convert linear values to sRGB.
+
+        Accepts a NumPy array in [0,1] and returns float32 in [0,1].
+        """
+        a = np.asarray(arr)
+        if a.dtype != np.float32 and a.dtype != np.float64:
+            a = a.astype(np.float32)
+
+        alpha = None
+        if a.ndim == 3 and a.shape[-1] == 4:
+            alpha = a[..., 3:4]
+            a = a[..., :3]
+
+        a = np.clip(a, 0.0, 1.0)
+        k1 = 0.0031308
+        out = np.empty_like(a, dtype=np.float32)
+        low = a <= k1
+        out[low] = a[low] * 12.92
+        out[~low] = 1.055 * (a[~low] ** (1.0 / 2.4)) - 0.055
+
+        if alpha is not None:
+            out = np.concatenate([out, alpha], axis=-1)
+        return out
+
+    @classmethod
+    def _srgb_to_linear_image(cls, img: Image.Image) -> Image.Image:
+        """Convert a PIL image (L/RGB/RGBA) from sRGB to linear, returned as 8-bit per channel.
+
+        Alpha channel (if present) is preserved untouched.
+        """
+        arr = np.array(img, dtype=np.float32)
+        if img.mode in ("L", "RGB", "RGBA"):
+            lin = cls._srgb_to_linear_np(arr)
+            lin_8 = np.clip(lin * 255.0, 0, 255).astype(np.uint8)
+            return Image.fromarray(lin_8, mode=img.mode)
+        # For other modes, fall back to converting to RGB
+        return cls._srgb_to_linear_image(img.convert("RGBA"))
+
+    @classmethod
+    def _linear_to_srgb_image(cls, img: Image.Image) -> Image.Image:
+        """Convert a PIL image (L/RGB/RGBA) from linear to sRGB, returned as 8-bit per channel.
+
+        Alpha channel (if present) is preserved untouched.
+        """
+        arr = np.array(img, dtype=np.float32)
+        if img.mode in ("L", "RGB", "RGBA"):
+            srgb = cls._linear_to_srgb_np(arr / 255.0)
+            srgb_8 = np.clip(srgb * 255.0, 0, 255).astype(np.uint8)
+            return Image.fromarray(srgb_8, mode=img.mode)
+        return cls._linear_to_srgb_image(img.convert("RGBA"))
+
+    @classmethod
+    def srgb_to_linear(cls, data):
+        """Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
+
+        - If Image: returns Image in the same mode (8-bit), converted to linear.
+        - Otherwise: converts input to numpy, applies sRGB->linear, returns numpy array float32 in [0,1].
+        """
+        if isinstance(data, Image.Image):
+            return cls._srgb_to_linear_image(data)
+        # Accept lists/tuples/arrays
+        return cls._srgb_to_linear_np(data)
+
+    @classmethod
+    def linear_to_srgb(cls, data):
+        """Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
+
+        - If Image: returns Image in the same mode (8-bit), converted to sRGB.
+        - Otherwise: expects data in [0,1], returns numpy array float32 in [0,1].
+        """
+        if isinstance(data, Image.Image):
+            return cls._linear_to_srgb_image(data)
+        return cls._linear_to_srgb_np(data)
+
+    @classmethod
     def extract_gloss_from_spec(
         cls, specular_map: str, channel: str = "A"
     ) -> Union[Image.Image, None]:
@@ -1407,7 +1725,7 @@ class ImgUtils(core_utils.HelpMixin):
         output_dir: str = None,
         convert_diffuse_to_albedo: bool = False,
         output_type: str = None,
-        image_size: bool = False,
+        image_size: Optional[int] = None,
         optimize_bit_depth: bool = True,
         write_files: bool = False,
     ) -> Union[Tuple[Image.Image, Image.Image, Image.Image], Tuple[str, str, str]]:
@@ -1420,7 +1738,9 @@ class ImgUtils(core_utils.HelpMixin):
             output_dir: (Optional) Directory where converted textures will be saved.
             convert_diffuse_to_albedo: (Optional) If True, generates a true Albedo map.
             output_type: (Optional) Desired output format (e.g., PNG, TGA). If None, keeps original.
-            image_size: (Optional) If True, resizes images to the same dimensions.
+            image_size: (Optional[int]) Target max dimension for output maps. If set and
+                larger than current, images will be downscaled to this size while preserving aspect.
+                If None, maintain original sizes.
             optimize_bit_depth: (Optional) If True, adjusts bit depth based on the map type.
             write_files: (Optional) If True, saves the images and returns file paths.
 
@@ -1443,10 +1763,14 @@ class ImgUtils(core_utils.HelpMixin):
             metallic = cls.set_bit_depth(metallic, "Metallic")
             roughness = cls.set_bit_depth(roughness, "Roughness")
 
-        if image_size and max(base_color.size) > image_size:
-            base_color = cls.resize_image(base_color, image_size, image_size)
-            metallic = cls.resize_image(metallic, image_size, image_size)
-            roughness = cls.resize_image(roughness, image_size, image_size)
+        # Optional downscale to target max dimension while preserving original if not requested
+        if isinstance(image_size, int) and image_size > 0:
+            if max(base_color.size) > image_size:
+                base_color = cls.resize_image(base_color, image_size, image_size)
+            if max(metallic.size) > image_size:
+                metallic = cls.resize_image(metallic, image_size, image_size)
+            if max(roughness.size) > image_size:
+                roughness = cls.resize_image(roughness, image_size, image_size)
 
         if not write_files:
             return base_color, metallic, roughness

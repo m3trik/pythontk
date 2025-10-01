@@ -340,31 +340,63 @@ class StrUtils(core_utils.CoreUtils):
 
     @staticmethod
     @core_utils.CoreUtils.listify(threading=True)
-    def truncate(string, length=75, beginning=True, insert=".."):
+    def truncate(string, length=75, mode="start", insert=".."):
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.
 
         Parameters:
             string (str): The string to truncate.
-            length (int): The maximum allowed length before trunicating.
-            beginning (bool): Trim starting chars, else; ending.
-            insert (str): Chars to add at the trimmed area. (default: ellipsis)
+            length (int): The maximum allowed length before truncating.
+            mode (str): Truncation mode.
+                - 'start'/'left': Trim from start (keep end) - default
+                - 'end'/'right': Trim from end (keep start)
+                - 'middle': Trim from middle (keep start and end)
+            insert (str): Characters to add at the trimmed area. (default: ellipsis)
 
         Returns:
             (str)
 
-        Example:
-            truncate('12345678', 4) #returns: '..5678'
+        Examples:
+            truncate('12345678', 4) #returns: '..5678' (start mode)
+            truncate('12345678', 4, 'end') #returns: '1234..' (end mode)
+            truncate('12345678', 6, 'middle') #returns: '12..78' (middle mode)
         """
         if not string or not isinstance(string, str):
             return string
 
-        if len(string) > length:
-            if beginning:  # trim starting chars.
-                string = insert + string[-length:]
-            else:  # trim ending chars.
-                string = string[:length] + insert
-        return string
+        # Normalize mode to lowercase
+        mode = mode.lower() if isinstance(mode, str) else "start"
+
+        if len(string) <= length:
+            return string
+
+        # Safety nets
+        if length <= 0:
+            return insert
+        if length < len(insert) + 1:
+            return insert + string[-1:]
+
+        if mode in ("start", "left"):
+            # Keep the last 'length' chars
+            return insert + string[-length:]
+        elif mode in ("end", "right"):
+            # Keep the first 'length' chars
+            return string[:length] + insert
+        elif mode == "middle":
+            # Split around the middle; allocate space for both sides
+            # Visible chars excluding insert
+            vis = max(1, length)
+            # If original code expected length as visible total excluding insert, we mimic prior behavior (it included insert area at trim point)
+            # We'll treat 'length' as the number of chars we preserve on each side total minus insert length.
+            avail = max(1, length - len(insert))
+            if avail <= 1:
+                return string[0] + insert
+            left = avail // 2
+            right = avail - left
+            return string[:left] + insert + string[-right:]
+        else:
+            # Fallback to start trimming (default behavior)
+            return insert + string[-length:]
 
     @staticmethod
     def get_trailing_integers(string, inc=0, as_string=False):

@@ -3,6 +3,8 @@
 
 from pythontk.vid_utils._vid_utils import VidUtils
 
+__all__ = ["VidUtils"]
+
 
 # --------------------------------------------------------------------------------------------
 

@@ -1,6 +1,9 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import List, Tuple, Union, Callable, Sequence, Any, Optional
+from typing import List, Tuple, Union, Callable, Sequence, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # from this package:
 from pythontk import core_utils
@@ -443,24 +446,18 @@ class MathUtils(core_utils.HelpMixin):
         return tuple(rotation)
 
     @staticmethod
-    def lerp(a, b, t):
-        """Perform linear interpolation between two points.
-
-        Linear interpolation is a method of curve fitting using linear
-        polynomials to construct new data points within the range of
-        a discrete set of known data points.
+    def lerp(start: float, end: float, t: float) -> float:
+        """Linear interpolation between two values.
 
         Parameters:
-            a (float or int): The first point, corresponds to the value at t=0.
-            b (float or int): The second point, corresponds to the value at t=1.
-            t (float): The interpolation parameter, should be in range [0.0, 1.0].
-                       If t=0, it will return `a`, if t=1 it will return `b`.
-                       Intermediate values of `t` will return a value somewhere between `a` and `b`.
+            start (float): Start value
+            end (float): End value
+            t (float): Interpolation factor (0.0 to 1.0)
 
         Returns:
-            float: The interpolated value between `a` and `b`.
+            float: Interpolated value
         """
-        return a + (b - a) * t
+        return start + t * (end - start)
 
     def generate_geometric_sequence(
         base_value: int, terms: int, common_ratio: float = 2.0
@@ -746,63 +743,6 @@ class MathUtils(core_utils.HelpMixin):
 if __name__ == "__main__":
     pass
 
-# -----------------------------------------------------------------------------
-# Notes
-# -----------------------------------------------------------------------------
-
-
-# deprecated ---------------------
-# @classmethod
-# def normalize(cls, vector, amount=1):
-#   '''Normalize a vector
-
-#   Parameters:
-#       vector (vector) = The vector to normalize.
-#       amount (float) = (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
-
-#   Returns:
-#       (tuple)
-#   '''
-#   length = cls.get_magnitude(vector)
-#   x, y, z = vector
-
-#   result = (
-#       x /length *amount,
-#       y /length *amount,
-#       z /length *amount
-#   )
-
-#   return result
-
-# @classmethod
-# def cross_product(cls, v1, v2, normalize_input=False, normalizeResult=False):
-#   '''Given two float arrays of 3 values each, this procedure returns
-#   the cross product of the two arrays as a float array of size 3.
-
-#   :Parmeters:
-#       v1 (list): The first 3 point vector.
-#       v2 (list): The second 3 point vector.
-#       normalize_input (bool): Normalize v1, v2 before calculating the point float list.
-#       normalizeResult (bool): Normalize the return value.
-
-#   Returns:
-#       (tuple) The cross product of the two vectors.
-
-#   Example: cross_product((1, 2, 3), (1, 1, -1)) #returns: (-5, 4, -1)
-#   Example: cross_product((1, 2, 3), (1, 1, -1), True) #returns: (-0.7715167498104597, 0.6172133998483678, -0.15430334996209194)
-#   Example: cross_product((1, 2, 3), (1, 1, -1), False, True) #returns: (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919)
-#   '''
-#   if normalize_input: #normalize the input vectors
-#       v1 = cls.normalize(v1)
-#       v2 = cls.normalize(v2)
-
-#   cross = [ #the cross product
-#       v1[1]*v2[2] - v1[2]*v2[1],
-#       v1[2]*v2[0] - v1[0]*v2[2],
-#       v1[0]*v2[1] - v1[1]*v2[0]
-#   ]
-
-#   if normalizeResult: #normalize the cross product result
-#       cross = cls.normalize(cross)
-
-#   return tuple(cross)
+    # -----------------------------------------------------------------------------
+    # Notes
+    # -----------------------------------------------------------------------------

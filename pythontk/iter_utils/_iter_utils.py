@@ -321,6 +321,7 @@ class IterUtils(core_utils.HelpMixin):
         nested_as_unit: bool = False,
         basename_only: bool = False,
         ignore_case: bool = False,
+        delimiter: str = ',',
     ) -> List:
         """Filters the given list based on inclusion/exclusion criteria using shell-style wildcards. This method can also apply
         the filter to nested structures like lists, tuples, or sets. If 'nested_as_unit' is True, then the entire structure is
@@ -350,12 +351,24 @@ class IterUtils(core_utils.HelpMixin):
             basename_only (bool, optional): Use only the base name of the file paths when filtering.
             ignore_case (bool, optional): If True, the matching will be case-insensitive.
                 This applies to string patterns in both `inc` and `exc` lists.
+            delimiter (str, optional): Character to split pattern strings on for multi-pattern support.
+                If `inc` or `exc` is a string containing this delimiter, it will be automatically split
+                into multiple patterns. Whitespace around patterns is automatically stripped.
+                Defaults to ',' (comma). Examples:
+                    - "*.ma, *.mb" becomes ["*.ma", "*.mb"]
+                    - "test_*; backup_*" with delimiter=';' becomes ["test_*", "backup_*"]
 
         Returns:
             list: The filtered list.
         """
         from fnmatch import fnmatchcase
         import os
+
+        # Handle multi-pattern strings with delimiter
+        if isinstance(inc, str) and delimiter in inc:
+            inc = [pattern.strip() for pattern in inc.split(delimiter) if pattern.strip()]
+        if isinstance(exc, str) and delimiter in exc:
+            exc = [pattern.strip() for pattern in exc.split(delimiter) if pattern.strip()]
 
         inc = list(cls.make_iterable(inc))
         exc = list(cls.make_iterable(exc))
