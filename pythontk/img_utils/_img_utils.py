@@ -44,7 +44,7 @@ class ImgUtils(core_utils.HelpMixin):
             "_MetalSmooth",
             "_MetallicSmoothness",
         ),
-        "Metallic_SmoothnessAO": (
+        "MSAO": (
             "Metallic_SmoothnessAO",
             "MetallicSmoothnessAmbientOcclusion",
             "MetallicSmoothAO",
@@ -86,6 +86,12 @@ class ImgUtils(core_utils.HelpMixin):
         "Roughness": (255, 255, 255, 255),
         "Metallic": (0, 0, 0, 255),
         "Metallic_Smoothness": (255, 255, 255, 255),
+        "Metallic_SmoothnessAO": (
+            0,
+            255,
+            0,
+            255,
+        ),  # R=metallic(black), G=AO(white), B=empty(black), A=smoothness(white)
         "Normal": (127, 127, 255, 255),
         "Normal_DirectX": (127, 127, 255, 255),
         "Normal_OpenGL": (127, 127, 255, 255),
@@ -114,6 +120,7 @@ class ImgUtils(core_utils.HelpMixin):
         "Roughness": "L",  # Grayscale map defining surface roughness.
         "Metallic": "L",  # Grayscale map defining metallic properties.
         "Metallic_Smoothness": "RGBA",  # Multi-channel map for metallic and smoothness.
+        "Metallic_SmoothnessAO": "RGBA",  # Multi-channel map for metallic, smoothness, and ambient occlusion.
         "Normal": "RGB",  # Full color normal map.
         "Normal_DirectX": "RGB",  # DirectX normal map with Y-axis inversion.
         "Normal_OpenGL": "RGB",  # OpenGL normal map with standard Y-axis.
@@ -2152,6 +2159,242 @@ class ImgUtils(core_utils.HelpMixin):
         if map_type == "Normal_OpenGL" and "Normal_DirectX" in available:
             return ImgUtils.create_gl_from_dx(available["Normal_DirectX"])
         return None
+
+    @classmethod
+    def pack_msao_texture(
+        cls,
+        metallic_map_path: str,
+        ao_map_path: str,
+        alpha_map_path: str,
+        output_dir: str = None,
+        suffix: str = "_MetallicSmoothnessAO",
+        invert_alpha: bool = False,
+    ) -> str:
+        """Packs Metallic (R), AO (G), and Smoothness/Roughness (A) into a single MSAO texture.
+
+        Parameters:
+            metallic_map_path (str): Path to the metallic texture map.
+            ao_map_path (str): Path to the ambient occlusion texture map.
+            alpha_map_path (str): Path to the smoothness or roughness texture map.
+            output_dir (str, optional): Output directory. If None, uses metallic map directory.
+            suffix (str, optional): Suffix for the output file name.
+            invert_alpha (bool, optional): If True, inverts the alpha channel (roughness to smoothness).
+
+        Returns:
+            str: Path to the packed MSAO texture.
+        """
+        cls.assert_pathlike(metallic_map_path, "metallic_map_path")
+        cls.assert_pathlike(ao_map_path, "ao_map_path")
+        cls.assert_pathlike(alpha_map_path, "alpha_map_path")
+
+        base_name = cls.get_base_texture_name(metallic_map_path)
+
+        if output_dir is None:
+            output_dir = os.path.dirname(metallic_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
+
+        # Pack channels using the existing pack_channels method
+        packed_image = cls.pack_channels(
+            channel_files={
+                "R": metallic_map_path,
+                "G": ao_map_path,
+                "B": None,  # Keep blue channel empty/black
+                "A": alpha_map_path,
+            },
+            channels=["R", "G", "B", "A"],
+            out_mode="RGBA",
+            fill_values={"R": 0, "G": 255, "B": 0, "A": 255 if not invert_alpha else 0},
+            output_path=output_path,
+            output_format="PNG",
+        )
+
+        if invert_alpha:
+            # Invert the alpha channel after packing
+            img = cls.ensure_image(packed_image)
+            img = cls.invert_channels(img, "A")
+            img.save(output_path)
+
+        return output_path
+
+    @classmethod
+    def unpack_msao_texture(
+        cls,
+        msao_map_path: str,
+        output_dir: str = None,
+        metallic_suffix: str = "_Metallic",
+        ao_suffix: str = "_AO",
+        smoothness_suffix: str = "_Smoothness",
+        invert_smoothness: bool = False,
+    ) -> Tuple[str, str, str]:
+        """Unpacks Metallic (R), AO (G), and Smoothness (A) maps from a combined MSAO texture.
+
+        Parameters:
+            msao_map_path (str): Path to the MSAO texture map.
+            output_dir (str, optional): Directory path for the output. If None, uses input map directory.
+            metallic_suffix (str, optional): Suffix for the metallic output file name.
+            ao_suffix (str, optional): Suffix for the AO output file name.
+            smoothness_suffix (str, optional): Suffix for the smoothness output file name.
+            invert_smoothness (bool, optional): If True, inverts the smoothness to create roughness.
+
+        Returns:
+            Tuple[str, str, str]: Paths to the extracted metallic, AO, and smoothness/roughness maps.
+
+        Raises:
+            ValueError: If the input path is invalid.
+            FileNotFoundError: If the input file does not exist.
+        """
+        cls.assert_pathlike(msao_map_path, "msao_map_path")
+
+        if not os.path.exists(msao_map_path):
+            raise FileNotFoundError(f"Input file not found: {msao_map_path}")
+
+        # Load the combined texture
+        combined_image = cls.ensure_image(msao_map_path)
+
+        # Get base name for output files
+        base_name = cls.get_base_texture_name(msao_map_path)
+
+        # Determine output directory
+        if output_dir is None:
+            output_dir = os.path.dirname(msao_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        # Extract channels
+        if combined_image.mode not in ("RGBA", "RGB"):
+            combined_image = combined_image.convert("RGBA")
+
+        # Extract metallic channel (Red)
+        metallic_channel = combined_image.getchannel("R").convert("L")
+
+        # Extract AO channel (Green)
+        ao_channel = combined_image.getchannel("G").convert("L")
+
+        # Extract smoothness channel (Alpha)
+        if combined_image.mode == "RGBA":
+            smoothness_channel = combined_image.getchannel("A").convert("L")
+        else:
+            # If no alpha channel, create a default smoothness (white = smooth)
+            smoothness_channel = Image.new("L", combined_image.size, 255)
+            print(
+                f"// Warning: No alpha channel found in {msao_map_path}, using default smoothness."
+            )
+
+        # Invert smoothness if requested (to create roughness)
+        if invert_smoothness:
+            smoothness_channel = ImageOps.invert(smoothness_channel)
+            # Update suffix if inverted
+            if smoothness_suffix == "_Smoothness":
+                smoothness_suffix = "_Roughness"
+
+        # Create output file paths
+        metallic_output_path = os.path.join(
+            output_dir, f"{base_name}{metallic_suffix}.png"
+        )
+        ao_output_path = os.path.join(output_dir, f"{base_name}{ao_suffix}.png")
+        smoothness_output_path = os.path.join(
+            output_dir, f"{base_name}{smoothness_suffix}.png"
+        )
+
+        # Save the extracted maps
+        metallic_channel.save(metallic_output_path, format="PNG")
+        ao_channel.save(ao_output_path, format="PNG")
+        smoothness_channel.save(smoothness_output_path, format="PNG")
+
+        return metallic_output_path, ao_output_path, smoothness_output_path
+
+    @classmethod
+    def convert_smoothness_to_roughness(
+        cls, smoothness_path: str, output_dir: str = None
+    ) -> str:
+        """Convert a Smoothness map to a Roughness map by inverting the grayscale values.
+
+        Smoothness (0=rough, 255=smooth) becomes Roughness (0=smooth, 255=rough).
+
+        Parameters:
+            smoothness_path (str): Path to the smoothness texture map.
+            output_dir (str, optional): Output directory. If None, uses smoothness map directory.
+
+        Returns:
+            str: Path to the converted roughness map.
+        """
+        cls.assert_pathlike(smoothness_path, "smoothness_path")
+
+        if not os.path.exists(smoothness_path):
+            raise FileNotFoundError(f"Input file not found: {smoothness_path}")
+
+        # Load and invert the smoothness map
+        smoothness_image = cls.ensure_image(smoothness_path, "L")
+        roughness_image = cls.invert_grayscale_image(smoothness_image)
+
+        # Generate output path
+        base_name = cls.get_base_texture_name(smoothness_path)
+
+        if output_dir is None:
+            output_dir = os.path.dirname(smoothness_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        # Get original extension
+        original_ext = os.path.splitext(smoothness_path)[1]
+        output_path = os.path.join(output_dir, f"{base_name}_Roughness{original_ext}")
+
+        # Save the roughness map
+        roughness_image.save(output_path)
+
+        return output_path
+
+    @classmethod
+    def convert_roughness_to_smoothness(
+        cls, roughness_path: str, output_dir: str = None
+    ) -> str:
+        """Convert a Roughness map to a Smoothness map by inverting the grayscale values.
+
+        Roughness (0=smooth, 255=rough) becomes Smoothness (0=rough, 255=smooth).
+
+        Parameters:
+            roughness_path (str): Path to the roughness texture map.
+            output_dir (str, optional): Output directory. If None, uses roughness map directory.
+
+        Returns:
+            str: Path to the converted smoothness map.
+        """
+        cls.assert_pathlike(roughness_path, "roughness_path")
+
+        if not os.path.exists(roughness_path):
+            raise FileNotFoundError(f"Input file not found: {roughness_path}")
+
+        # Load and invert the roughness map
+        roughness_image = cls.ensure_image(roughness_path, "L")
+        smoothness_image = cls.invert_grayscale_image(roughness_image)
+
+        # Generate output path
+        base_name = cls.get_base_texture_name(roughness_path)
+
+        if output_dir is None:
+            output_dir = os.path.dirname(roughness_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        # Get original extension
+        original_ext = os.path.splitext(roughness_path)[1]
+        output_path = os.path.join(output_dir, f"{base_name}_Smoothness{original_ext}")
+
+        # Save the smoothness map
+        smoothness_image.save(output_path)
+
+        return output_path
 
 
 # --------------------------------------------------------------------------------------------

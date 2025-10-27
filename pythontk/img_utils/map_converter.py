@@ -415,6 +415,145 @@ class MapConverterSlots(ImgUtils):
         except Exception:
             pass
 
+    def b008(self):
+        """Batch pack Metallic (R), AO (G), and Smoothness (A) across texture sets."""
+        paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select one or more sets of Metallic, Ambient Occlusion, and Smoothness maps:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not paths:
+            return
+
+        texture_sets = self.group_textures_by_set(paths)
+
+        for base_name, files in texture_sets.items():
+            sorted_maps = self.sort_images_by_type(files)
+
+            metallic_map_path = sorted_maps.get("Metallic", [None])[0]
+            ao_map_path = sorted_maps.get("Ambient_Occlusion", [None])[0]
+            smoothness_map_path = sorted_maps.get("Smoothness", [None])[0]
+            roughness_map_path = sorted_maps.get("Roughness", [None])[0]
+
+            if not metallic_map_path:
+                print(f"Skipping {base_name}: No Metallic map found.")
+                continue
+
+            if not ao_map_path:
+                print(f"Skipping {base_name}: No Ambient Occlusion map found.")
+                continue
+
+            # Use smoothness or convert roughness
+            alpha_map_path = smoothness_map_path or roughness_map_path
+            invert_alpha = roughness_map_path is not None
+
+            if not alpha_map_path:
+                print(f"Skipping {base_name}: No Smoothness or Roughness map found.")
+                continue
+
+            print(f"Packing MSAO for {base_name}:")
+            print(f"  Metallic (R): {metallic_map_path}")
+            print(f"  AO (G): {ao_map_path}")
+            print(
+                f"  {'Roughness' if invert_alpha else 'Smoothness'} (A): {alpha_map_path}"
+            )
+
+            packed_path = self.pack_msao_texture(
+                metallic_map_path,
+                ao_map_path,
+                alpha_map_path,
+                invert_alpha=invert_alpha,
+            )
+            print(f"// Result: {packed_path}")
+
+        try:
+            self.source_dir = FileUtils.format_path(paths[0], "path")
+        except Exception:
+            pass
+
+    def b009(self):
+        """Unpack Metallic, AO, and Smoothness maps from MSAO textures."""
+        msao_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select MSAO (MetallicSmoothnessAO) maps to unpack:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not msao_paths:
+            return
+
+        for msao_path in msao_paths:
+            print(f"Unpacking MSAO: {msao_path} ..")
+
+            try:
+                metallic_path, ao_path, smoothness_path = self.unpack_msao_texture(
+                    msao_path
+                )
+                print(f"// Metallic map: {metallic_path}")
+                print(f"// AO map: {ao_path}")
+                print(f"// Smoothness map: {smoothness_path}")
+
+            except Exception as e:
+                print(f"// Error unpacking {msao_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(msao_paths[0], "path")
+        except Exception:
+            pass
+
+    def b010(self):
+        """Convert Smoothness maps to Roughness maps."""
+        smoothness_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select Smoothness maps to convert to Roughness:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not smoothness_paths:
+            return
+
+        for smoothness_path in smoothness_paths:
+            print(f"Converting Smoothness to Roughness: {smoothness_path} ..")
+
+            try:
+                roughness_path = self.convert_smoothness_to_roughness(smoothness_path)
+                print(f"// Result: {roughness_path}")
+
+            except Exception as e:
+                print(f"// Error converting {smoothness_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(smoothness_paths[0], "path")
+        except Exception:
+            pass
+
+    def b011(self):
+        """Convert Roughness maps to Smoothness maps."""
+        roughness_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select Roughness maps to convert to Smoothness:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not roughness_paths:
+            return
+
+        for roughness_path in roughness_paths:
+            print(f"Converting Roughness to Smoothness: {roughness_path} ..")
+
+            try:
+                smoothness_path = self.convert_roughness_to_smoothness(roughness_path)
+                print(f"// Result: {smoothness_path}")
+
+            except Exception as e:
+                print(f"// Error converting {roughness_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(roughness_paths[0], "path")
+        except Exception:
+            pass
+
 
 class MapConverterUi:
     def __new__(self):
@@ -433,6 +572,14 @@ class MapConverterUi:
         return ui
 
 
+# -----------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    MapConverterUi().show(pos="screen", app_exec=True)
+
+# -----------------------------------------------------------------------------
+# Notes
+# -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":

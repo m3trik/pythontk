@@ -737,6 +737,205 @@ class MathUtils(core_utils.HelpMixin):
             else upper_power
         )
 
+    @staticmethod
+    def round_to_preferred(value: float, max_distance: float = 1.5) -> int:
+        """Round to aesthetically pleasing 'round' numbers (conservative approach).
+
+        Only rounds to preferred numbers if they're within max_distance frames.
+        Preferred numbers in order of priority:
+        - Multiples of 100 (0, 100, 200, ...)
+        - Multiples of 50 (50, 150, 250, ...)
+        - Multiples of 25 (25, 75, 125, ...)
+        - Multiples of 20 (20, 40, 60, 80, ...)
+        - Multiples of 10 (10, 30, 70, 90, ...)
+        - Multiples of 5 (5, 15, 35, 45, ...)
+
+        Parameters:
+            value (float): The value to round
+            max_distance (float): Maximum distance from value to consider a preferred number.
+                Default is 1.5, meaning only round if a preferred number is very close.
+
+        Returns:
+            int: The rounded value to the nearest preferred number
+
+        Example:
+            round_to_preferred(24.8) #returns: 25
+            round_to_preferred(19.3) #returns: 20
+            round_to_preferred(99.5) #returns: 100
+            round_to_preferred(48.5) #returns: 49 (not 50, too far away with default max_distance)
+        """
+        import math
+
+        # Handle exact integers
+        rounded = round(value)
+        if value == rounded:
+            return int(rounded)
+
+        # Define preferred numbers and their intervals
+        candidates = []
+
+        # Generate candidates based on scale
+        floor_val = math.floor(value)
+        ceil_val = math.ceil(value)
+
+        # Add multiples of 100
+        hundred_floor = (floor_val // 100) * 100
+        hundred_ceil = ((floor_val // 100) + 1) * 100
+        candidates.extend([hundred_floor, hundred_ceil])
+
+        # Add multiples of 50
+        fifty_floor = (floor_val // 50) * 50
+        fifty_ceil = ((floor_val // 50) + 1) * 50
+        candidates.extend([fifty_floor, fifty_ceil])
+
+        # Add multiples of 25
+        twentyfive_floor = (floor_val // 25) * 25
+        twentyfive_ceil = ((floor_val // 25) + 1) * 25
+        candidates.extend([twentyfive_floor, twentyfive_ceil])
+
+        # Add multiples of 20
+        twenty_floor = (floor_val // 20) * 20
+        twenty_ceil = ((floor_val // 20) + 1) * 20
+        candidates.extend([twenty_floor, twenty_ceil])
+
+        # Add multiples of 10
+        ten_floor = (floor_val // 10) * 10
+        ten_ceil = ((floor_val // 10) + 1) * 10
+        candidates.extend([ten_floor, ten_ceil])
+
+        # Add multiples of 5
+        five_floor = (floor_val // 5) * 5
+        five_ceil = ((floor_val // 5) + 1) * 5
+        candidates.extend([five_floor, five_ceil])
+
+        # Remove duplicates and filter to conservative range
+        candidates = list(set(candidates))
+        candidates = [c for c in candidates if abs(c - value) <= max_distance]
+
+        if not candidates:
+            # Fallback to simple rounding
+            return int(round(value))
+
+        # Find the closest candidate
+        closest = min(candidates, key=lambda x: abs(x - value))
+
+        # If there's a tie, prefer the higher number for round numbers
+        distances = [(c, abs(c - value)) for c in candidates]
+        min_distance = min(d[1] for d in distances)
+        tied = [c for c, d in distances if d == min_distance]
+
+        if len(tied) > 1:
+            # Prefer rounder numbers in ties
+            # Priority: 100 > 50 > 25 > 20 > 10 > 5
+            for multiple in [100, 50, 25, 20, 10, 5]:
+                for t in tied:
+                    if t % multiple == 0:
+                        return int(t)
+            # If still tied, prefer the higher number
+            return int(max(tied))
+
+        return int(closest)
+
+    @staticmethod
+    def round_to_aggressive_preferred(value: float) -> int:
+        """Round to aesthetically pleasing 'round' numbers (aggressive approach).
+
+        Rounds to preferred numbers even when farther away (within ~10 frames).
+        Examples: 48.x→50, 73.x→75, 88.x→90, 23.x→25, 7.x→10
+
+        Preferred numbers in order of priority:
+        - Multiples of 100 (0, 100, 200, ...)
+        - Multiples of 50 (50, 150, 250, ...)
+        - Multiples of 25 (25, 75, 125, ...)
+        - Multiples of 20 (20, 40, 60, 80, ...)
+        - Multiples of 10 (10, 30, 70, 90, ...)
+        - Multiples of 5 (5, 15, 35, 45, ...)
+
+        Parameters:
+            value (float): The value to round
+
+        Returns:
+            int: The rounded value to the nearest preferred number
+
+        Example:
+            round_to_aggressive_preferred(48.5) #returns: 50
+            round_to_aggressive_preferred(73.2) #returns: 75
+            round_to_aggressive_preferred(88.9) #returns: 90
+            round_to_aggressive_preferred(23.4) #returns: 25
+            round_to_aggressive_preferred(7.8) #returns: 10
+        """
+        import math
+
+        # Handle exact integers
+        rounded = round(value)
+        if value == rounded:
+            return int(rounded)
+
+        # Define preferred numbers and their intervals
+        candidates = []
+
+        # Generate candidates based on scale
+        floor_val = math.floor(value)
+        ceil_val = math.ceil(value)
+
+        # Add multiples of 100
+        hundred_floor = (floor_val // 100) * 100
+        hundred_ceil = ((floor_val // 100) + 1) * 100
+        candidates.extend([hundred_floor, hundred_ceil])
+
+        # Add multiples of 50
+        fifty_floor = (floor_val // 50) * 50
+        fifty_ceil = ((floor_val // 50) + 1) * 50
+        candidates.extend([fifty_floor, fifty_ceil])
+
+        # Add multiples of 25
+        twentyfive_floor = (floor_val // 25) * 25
+        twentyfive_ceil = ((floor_val // 25) + 1) * 25
+        candidates.extend([twentyfive_floor, twentyfive_ceil])
+
+        # Add multiples of 20
+        twenty_floor = (floor_val // 20) * 20
+        twenty_ceil = ((floor_val // 20) + 1) * 20
+        candidates.extend([twenty_floor, twenty_ceil])
+
+        # Add multiples of 10
+        ten_floor = (floor_val // 10) * 10
+        ten_ceil = ((floor_val // 10) + 1) * 10
+        candidates.extend([ten_floor, ten_ceil])
+
+        # Add multiples of 5
+        five_floor = (floor_val // 5) * 5
+        five_ceil = ((floor_val // 5) + 1) * 5
+        candidates.extend([five_floor, five_ceil])
+
+        # Remove duplicates and filter to aggressive range (within 10 frames)
+        candidates = list(set(candidates))
+        candidates = [c for c in candidates if abs(c - value) <= 10]
+
+        if not candidates:
+            # Fallback to simple rounding
+            return int(round(value))
+
+        # Find the closest candidate
+        closest = min(candidates, key=lambda x: abs(x - value))
+
+        # If there's a tie, prefer the higher number for round numbers
+        distances = [(c, abs(c - value)) for c in candidates]
+        min_distance = min(d[1] for d in distances)
+        tied = [c for c, d in distances if d == min_distance]
+
+        if len(tied) > 1:
+            # Prefer rounder numbers in ties
+            # Priority: 100 > 50 > 25 > 20 > 10 > 5
+            for multiple in [100, 50, 25, 20, 10, 5]:
+                for t in tied:
+                    if t % multiple == 0:
+                        return int(t)
+            # If still tied, prefer the higher number
+            return int(max(tied))
+
+        return int(closest)
+
 
 # -----------------------------------------------------------------------------
 
