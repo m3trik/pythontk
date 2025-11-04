@@ -936,6 +936,34 @@ class MathUtils(core_utils.HelpMixin):
 
         return int(closest)
 
+    @staticmethod
+    def hash_points(points, precision=4):
+        """Hash the given list of point values.
+
+        Parameters:
+            points (list): A list of point values as tuples.
+            precision (int): Determines the number of decimal places that are retained
+                    in the fixed-point representation. For example, with a value of 4, the
+                    fixed-point representation would retain 4 decimal places.
+
+        Returns:
+            (list) list(s) of hashed tuples.
+
+        Example:
+            hash_points([(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]) #returns: [hash values]
+            hash_points([[(1.0, 2.0, 3.0)], [(4.0, 5.0, 6.0)]]) #returns: [[hash values], [hash values]]
+        """
+        nested = core_utils.CoreUtils.nested_depth(points) > 1
+        sets = points if nested else [points]
+
+        def clamp(p):
+            return int(p * 10**precision)
+
+        result = []
+        for pset in sets:
+            result.append([hash(tuple(map(clamp, i))) for i in pset])
+        return core_utils.CoreUtils.format_return(result, nested)
+
 
 # -----------------------------------------------------------------------------
 
