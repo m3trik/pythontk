@@ -192,9 +192,7 @@ class MapPackerUi:
         ui.set_attributes(WA_TranslucentBackground=True)
         ui.set_flags(FramelessWindowHint=True)
         ui.style.set(theme="dark", style_class="translucentBgWithBorder")
-        ui.header.config_buttons(
-            menu_button=True, minimize_button=True, hide_button=True
-        )
+        ui.header.config_buttons("menu_button", "minimize_button", "hide_button")
         return ui
 
 
