@@ -365,14 +365,14 @@ class StrTest(Main, StrUtils):
         )
 
     def test_splitAtChars(self):
-        """Test split_at_chars method."""
+        """Test split_at_delimiter method."""
         self.perform_test(
             {
-                "self.split_at_chars(['str|ing', 'string'])": [
+                "self.split_at_delimiter(['str|ing', 'string'])": [
                     ("str", "ing"),
                     ("string", ""),
                 ],
-                "self.split_at_chars('aCHARScCHARSd', 'CHARS', 0)": ("", "a"),
+                "self.split_at_delimiter('aCHARScCHARSd', 'CHARS', 0)": ("", "a"),
             }
         )
 
