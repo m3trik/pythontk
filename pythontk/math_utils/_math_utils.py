@@ -1,5 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
+from bisect import bisect_left
+import math
 from typing import List, Tuple, Union, Callable, Sequence, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -74,6 +76,49 @@ class MathUtils(core_utils.HelpMixin):
             clamp(range(10), 3, 7) #returns: [3, 3, 3, 3, 4, 5, 6, 7, 7, 7]
         """
         return max(minimum, min(n, maximum))
+
+    @staticmethod
+    def clamp_range(
+        start,
+        end,
+        clamp_start=None,
+        clamp_end=None,
+        validate=True,
+    ):
+        """Clamp a numeric range (start, end) to optional boundaries with validation.
+
+        Parameters:
+            start (float): Range start value.
+            end (float): Range end value.
+            clamp_start (float, optional): Optional minimum boundary for start.
+            clamp_end (float, optional): Optional maximum boundary for end.
+            validate (bool): If True, validates that start < end and returns None if invalid.
+                           If False, no validation is performed (use with caution).
+
+        Returns:
+            tuple: Clamped (start, end) tuple, or None if validation fails.
+
+        Example:
+            clamp_range(5, 15) #returns: (5, 15)
+            clamp_range(5, 15, clamp_start=10) #returns: (10, 15)
+            clamp_range(5, 15, clamp_end=12) #returns: (5, 12)
+            clamp_range(5, 15, clamp_start=10, clamp_end=12) #returns: (10, 12)
+            clamp_range(15, 5, clamp_start=10, clamp_end=12) #returns: None (invalid: start >= end)
+            clamp_range(5, 15, clamp_start=20) #returns: None (clamping makes it invalid)
+            clamp_range(None, 15) #returns: None (None values not allowed)
+        """
+        if start is None or end is None:
+            return None
+
+        # Clamp start and end to their respective boundaries
+        final_start = max(start, clamp_start) if clamp_start is not None else start
+        final_end = min(end, clamp_end) if clamp_end is not None else end
+
+        # Validate that start < end
+        if validate and final_start >= final_end:
+            return None
+
+        return (final_start, final_end)
 
     @classmethod
     def normalize(cls, vector, amount=1):
@@ -459,6 +504,57 @@ class MathUtils(core_utils.HelpMixin):
         """
         return start + t * (end - start)
 
+    @staticmethod
+    def evaluate_sampled_progress(
+        time_value: float,
+        sample_times: Sequence[float],
+        progress: Sequence[float],
+        tolerance: float = 1e-6,
+    ) -> float:
+        """Interpolate normalized progress from sampled time/progress pairs.
+
+        Parameters:
+            time_value (float): The time at which to evaluate progress.
+            sample_times (Sequence[float]): Monotonically increasing sample times.
+            progress (Sequence[float]): Normalized progress values mapped to sample times.
+            tolerance (float): Comparison tolerance for matching sample times exactly.
+
+        Returns:
+            float: The interpolated progress value.
+        """
+        if not sample_times or not progress:
+            return 0.0
+
+        limit = min(len(sample_times), len(progress))
+        if limit == 0:
+            return 0.0
+
+        if time_value <= sample_times[0]:
+            return float(progress[0])
+        if time_value >= sample_times[limit - 1]:
+            return float(progress[limit - 1])
+
+        index = bisect_left(sample_times, time_value, 0, limit)
+
+        if index < limit and math.isclose(
+            sample_times[index], time_value, abs_tol=tolerance
+        ):
+            return float(progress[index])
+
+        prev_index = max(0, index - 1)
+        next_index = min(limit - 1, index)
+
+        t0 = sample_times[prev_index]
+        t1 = sample_times[next_index]
+        p0 = progress[prev_index]
+        p1 = progress[next_index]
+
+        if math.isclose(t1, t0, abs_tol=tolerance):
+            return float(p1)
+
+        ratio = (time_value - t0) / (t1 - t0)
+        return float(p0 + (p1 - p0) * ratio)
+
     def generate_geometric_sequence(
         base_value: int, terms: int, common_ratio: float = 2.0
     ) -> List[int]:
@@ -736,6 +832,83 @@ class MathUtils(core_utils.HelpMixin):
             if (value - lower_power) < (upper_power - value)
             else upper_power
         )
+
+    @staticmethod
+    def is_close_to_whole(value: float, tolerance: float = 1e-4) -> bool:
+        """Check if a float value is close to a whole number within tolerance.
+
+        Parameters:
+            value (float): The value to check.
+            tolerance (float): The maximum difference from a whole number to be considered close.
+                Default is 1e-4 (0.0001).
+
+        Returns:
+            bool: True if the value is within tolerance of a whole number, False otherwise.
+
+        Example:
+            is_close_to_whole(10.0) #returns: True
+            is_close_to_whole(10.00001) #returns: True
+            is_close_to_whole(10.5) #returns: False
+            is_close_to_whole(9.9999) #returns: True
+        """
+        return abs(value - round(value)) <= tolerance
+
+    @staticmethod
+    def round_value(
+        value: float,
+        mode: str = "none",
+        max_distance: float = 1.5,
+    ) -> Union[int, float]:
+        """General-purpose rounding function with multiple modes.
+
+        Provides a unified interface for various rounding strategies, from precise
+        preservation to aesthetic snapping.
+
+        Parameters:
+            value (float): The value to round.
+            mode (str): Rounding mode to use. Options:
+                - "none": No rounding, return value as-is (default)
+                - "nearest": Round to nearest whole number (standard rounding)
+                - "floor": Always round down
+                - "ceil": Always round up
+                - "half_up": Round .5 and above up, below .5 down
+                - "preferred": Round to aesthetically pleasing numbers when very close.
+                  Examples: 24→25, 19→20, 99→100. Conservative approach.
+                - "aggressive_preferred": Round to preferred numbers even when farther away.
+                  Examples: 48.x→50, 73.x→75, 88.x→90, 23.x→25, 7.x→10.
+            max_distance (float): Maximum distance for "preferred" mode to consider a
+                preferred number. Only used when mode="preferred". Default is 1.5.
+
+        Returns:
+            Union[int, float]: The rounded value (int for most modes, float for "none").
+
+        Example:
+            round_value(10.7, mode="nearest") #returns: 11
+            round_value(10.7, mode="floor") #returns: 10
+            round_value(10.5, mode="half_up") #returns: 11
+            round_value(24.8, mode="preferred") #returns: 25
+            round_value(48.5, mode="aggressive_preferred") #returns: 50
+            round_value(10.7, mode="none") #returns: 10.7
+        """
+        if mode == "none":
+            return value
+        elif mode == "nearest":
+            return int(round(value))
+        elif mode == "floor":
+            return int(math.floor(value))
+        elif mode == "ceil":
+            return int(math.ceil(value))
+        elif mode == "half_up":
+            return int(math.floor(value + 0.5))
+        elif mode == "preferred":
+            return MathUtils.round_to_preferred(value, max_distance)
+        elif mode == "aggressive_preferred":
+            return MathUtils.round_to_aggressive_preferred(value)
+        else:
+            raise ValueError(
+                f"Invalid rounding mode: '{mode}'. "
+                f"Valid options: 'none', 'nearest', 'floor', 'ceil', 'half_up', 'preferred', 'aggressive_preferred'"
+            )
 
     @staticmethod
     def round_to_preferred(value: float, max_distance: float = 1.5) -> int:
