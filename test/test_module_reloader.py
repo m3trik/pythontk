@@ -170,6 +170,140 @@ class ModuleReloaderTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(sys.modules["reloader_pkg_d.child"].value, "child-initial")
 
+    def test_reload_accepts_module_objects(self) -> None:
+        self._make_package(
+            "reloader_pkg_obj",
+            init_body="""
+                value = "pkg-initial"
+                from . import child
+            """,
+            modules={
+                "child.py": """
+                    value = "child-initial"
+                """,
+            },
+        )
+
+        importlib.import_module("reloader_pkg_obj.child")
+        sys.modules["reloader_pkg_obj"].value = "pkg-updated"
+        sys.modules["reloader_pkg_obj.child"].value = "child-updated"
+
+        reloader = ModuleReloader(include_submodules=True)
+        reloader.reload(sys.modules["reloader_pkg_obj"])
+
+        self.assertEqual(sys.modules["reloader_pkg_obj"].value, "pkg-initial")
+        self.assertEqual(sys.modules["reloader_pkg_obj.child"].value, "child-initial")
+
+    def test_reload_predicate_filters_submodules(self) -> None:
+        self._make_package(
+            "reloader_pkg_pred",
+            init_body="""
+                from . import keep
+                from . import skip
+            """,
+            modules={
+                "keep.py": """
+                    value = "keep-initial"
+                """,
+                "skip.py": """
+                    value = "skip-initial"
+                """,
+            },
+        )
+
+        importlib.import_module("reloader_pkg_pred.keep")
+        importlib.import_module("reloader_pkg_pred.skip")
+        sys.modules["reloader_pkg_pred.keep"].value = "keep-updated"
+        sys.modules["reloader_pkg_pred.skip"].value = "skip-updated"
+
+        predicate = lambda module: not module.__name__.endswith(".skip")
+        reloader = ModuleReloader(include_submodules=True, predicate=predicate)
+        reloader.reload("reloader_pkg_pred")
+
+        self.assertEqual(sys.modules["reloader_pkg_pred.keep"].value, "keep-initial")
+        self.assertEqual(sys.modules["reloader_pkg_pred.skip"].value, "skip-updated")
+
+    def test_reload_invokes_before_and_after_hooks(self) -> None:
+        self._make_package(
+            "reloader_pkg_hooks",
+            init_body="""
+                from . import child
+            """,
+            modules={
+                "child.py": """
+                    value = "child-initial"
+                """,
+            },
+        )
+
+        importlib.import_module("reloader_pkg_hooks.child")
+        events: list[tuple[str, str]] = []
+
+        def before(module: types.ModuleType) -> None:
+            events.append(("before", module.__name__))
+
+        def after(module: types.ModuleType) -> None:
+            events.append(("after", module.__name__))
+
+        reloader = ModuleReloader(
+            include_submodules=True, before_reload=before, after_reload=after
+        )
+        reloader.reload("reloader_pkg_hooks")
+
+        expected_modules = {"reloader_pkg_hooks.child", "reloader_pkg_hooks"}
+        observed = {name for _, name in events if name in expected_modules}
+        self.assertEqual(observed, expected_modules)
+
+        self.assertEqual(len(events) % 2, 0)
+        for idx in range(0, len(events), 2):
+            before_event = events[idx]
+            after_event = events[idx + 1]
+            self.assertEqual(before_event[0], "before")
+            self.assertEqual(after_event[0], "after")
+            self.assertEqual(before_event[1], after_event[1])
+
+    def test_reload_respects_dependency_ordering(self) -> None:
+        self._make_package(
+            "reloader_pkg_order",
+            init_body="""
+                from . import dep
+                from . import plugin
+            """,
+            modules={
+                "dep.py": """
+                    value = "dep"
+                """,
+                "plugin.py": """
+                    value = "plugin"
+                """,
+            },
+        )
+
+        importlib.import_module("reloader_pkg_order.dep")
+        importlib.import_module("reloader_pkg_order.plugin")
+
+        order: list[str] = []
+
+        def before(module: types.ModuleType) -> None:
+            order.append(module.__name__)
+
+        reloader = ModuleReloader(
+            include_submodules=False,
+            dependencies_first=["reloader_pkg_order.dep"],
+            dependencies_last=["reloader_pkg_order.plugin"],
+            before_reload=before,
+        )
+        reloader.reload("reloader_pkg_order")
+
+        self.assertEqual(
+            order,
+            [
+                "reloader_pkg_order.dep",
+                "reloader_pkg_order.plugin",
+                "reloader_pkg_order",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

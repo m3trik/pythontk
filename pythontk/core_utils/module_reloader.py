@@ -27,7 +27,7 @@ class ModuleReloader:
         before_reload: Optional[Callable[[ModuleType], None]] = None,
         after_reload: Optional[Callable[[ModuleType], None]] = None,
         import_missing: bool = True,
-        verbose: bool = False,
+        verbose: Union[bool, int] = False,
     ) -> None:
         self.include_submodules = include_submodules
         self.dependencies_first = list(dependencies_first or [])
@@ -36,7 +36,8 @@ class ModuleReloader:
         self.before_reload = before_reload
         self.after_reload = after_reload
         self.import_missing = import_missing
-        self.verbose = verbose
+        # Convert bool to int: False->0, True->1
+        self.verbose = int(verbose) if isinstance(verbose, bool) else verbose
 
     # ------------------------------------------------------------------
     def reload(
@@ -50,9 +51,16 @@ class ModuleReloader:
         before_reload: Optional[Callable[[ModuleType], None]] = None,
         after_reload: Optional[Callable[[ModuleType], None]] = None,
         import_missing: Optional[bool] = None,
-        verbose: Optional[bool] = None,
+        verbose: Optional[Union[bool, int]] = None,
     ) -> List[ModuleType]:
-        """Reload a package and return the modules processed."""
+        """Reload a package and return the modules processed.
+
+        Args:
+            verbose: Verbosity level:
+                - 0 or False: Silent (no output)
+                - 1 or True: Basic (module names only)
+                - 2: Detailed (include skip reasons and errors)
+        """
 
         include_submodules = (
             self.include_submodules
@@ -71,7 +79,11 @@ class ModuleReloader:
         import_missing = (
             self.import_missing if import_missing is None else import_missing
         )
-        verbose = self.verbose if verbose is None else verbose
+        verbose_level = self.verbose if verbose is None else verbose
+        # Convert bool to int: False->0, True->1
+        verbose_level = (
+            int(verbose_level) if isinstance(verbose_level, bool) else verbose_level
+        )
 
         target_package = self._resolve_module(package, import_missing=import_missing)
 
@@ -111,13 +123,13 @@ class ModuleReloader:
                     try:
                         target_module = importlib.import_module(canonical_name)
                     except ImportError as exc:
-                        if verbose:
+                        if verbose_level >= 2:
                             print(
                                 f"Skipping reload for {canonical_name}: import failed ({exc})."
                             )
                         continue
                 else:
-                    if verbose:
+                    if verbose_level >= 2:
                         print(
                             f"Skipping reload for {canonical_name}: not present in sys.modules."
                         )
@@ -128,13 +140,13 @@ class ModuleReloader:
             if before_reload:
                 before_reload(target_module)
 
-            if verbose:
+            if verbose_level >= 1:
                 print(f"Reloading {canonical_name}")
 
             try:
                 refreshed = importlib.reload(target_module)
             except ImportError as exc:
-                if verbose:
+                if verbose_level >= 2:
                     print(f"Skipping reload for {canonical_name}: {exc}")
                 continue
 
