@@ -690,7 +690,7 @@ class FileUtils(core_utils.HelpMixin):
             )
 
         if obj is None:
-            filepath = None
+            return ""
 
         elif isinstance(obj, str):
             filepath = obj

@@ -365,6 +365,47 @@ class StrUtils(core_utils.CoreUtils):
 
         return parts
 
+    @staticmethod
+    @core_utils.CoreUtils.listify(threading=True)
+    def split_at_delimiter(
+        string: str,
+        delimiter: str = "|",
+        occurrence: int = -1,
+    ) -> Tuple[str, str]:
+        """Split ``string`` into a tuple around a specific delimiter occurrence.
+
+        Parameters:
+            string (str): The source string to split.
+            delimiter (str): The delimiter to split on. Defaults to ``"|"``.
+            occurrence (int): Which occurrence to split on. Positive values count from
+                the start, negative values from the end (-1 = last). Defaults to -1.
+
+        Returns:
+            tuple[str, str]: A 2-tuple of (left, right). When the delimiter does not
+            exist in the string, returns (string, "").
+        """
+
+        if not isinstance(string, str) or not delimiter:
+            return (string if isinstance(string, str) else "", "")
+
+        if delimiter not in string:
+            return (string, "")
+
+        parts = string.split(delimiter)
+        if occurrence is None:
+            index = len(parts) - 1
+        else:
+            index = occurrence
+            if occurrence < 0:
+                index = len(parts) + occurrence
+
+        if index < 0 or index >= len(parts):
+            return (string, "")
+
+        left = delimiter.join(parts[:index])
+        right = parts[index]
+        return (left, right)
+
     @classmethod
     def insert(cls, src, ins, at, occurrence=1, before=False):
         """Insert character(s) into a string at a given location.
@@ -799,7 +840,7 @@ class StrUtils(core_utils.CoreUtils):
                 s = re.sub(r"\d+$", "", s)
                 stripped = True
             if strip_trailing_alpha and s and s[-1].isupper():
-                s = re.sub(r"[A-Z]+$", "", s)
+                s = re.sub(r"(?:[^0-9A-Za-z]+)?[A-Z]+$", "", s)
                 stripped = True
             if not stripped:
                 break
