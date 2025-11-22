@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>200</width>
-    <height>250</height>
+    <height>403</height>
    </rect>
   </property>
   <property name="tabShape">
@@ -66,7 +66,7 @@
       <item>
        <widget class="QGroupBox" name="Formatting">
         <property name="title">
-         <string>Convert</string>
+         <string/>
         </property>
         <layout class="QVBoxLayout" name="verticalLayout_4">
          <property name="spacing">
@@ -85,211 +85,408 @@
           <number>0</number>
          </property>
          <item>
-          <widget class="QPushButton" name="b000">
-           <property name="enabled">
-            <bool>true</bool>
+          <widget class="QGroupBox" name="groupBox_2">
+           <property name="title">
+            <string>Convert:</string>
            </property>
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>&lt;b&gt;Convert DirectX to OpenGL&lt;/b&gt;&lt;br&gt;
+           <layout class="QVBoxLayout" name="verticalLayout_3">
+            <property name="spacing">
+             <number>1</number>
+            </property>
+            <property name="leftMargin">
+             <number>1</number>
+            </property>
+            <property name="topMargin">
+             <number>1</number>
+            </property>
+            <property name="rightMargin">
+             <number>1</number>
+            </property>
+            <property name="bottomMargin">
+             <number>1</number>
+            </property>
+            <item>
+             <widget class="QPushButton" name="b000">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;b&gt;Convert DirectX to OpenGL&lt;/b&gt;&lt;br&gt;
 Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;DirectX&lt;/b&gt; format to &lt;b&gt;OpenGL&lt;/b&gt; format.&lt;br&gt;&lt;br&gt;
 &lt;b&gt;Usage:&lt;/b&gt; Select a &lt;b&gt;DirectX&lt;/b&gt; normal map.&lt;br&gt;&lt;br&gt;
 - If an existing &lt;b&gt;OpenGL&lt;/b&gt; normal map of the same name is found, it will be &lt;b&gt;overwritten&lt;/b&gt;.</string>
-           </property>
-           <property name="text">
-            <string>DirectX to GL</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="b001">
-           <property name="enabled">
-            <bool>true</bool>
-           </property>
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>&lt;b&gt;Convert OpenGL to DirectX&lt;/b&gt;&lt;br&gt;
+              </property>
+              <property name="text">
+               <string>DirectX to GL</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b001">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;b&gt;Convert OpenGL to DirectX&lt;/b&gt;&lt;br&gt;
 Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format to &lt;b&gt;DirectX&lt;/b&gt; format.&lt;br&gt;&lt;br&gt;
 &lt;b&gt;Usage:&lt;/b&gt; Select an &lt;b&gt;OpenGL&lt;/b&gt; normal map.&lt;br&gt;&lt;br&gt;
 - If an existing &lt;b&gt;DirectX&lt;/b&gt; normal map of the same name is found, it will be &lt;b&gt;overwritten&lt;/b&gt;.
 
 </string>
-           </property>
-           <property name="text">
-            <string>OpenGL to DX</string>
-           </property>
+              </property>
+              <property name="text">
+               <string>OpenGL to DX</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b010">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Convert Smoothness to Roughness  &lt;/p&gt;&lt;p&gt;Converts a Smoothness map into a Roughness map by inverting its values.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select a Smoothness map. Batch processing is supported.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- If an existing Roughness map of the same name is found, it will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Smoothness to Roughness</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b011">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Convert Roughness to Smoothness  &lt;/p&gt;&lt;p&gt;Converts a Roughness map into a Smoothness map by inverting its values.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select a Roughness map. Batch processing is supported.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- If an existing Smoothness map of the same name is found, it will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Roughness to Smoothness</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="PushButton" name="tb001">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Convert Specular Glossiness to PBR&lt;/span&gt;&lt;br/&gt;Converts Specular Glossiness map(s) to &lt;span style=&quot; font-weight:600;&quot;&gt;PBR&lt;/span&gt; format.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select &lt;span style=&quot; font-weight:600;&quot;&gt;Diffuse, Specular,&lt;/span&gt; and &lt;span style=&quot; font-weight:600;&quot;&gt;Glossiness&lt;/span&gt; maps.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If no &lt;span style=&quot; font-weight:600;&quot;&gt;Glossiness&lt;/span&gt; map is provided, it will attempt to extract it from the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If extraction fails, the &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map will be approximated using the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If existing &lt;span style=&quot; font-weight:600;&quot;&gt;BaseColor, Metallic,&lt;/span&gt; and &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; maps of the same name exist, they will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Spec Gloss to PBR</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="PushButton" name="tb000">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Optimize Texture&lt;/span&gt;&lt;br/&gt;Optimizes a texture by clamping the maximum size and adjusting the image (such as setting bit depth) according to the map type.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select the texture map(s) to optimize.&lt;br/&gt;&lt;br/&gt;The optimized texture will be created in the same directory, with the original file moved to an &lt;span style=&quot; font-style:italic;&quot;&gt;old&lt;/span&gt; folder. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Optimize</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="PushButton" name="tb003">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Bump to Normal&lt;/span&gt;&lt;br/&gt;Converts Bump/Height to Normal with options available in the tool menu.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Options:&lt;/span&gt; Choose OpenGL or DirectX format and set intensity.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Bump to Normal</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="b002">
-           <property name="enabled">
-            <bool>true</bool>
+          <widget class="QGroupBox" name="groupBox">
+           <property name="title">
+            <string>Pack:</string>
            </property>
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Pack Transparency into Albedo&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=&quot; font-weight:600;&quot;&gt;Transparency (Opacity)&lt;/span&gt; map into the &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select an &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt; and an &lt;span style=&quot; font-weight:600;&quot;&gt;Opacity&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo Transparency&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;br/&gt;- If a &lt;span style=&quot; font-weight:600;&quot;&gt;BaseColor&lt;/span&gt; map is provided, it will be converted to &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Albedo Transparency</string>
-           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_2">
+            <property name="spacing">
+             <number>1</number>
+            </property>
+            <property name="leftMargin">
+             <number>1</number>
+            </property>
+            <property name="topMargin">
+             <number>1</number>
+            </property>
+            <property name="rightMargin">
+             <number>1</number>
+            </property>
+            <property name="bottomMargin">
+             <number>1</number>
+            </property>
+            <item>
+             <widget class="QPushButton" name="b004">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Pack Transparency into Albedo&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=&quot; font-weight:600;&quot;&gt;Transparency (Opacity)&lt;/span&gt; map into the &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select an &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt; and an &lt;span style=&quot; font-weight:600;&quot;&gt;Opacity&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo Transparency&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;br/&gt;- If a &lt;span style=&quot; font-weight:600;&quot;&gt;BaseColor&lt;/span&gt; map is provided, it will be converted to &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Albedo Transparency</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b005">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Pack Smoothness or Roughness into Metallic&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=&quot; font-weight:600;&quot;&gt;Smoothness&lt;/span&gt; or &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map into the &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; and a &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Metallic Smoothness</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b008">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Pack Metallic Smoothness AO  &lt;/p&gt;&lt;p&gt;Combines Metallic, Smoothness (or Roughness), and Ambient Occlusion maps into a single packed texture.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select Metallic, Roughness (or Smoothness), and AO maps. Multiple sets can be processed in batch.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- Output channels: R=Metallic, G=AO, B=Empty, A=Smoothness.  &lt;/p&gt;&lt;p&gt;- If an existing MSAO map of the same name exists, it will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>MSAO</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="b003">
-           <property name="enabled">
-            <bool>true</bool>
+          <widget class="QGroupBox" name="groupBox_3">
+           <property name="title">
+            <string>Unpack:</string>
            </property>
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Pack Smoothness or Roughness into Metallic&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=&quot; font-weight:600;&quot;&gt;Smoothness&lt;/span&gt; or &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map into the &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; and a &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Metallic Smoothness</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="PushButton" name="tb001">
-           <property name="enabled">
-            <bool>true</bool>
-           </property>
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Convert Specular Glossiness to PBR&lt;/span&gt;&lt;br/&gt;Converts Specular Glossiness map(s) to &lt;span style=&quot; font-weight:600;&quot;&gt;PBR&lt;/span&gt; format.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select &lt;span style=&quot; font-weight:600;&quot;&gt;Diffuse, Specular,&lt;/span&gt; and &lt;span style=&quot; font-weight:600;&quot;&gt;Glossiness&lt;/span&gt; maps.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If no &lt;span style=&quot; font-weight:600;&quot;&gt;Glossiness&lt;/span&gt; map is provided, it will attempt to extract it from the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If extraction fails, the &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map will be approximated using the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If existing &lt;span style=&quot; font-weight:600;&quot;&gt;BaseColor, Metallic,&lt;/span&gt; and &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; maps of the same name exist, they will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Spec Gloss to PBR</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="b005">
-           <property name="enabled">
-            <bool>true</bool>
-           </property>
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Unpack Specular and Glossiness to separate maps.&lt;/span&gt;&lt;br/&gt;Extracts the Glossiness map from the Specular map's alpha channel.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;Specular &lt;/span&gt;map.&lt;br/&gt;&lt;br/&gt;- If extraction fails, the Glossiness map will be approximated using the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If an existing Specular or Glossiness map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Unpack Spec Gloss</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="b004">
-           <property name="enabled">
-            <bool>true</bool>
-           </property>
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;UnPack MetallicSmoothness into separate Metallic and Smoothness maps.&lt;/span&gt;&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;MetallicSmoothness&lt;/span&gt; map. Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic or Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Unpack Metallic Smoothness</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="PushButton" name="tb000">
-           <property name="enabled">
-            <bool>true</bool>
-           </property>
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>16777215</width>
-             <height>20</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Optimize Texture&lt;/span&gt;&lt;br/&gt;Optimizes a texture by clamping the maximum size and adjusting the image (such as setting bit depth) according to the map type.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select the texture map(s) to optimize.&lt;br/&gt;&lt;br/&gt;The optimized texture will be created in the same directory, with the original file moved to an &lt;span style=&quot; font-style:italic;&quot;&gt;old&lt;/span&gt; folder. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-           </property>
-           <property name="text">
-            <string>Optimize</string>
-           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_5">
+            <property name="spacing">
+             <number>1</number>
+            </property>
+            <property name="leftMargin">
+             <number>1</number>
+            </property>
+            <property name="topMargin">
+             <number>1</number>
+            </property>
+            <property name="rightMargin">
+             <number>1</number>
+            </property>
+            <property name="bottomMargin">
+             <number>1</number>
+            </property>
+            <item>
+             <widget class="QPushButton" name="b007">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Unpack Specular and Glossiness to separate maps.&lt;/span&gt;&lt;br/&gt;Extracts the Glossiness map from the Specular map's alpha channel.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;Specular &lt;/span&gt;map.&lt;br/&gt;&lt;br/&gt;- If extraction fails, the Glossiness map will be approximated using the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If an existing Specular or Glossiness map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Spec Gloss</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b006">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;UnPack MetallicSmoothness into separate Metallic and Smoothness maps.&lt;/span&gt;&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;MetallicSmoothness&lt;/span&gt; map. Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic or Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>Metallic Smoothness</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b009">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Unpack Metallic Smoothness AO  &lt;/p&gt;&lt;p&gt;Separates a packed MetallicSmoothnessAO map into individual Metallic, Smoothness (or Roughness), and AO maps.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select one or more MSAO maps to process. Batch processing is supported.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- Output maps: Metallic, Smoothness (or Roughness), and AO.  &lt;/p&gt;&lt;p&gt;- If existing maps of the same name exist, they will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>MSAO</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </widget>
          </item>
         </layout>

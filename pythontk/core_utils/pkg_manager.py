@@ -216,6 +216,7 @@ class PkgVersionCheck:
         """Check the installed and latest versions of the package.
 
         This method updates the _installed_ver and _latest_ver attributes.
+        Network errors are handled silently to prevent blocking the application.
 
         Parameters:
             package_name (str, optional): The name of the package to check.
@@ -235,9 +236,15 @@ class PkgVersionCheck:
         # Create a package manager for the specified Python interpreter
         pkg_mgr = PkgManager(python_path=self._python_path)
 
-        # Get the installed and latest versions
-        self._installed_ver = pkg_mgr.installed_version(self._package_name)
-        self._latest_ver = pkg_mgr.latest_version(self._package_name)
+        try:
+            # Get the installed and latest versions
+            self._installed_ver = pkg_mgr.installed_version(self._package_name)
+            self._latest_ver = pkg_mgr.latest_version(self._package_name)
+        except RuntimeError:
+            # Silently handle network errors - version check will be skipped
+            # The installed version is still retrieved, but latest version remains empty
+            self._latest_ver = ""
+            pass
 
 
 class PkgVersionUtils:

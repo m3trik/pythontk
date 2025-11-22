@@ -210,7 +210,7 @@ class FileUtils(core_utils.HelpMixin):
             lines (list): A list of strings to write to the file.
         """
         try:
-            with open(filepath, "w") as f:
+            with open(filepath, "w", encoding="utf-8") as f:
                 f.writelines(lines)
         except OSError:
             traceback.print_exc()
@@ -690,7 +690,7 @@ class FileUtils(core_utils.HelpMixin):
             )
 
         if obj is None:
-            filepath = None
+            return ""
 
         elif isinstance(obj, str):
             filepath = obj
@@ -931,14 +931,14 @@ class FileUtils(core_utils.HelpMixin):
         )
 
         try:
-            with open(file, "r") as f:
+            with open(file, "r", encoding="utf-8") as f:
                 dct = json.loads(f.read())
                 dct[key] = value
         except json.decoder.JSONDecodeError:
             dct = {}
             dct[key] = value
 
-        with open(file, "w") as f:
+        with open(file, "w", encoding="utf-8") as f:
             f.write(json.dumps(dct))
 
     @classmethod
@@ -971,7 +971,7 @@ class FileUtils(core_utils.HelpMixin):
         )
 
         try:
-            with open(file, "r") as f:
+            with open(file, "r", encoding="utf-8") as f:
                 return json.loads(f.read())[key]
 
         except KeyError:

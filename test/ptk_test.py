@@ -365,14 +365,14 @@ class StrTest(Main, StrUtils):
         )
 
     def test_splitAtChars(self):
-        """Test split_at_chars method."""
+        """Test split_at_delimiter method."""
         self.perform_test(
             {
-                "self.split_at_chars(['str|ing', 'string'])": [
+                "self.split_at_delimiter(['str|ing', 'string'])": [
                     ("str", "ing"),
                     ("string", ""),
                 ],
-                "self.split_at_chars('aCHARScCHARSd', 'CHARS', 0)": ("", "a"),
+                "self.split_at_delimiter('aCHARScCHARSd', 'CHARS', 0)": ("", "a"),
             }
         )
 
@@ -403,8 +403,9 @@ class StrTest(Main, StrUtils):
         self.perform_test(
             {
                 "self.truncate('12345678', 4)": "..5678",
-                "self.truncate('12345678', 4, False)": "1234..",
-                "self.truncate('12345678', 4, False, '--')": "1234--",
+                "self.truncate('12345678', 4, 'end')": "1234..",
+                "self.truncate('12345678', 4, 'end', '--')": "1234--",
+                "self.truncate('12345678', 6, 'middle')": "12..78",
                 "self.truncate(None, 4)": None,
             }
         )
@@ -491,8 +492,8 @@ class StrTest(Main, StrUtils):
         """Test format_suffix method."""
         self.perform_test(
             {
-                "self.format_suffix('p001Cube1', '_suffix', 'Cube1')": "p00_suffix",
-                "self.format_suffix('p001Cube1', '_suffix', ['Cu', 'be1'])": "p00_suffix",
+                "self.format_suffix('p001Cube1', '_suffix', 'Cube1')": "p001_suffix",
+                "self.format_suffix('p001Cube1', '_suffix', ['Cu', 'be1'])": "p001_suffix",
                 "self.format_suffix('p001Cube1', '_suffix', '', True)": "p001Cube_suffix",
                 "self.format_suffix('pCube_GEO1', '_suffix', '', True, True)": "pCube_suffix",
             }
@@ -1016,58 +1017,53 @@ class FileTest(Main, FileUtils):
     def test_get_classes_from_dir(self):
         """ """
         path = os.path.abspath(os.path.dirname(__file__))
+
+        def fp(name):
+            return os.path.join(path, name)
+
+        expected_all = [
+            ("Main", fp("ptk_test.py")),
+            ("CoreTest", fp("ptk_test.py")),
+            ("StrTest", fp("ptk_test.py")),
+            ("IterTest", fp("ptk_test.py")),
+            ("FileTest", fp("ptk_test.py")),
+            ("ImgTest", fp("ptk_test.py")),
+            ("MathTest", fp("ptk_test.py")),
+            ("ModuleReloaderTests", fp("test_module_reloader.py")),
+            ("ModuleResolverBootstrapTests", fp("test_module_resolver.py")),
+        ]
         self.assertEqual(
             self.get_classes_from_path(path),
-            [
-                ("Main", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("MathTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-            ],
+            expected_all,
         )
         self.assertEqual(
             self.get_classes_from_path(path, "classname"),
-            [
-                ("Main"),
-                ("CoreTest"),
-                ("StrTest"),
-                ("IterTest"),
-                ("FileTest"),
-                ("ImgTest"),
-                ("MathTest"),
-            ],
+            [name for name, _ in expected_all],
         )
         # Test_get_classes_from_dir_with_inc
+        expected_inc = [pair for pair in expected_all if pair[0].endswith("Test")]
         self.assertEqual(
             self.get_classes_from_path(path, inc="*Test"),
-            [
-                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("MathTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-            ],
+            expected_inc,
         )
         # Test_get_classes_from_dir_with_exc
         self.assertEqual(
             self.get_classes_from_path(path, exc="*Test"),
             [
-                ("Main", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("Main", fp("ptk_test.py")),
+                ("ModuleReloaderTests", fp("test_module_reloader.py")),
+                ("ModuleResolverBootstrapTests", fp("test_module_resolver.py")),
             ],
         )
         # Test_get_classes_from_dir_with_inc_and_exc
         self.assertEqual(
             self.get_classes_from_path(path, inc="*Test", exc="MathTest"),
             [
-                ("CoreTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("StrTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("IterTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("FileTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
-                ("ImgTest", "O:\\Cloud\\Code\\_scripts\\pythontk\\test\\ptk_test.py"),
+                ("CoreTest", fp("ptk_test.py")),
+                ("StrTest", fp("ptk_test.py")),
+                ("IterTest", fp("ptk_test.py")),
+                ("FileTest", fp("ptk_test.py")),
+                ("ImgTest", fp("ptk_test.py")),
             ],
         )
 
@@ -1217,17 +1213,29 @@ class ImgTest(Main, ImgUtils):
 
     def test_createDXFromGL(self):
         """ """
-        self.assertEqual(
-            self.create_dx_from_gl("test_files/imgtk_test/im_Normal_OpenGL.png"),
-            "test_files/imgtk_test/im_Normal_DirectX.png",
+        dx_path = self.create_dx_from_gl("test_files/imgtk_test/im_Normal_OpenGL.png")
+        expected = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "test_files",
+                "imgtk_test",
+                "im_Normal_DirectX.png",
+            )
         )
+        self.assertEqual(os.path.normpath(dx_path), os.path.normpath(expected))
 
     def test_createGLFromDX(self):
         """ """
-        self.assertEqual(
-            self.create_gl_from_dx("test_files/imgtk_test/im_Normal_DirectX.png"),
-            "test_files/imgtk_test/im_Normal_OpenGL.png",
+        gl_path = self.create_gl_from_dx("test_files/imgtk_test/im_Normal_DirectX.png")
+        expected = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "test_files",
+                "imgtk_test",
+                "im_Normal_OpenGL.png",
+            )
         )
+        self.assertEqual(os.path.normpath(gl_path), os.path.normpath(expected))
 
     def test_createMask(self):
         """ """

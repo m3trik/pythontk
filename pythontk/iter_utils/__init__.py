@@ -3,6 +3,7 @@
 
 from pythontk.iter_utils._iter_utils import IterUtils
 
+__all__ = ["IterUtils"]
 
 # --------------------------------------------------------------------------------------------
 

@@ -3,6 +3,7 @@
 import os
 import subprocess
 import shutil
+import re
 
 # from this package:
 from pythontk import core_utils
@@ -62,13 +63,23 @@ class VidUtils(core_utils.HelpMixin):
             stderr=subprocess.PIPE,
             text=True,
         )
+        fps_pattern = re.compile(r"(?P<fps>\d+(?:\.\d+)?)\s*fps", re.IGNORECASE)
+        tbr_pattern = re.compile(r"(?P<tbr>\d+(?:\.\d+)?)\s*tbr", re.IGNORECASE)
+
         for line in result.stderr.splitlines():
-            if "fps" in line:
-                try:
-                    return float(line.split("fps")[0].strip().split()[-1])
-                except ValueError:
-                    continue
-        raise RuntimeError("Could not determine frame rate of the video.")
+            fps_match = fps_pattern.search(line)
+            if fps_match:
+                return float(fps_match.group("fps"))
+
+            tbr_match = tbr_pattern.search(line)
+            if tbr_match:
+                return float(tbr_match.group("tbr"))
+
+        error_excerpt = result.stderr.strip().splitlines()[-1] if result.stderr else ""
+        raise RuntimeError(
+            "Could not determine frame rate of the video. "
+            f"FFmpeg last message: {error_excerpt}"
+        )
 
     @classmethod
     def compress_video(
@@ -96,7 +107,14 @@ class VidUtils(core_utils.HelpMixin):
         if output_filepath is None:
             output_filepath = input_filepath.replace(".avi", ".mp4")
 
-        frame_rate = frame_rate or cls.get_video_frame_rate(input_filepath)
+        if frame_rate is None:
+            try:
+                frame_rate = cls.get_video_frame_rate(input_filepath)
+            except RuntimeError as err:
+                print(
+                    f"[VidUtils] Warning: {err} - falling back to 24 fps for compression."
+                )
+                frame_rate = 24
 
         ffmpeg_cmd = [
             ffmpeg_path,
@@ -131,13 +149,20 @@ class VidUtils(core_utils.HelpMixin):
             )
             print(f"Compressed video saved to: {output_filepath}")
 
-            if delete_original and os.path.exists(input_filepath):
+            if (
+                delete_original
+                and os.path.abspath(input_filepath) != os.path.abspath(output_filepath)
+                and os.path.exists(input_filepath)
+            ):
                 os.remove(input_filepath)
                 print(f"Original file {input_filepath} deleted.")
+
+            return output_filepath
 
         except subprocess.CalledProcessError as e:
             print(f"Error during FFmpeg compression: {e}")
             print(f"FFmpeg output:\n{e.stderr}")
+            return None
 
 
 # --------------------------------------------------------------------------------------------

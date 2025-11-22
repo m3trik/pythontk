@@ -36,192 +36,6 @@ class MapConverterSlots(ImgUtils):
         """Set the starting directory for file dialogs."""
         self._source_dir = value
 
-    def b000(self):
-        """Convert DirectX to OpenGL"""
-        dx_map_path = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select a DirectX normal map to convert:",
-            start_dir=self.source_dir,
-            allow_multiple=False,
-        )
-        if not dx_map_path:
-            return
-
-        print(f"Converting: {dx_map_path} ..")
-        gl_map_path = self.create_gl_from_dx(dx_map_path)
-        print(f"// Result: {gl_map_path}")
-        self.source_dir = FileUtils.format_path(gl_map_path, "path")
-
-    def b001(self):
-        """Convert OpenGL to DirectX"""
-        gl_map_path = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select an OpenGL normal map to convert:",
-            start_dir=self.source_dir,
-            allow_multiple=False,
-        )
-        if not gl_map_path:
-            return
-
-        print(f"Converting: {gl_map_path} ..")
-        dx_map_path = self.create_dx_from_gl(gl_map_path)
-        print(f"// Result: {dx_map_path}")
-        self.source_dir = FileUtils.format_path(dx_map_path, "path")
-
-    def b002(self):
-        """Batch pack Transparency into Albedo across texture sets."""
-        paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select one or more sets of Albedo/Base Color and Transparency maps:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
-        )
-        if not paths:
-            return
-
-        texture_sets = self.group_textures_by_set(paths)
-
-        for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
-
-            albedo_map_path = sorted_maps.get("Albedo_Transparency", [None])[0]
-            base_color_path = sorted_maps.get("Base_Color", [None])[0]
-            opacity_map_path = sorted_maps.get("Opacity", [None])[0]
-
-            if not (albedo_map_path or base_color_path):
-                print(f"Skipping {base_name}: No Albedo or Base Color map found.")
-                continue
-
-            if not opacity_map_path:
-                print(f"Skipping {base_name}: No Transparency (Opacity) map found.")
-                continue
-
-            rgb_map_path = albedo_map_path or base_color_path
-
-            print(
-                f"Packing Transparency from: {opacity_map_path}\n\tinto: {rgb_map_path} .."
-            )
-
-            packed_path = self.pack_transparency_into_albedo(
-                rgb_map_path,
-                opacity_map_path,
-                invert_alpha=False,
-            )
-            print(f"// Result: {packed_path}")
-
-        try:
-            self.source_dir = FileUtils.format_path(paths[0], "path")
-        except Exception:
-            pass
-
-    def b003(self):
-        """Batch pack Smoothness or Roughness into Metallic across texture sets."""
-        paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select one or more sets of metallic and smoothness/roughness maps:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
-        )
-        if not paths:
-            return
-
-        texture_sets = self.group_textures_by_set(paths)
-
-        for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
-
-            metallic_map_path = sorted_maps.get("Metallic", [None])[0]
-            smooth_map_path = sorted_maps.get("Smoothness", [None])[0]
-            rough_map_path = sorted_maps.get("Roughness", [None])[0]
-
-            if not metallic_map_path:
-                print(f"Skipping {base_name}: No Metallic map found.")
-                continue
-
-            alpha_map_path = smooth_map_path or rough_map_path
-            invert_alpha = rough_map_path is not None
-
-            if not alpha_map_path:
-                print(f"Skipping {base_name}: No Smoothness or Roughness map found.")
-                continue
-
-            print(
-                f"Packing {'Roughness' if invert_alpha else 'Smoothness'} from: {alpha_map_path}\n\tinto: {metallic_map_path} .."
-            )
-
-            packed_path = self.pack_smoothness_into_metallic(
-                metallic_map_path,
-                alpha_map_path,
-                invert_alpha=invert_alpha,
-            )
-            print(f"// Result: {packed_path}")
-
-        try:
-            self.source_dir = FileUtils.format_path(paths[0], "path")
-        except Exception:
-            pass
-
-    def b004(self):
-        """Unpack Metallic and Smoothness maps from MetallicSmoothness textures."""
-        print("Unpacking Metallic and Smoothness maps ..")
-        metallic_smoothness_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select MetallicSmoothness maps to unpack:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
-        )
-        if not metallic_smoothness_paths:
-            return
-
-        for metallic_smoothness_path in metallic_smoothness_paths:
-            print(f"Unpacking: {metallic_smoothness_path} ..")
-
-            try:
-                metallic_path, smoothness_path = self.unpack_metallic_smoothness(
-                    metallic_smoothness_path
-                )
-                print(f"// Metallic map: {metallic_path}")
-                print(f"// Smoothness map: {smoothness_path}")
-
-            except Exception as e:
-                print(f"// Error unpacking {metallic_smoothness_path}: {e}")
-
-        try:
-            self.source_dir = FileUtils.format_path(
-                metallic_smoothness_paths[0], "path"
-            )
-        except Exception:
-            pass
-
-    def b005(self):
-        """Unpack Specular and Gloss maps from SpecularGloss textures."""
-        specular_gloss_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
-            title="Select SpecularGloss maps to unpack:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
-        )
-        if not specular_gloss_paths:
-            return
-
-        for specular_gloss_path in specular_gloss_paths:
-            print(f"Unpacking: {specular_gloss_path} ..")
-
-            try:
-                specular_path, gloss_path = self.unpack_specular_gloss(
-                    specular_gloss_path
-                )
-                print(f"// Specular map: {specular_path}")
-                print(f"// Gloss map: {gloss_path}")
-
-            except Exception as e:
-                print(f"// Error unpacking {specular_gloss_path}: {e}")
-
-        try:
-            self.source_dir = FileUtils.format_path(specular_gloss_paths[0], "path")
-        except Exception:
-            pass
-
     def tb000_init(self, widget):
         """ """
         widget.menu.add(
@@ -332,7 +146,6 @@ class MapConverterSlots(ImgUtils):
                 glossiness_map,
                 diffuse_map,
                 output_type="PNG",
-                image_size=4096,
                 optimize_bit_depth=True,
                 write_files=True,
             )
@@ -351,6 +164,396 @@ class MapConverterSlots(ImgUtils):
         except Exception:
             pass
 
+    def tb003_init(self, widget):
+        """Initialize a 'Bump to Normal' toolbutton with options."""
+        widget.menu.add(
+            "QComboBox",
+            setObjectName="tb003_cmb_format",
+            setToolTip="OpenGL: Y+ up, DirectX: Y+ down",
+        )
+        # Display-friendly items with data values
+        cmb = widget.menu.tb003_cmb_format
+        cmb.clear()
+        cmb.addItem("Format: OpenGL", "opengl")
+        cmb.addItem("Format: DirectX", "directx")
+
+        widget.menu.add(
+            "QDoubleSpinBox",
+            setObjectName="tb003_dsb_intensity",
+            setMinimum=0.1,
+            setMaximum=5.0,
+            setSingleStep=0.1,
+            setValue=1.0,
+            setDecimals=2,
+            setPrefix="Intensity: ",
+            setToolTip="Controls how deep the height values are interpreted",
+        )
+
+    def tb003(self, widget):
+        """Bump/Height to Normal converter (single entry point with options)."""
+        bump_map_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select bump/height maps to convert:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not bump_map_paths:
+            return
+
+        # Options
+        try:
+            output_format = widget.menu.tb003_cmb_format.currentData() or "opengl"
+        except Exception:
+            fmt_text = widget.menu.tb003_cmb_format.currentText().lower()
+            output_format = "directx" if "directx" in fmt_text else "opengl"
+        intensity = widget.menu.tb003_dsb_intensity.value()
+
+        for bump_path in bump_map_paths:
+            print(f"Converting bump to normal ({output_format.upper()}): {bump_path}")
+
+            try:
+                normal_path = self.convert_bump_to_normal(
+                    bump_path,
+                    output_format=output_format,
+                    intensity=intensity,
+                    smooth_filter=True,
+                    filter_radius=0.5,
+                )
+                print(f"// Result: {normal_path}")
+
+            except Exception as e:
+                print(f"// Error converting {bump_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(bump_map_paths[0], "path")
+        except Exception:
+            pass
+
+    def b000(self):
+        """Convert DirectX to OpenGL"""
+        dx_map_path = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select a DirectX normal map to convert:",
+            start_dir=self.source_dir,
+            allow_multiple=False,
+        )
+        if not dx_map_path:
+            return
+
+        print(f"Converting: {dx_map_path} ..")
+        gl_map_path = self.create_gl_from_dx(dx_map_path)
+        print(f"// Result: {gl_map_path}")
+        self.source_dir = FileUtils.format_path(gl_map_path, "path")
+
+    def b001(self):
+        """Convert OpenGL to DirectX"""
+        gl_map_path = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select an OpenGL normal map to convert:",
+            start_dir=self.source_dir,
+            allow_multiple=False,
+        )
+        if not gl_map_path:
+            return
+
+        print(f"Converting: {gl_map_path} ..")
+        dx_map_path = self.create_dx_from_gl(gl_map_path)
+        print(f"// Result: {dx_map_path}")
+        self.source_dir = FileUtils.format_path(dx_map_path, "path")
+
+    def b004(self):
+        """Batch pack Transparency into Albedo across texture sets."""
+        paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select one or more sets of Albedo/Base Color and Transparency maps:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not paths:
+            return
+
+        texture_sets = self.group_textures_by_set(paths)
+
+        for base_name, files in texture_sets.items():
+            sorted_maps = self.sort_images_by_type(files)
+
+            albedo_map_path = sorted_maps.get("Albedo_Transparency", [None])[0]
+            base_color_path = sorted_maps.get("Base_Color", [None])[0]
+            opacity_map_path = sorted_maps.get("Opacity", [None])[0]
+
+            if not (albedo_map_path or base_color_path):
+                print(f"Skipping {base_name}: No Albedo or Base Color map found.")
+                continue
+
+            if not opacity_map_path:
+                print(f"Skipping {base_name}: No Transparency (Opacity) map found.")
+                continue
+
+            rgb_map_path = albedo_map_path or base_color_path
+
+            print(
+                f"Packing Transparency from: {opacity_map_path}\n\tinto: {rgb_map_path} .."
+            )
+
+            packed_path = self.pack_transparency_into_albedo(
+                rgb_map_path,
+                opacity_map_path,
+                invert_alpha=False,
+            )
+            print(f"// Result: {packed_path}")
+
+        try:
+            self.source_dir = FileUtils.format_path(paths[0], "path")
+        except Exception:
+            pass
+
+    def b005(self):
+        """Batch pack Smoothness or Roughness into Metallic across texture sets."""
+        paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select one or more sets of metallic and smoothness/roughness maps:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not paths:
+            return
+
+        texture_sets = self.group_textures_by_set(paths)
+
+        for base_name, files in texture_sets.items():
+            sorted_maps = self.sort_images_by_type(files)
+
+            metallic_map_path = sorted_maps.get("Metallic", [None])[0]
+            smooth_map_path = sorted_maps.get("Smoothness", [None])[0]
+            rough_map_path = sorted_maps.get("Roughness", [None])[0]
+
+            if not metallic_map_path:
+                print(f"Skipping {base_name}: No Metallic map found.")
+                continue
+
+            alpha_map_path = smooth_map_path or rough_map_path
+            invert_alpha = rough_map_path is not None
+
+            if not alpha_map_path:
+                print(f"Skipping {base_name}: No Smoothness or Roughness map found.")
+                continue
+
+            print(
+                f"Packing {'Roughness' if invert_alpha else 'Smoothness'} from: {alpha_map_path}\n\tinto: {metallic_map_path} .."
+            )
+
+            packed_path = self.pack_smoothness_into_metallic(
+                metallic_map_path,
+                alpha_map_path,
+                invert_alpha=invert_alpha,
+            )
+            print(f"// Result: {packed_path}")
+
+        try:
+            self.source_dir = FileUtils.format_path(paths[0], "path")
+        except Exception:
+            pass
+
+    def b006(self):
+        """Unpack Metallic and Smoothness maps from MetallicSmoothness textures."""
+        print("Unpacking Metallic and Smoothness maps ..")
+        metallic_smoothness_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select MetallicSmoothness maps to unpack:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not metallic_smoothness_paths:
+            return
+
+        for metallic_smoothness_path in metallic_smoothness_paths:
+            print(f"Unpacking: {metallic_smoothness_path} ..")
+
+            try:
+                metallic_path, smoothness_path = self.unpack_metallic_smoothness(
+                    metallic_smoothness_path
+                )
+                print(f"// Metallic map: {metallic_path}")
+                print(f"// Smoothness map: {smoothness_path}")
+
+            except Exception as e:
+                print(f"// Error unpacking {metallic_smoothness_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(
+                metallic_smoothness_paths[0], "path"
+            )
+        except Exception:
+            pass
+
+    def b007(self):
+        """Unpack Specular and Gloss maps from SpecularGloss textures."""
+        specular_gloss_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select SpecularGloss maps to unpack:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not specular_gloss_paths:
+            return
+
+        for specular_gloss_path in specular_gloss_paths:
+            print(f"Unpacking: {specular_gloss_path} ..")
+
+            try:
+                specular_path, gloss_path = self.unpack_specular_gloss(
+                    specular_gloss_path
+                )
+                print(f"// Specular map: {specular_path}")
+                print(f"// Gloss map: {gloss_path}")
+
+            except Exception as e:
+                print(f"// Error unpacking {specular_gloss_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(specular_gloss_paths[0], "path")
+        except Exception:
+            pass
+
+    def b008(self):
+        """Batch pack Metallic (R), AO (G), and Smoothness (A) across texture sets."""
+        paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select one or more sets of Metallic, Ambient Occlusion, and Smoothness maps:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not paths:
+            return
+
+        texture_sets = self.group_textures_by_set(paths)
+
+        for base_name, files in texture_sets.items():
+            sorted_maps = self.sort_images_by_type(files)
+
+            metallic_map_path = sorted_maps.get("Metallic", [None])[0]
+            ao_map_path = sorted_maps.get("Ambient_Occlusion", [None])[0]
+            smoothness_map_path = sorted_maps.get("Smoothness", [None])[0]
+            roughness_map_path = sorted_maps.get("Roughness", [None])[0]
+
+            if not metallic_map_path:
+                print(f"Skipping {base_name}: No Metallic map found.")
+                continue
+
+            if not ao_map_path:
+                print(f"Skipping {base_name}: No Ambient Occlusion map found.")
+                continue
+
+            # Use smoothness or convert roughness
+            alpha_map_path = smoothness_map_path or roughness_map_path
+            invert_alpha = roughness_map_path is not None
+
+            if not alpha_map_path:
+                print(f"Skipping {base_name}: No Smoothness or Roughness map found.")
+                continue
+
+            print(f"Packing MSAO for {base_name}:")
+            print(f"  Metallic (R): {metallic_map_path}")
+            print(f"  AO (G): {ao_map_path}")
+            print(
+                f"  {'Roughness' if invert_alpha else 'Smoothness'} (A): {alpha_map_path}"
+            )
+
+            packed_path = self.pack_msao_texture(
+                metallic_map_path,
+                ao_map_path,
+                alpha_map_path,
+                invert_alpha=invert_alpha,
+            )
+            print(f"// Result: {packed_path}")
+
+        try:
+            self.source_dir = FileUtils.format_path(paths[0], "path")
+        except Exception:
+            pass
+
+    def b009(self):
+        """Unpack Metallic, AO, and Smoothness maps from MSAO textures."""
+        msao_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select MSAO (MetallicSmoothnessAO) maps to unpack:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not msao_paths:
+            return
+
+        for msao_path in msao_paths:
+            print(f"Unpacking MSAO: {msao_path} ..")
+
+            try:
+                metallic_path, ao_path, smoothness_path = self.unpack_msao_texture(
+                    msao_path
+                )
+                print(f"// Metallic map: {metallic_path}")
+                print(f"// AO map: {ao_path}")
+                print(f"// Smoothness map: {smoothness_path}")
+
+            except Exception as e:
+                print(f"// Error unpacking {msao_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(msao_paths[0], "path")
+        except Exception:
+            pass
+
+    def b010(self):
+        """Convert Smoothness maps to Roughness maps."""
+        smoothness_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select Smoothness maps to convert to Roughness:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not smoothness_paths:
+            return
+
+        for smoothness_path in smoothness_paths:
+            print(f"Converting Smoothness to Roughness: {smoothness_path} ..")
+
+            try:
+                roughness_path = self.convert_smoothness_to_roughness(smoothness_path)
+                print(f"// Result: {roughness_path}")
+
+            except Exception as e:
+                print(f"// Error converting {smoothness_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(smoothness_paths[0], "path")
+        except Exception:
+            pass
+
+    def b011(self):
+        """Convert Roughness maps to Smoothness maps."""
+        roughness_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select Roughness maps to convert to Smoothness:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not roughness_paths:
+            return
+
+        for roughness_path in roughness_paths:
+            print(f"Converting Roughness to Smoothness: {roughness_path} ..")
+
+            try:
+                smoothness_path = self.convert_roughness_to_smoothness(roughness_path)
+                print(f"// Result: {smoothness_path}")
+
+            except Exception as e:
+                print(f"// Error converting {roughness_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(roughness_paths[0], "path")
+        except Exception:
+            pass
+
 
 class MapConverterUi:
     def __new__(self):
@@ -363,12 +566,18 @@ class MapConverterUi:
         ui.set_attributes(WA_TranslucentBackground=True)
         ui.set_flags(FramelessWindowHint=True)
         ui.style.set(theme="dark", style_class="translucentBgWithBorder")
-        ui.header.config_buttons(
-            menu_button=True, minimize_button=True, hide_button=True
-        )
+        ui.header.config_buttons("menu_button", "minimize_button", "hide_button")
         return ui
 
 
+# -----------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    MapConverterUi().show(pos="screen", app_exec=True)
+
+# -----------------------------------------------------------------------------
+# Notes
+# -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":

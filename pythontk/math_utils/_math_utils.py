@@ -1,6 +1,11 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import List, Tuple, Union, Callable, Sequence, Any, Optional
+from bisect import bisect_left
+import math
+from typing import List, Tuple, Union, Callable, Sequence, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # from this package:
 from pythontk import core_utils
@@ -71,6 +76,49 @@ class MathUtils(core_utils.HelpMixin):
             clamp(range(10), 3, 7) #returns: [3, 3, 3, 3, 4, 5, 6, 7, 7, 7]
         """
         return max(minimum, min(n, maximum))
+
+    @staticmethod
+    def clamp_range(
+        start,
+        end,
+        clamp_start=None,
+        clamp_end=None,
+        validate=True,
+    ):
+        """Clamp a numeric range (start, end) to optional boundaries with validation.
+
+        Parameters:
+            start (float): Range start value.
+            end (float): Range end value.
+            clamp_start (float, optional): Optional minimum boundary for start.
+            clamp_end (float, optional): Optional maximum boundary for end.
+            validate (bool): If True, validates that start < end and returns None if invalid.
+                           If False, no validation is performed (use with caution).
+
+        Returns:
+            tuple: Clamped (start, end) tuple, or None if validation fails.
+
+        Example:
+            clamp_range(5, 15) #returns: (5, 15)
+            clamp_range(5, 15, clamp_start=10) #returns: (10, 15)
+            clamp_range(5, 15, clamp_end=12) #returns: (5, 12)
+            clamp_range(5, 15, clamp_start=10, clamp_end=12) #returns: (10, 12)
+            clamp_range(15, 5, clamp_start=10, clamp_end=12) #returns: None (invalid: start >= end)
+            clamp_range(5, 15, clamp_start=20) #returns: None (clamping makes it invalid)
+            clamp_range(None, 15) #returns: None (None values not allowed)
+        """
+        if start is None or end is None:
+            return None
+
+        # Clamp start and end to their respective boundaries
+        final_start = max(start, clamp_start) if clamp_start is not None else start
+        final_end = min(end, clamp_end) if clamp_end is not None else end
+
+        # Validate that start < end
+        if validate and final_start >= final_end:
+            return None
+
+        return (final_start, final_end)
 
     @classmethod
     def normalize(cls, vector, amount=1):
@@ -443,24 +491,69 @@ class MathUtils(core_utils.HelpMixin):
         return tuple(rotation)
 
     @staticmethod
-    def lerp(a, b, t):
-        """Perform linear interpolation between two points.
-
-        Linear interpolation is a method of curve fitting using linear
-        polynomials to construct new data points within the range of
-        a discrete set of known data points.
+    def lerp(start: float, end: float, t: float) -> float:
+        """Linear interpolation between two values.
 
         Parameters:
-            a (float or int): The first point, corresponds to the value at t=0.
-            b (float or int): The second point, corresponds to the value at t=1.
-            t (float): The interpolation parameter, should be in range [0.0, 1.0].
-                       If t=0, it will return `a`, if t=1 it will return `b`.
-                       Intermediate values of `t` will return a value somewhere between `a` and `b`.
+            start (float): Start value
+            end (float): End value
+            t (float): Interpolation factor (0.0 to 1.0)
 
         Returns:
-            float: The interpolated value between `a` and `b`.
+            float: Interpolated value
         """
-        return a + (b - a) * t
+        return start + t * (end - start)
+
+    @staticmethod
+    def evaluate_sampled_progress(
+        time_value: float,
+        sample_times: Sequence[float],
+        progress: Sequence[float],
+        tolerance: float = 1e-6,
+    ) -> float:
+        """Interpolate normalized progress from sampled time/progress pairs.
+
+        Parameters:
+            time_value (float): The time at which to evaluate progress.
+            sample_times (Sequence[float]): Monotonically increasing sample times.
+            progress (Sequence[float]): Normalized progress values mapped to sample times.
+            tolerance (float): Comparison tolerance for matching sample times exactly.
+
+        Returns:
+            float: The interpolated progress value.
+        """
+        if not sample_times or not progress:
+            return 0.0
+
+        limit = min(len(sample_times), len(progress))
+        if limit == 0:
+            return 0.0
+
+        if time_value <= sample_times[0]:
+            return float(progress[0])
+        if time_value >= sample_times[limit - 1]:
+            return float(progress[limit - 1])
+
+        index = bisect_left(sample_times, time_value, 0, limit)
+
+        if index < limit and math.isclose(
+            sample_times[index], time_value, abs_tol=tolerance
+        ):
+            return float(progress[index])
+
+        prev_index = max(0, index - 1)
+        next_index = min(limit - 1, index)
+
+        t0 = sample_times[prev_index]
+        t1 = sample_times[next_index]
+        p0 = progress[prev_index]
+        p1 = progress[next_index]
+
+        if math.isclose(t1, t0, abs_tol=tolerance):
+            return float(p1)
+
+        ratio = (time_value - t0) / (t1 - t0)
+        return float(p0 + (p1 - p0) * ratio)
 
     def generate_geometric_sequence(
         base_value: int, terms: int, common_ratio: float = 2.0
@@ -740,69 +833,316 @@ class MathUtils(core_utils.HelpMixin):
             else upper_power
         )
 
+    @staticmethod
+    def is_close_to_whole(value: float, tolerance: float = 1e-4) -> bool:
+        """Check if a float value is close to a whole number within tolerance.
+
+        Parameters:
+            value (float): The value to check.
+            tolerance (float): The maximum difference from a whole number to be considered close.
+                Default is 1e-4 (0.0001).
+
+        Returns:
+            bool: True if the value is within tolerance of a whole number, False otherwise.
+
+        Example:
+            is_close_to_whole(10.0) #returns: True
+            is_close_to_whole(10.00001) #returns: True
+            is_close_to_whole(10.5) #returns: False
+            is_close_to_whole(9.9999) #returns: True
+        """
+        return abs(value - round(value)) <= tolerance
+
+    @staticmethod
+    def round_value(
+        value: float,
+        mode: str = "none",
+        max_distance: float = 1.5,
+    ) -> Union[int, float]:
+        """General-purpose rounding function with multiple modes.
+
+        Provides a unified interface for various rounding strategies, from precise
+        preservation to aesthetic snapping.
+
+        Parameters:
+            value (float): The value to round.
+            mode (str): Rounding mode to use. Options:
+                - "none": No rounding, return value as-is (default)
+                - "nearest": Round to nearest whole number (standard rounding)
+                - "floor": Always round down
+                - "ceil": Always round up
+                - "half_up": Round .5 and above up, below .5 down
+                - "preferred": Round to aesthetically pleasing numbers when very close.
+                  Examples: 24→25, 19→20, 99→100. Conservative approach.
+                - "aggressive_preferred": Round to preferred numbers even when farther away.
+                  Examples: 48.x→50, 73.x→75, 88.x→90, 23.x→25, 7.x→10.
+            max_distance (float): Maximum distance for "preferred" mode to consider a
+                preferred number. Only used when mode="preferred". Default is 1.5.
+
+        Returns:
+            Union[int, float]: The rounded value (int for most modes, float for "none").
+
+        Example:
+            round_value(10.7, mode="nearest") #returns: 11
+            round_value(10.7, mode="floor") #returns: 10
+            round_value(10.5, mode="half_up") #returns: 11
+            round_value(24.8, mode="preferred") #returns: 25
+            round_value(48.5, mode="aggressive_preferred") #returns: 50
+            round_value(10.7, mode="none") #returns: 10.7
+        """
+        if mode == "none":
+            return value
+        elif mode == "nearest":
+            return int(round(value))
+        elif mode == "floor":
+            return int(math.floor(value))
+        elif mode == "ceil":
+            return int(math.ceil(value))
+        elif mode == "half_up":
+            return int(math.floor(value + 0.5))
+        elif mode == "preferred":
+            return MathUtils.round_to_preferred(value, max_distance)
+        elif mode == "aggressive_preferred":
+            return MathUtils.round_to_aggressive_preferred(value)
+        else:
+            raise ValueError(
+                f"Invalid rounding mode: '{mode}'. "
+                f"Valid options: 'none', 'nearest', 'floor', 'ceil', 'half_up', 'preferred', 'aggressive_preferred'"
+            )
+
+    @staticmethod
+    def round_to_preferred(value: float, max_distance: float = 1.5) -> int:
+        """Round to aesthetically pleasing 'round' numbers (conservative approach).
+
+        Only rounds to preferred numbers if they're within max_distance frames.
+        Preferred numbers in order of priority:
+        - Multiples of 100 (0, 100, 200, ...)
+        - Multiples of 50 (50, 150, 250, ...)
+        - Multiples of 25 (25, 75, 125, ...)
+        - Multiples of 20 (20, 40, 60, 80, ...)
+        - Multiples of 10 (10, 30, 70, 90, ...)
+        - Multiples of 5 (5, 15, 35, 45, ...)
+
+        Parameters:
+            value (float): The value to round
+            max_distance (float): Maximum distance from value to consider a preferred number.
+                Default is 1.5, meaning only round if a preferred number is very close.
+
+        Returns:
+            int: The rounded value to the nearest preferred number
+
+        Example:
+            round_to_preferred(24.8) #returns: 25
+            round_to_preferred(19.3) #returns: 20
+            round_to_preferred(99.5) #returns: 100
+            round_to_preferred(48.5) #returns: 49 (not 50, too far away with default max_distance)
+        """
+        import math
+
+        # Handle exact integers
+        rounded = round(value)
+        if value == rounded:
+            return int(rounded)
+
+        # Define preferred numbers and their intervals
+        candidates = []
+
+        # Generate candidates based on scale
+        floor_val = math.floor(value)
+        ceil_val = math.ceil(value)
+
+        # Add multiples of 100
+        hundred_floor = (floor_val // 100) * 100
+        hundred_ceil = ((floor_val // 100) + 1) * 100
+        candidates.extend([hundred_floor, hundred_ceil])
+
+        # Add multiples of 50
+        fifty_floor = (floor_val // 50) * 50
+        fifty_ceil = ((floor_val // 50) + 1) * 50
+        candidates.extend([fifty_floor, fifty_ceil])
+
+        # Add multiples of 25
+        twentyfive_floor = (floor_val // 25) * 25
+        twentyfive_ceil = ((floor_val // 25) + 1) * 25
+        candidates.extend([twentyfive_floor, twentyfive_ceil])
+
+        # Add multiples of 20
+        twenty_floor = (floor_val // 20) * 20
+        twenty_ceil = ((floor_val // 20) + 1) * 20
+        candidates.extend([twenty_floor, twenty_ceil])
+
+        # Add multiples of 10
+        ten_floor = (floor_val // 10) * 10
+        ten_ceil = ((floor_val // 10) + 1) * 10
+        candidates.extend([ten_floor, ten_ceil])
+
+        # Add multiples of 5
+        five_floor = (floor_val // 5) * 5
+        five_ceil = ((floor_val // 5) + 1) * 5
+        candidates.extend([five_floor, five_ceil])
+
+        # Remove duplicates and filter to conservative range
+        candidates = list(set(candidates))
+        candidates = [c for c in candidates if abs(c - value) <= max_distance]
+
+        if not candidates:
+            # Fallback to simple rounding
+            return int(round(value))
+
+        # Find the closest candidate
+        closest = min(candidates, key=lambda x: abs(x - value))
+
+        # If there's a tie, prefer the higher number for round numbers
+        distances = [(c, abs(c - value)) for c in candidates]
+        min_distance = min(d[1] for d in distances)
+        tied = [c for c, d in distances if d == min_distance]
+
+        if len(tied) > 1:
+            # Prefer rounder numbers in ties
+            # Priority: 100 > 50 > 25 > 20 > 10 > 5
+            for multiple in [100, 50, 25, 20, 10, 5]:
+                for t in tied:
+                    if t % multiple == 0:
+                        return int(t)
+            # If still tied, prefer the higher number
+            return int(max(tied))
+
+        return int(closest)
+
+    @staticmethod
+    def round_to_aggressive_preferred(value: float) -> int:
+        """Round to aesthetically pleasing 'round' numbers (aggressive approach).
+
+        Rounds to preferred numbers even when farther away (within ~10 frames).
+        Examples: 48.x→50, 73.x→75, 88.x→90, 23.x→25, 7.x→10
+
+        Preferred numbers in order of priority:
+        - Multiples of 100 (0, 100, 200, ...)
+        - Multiples of 50 (50, 150, 250, ...)
+        - Multiples of 25 (25, 75, 125, ...)
+        - Multiples of 20 (20, 40, 60, 80, ...)
+        - Multiples of 10 (10, 30, 70, 90, ...)
+        - Multiples of 5 (5, 15, 35, 45, ...)
+
+        Parameters:
+            value (float): The value to round
+
+        Returns:
+            int: The rounded value to the nearest preferred number
+
+        Example:
+            round_to_aggressive_preferred(48.5) #returns: 50
+            round_to_aggressive_preferred(73.2) #returns: 75
+            round_to_aggressive_preferred(88.9) #returns: 90
+            round_to_aggressive_preferred(23.4) #returns: 25
+            round_to_aggressive_preferred(7.8) #returns: 10
+        """
+        import math
+
+        # Handle exact integers
+        rounded = round(value)
+        if value == rounded:
+            return int(rounded)
+
+        # Define preferred numbers and their intervals
+        candidates = []
+
+        # Generate candidates based on scale
+        floor_val = math.floor(value)
+        ceil_val = math.ceil(value)
+
+        # Add multiples of 100
+        hundred_floor = (floor_val // 100) * 100
+        hundred_ceil = ((floor_val // 100) + 1) * 100
+        candidates.extend([hundred_floor, hundred_ceil])
+
+        # Add multiples of 50
+        fifty_floor = (floor_val // 50) * 50
+        fifty_ceil = ((floor_val // 50) + 1) * 50
+        candidates.extend([fifty_floor, fifty_ceil])
+
+        # Add multiples of 25
+        twentyfive_floor = (floor_val // 25) * 25
+        twentyfive_ceil = ((floor_val // 25) + 1) * 25
+        candidates.extend([twentyfive_floor, twentyfive_ceil])
+
+        # Add multiples of 20
+        twenty_floor = (floor_val // 20) * 20
+        twenty_ceil = ((floor_val // 20) + 1) * 20
+        candidates.extend([twenty_floor, twenty_ceil])
+
+        # Add multiples of 10
+        ten_floor = (floor_val // 10) * 10
+        ten_ceil = ((floor_val // 10) + 1) * 10
+        candidates.extend([ten_floor, ten_ceil])
+
+        # Add multiples of 5
+        five_floor = (floor_val // 5) * 5
+        five_ceil = ((floor_val // 5) + 1) * 5
+        candidates.extend([five_floor, five_ceil])
+
+        # Remove duplicates and filter to aggressive range (within 10 frames)
+        candidates = list(set(candidates))
+        candidates = [c for c in candidates if abs(c - value) <= 10]
+
+        if not candidates:
+            # Fallback to simple rounding
+            return int(round(value))
+
+        # Find the closest candidate
+        closest = min(candidates, key=lambda x: abs(x - value))
+
+        # If there's a tie, prefer the higher number for round numbers
+        distances = [(c, abs(c - value)) for c in candidates]
+        min_distance = min(d[1] for d in distances)
+        tied = [c for c, d in distances if d == min_distance]
+
+        if len(tied) > 1:
+            # Prefer rounder numbers in ties
+            # Priority: 100 > 50 > 25 > 20 > 10 > 5
+            for multiple in [100, 50, 25, 20, 10, 5]:
+                for t in tied:
+                    if t % multiple == 0:
+                        return int(t)
+            # If still tied, prefer the higher number
+            return int(max(tied))
+
+        return int(closest)
+
+    @staticmethod
+    def hash_points(points, precision=4):
+        """Hash the given list of point values.
+
+        Parameters:
+            points (list): A list of point values as tuples.
+            precision (int): Determines the number of decimal places that are retained
+                    in the fixed-point representation. For example, with a value of 4, the
+                    fixed-point representation would retain 4 decimal places.
+
+        Returns:
+            (list) list(s) of hashed tuples.
+
+        Example:
+            hash_points([(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]) #returns: [hash values]
+            hash_points([[(1.0, 2.0, 3.0)], [(4.0, 5.0, 6.0)]]) #returns: [[hash values], [hash values]]
+        """
+        nested = core_utils.CoreUtils.nested_depth(points) > 1
+        sets = points if nested else [points]
+
+        def clamp(p):
+            return int(p * 10**precision)
+
+        result = []
+        for pset in sets:
+            result.append([hash(tuple(map(clamp, i))) for i in pset])
+        return core_utils.CoreUtils.format_return(result, nested)
+
 
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     pass
 
-# -----------------------------------------------------------------------------
-# Notes
-# -----------------------------------------------------------------------------
-
-
-# deprecated ---------------------
-# @classmethod
-# def normalize(cls, vector, amount=1):
-#   '''Normalize a vector
-
-#   Parameters:
-#       vector (vector) = The vector to normalize.
-#       amount (float) = (1) Normalize standard. (value other than 0 or 1) Normalize using the given float value as desired length.
-
-#   Returns:
-#       (tuple)
-#   '''
-#   length = cls.get_magnitude(vector)
-#   x, y, z = vector
-
-#   result = (
-#       x /length *amount,
-#       y /length *amount,
-#       z /length *amount
-#   )
-
-#   return result
-
-# @classmethod
-# def cross_product(cls, v1, v2, normalize_input=False, normalizeResult=False):
-#   '''Given two float arrays of 3 values each, this procedure returns
-#   the cross product of the two arrays as a float array of size 3.
-
-#   :Parmeters:
-#       v1 (list): The first 3 point vector.
-#       v2 (list): The second 3 point vector.
-#       normalize_input (bool): Normalize v1, v2 before calculating the point float list.
-#       normalizeResult (bool): Normalize the return value.
-
-#   Returns:
-#       (tuple) The cross product of the two vectors.
-
-#   Example: cross_product((1, 2, 3), (1, 1, -1)) #returns: (-5, 4, -1)
-#   Example: cross_product((1, 2, 3), (1, 1, -1), True) #returns: (-0.7715167498104597, 0.6172133998483678, -0.15430334996209194)
-#   Example: cross_product((1, 2, 3), (1, 1, -1), False, True) #returns: (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919)
-#   '''
-#   if normalize_input: #normalize the input vectors
-#       v1 = cls.normalize(v1)
-#       v2 = cls.normalize(v2)
-
-#   cross = [ #the cross product
-#       v1[1]*v2[2] - v1[2]*v2[1],
-#       v1[2]*v2[0] - v1[0]*v2[2],
-#       v1[0]*v2[1] - v1[1]*v2[0]
-#   ]
-
-#   if normalizeResult: #normalize the cross product result
-#       cross = cls.normalize(cross)
-
-#   return tuple(cross)
+    # -----------------------------------------------------------------------------
+    # Notes
+    # -----------------------------------------------------------------------------

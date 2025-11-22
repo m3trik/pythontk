@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Union, List, Optional, Dict, Tuple
+from typing import Union, List, Optional, Dict, Tuple, Callable
 
 # from this package:
 from pythontk import core_utils
@@ -254,34 +254,157 @@ class StrUtils(core_utils.CoreUtils):
 
     @staticmethod
     @core_utils.CoreUtils.listify(threading=True)
-    def split_at_chars(string, chars="|", occurrence=-1):
-        """Split a string containing the given chars at the given occurrence and return
-        a two element tuple containing both halves.
+    def split_delimited_string(
+        string: str,
+        delimiter: str = "|",
+        max_split: Optional[int] = None,
+        occurrence: Optional[int] = None,
+        strip_whitespace: bool = False,
+        remove_empty: bool = False,
+        func: Optional[Callable] = None,
+    ) -> Union[List[str], Tuple[str, str]]:
+        """Split a delimited string with flexible control over the result format.
+
+        This unified method handles both simple multi-way splitting and binary splitting
+        at specific occurrences, with optional preprocessing and post-processing.
 
         Parameters:
-            strings (str/list): The string(s) to operate on.
-            chars (str): The chars to split at.
-            occurrence (int): The occurrence of the pipe to split at from left.
-                    ex. -1 would split at the last occurrence. 0 would split at the first.
-                        If the occurrence is out of range, the full string will be
-                        returned as: ('original string', '')
+            string (str): The string to split.
+            delimiter (str): The delimiter to split on. Default is '|'.
+            max_split (int, optional): Maximum number of splits to perform. If None, splits at all delimiters.
+            occurrence (int, optional): If specified, returns a 2-tuple split at this specific occurrence.
+                - Positive: split at Nth occurrence from left (0-indexed)
+                - Negative: split at Nth occurrence from right (-1 = last)
+                - If occurrence is specified, returns tuple instead of list.
+            strip_whitespace (bool): If True, strip leading/trailing whitespace from each part.
+                Default is False.
+            remove_empty (bool): If True, remove empty strings from the result after splitting
+                and stripping. Default is False.
+            func (callable, optional): Function to apply to the result list (not applied to tuples).
+                Should take a list and return a transformed list.
+                Examples: sorted, reversed, lambda x: [s.upper() for s in x]
+
         Returns:
-            (tuple)(list) two element tuple, or list of two element tuples if multiple strings given.
+            Union[list, tuple]:
+                - If occurrence is specified: 2-tuple (left, right)
+                - Otherwise: List of string parts
 
         Example:
-            split_at_chars(['str|ing', 'string']) returns: [('str', 'ing'), ('string', '')]
-        """
-        split = string.split(chars)
+            # Multi-way splitting (list output)
+            >>> split_delimited_string('a|b|c|d')
+            ['a', 'b', 'c', 'd']
 
-        try:
-            s2 = "".join(split[occurrence])
-            if chars in string:
-                s1 = chars.join(split[:occurrence])
-                return (s1, s2)
-            else:
-                return (s2, "")
-        except IndexError:
+            >>> split_delimited_string('  a  | b |  c  ', strip_whitespace=True)
+            ['a', 'b', 'c']
+
+            >>> split_delimited_string('a||b||c', remove_empty=True)
+            ['a', 'b', 'c']
+
+            >>> split_delimited_string('c|a|b', func=sorted)
+            ['a', 'b', 'c']
+
+            >>> split_delimited_string('a|b|c', func=reversed)
+            ['c', 'b', 'a']
+
+            >>> split_delimited_string('apple|banana|cherry', func=lambda x: [s.upper() for s in x])
+            ['APPLE', 'BANANA', 'CHERRY']
+
+            # Binary splitting at specific occurrence (tuple output)
+            >>> split_delimited_string('a|b|c|d', occurrence=-1)
+            ('a|b|c', 'd')
+
+            >>> split_delimited_string('a|b|c|d', occurrence=0)
+            ('', 'a')
+
+            >>> split_delimited_string('a|b|c|d', occurrence=1)
+            ('a', 'b')
+
+            >>> split_delimited_string('string', occurrence=-1)  # No delimiter found
+            ('string', '')
+
+            # Max split limiting
+            >>> split_delimited_string('a|b|c|d', max_split=2)
+            ['a', 'b', 'c|d']
+        """
+        if not string:
+            return ("", "") if occurrence is not None else []
+
+        # Handle binary splitting at specific occurrence (returns tuple)
+        if occurrence is not None:
+            if delimiter not in string:
+                return (string, "")
+
+            parts = string.split(delimiter)
+
+            try:
+                # Get the part at the specified occurrence
+                right = parts[occurrence]
+                # Reconstruct the left part (everything before the occurrence)
+                left = delimiter.join(parts[:occurrence])
+                return (left, right)
+            except IndexError:
+                return (string, "")
+
+        # Handle multi-way splitting (returns list)
+        if max_split is not None:
+            parts = string.split(delimiter, max_split)
+        else:
+            parts = string.split(delimiter)
+
+        # Strip whitespace if requested
+        if strip_whitespace:
+            parts = [part.strip() for part in parts]
+
+        # Remove empty strings if requested
+        if remove_empty:
+            parts = [part for part in parts if part]
+
+        # Apply function if specified
+        if func and callable(func):
+            parts = func(parts)
+
+        return parts
+
+    @staticmethod
+    @core_utils.CoreUtils.listify(threading=True)
+    def split_at_delimiter(
+        string: str,
+        delimiter: str = "|",
+        occurrence: int = -1,
+    ) -> Tuple[str, str]:
+        """Split ``string`` into a tuple around a specific delimiter occurrence.
+
+        Parameters:
+            string (str): The source string to split.
+            delimiter (str): The delimiter to split on. Defaults to ``"|"``.
+            occurrence (int): Which occurrence to split on. Positive values count from
+                the start, negative values from the end (-1 = last). Defaults to -1.
+
+        Returns:
+            tuple[str, str]: A 2-tuple of (left, right). When the delimiter does not
+            exist in the string, returns (string, "").
+        """
+
+        if not isinstance(string, str) or not delimiter:
+            return (string if isinstance(string, str) else "", "")
+
+        if delimiter not in string:
             return (string, "")
+
+        parts = string.split(delimiter)
+        if occurrence is None:
+            index = len(parts) - 1
+        else:
+            index = occurrence
+            if occurrence < 0:
+                index = len(parts) + occurrence
+
+        if index < 0 or index >= len(parts):
+            return (string, "")
+
+        left = delimiter.join(parts[:index])
+        right = parts[index]
+        return (left, right)
 
     @classmethod
     def insert(cls, src, ins, at, occurrence=1, before=False):
@@ -340,31 +463,63 @@ class StrUtils(core_utils.CoreUtils):
 
     @staticmethod
     @core_utils.CoreUtils.listify(threading=True)
-    def truncate(string, length=75, beginning=True, insert=".."):
+    def truncate(string, length=75, mode="start", insert=".."):
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.
 
         Parameters:
             string (str): The string to truncate.
-            length (int): The maximum allowed length before trunicating.
-            beginning (bool): Trim starting chars, else; ending.
-            insert (str): Chars to add at the trimmed area. (default: ellipsis)
+            length (int): The maximum allowed length before truncating.
+            mode (str): Truncation mode.
+                - 'start'/'left': Trim from start (keep end) - default
+                - 'end'/'right': Trim from end (keep start)
+                - 'middle': Trim from middle (keep start and end)
+            insert (str): Characters to add at the trimmed area. (default: ellipsis)
 
         Returns:
             (str)
 
-        Example:
-            truncate('12345678', 4) #returns: '..5678'
+        Examples:
+            truncate('12345678', 4) #returns: '..5678' (start mode)
+            truncate('12345678', 4, 'end') #returns: '1234..' (end mode)
+            truncate('12345678', 6, 'middle') #returns: '12..78' (middle mode)
         """
         if not string or not isinstance(string, str):
             return string
 
-        if len(string) > length:
-            if beginning:  # trim starting chars.
-                string = insert + string[-length:]
-            else:  # trim ending chars.
-                string = string[:length] + insert
-        return string
+        # Normalize mode to lowercase
+        mode = mode.lower() if isinstance(mode, str) else "start"
+
+        if len(string) <= length:
+            return string
+
+        # Safety nets
+        if length <= 0:
+            return insert
+        if length < len(insert) + 1:
+            return insert + string[-1:]
+
+        if mode in ("start", "left"):
+            # Keep the last 'length' chars
+            return insert + string[-length:]
+        elif mode in ("end", "right"):
+            # Keep the first 'length' chars
+            return string[:length] + insert
+        elif mode == "middle":
+            # Split around the middle; allocate space for both sides
+            # Visible chars excluding insert
+            vis = max(1, length)
+            # If original code expected length as visible total excluding insert, we mimic prior behavior (it included insert area at trim point)
+            # We'll treat 'length' as the number of chars we preserve on each side total minus insert length.
+            avail = max(1, length - len(insert))
+            if avail <= 1:
+                return string[0] + insert
+            left = avail // 2
+            right = avail - left
+            return string[:left] + insert + string[-right:]
+        else:
+            # Fallback to start trimming (default behavior)
+            return insert + string[-length:]
 
     @staticmethod
     def get_trailing_integers(string, inc=0, as_string=False):
@@ -685,7 +840,7 @@ class StrUtils(core_utils.CoreUtils):
                 s = re.sub(r"\d+$", "", s)
                 stripped = True
             if strip_trailing_alpha and s and s[-1].isupper():
-                s = re.sub(r"[A-Z]+$", "", s)
+                s = re.sub(r"(?:[^0-9A-Za-z]+)?[A-Z]+$", "", s)
                 stripped = True
             if not stripped:
                 break

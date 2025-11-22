@@ -3,6 +3,7 @@
 
 from pythontk.img_utils._img_utils import ImgUtils
 
+__all__ = ["ImgUtils"]
 
 # --------------------------------------------------------------------------------------------
 

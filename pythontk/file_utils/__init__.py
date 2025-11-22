@@ -3,6 +3,8 @@
 
 from pythontk.file_utils._file_utils import FileUtils
 
+__all__ = ["FileUtils"]
+
 
 # --------------------------------------------------------------------------------------------
 

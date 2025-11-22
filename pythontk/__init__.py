@@ -1,64 +1,60 @@
 # !/usr/bin/python
 # coding=utf-8
-import inspect
-import importlib
-import pkgutil
+from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.7.30"
+__version__ = "0.7.32"
 
-CLASS_TO_MODULE = {}
-METHOD_TO_MODULE = {}
-CLASS_METHOD_TO_MODULE = {}
-IMPORTED_MODULES = {}
+"""Expose toolkit utilities with explicit resolver include maps for clarity."""
 
 
-def build_dictionaries():
-    for importer, modname, ispkg in pkgutil.walk_packages(__path__, __name__ + "."):
-        module = importlib.import_module(modname)
-        for name, obj in inspect.getmembers(module, inspect.isclass):
-            CLASS_TO_MODULE[name] = modname
-            for method_name, _ in inspect.getmembers(obj, inspect.isfunction):
-                METHOD_TO_MODULE[method_name] = (modname, name)
-            for method_name, _ in inspect.getmembers(obj, inspect.ismethod):
-                CLASS_METHOD_TO_MODULE[method_name] = (modname, name)
+DEFAULT_INCLUDE = {
+    "core_utils.help_mixin": "HelpMixin",
+    "core_utils._core_utils": "CoreUtils",
+    "core_utils.pkg_manager": ["PkgManager", "PkgVersionCheck", "PkgVersionUtils"],
+    "core_utils.class_property": "ClassProperty",
+    "core_utils.logging_mixin": "LoggingMixin",
+    "core_utils.namespace_handler": "NamespaceHandler",
+    "core_utils.namedtuple_container": "NamedTupleContainer",
+    "core_utils.hierarchy_diff": "HierarchyDiff",
+    "core_utils.singleton_mixin": "SingletonMixin",
+    "core_utils.module_reloader": ["ModuleReloader", "reload_package"],
+    "core_utils.execution_monitor": "ExecutionMonitor",
+    "file_utils._file_utils": "FileUtils",
+    "img_utils._img_utils": "ImgUtils",
+    "iter_utils._iter_utils": "IterUtils",
+    "math_utils._math_utils": "MathUtils",
+    "math_utils.progression": "ProgressionCurves",
+    "str_utils._str_utils": "StrUtils",
+    "str_utils.fuzzy_matcher": "FuzzyMatcher",
+    "vid_utils._vid_utils": "VidUtils",
+}
 
 
-def import_module(module_name):
-    if module_name not in IMPORTED_MODULES:
-        IMPORTED_MODULES[module_name] = importlib.import_module(module_name)
-    return IMPORTED_MODULES[module_name]
+bootstrap_package(globals(), include=DEFAULT_INCLUDE)
 
 
-def get_attribute_from_module(module, attribute_name, class_name=None):
-    if class_name:
-        class_obj = getattr(module, class_name)
-        return getattr(class_obj, attribute_name)
-    return getattr(module, attribute_name)
-
-
-def __getattr__(name):
-    if name in CLASS_TO_MODULE:
-        module = import_module(CLASS_TO_MODULE[name])
-        return get_attribute_from_module(module, name)
-
-    if name in METHOD_TO_MODULE:
-        module_name, class_name = METHOD_TO_MODULE[name]
-        module = import_module(module_name)
-        return get_attribute_from_module(module, name, class_name)
-
-    if name in CLASS_METHOD_TO_MODULE:
-        module_name, class_name = CLASS_METHOD_TO_MODULE[name]
-        module = import_module(module_name)
-        return get_attribute_from_module(module, name, class_name)
-
-    raise AttributeError(f"module {__package__} has no attribute '{name}'")
-
-
-# --------------------------------------------------------------------------------------------
-# Build dictionaries at the start
-build_dictionaries()
-
-# --------------------------------------------------------------------------------------------
-# Notes
-# --------------------------------------------------------------------------------------------
+__all__ = [
+    "CoreUtils",
+    "HelpMixin",
+    "LoggingMixin",
+    "NamespaceHandler",
+    "NamedTupleContainer",
+    "SingletonMixin",
+    "PkgManager",
+    "PkgVersionCheck",
+    "PkgVersionUtils",
+    "ClassProperty",
+    "HierarchyDiff",
+    "ModuleReloader",
+    "reload_package",
+    "ExecutionMonitor",
+    "FileUtils",
+    "ImgUtils",
+    "IterUtils",
+    "MathUtils",
+    "ProgressionCurves",
+    "StrUtils",
+    "FuzzyMatcher",
+    "VidUtils",
+]

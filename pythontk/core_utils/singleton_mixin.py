@@ -4,7 +4,10 @@ from typing import Dict, Optional, Any
 
 
 class SingletonMixin:
-    """Reusable singleton mixin that supports optional key-based instances."""
+    """Reusable singleton mixin that supports optional key-based instances.
+
+    Automatically handles initialization suppression for existing instances.
+    """
 
     _instances: Dict[Any, Any] = {}
 
@@ -17,7 +20,20 @@ class SingletonMixin:
         if key not in cls._instances:
             instance = super().__new__(cls)
             cls._instances[key] = instance
+            return instance
         return cls._instances[key]
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+        original_init = cls.__init__
+
+        def new_init(self, *args, **kwargs):
+            if not getattr(self, "_initialized", False):
+                original_init(self, *args, **kwargs)
+                self._initialized = True
+
+        cls.__init__ = new_init
 
     @classmethod
     def instance(cls, *args: Any, **kwargs: Any) -> Any:
