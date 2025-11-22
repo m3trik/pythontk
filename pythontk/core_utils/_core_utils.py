@@ -16,59 +16,6 @@ class CoreUtils(HelpMixin):
     """ """
 
     @staticmethod
-    def on_long_execution(threshold, callback, interval=None):
-        """
-        Decorator that triggers a callback if the decorated function
-        takes longer than `threshold` seconds to execute.
-
-        Args:
-            threshold (float): Time in seconds before callback is triggered.
-            callback (callable): Function to call if threshold is exceeded.
-                                 If the callback returns False, a KeyboardInterrupt will be raised
-                                 in the main thread to attempt to abort the execution.
-            interval (float|bool, optional): If True, repeats every `threshold` seconds.
-                                             If float, repeats every `interval` seconds.
-        """
-        from functools import wraps
-        import _thread
-
-        # If interval is True, use threshold as the interval
-        repeat_interval = threshold if interval is True else interval
-
-        def decorator(func):
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                stop_event = threading.Event()
-
-                def timer_func():
-                    # Wait for the initial threshold
-                    if not stop_event.wait(threshold):
-                        if callback() is False:
-                            _thread.interrupt_main()
-                            return
-
-                        # If repeat_interval is set, keep repeating
-                        if repeat_interval:
-                            while not stop_event.wait(repeat_interval):
-                                if callback() is False:
-                                    _thread.interrupt_main()
-                                    return
-
-                t = threading.Thread(target=timer_func)
-                t.daemon = True
-                t.start()
-
-                try:
-                    result = func(*args, **kwargs)
-                finally:
-                    stop_event.set()
-                return result
-
-            return wrapper
-
-        return decorator
-
-    @staticmethod
     def cached_property(func: Callable) -> Any:
         """Decorator that converts a method with a single self argument into a property
         that runs the method only once and stores the result, returning the stored
