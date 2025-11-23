@@ -37,6 +37,7 @@ class ModuleAttributeResolver:
         module_to_parent: Optional[Mapping[str, str]] = None,
         on_import_error: Optional[Callable[[str, Exception], None]] = None,
         method_predicate: Optional[Callable[[str], bool]] = None,
+        lazy_import: bool = False,
     ) -> None:
         if isinstance(module, str):
             module = sys.modules[module]
@@ -61,6 +62,7 @@ class ModuleAttributeResolver:
         self.method_predicate = method_predicate or (
             lambda name: not name.startswith("_")
         )
+        self.lazy_import = lazy_import
 
         self.imported_modules: Dict[str, ModuleType] = {}
         self.class_to_module: Dict[str, str] = {}
@@ -81,6 +83,11 @@ class ModuleAttributeResolver:
         ):
             classes = self._classes_for_module(modname)
             if classes is None:
+                continue
+
+            if self.lazy_import and classes and "*" not in classes:
+                for class_name in classes:
+                    self.class_to_module[class_name] = modname
                 continue
 
             try:
@@ -506,6 +513,7 @@ def bootstrap_package(
     on_import_error: Optional[Callable[[str, Exception], None]] = None,
     method_predicate: Optional[Callable[[str], bool]] = None,
     custom_getattr: Optional[Callable[[str], Any]] = None,
+    lazy_import: bool = False,
 ) -> PackageResolverHandle:
     """Bootstrap a package's ``__init__`` module with dynamic attribute resolution."""
 
@@ -551,6 +559,7 @@ def bootstrap_package(
         module_to_parent=module_to_parent,
         on_import_error=on_import_error,
         method_predicate=method_predicate,
+        lazy_import=lazy_import,
     )
     resolver.build()
 
