@@ -26,7 +26,7 @@ setuptools.setup(
     ],
     packages=setuptools.find_packages(),
     include_package_data=True,
-    install_requires=ptk.update_requirements(exc=["Pillow", "numpy"]),
+    install_requires=ptk.PackageManager.update_requirements(exc=["Pillow", "numpy"]),
     data_files=ptk.get_dir_contents(
         __package__,
         "filepath",

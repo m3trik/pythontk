@@ -3,7 +3,7 @@
 
 from pythontk.core_utils.help_mixin import HelpMixin  # Before CoreUtils
 from pythontk.core_utils._core_utils import CoreUtils
-from pythontk.core_utils.pkg_manager import PkgManager, PkgVersionCheck, PkgVersionUtils
+from pythontk.core_utils.package_manager import PackageManager
 from pythontk.core_utils.module_reloader import ModuleReloader, reload_package
 from pythontk.core_utils.execution_monitor import ExecutionMonitor
 from pythontk.core_utils.class_property import ClassProperty  # Before LoggingMixin
@@ -15,9 +15,7 @@ from pythontk.core_utils.hierarchy_diff import HierarchyDiff
 __all__ = [
     "HelpMixin",
     "CoreUtils",
-    "PkgManager",
-    "PkgVersionCheck",
-    "PkgVersionUtils",
+    "PackageManager",
     "ClassProperty",
     "LoggingMixin",
     "NamespaceHandler",

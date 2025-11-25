@@ -6,6 +6,7 @@ import inspect
 import os
 import pkgutil
 import sys
+import ast
 from types import ModuleType
 from typing import (
     Any,
@@ -37,6 +38,7 @@ class ModuleAttributeResolver:
         module_to_parent: Optional[Mapping[str, str]] = None,
         on_import_error: Optional[Callable[[str, Exception], None]] = None,
         method_predicate: Optional[Callable[[str], bool]] = None,
+        lazy_import: Optional[bool] = None,
     ) -> None:
         if isinstance(module, str):
             module = sys.modules[module]
@@ -61,11 +63,13 @@ class ModuleAttributeResolver:
         self.method_predicate = method_predicate or (
             lambda name: not name.startswith("_")
         )
+        self.lazy_import = lazy_import
 
         self.imported_modules: Dict[str, ModuleType] = {}
         self.class_to_module: Dict[str, str] = {}
         self.method_to_module: Dict[str, Tuple[str, str]] = {}
         self.class_method_to_module: Dict[str, Tuple[str, str]] = {}
+        self.submodules: set[str] = set()
 
     # ------------------------------------------------------------------
     # public API
@@ -75,13 +79,50 @@ class ModuleAttributeResolver:
         self.class_to_module.clear()
         self.method_to_module.clear()
         self.class_method_to_module.clear()
+        self.submodules.clear()
 
         for _, modname, _ in pkgutil.walk_packages(
             self._package_path, prefix=f"{self.package_name}."
         ):
+            # Register direct submodules for lazy resolution
+            if modname.startswith(f"{self.package_name}."):
+                rel_name = modname[len(self.package_name) + 1 :]
+                if "." not in rel_name:
+                    self.submodules.add(rel_name)
+
             classes = self._classes_for_module(modname)
             if classes is None:
                 continue
+
+            # Determine if we should lazy load this module
+            should_lazy = self.lazy_import
+            if should_lazy is None:
+                # Auto-detect: check if module is safe to lazy load
+                should_lazy = self._is_safe_to_lazy_load(modname)
+
+            if should_lazy and classes and "*" not in classes:
+                for class_name in classes:
+                    self.class_to_module[class_name] = modname
+                continue
+
+            if should_lazy and (not classes or "*" in classes):
+                try:
+                    scanned_classes, scanned_methods = self._scan_module_attributes(
+                        modname
+                    )
+                    if scanned_classes or scanned_methods:
+                        for class_name in scanned_classes:
+                            self.class_to_module[class_name] = modname
+                        for method_name, class_name in scanned_methods.items():
+                            self.method_to_module[method_name] = (modname, class_name)
+                            self.class_method_to_module[method_name] = (
+                                modname,
+                                class_name,
+                            )
+                        continue
+                except Exception as exc:
+                    # Fallback to eager import if scanning fails
+                    self._handle_import_error(modname, exc)
 
             try:
                 module = importlib.import_module(modname)
@@ -127,11 +168,19 @@ class ModuleAttributeResolver:
             parent_module = self._import(self.module_to_parent[name])
             return getattr(parent_module, name)
 
+        if name in self.submodules:
+            return self._import(f"{self.package_name}.{name}")
+
         if name in self.fallbacks:
             module = self._import(self.fallbacks[name])
             attr = getattr(module, name)
             self.class_to_module[name] = self.fallbacks[name]
             return attr
+
+        # Check if the attribute is available in the module itself (e.g. static methods on the package)
+        # Use __dict__ lookup to avoid recursion if self._module has a __getattr__ that calls us
+        if name in self._module.__dict__:
+            return self._module.__dict__[name]
 
         raise AttributeError(f"module {self.package_name} has no attribute '{name}'")
 
@@ -170,6 +219,7 @@ class ModuleAttributeResolver:
             self.class_method_to_module,
             self.module_to_parent,
             self.fallbacks,
+            self.submodules,
         ):
             for key in container:
                 if key not in yielded:
@@ -179,6 +229,70 @@ class ModuleAttributeResolver:
     def clear_module_cache(self) -> None:
         """Drop cached module imports managed by the resolver."""
         self.imported_modules.clear()
+
+    def _scan_module_attributes(
+        self, module_name: str
+    ) -> Tuple[Sequence[str], Dict[str, str]]:
+        """Statically scan a module for classes and their methods."""
+        tree = self._parse_module(module_name)
+        if not tree:
+            return [], {}
+
+        top_level = []
+        methods = {}
+
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                if self.method_predicate(node.name):
+                    top_level.append(node.name)
+                    for item in node.body:
+                        if isinstance(item, ast.FunctionDef):
+                            if self.method_predicate(item.name):
+                                methods[item.name] = node.name
+            elif isinstance(node, ast.FunctionDef):
+                if self.method_predicate(node.name):
+                    top_level.append(node.name)
+        return top_level, methods
+
+    def _is_safe_to_lazy_load(self, module_name: str) -> bool:
+        """Check if a module is safe to lazy load (no top-level side effects)."""
+        tree = self._parse_module(module_name)
+        if not tree:
+            return False  # If we can't parse, assume unsafe
+
+        # Allowed top-level nodes
+        SAFE_NODES = (
+            ast.Import,
+            ast.ImportFrom,
+            ast.ClassDef,
+            ast.FunctionDef,
+            ast.Assign,
+            ast.AnnAssign,
+            ast.If,  # Assume if/try are for flow control/imports
+            ast.Try,
+        )
+
+        for node in tree.body:
+            if not isinstance(node, SAFE_NODES):
+                # Found something suspicious (like a top-level function call)
+                return False
+        return True
+
+    def _parse_module(self, module_name: str) -> Optional[ast.AST]:
+        """Helper to parse a module file into an AST."""
+        try:
+            loader = pkgutil.get_loader(module_name)
+            if not loader or not hasattr(loader, "get_filename"):
+                return None
+
+            filename = loader.get_filename(module_name)
+            if not filename or not os.path.exists(filename):
+                return None
+
+            with open(filename, "r", encoding="utf-8") as f:
+                return ast.parse(f.read(), filename=filename)
+        except (ImportError, SyntaxError, OSError):
+            return None
 
     # ------------------------------------------------------------------
     # internal helpers
@@ -223,7 +337,7 @@ class ModuleAttributeResolver:
                 continue
             if obj.__module__ != module.__name__:
                 continue
-            self._register_class(name, obj, module.__name__)
+            self._register_class(name, obj, module.__name__, register_methods=True)
 
     def _register_selected_classes(
         self, module: ModuleType, classes: Sequence[str]
@@ -231,10 +345,21 @@ class ModuleAttributeResolver:
         for class_name in classes:
             obj = getattr(module, class_name, None)
             if obj and inspect.isclass(obj) and obj.__module__ == module.__name__:
-                self._register_class(class_name, obj, module.__name__)
+                self._register_class(
+                    class_name, obj, module.__name__, register_methods=False
+                )
 
-    def _register_class(self, class_name: str, class_obj, module_name: str) -> None:
+    def _register_class(
+        self,
+        class_name: str,
+        class_obj,
+        module_name: str,
+        register_methods: bool = True,
+    ) -> None:
         self.class_to_module[class_name] = module_name
+
+        if not register_methods:
+            return
 
         for method_name, attribute in class_obj.__dict__.items():
             if not self.method_predicate(method_name):
@@ -506,6 +631,7 @@ def bootstrap_package(
     on_import_error: Optional[Callable[[str, Exception], None]] = None,
     method_predicate: Optional[Callable[[str], bool]] = None,
     custom_getattr: Optional[Callable[[str], Any]] = None,
+    lazy_import: Optional[bool] = None,
 ) -> PackageResolverHandle:
     """Bootstrap a package's ``__init__`` module with dynamic attribute resolution."""
 
@@ -551,6 +677,7 @@ def bootstrap_package(
         module_to_parent=module_to_parent,
         on_import_error=on_import_error,
         method_predicate=method_predicate,
+        lazy_import=lazy_import,
     )
     resolver.build()
 
