@@ -7,7 +7,7 @@ import subprocess
 from pythontk.core_utils import help_mixin
 
 
-class PkgManagerHelperMixin:
+class PackageManagerHelperMixin:
     """A mixin class to provide package management capabilities using pip.
 
     This mixin class offers methods to interact with the Python Package Index (PyPI)
@@ -234,7 +234,7 @@ class PkgVersionCheck:
             raise ValueError("Package name must be provided")
 
         # Create a package manager for the specified Python interpreter
-        pkg_mgr = PkgManager(python_path=self._python_path)
+        pkg_mgr = PackageManager(python_path=self._python_path)
 
         try:
             # Get the installed and latest versions
@@ -419,10 +419,10 @@ class PkgVersionUtils:
         ]
 
 
-class PkgManager(PkgManagerHelperMixin, help_mixin.HelpMixin):
+class PackageManager(PackageManagerHelperMixin, help_mixin.HelpMixin):
     """A class that encapsulates package management functionalities using pip.
 
-    This class combines the capabilities of PkgManagerHelperMixin and HelpMixin to
+    This class combines the capabilities of PackageManagerHelperMixin and HelpMixin to
     offer an integrated environment for managing Python packages and accessing help
     documentation for different methods. It provides an interface to execute pip commands
     and parse their output, along with handling Python environment-specific information.
@@ -439,7 +439,7 @@ class PkgManager(PkgManagerHelperMixin, help_mixin.HelpMixin):
         _is_key_value_format: Determine if the output is in key-value pair format.
         _parse_key_value_format: Parse key-value pair output into a dictionary.
 
-    The PkgManager class serves as a comprehensive tool for package management in Python,
+    The PackageManager class serves as a comprehensive tool for package management in Python,
     supporting a range of pip functionalities and enhancing user experience with formatted
     help messages and command outputs.
     """
@@ -540,7 +540,7 @@ class PkgManager(PkgManagerHelperMixin, help_mixin.HelpMixin):
 # --------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pkg_mgr = PkgManager("C:/Program Files/Autodesk/Maya2025/bin/mayapy.exe")
+    pkg_mgr = PackageManager("C:/Program Files/Autodesk/Maya2025/bin/mayapy.exe")
     # output = pkg_mgr.get_installed_packages("")
 
     # Test various pip commands

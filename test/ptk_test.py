@@ -3,7 +3,15 @@
 import os
 import unittest
 import inspect
-from pythontk import CoreUtils, FileUtils, ImgUtils, IterUtils, MathUtils, StrUtils
+from pythontk import (
+    CoreUtils,
+    FileUtils,
+    ImgUtils,
+    IterUtils,
+    MathUtils,
+    StrUtils,
+    PkgVersionUtils,
+)
 
 
 class Main(unittest.TestCase):
@@ -1074,8 +1082,8 @@ class FileTest(Main, FileUtils):
 
         self.perform_test(
             {
-                f"str(self.update_version(r'{file}', 'increment'))": r"0.9.1",
-                f"str(self.update_version(r'{file}', 'decrement'))": r"0.9.0",
+                f"str(PkgVersionUtils.update_version(r'{file}', 'increment'))": r"0.9.1",
+                f"str(PkgVersionUtils.update_version(r'{file}', 'decrement'))": r"0.9.0",
             }
         )
 
