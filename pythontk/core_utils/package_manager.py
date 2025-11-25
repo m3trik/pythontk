@@ -7,7 +7,7 @@ import subprocess
 from pythontk.core_utils import help_mixin
 
 
-class PackageManagerHelperMixin:
+class _PackageManagerHelperMixin:
     """A mixin class to provide package management capabilities using pip.
 
     This mixin class offers methods to interact with the Python Package Index (PyPI)
@@ -122,7 +122,7 @@ class PackageManagerHelperMixin:
         return self.installed_version(package_name) != self.latest_version(package_name)
 
 
-class PkgVersionCheck:
+class _PkgVersionCheck:
     """A class to check package versions and detect available updates.
 
     This class provides functionality to check if a package is up-to-date by comparing
@@ -141,7 +141,7 @@ class PkgVersionCheck:
     _latest_ver: str = ""
 
     def __init__(self, package_name=None, python_path=None):
-        """Initialize the PkgVersionCheck.
+        """Initialize the _PkgVersionCheck.
 
         Parameters:
             package_name (str, optional): The name of the package to check.
@@ -247,7 +247,7 @@ class PkgVersionCheck:
             pass
 
 
-class PkgVersionUtils:
+class _PkgVersionUtils:
     """Utilities for managing package version information in files.
 
     This class provides static methods for updating version numbers in source files
@@ -279,7 +279,6 @@ class PkgVersionUtils:
             str: The new version number or empty string if not found.
         """
         import re
-        import os
         from pythontk.file_utils import FileUtils
 
         lines = FileUtils.get_file_contents(filepath, as_list=True)
@@ -419,10 +418,12 @@ class PkgVersionUtils:
         ]
 
 
-class PackageManager(PackageManagerHelperMixin, help_mixin.HelpMixin):
+class PackageManager(
+    _PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin
+):
     """A class that encapsulates package management functionalities using pip.
 
-    This class combines the capabilities of PackageManagerHelperMixin and HelpMixin to
+    This class combines the capabilities of _PackageManagerHelperMixin and HelpMixin to
     offer an integrated environment for managing Python packages and accessing help
     documentation for different methods. It provides an interface to execute pip commands
     and parse their output, along with handling Python environment-specific information.

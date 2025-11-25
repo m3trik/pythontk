@@ -10,7 +10,6 @@ from pythontk import (
     IterUtils,
     MathUtils,
     StrUtils,
-    PkgVersionUtils,
 )
 
 
@@ -1082,8 +1081,8 @@ class FileTest(Main, FileUtils):
 
         self.perform_test(
             {
-                f"str(PkgVersionUtils.update_version(r'{file}', 'increment'))": r"0.9.1",
-                f"str(PkgVersionUtils.update_version(r'{file}', 'decrement'))": r"0.9.0",
+                f"str(PackageManager.update_version(r'{file}', 'increment'))": r"0.9.1",
+                f"str(PackageManager.update_version(r'{file}', 'decrement'))": r"0.9.0",
             }
         )
 
