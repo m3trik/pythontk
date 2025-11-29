@@ -29,30 +29,3 @@ class ClassProperty:
         return self.getter(owner)
 
 
-# --------------------------------------------------------------------------------------------
-
-
-if __name__ == "__main__":
-    import unittest
-
-    class TestClassProperty(unittest.TestCase):
-        class MyClass:
-            _value = 42
-
-            @ClassProperty
-            def value(cls):
-                return cls._value
-
-        def test_class_property(self):
-            self.assertEqual(self.MyClass.value, 42)
-
-        def test_class_property_setter(self):
-            self.MyClass._value = 100
-            self.assertEqual(self.MyClass.value, 100)
-
-    unittest.main(exit=False)
-
-
-# --------------------------------------------------------------------------------------------
-# Notes
-# --------------------------------------------------------------------------------------------

@@ -50,31 +50,3 @@ class SingletonMixin:
         cls._instances.pop(singleton_key or cls, None)
 
 
-# --------------------------------------------------------------------------------------------
-
-
-if __name__ == "__main__":
-    import unittest
-
-    class TestSingletonMixin(unittest.TestCase):
-        class TestClass(SingletonMixin):
-            pass
-
-        def test_singleton(self):
-            instance1 = self.TestClass()
-            instance2 = self.TestClass()
-            self.assertIs(instance1, instance2)
-
-        def test_reset_instance(self):
-            instance1 = self.TestClass()
-            self.TestClass.reset_instance()
-            instance2 = self.TestClass()
-            self.assertIsNot(instance1, instance2)
-            self.assertIs(instance1, self.TestClass._instances[self.TestClass])
-
-    unittest.main(exit=False)
-
-
-# --------------------------------------------------------------------------------------------
-# Notes
-# --------------------------------------------------------------------------------------------

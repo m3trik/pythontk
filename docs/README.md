@@ -1,156 +1,151 @@
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-0.7.34-blue.svg)](https://pypi.org/project/pythontk/)
-[![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/)
+<p align="center">
+  <h1 align="center">pythontk</h1>
+  <p align="center">A modular Python utility toolkit for everyday programming tasks</p>
+</p>
 
-
-# PYTHONTK (Python Toolkit)
+<p align="center">
+  <a href="https://github.com/m3trik/pythontk/actions/workflows/tests.yml"><img src="https://github.com/m3trik/pythontk/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://pypi.org/project/pythontk/"><img src="https://img.shields.io/badge/Version-0.7.34-blue.svg" alt="Version"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.7+-blue.svg" alt="Python"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
+</p>
 
 ---
+
 <!-- short_description_start -->
-*A collection of Python utility functions for file operations, text processing, and basic image/video manipulation. Provides helper classes and convenience functions for common programming tasks.*
+*Utility functions and mixin classes for file operations, text processing, data filtering, image/video manipulation, and common programming patterns.*
 <!-- short_description_end -->
-
-## Features
-
-pythontk provides utility functions organized into focused modules:
-
-- **File Operations**: Directory listing, file reading/writing, and path utilities
-- **Text Processing**: String sanitization, formatting, and text manipulation
-- **Data Filtering**: List and dictionary filtering with pattern matching
-- **Image Utilities**: Basic image operations and texture map processing (requires Pillow)
-- **Video Utilities**: Simple video operations using FFmpeg
-- **Math Utilities**: Basic mathematical helper functions
-- **Core Utilities**: Decorators and helper classes for common patterns
 
 ## Installation
 
-**Python Requirements:**
-- Python 3.7+
-
-**Installation:**
 ```bash
 pip install pythontk
 ```
 
-**Development Installation:**
+<details>
+<summary>Development installation</summary>
+
 ```bash
 git clone https://github.com/m3trik/pythontk.git
 cd pythontk
 pip install -e .
 ```
+</details>
 
-**Optional Dependencies:**
-- `PIL` (Pillow) for image operations
-- `numpy` for mathematical operations  
-- `FFmpeg` for video utilities
+## Quick Example
 
-## Usage Examples
-
-### File Operations
 ```python
 import pythontk as ptk
 
-# Get directory contents with filtering
-files = ptk.filter_list(
-    ptk.get_dir_contents('/path/to/directory'),
-    inc=['*.py', '*.txt'], exc='*temp*'
-)
+# Filter files by pattern
+files = ptk.get_dir_contents('/project', recursive=True)
+scripts = ptk.filter_list(files, inc='*.py', exc='*test*')
 
-# Path formatting
-clean_path = ptk.format_path('/path\\to/file.txt', style='forward')
+# Clean strings for filenames
+safe_name = ptk.sanitize('My File (v2)!.txt')  # 'My_File_v2_.txt'
+
+# Format paths consistently
+path = ptk.format_path('C:\\Users\\docs/file.txt', 'forward')  # 'C:/Users/docs/file.txt'
+```
+
+## Modules
+
+### File Operations
+```python
+ptk.get_dir_contents(path, recursive=True)    # List directory contents
+ptk.get_file_contents(path)                    # Read file
+ptk.write_to_file(path, content)               # Write file
+ptk.format_path(path, 'forward')               # Normalize path separators
 ```
 
 ### Text Processing
 ```python
-# String sanitization
-clean_name = ptk.sanitize('My Asset Name!@#', replacement_char='_')
-# Result: 'My_Asset_Name'
+ptk.sanitize('text!@#', replacement_char='_')  # Clean for filenames
+ptk.set_case('hello world', 'title')           # 'Hello World'
+ptk.set_case('hello world', 'camel')           # 'helloWorld'
 
-# Text formatting
-formatted = ptk.format_string('hello world', style='title')
-# Result: 'Hello World'
+# Fuzzy string matching
+from pythontk import FuzzyMatcher
+FuzzyMatcher.find_best_match('mesh_03', ['mesh_01', 'mesh_02'])
 ```
 
-### Basic Image Operations
+### Data Filtering
 ```python
-# Requires PIL/Pillow
+# Lists - supports wildcards
+ptk.filter_list(['a.py', 'b.txt', 'c.py'], inc='*.py')  # ['a.py', 'c.py']
+
+# Dictionaries
+ptk.filter_dict({'a': 1, 'b': 2, 'c': 3}, inc=['a', 'b'])  # {'a': 1, 'b': 2}
+```
+
+### Image Utilities
+Requires `Pillow`
+```python
 from pythontk import ImgUtils
 
-# Create image from channels
-img = ImgUtils.pack_channels({
-    'R': red_channel_path,
-    'G': green_channel_path,
-    'B': blue_channel_path
-})
-
-# Get image dimensions
-width, height = ImgUtils.get_image_size('image.jpg')
+ImgUtils.get_image_size('texture.png')
+ImgUtils.pack_channels(output='packed.png', R='rough.png', G='metal.png', B='ao.png')
+ImgUtils.get_channels('image.png')
 ```
 
-### Data Processing
+### Video Utilities
+Requires `FFmpeg` in PATH
 ```python
-# Filter lists and dictionaries
-filtered_data = ptk.filter_dict(
-    data, inc=['name', 'version'], keys=True
-)
+from pythontk import VidUtils
 
-# List filtering with patterns
-python_files = ptk.filter_list(
-    file_list, inc=['*.py'], exc=['*test*']
-)
+VidUtils.extract_frames('video.mp4', output_dir='frames/')
+VidUtils.get_video_info('video.mp4')
 ```
 
-## Module Overview
+### Math Utilities
+```python
+ptk.lerp(0, 100, 0.5)      # 50.0 - Linear interpolation
+ptk.clamp(150, 0, 100)     # 100  - Clamp to range
 
-### Core Utilities (`core_utils`)
-Basic helper classes and decorators:
-- `HelpMixin`: Documentation helper
-- `cached_property`: Property caching decorator
-- `@listify`: Convert returns to lists
+# Easing curves for animation
+from pythontk import ProgressionCurves
+ProgressionCurves.calculate_progression_factor(i, total, calculation_mode='ease_in_out')
+```
 
-### File Utilities (`file_utils`)  
-File system operations:
-- `get_dir_contents()`: Directory listing with filtering
-- `get_file_contents()`: Read file contents
-- `create_dir()`: Directory creation
-- `format_path()`: Path formatting
+## Mixin Classes
 
-### String Utilities (`str_utils`)
-Text processing functions:
-- `sanitize()`: Clean strings for filenames
-- `format_string()`: Text case formatting
-- `remove_chars()`: Character removal
-
-### Image Utilities (`img_utils`)
-Basic image operations (requires PIL):
-- `get_image_size()`: Get image dimensions
-- `pack_channels()`: Combine image channels
-- `get_channels()`: Extract image channels
-
-### Video Utilities (`vid_utils`)
-Simple video operations (requires FFmpeg):
-- `extract_frames()`: Extract video frames
-- `get_video_info()`: Video metadata
-
-### Math Utilities (`math_utils`)
-Mathematical helper functions for common calculations.
-
-## Dynamic Imports
-
-pythontk uses a dynamic attribute resolution system allowing direct access to utility functions:
+Reusable base classes for common patterns:
 
 ```python
-import pythontk as ptk
+from pythontk import SingletonMixin, LoggingMixin, HelpMixin
 
-# These are equivalent:
-ptk.sanitize('text')           # Direct access
-ptk.str_utils.sanitize('text') # Module-specific access
+class Config(SingletonMixin):
+    """Only one instance ever created."""
+    pass
+
+class Processor(LoggingMixin):
+    """Automatic logger attribute."""
+    def run(self):
+        self.logger.info("Processing...")
+
+class Tool(HelpMixin):
+    """Self-documenting with .help() method."""
+    pass
 ```
 
-## Contributing
+## Additional Utilities
 
-This is a utility collection for common Python tasks. Contributions that add useful, focused utility functions are welcome.
+| Class | Purpose |
+|-------|---------|
+| `ExecutionMonitor` | Profile execution time and memory |
+| `PackageManager` | Pip operations from Python |
+| `ModuleReloader` | Hot-reload modules during development |
+| `NamespaceHandler` | Dynamic attribute containers |
+| `NamedTupleContainer` | Manage collections of named tuples |
+| `HierarchyDiff` | Compare hierarchical structures |
+
+## Testing
+
+```bash
+cd test
+pytest -v
+```
 
 ## License
 
-This project is licensed under the MIT License.
+MIT
