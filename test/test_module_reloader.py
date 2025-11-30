@@ -14,7 +14,10 @@ from pathlib import Path
 from pythontk.core_utils.module_reloader import ModuleReloader
 
 
-class ModuleReloaderTests(unittest.TestCase):
+from conftest import BaseTestCase
+
+
+class ModuleReloaderTests(BaseTestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tempdir.cleanup)

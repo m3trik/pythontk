@@ -5,23 +5,10 @@
 This module provides a mixin class that enhances class introspection by wrapping
 and extending Python's built-in help() functionality with filtering, sorting,
 and targeted output options.
-
-Note: pydoc is lazy-loaded since it's heavy and rarely used. inspect is imported
-directly since it's already loaded by many stdlib modules (dataclasses, pkgutil, etc.)
 """
 import inspect
+import pydoc
 from typing import TYPE_CHECKING, Any, List, Optional
-
-# Type checking imports - these don't run at runtime
-if TYPE_CHECKING:
-    import pydoc as _pydoc
-
-
-def _get_pydoc():
-    """Lazy load the pydoc module (heavy, pulls in many dependencies)."""
-    import pydoc
-
-    return pydoc
 
 
 class HelpMixin:
@@ -68,6 +55,28 @@ class HelpMixin:
         # Show inheritance chain
         MyClass.mro()
     """
+
+    # Lazy-loaded module references (class-level cache)
+    _inspect = None
+    _pydoc = None
+
+    @classmethod
+    def _get_inspect(cls):
+        """Lazily import and cache the inspect module."""
+        if cls._inspect is None:
+            import inspect
+
+            HelpMixin._inspect = inspect
+        return cls._inspect
+
+    @classmethod
+    def _get_pydoc(cls):
+        """Lazily import and cache the pydoc module."""
+        if cls._pydoc is None:
+            import pydoc
+
+            HelpMixin._pydoc = pydoc
+        return cls._pydoc
 
     @classmethod
     def help(
@@ -117,7 +126,7 @@ class HelpMixin:
         if members is None and inherited and not brief and not sort and not private:
             # Default case: just use built-in help
             if returns:
-                return _get_pydoc().render_doc(cls, title="%s")
+                return pydoc.render_doc(cls, title="%s")
             help(cls)
             return None
 
@@ -152,7 +161,7 @@ class HelpMixin:
         else:
             # Use built-in help for full documentation
             if returns:
-                return _get_pydoc().render_doc(member, title="%s")
+                return pydoc.render_doc(member, title="%s")
             help(member)
             return None
 
@@ -291,7 +300,6 @@ class HelpMixin:
         if callable(member) and member_type != "property":
             try:
                 # Unwrap to get true signature
-
                 unwrapped = inspect.unwrap(member)
                 sig = str(inspect.signature(unwrapped))
             except (ValueError, TypeError):
@@ -334,7 +342,6 @@ class HelpMixin:
         if callable(member) and member_type != "property":
             try:
                 # Unwrap to get true signature
-
                 unwrapped = inspect.unwrap(member)
                 sig = str(inspect.signature(unwrapped))
             except (ValueError, TypeError):
@@ -411,7 +418,6 @@ class HelpMixin:
 
         try:
             # Unwrap decorated functions to get actual source
-
             unwrapped = inspect.unwrap(target) if callable(target) else target
             source = inspect.getsource(unwrapped)
         except (OSError, TypeError) as e:
@@ -458,7 +464,6 @@ class HelpMixin:
 
         try:
             # Unwrap to get actual location for decorated functions
-
             unwrapped = inspect.unwrap(target) if callable(target) else target
             source_file = inspect.getsourcefile(unwrapped)
             _, line_no = inspect.getsourcelines(unwrapped)
@@ -556,7 +561,6 @@ class HelpMixin:
 
         try:
             # Unwrap to get true signature
-
             unwrapped = inspect.unwrap(member)
             sig = inspect.signature(unwrapped)
         except (ValueError, TypeError) as e:
@@ -595,7 +599,9 @@ class HelpMixin:
         # Return type
         if sig.return_annotation is not inspect.Signature.empty:
             lines.append("")
-            lines.append(f"Returns: {cls._format_annotation(sig.return_annotation)}")
+            lines.append(
+                f"Returns: {cls._format_annotation(sig.return_annotation)}"
+            )
 
         output = "\n".join(lines)
         if returns:
@@ -833,6 +839,8 @@ class HelpMixin:
             >>> HelpMixin.about(SomeClass, "method")     # Help for a method
             >>> HelpMixin.about(some_module)             # Help for a module
         """
+        inspect = HelpMixin._get_inspect()
+
         # If name provided, get that attribute from target
         if name is not None:
             member = getattr(target, name, None)
@@ -887,7 +895,6 @@ class HelpMixin:
                 return msg
             print(msg)
             return None
-
 
 
 # --------------------------------------------------------------------------------------------

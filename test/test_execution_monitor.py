@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, patch
 from pythontk.core_utils.execution_monitor import ExecutionMonitor
 
 
-class TestExecutionMonitor(unittest.TestCase):
+from conftest import BaseTestCase
+
+
+class TestExecutionMonitor(BaseTestCase):
 
     def test_on_long_execution_fast_function(self):
         """Test that callback is not triggered for fast functions."""

@@ -321,7 +321,7 @@ class IterUtils(core_utils.HelpMixin):
         nested_as_unit: bool = False,
         basename_only: bool = False,
         ignore_case: bool = False,
-        delimiter: str = ',',
+        delimiter: str = ",",
     ) -> List:
         """Filters the given list based on inclusion/exclusion criteria using shell-style wildcards. This method can also apply
         the filter to nested structures like lists, tuples, or sets. If 'nested_as_unit' is True, then the entire structure is
@@ -362,56 +362,81 @@ class IterUtils(core_utils.HelpMixin):
             list: The filtered list.
         """
         from fnmatch import fnmatchcase
-        import os
+        from os.path import basename
+
+        # Early exit for empty list
+        if not lst:
+            return []
 
         # Handle multi-pattern strings with delimiter
         if isinstance(inc, str) and delimiter in inc:
-            inc = [pattern.strip() for pattern in inc.split(delimiter) if pattern.strip()]
+            inc = [p.strip() for p in inc.split(delimiter) if p.strip()]
         if isinstance(exc, str) and delimiter in exc:
-            exc = [pattern.strip() for pattern in exc.split(delimiter) if pattern.strip()]
+            exc = [p.strip() for p in exc.split(delimiter) if p.strip()]
 
         inc = list(cls.make_iterable(inc))
         exc = list(cls.make_iterable(exc))
 
-        def match_item(item: Union[str, int], patterns: List[Union[str, int]]) -> bool:
-            for pattern in patterns:
-                check_item = os.path.basename(str(item)) if basename_only else str(item)
+        # Early exit: no filters means return original list
+        if not inc and not exc:
+            return list(lst)
 
-                # Safe case normalization only if both are strings
-                if (
-                    ignore_case
-                    and isinstance(pattern, str)
-                    and isinstance(check_item, str)
-                ):
-                    check_item = check_item.lower()
-                    pattern = pattern.lower()
+        # Pre-process patterns for case-insensitive matching
+        # Separate string patterns (for fnmatch) from non-string patterns (for equality)
+        if ignore_case:
+            inc_str = [p.lower() for p in inc if isinstance(p, str)]
+            inc_other = [p for p in inc if not isinstance(p, str)]
+            exc_str = [p.lower() for p in exc if isinstance(p, str)]
+            exc_other = [p for p in exc if not isinstance(p, str)]
+        else:
+            inc_str = [p for p in inc if isinstance(p, str)]
+            inc_other = [p for p in inc if not isinstance(p, str)]
+            exc_str = [p for p in exc if isinstance(p, str)]
+            exc_other = [p for p in exc if not isinstance(p, str)]
 
-                match_result = (
-                    fnmatchcase(check_item, pattern)
-                    if isinstance(pattern, str)
-                    else item == pattern
-                )
+        has_inc = bool(inc)
+        has_exc = bool(exc)
 
-                if match_result:
+        def match_patterns(item, str_patterns, other_patterns):
+            """Check if item matches any pattern. Returns True on first match."""
+            # Prepare item string once
+            item_str = basename(str(item)) if basename_only else str(item)
+            if ignore_case:
+                item_str = item_str.lower()
+
+            # Check string patterns with fnmatch
+            for pattern in str_patterns:
+                if fnmatchcase(item_str, pattern):
                     return True
+
+            # Check non-string patterns with equality
+            for pattern in other_patterns:
+                if item == pattern:
+                    return True
+
             return False
 
         def check_item(item):
+            """Determine if an item should be included in the result."""
             try:
                 mapped_item = map_func(item) if map_func is not None else item
             except Exception:
                 mapped_item = item
 
-            if match_item(mapped_item, exc):
+            # Check exclusion first (fail fast)
+            if has_exc and match_patterns(mapped_item, exc_str, exc_other):
                 return False
 
-            if not inc or match_item(mapped_item, inc):
+            # Check inclusion
+            if not has_inc or match_patterns(mapped_item, inc_str, inc_other):
                 return True
 
-            if check_unmapped and (
-                (not inc or match_item(item, inc)) and not match_item(item, exc)
-            ):
-                return True
+            # Check unmapped if enabled
+            if check_unmapped:
+                if (not has_inc or match_patterns(item, inc_str, inc_other)) and not (
+                    has_exc and match_patterns(item, exc_str, exc_other)
+                ):
+                    return True
 
             return False
 
@@ -421,10 +446,17 @@ class IterUtils(core_utils.HelpMixin):
                 if nested_as_unit:
                     match_inc = match_exc = False
                     for i in original_item:
-                        if check_item(i):
+                        if not match_inc and check_item(i):
                             match_inc = True
-                        if match_item(i, exc):
+                        if (
+                            not match_exc
+                            and has_exc
+                            and match_patterns(i, exc_str, exc_other)
+                        ):
                             match_exc = True
+                        # Early exit if we've determined both
+                        if match_inc and match_exc:
+                            break
                     if match_inc and not match_exc:
                         result.append(original_item)
                 else:
@@ -435,8 +467,10 @@ class IterUtils(core_utils.HelpMixin):
                         map_func,
                         check_unmapped,
                         nested_as_unit,
+                        basename_only,
+                        ignore_case,
+                        delimiter,
                     )
-                    # Only append non-empty tuples/lists/sets
                     if filtered_sublist:
                         result.append(type(original_item)(filtered_sublist))
             else:
@@ -467,12 +501,27 @@ class IterUtils(core_utils.HelpMixin):
             filter_dict(dct, exc='t*', keys=True) #returns: {1: '1', 3: 'three'}
             filter_dict(dct, exc=1, keys=True) #returns: {'two': 2, 3: 'three'}
         """
+        if not dct:
+            return {}
+
         if keys:
             filtered_keys = cls.filter_list(list(dct.keys()), **kwargs)
-            dct = {k: dct[k] for k in filtered_keys}
+            # Use set for O(1) lookup when possible
+            try:
+                filtered_keys_set = set(filtered_keys)
+                dct = {k: v for k, v in dct.items() if k in filtered_keys_set}
+            except TypeError:  # Unhashable keys
+                dct = {k: dct[k] for k in filtered_keys}
+
         if values:
             filtered_values = cls.filter_list(list(dct.values()), **kwargs)
-            dct = {k: v for k, v in dct.items() if v in filtered_values}
+            # Use set for O(1) lookup when possible
+            try:
+                filtered_values_set = set(filtered_values)
+                dct = {k: v for k, v in dct.items() if v in filtered_values_set}
+            except TypeError:  # Unhashable values
+                dct = {k: v for k, v in dct.items() if v in filtered_values}
+
         return dct
 
     @staticmethod

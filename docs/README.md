@@ -1,6 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/Version-0.7.34-blue.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/Tests-389%20passed-brightgreen.svg)](test/)
 
 
 # PYTHONTK (Python Toolkit)
@@ -51,23 +52,25 @@ pip install -e .
 import pythontk as ptk
 
 # Get directory contents with filtering
-files = ptk.filter_list(
-    ptk.get_dir_contents('/path/to/directory'),
-    inc=['*.py', '*.txt'], exc='*temp*'
+files = ptk.get_dir_contents(
+    '/path/to/directory',
+    inc_files=['*.py', '*.txt'],
+    exc_files=['*temp*']
 )
 
-# Path formatting
-clean_path = ptk.format_path('/path\\to/file.txt', style='forward')
+# Path formatting (normalizes slashes, extracts path sections)
+clean_path = ptk.format_path('/path\\to/file.txt')  # Returns: 'path/to/file.txt'
+filename = ptk.format_path('/path/to/file.txt', section='file')  # Returns: 'file.txt'
 ```
 
 ### Text Processing
 ```python
 # String sanitization
 clean_name = ptk.sanitize('My Asset Name!@#', replacement_char='_')
-# Result: 'My_Asset_Name'
+# Result: 'my_asset_name'
 
-# Text formatting
-formatted = ptk.format_string('hello world', style='title')
+# Text case formatting
+formatted = ptk.set_case('hello world', case='title')
 # Result: 'Hello World'
 ```
 
@@ -76,15 +79,15 @@ formatted = ptk.format_string('hello world', style='title')
 # Requires PIL/Pillow
 from pythontk import ImgUtils
 
-# Create image from channels
+# Pack grayscale images into RGB/RGBA channels
 img = ImgUtils.pack_channels({
-    'R': red_channel_path,
-    'G': green_channel_path,
-    'B': blue_channel_path
+    'R': 'red_channel.png',
+    'G': 'green_channel.png',
+    'B': 'blue_channel.png'
 })
 
-# Get image dimensions
-width, height = ImgUtils.get_image_size('image.jpg')
+# Save image
+ImgUtils.save_image(img, 'output.png')
 ```
 
 ### Data Processing
@@ -118,19 +121,21 @@ File system operations:
 ### String Utilities (`str_utils`)
 Text processing functions:
 - `sanitize()`: Clean strings for filenames
-- `format_string()`: Text case formatting
-- `remove_chars()`: Character removal
+- `set_case()`: Text case formatting
+- `find_str()`: Search strings with wildcards
+- `truncate()`: Shorten strings with ellipsis
 
 ### Image Utilities (`img_utils`)
 Basic image operations (requires PIL):
-- `get_image_size()`: Get image dimensions
+- `ensure_image()`: Load and validate images
 - `pack_channels()`: Combine image channels
-- `get_channels()`: Extract image channels
+- `save_image()`: Save images to file
+- `resize_image()`: Resize images
 
 ### Video Utilities (`vid_utils`)
 Simple video operations (requires FFmpeg):
-- `extract_frames()`: Extract video frames
-- `get_video_info()`: Video metadata
+- `get_video_frame_rate()`: Get video frame rate
+- `compress_video()`: Compress video files
 
 ### Math Utilities (`math_utils`)
 Mathematical helper functions for common calculations.

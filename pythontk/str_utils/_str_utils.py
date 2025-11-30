@@ -134,51 +134,6 @@ class StrUtils(core_utils.CoreUtils):
         return f"_{class_name}{attribute_name}"
 
     @staticmethod
-    def get_text_between_delimiters(string, start_delim, end_delim, as_string=False):
-        """Get any text between the specified start and end delimiters in the given string. The text can be returned as a
-        generator (default behavior) or as a single concatenated string if `as_string` is set to True.
-
-        Parameters:
-            string (str): The input string to search for matches.
-            start_delim (str): The starting delimiter to search for.
-            end_delim (str): The ending delimiter to search for.
-            as_string (bool, optional): If True, the function returns a single concatenated string of all matches.
-                                                                     If False (default), the function returns a generator that yields each match.
-
-        Returns:
-            If as_string is False (default): A generator that yields all matches found in the input string.
-            If as_string is True: A single concatenated string containing all matches found in the input string.
-
-        Example:
-            input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
-
-            # Get the matches as a generator (default behavior)
-            matches_generator = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->')
-            for match in matches_generator:
-                    print(match)  # Output: first match (first iteration), second match (second iteration)
-
-            # Get the matches as a single string
-            matches_string = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->', as_string=True)
-            print(matches_string)  # Output: "first match second match"
-        """
-        import re
-
-        def extract_matches(string, start_delim, end_delim, start_index=0):
-            pattern = re.compile(
-                f"{re.escape(start_delim)}(.*?){re.escape(end_delim)}", re.DOTALL
-            )
-            match = pattern.search(string, start_index)
-            if match:
-                yield match.group(1).strip()
-                yield from extract_matches(string, start_delim, end_delim, match.end())
-
-        if as_string:
-            matches = list(extract_matches(string, start_delim, end_delim))
-            return " ".join(matches)
-        else:
-            return extract_matches(string, start_delim, end_delim)
-
-    @staticmethod
     def get_matching_hierarchy_items(
         hierarchy_items,
         target,
@@ -364,6 +319,51 @@ class StrUtils(core_utils.CoreUtils):
             parts = func(parts)
 
         return parts
+
+    @staticmethod
+    def get_text_between_delimiters(string, start_delim, end_delim, as_string=False):
+        """Get any text between the specified start and end delimiters in the given string. The text can be returned as a
+        generator (default behavior) or as a single concatenated string if `as_string` is set to True.
+
+        Parameters:
+            string (str): The input string to search for matches.
+            start_delim (str): The starting delimiter to search for.
+            end_delim (str): The ending delimiter to search for.
+            as_string (bool, optional): If True, the function returns a single concatenated string of all matches.
+                                                                     If False (default), the function returns a generator that yields each match.
+
+        Returns:
+            If as_string is False (default): A generator that yields all matches found in the input string.
+            If as_string is True: A single concatenated string containing all matches found in the input string.
+
+        Example:
+            input_string = "Here is the <!-- start -->first match<!-- end --> and here is the <!-- start -->second match<!-- end -->"
+
+            # Get the matches as a generator (default behavior)
+            matches_generator = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->')
+            for match in matches_generator:
+                    print(match)  # Output: first match (first iteration), second match (second iteration)
+
+            # Get the matches as a single string
+            matches_string = get_text_between_delimiters(input_string, '<!-- start -->', '<!-- end -->', as_string=True)
+            print(matches_string)  # Output: "first match second match"
+        """
+        import re
+
+        def extract_matches(string, start_delim, end_delim, start_index=0):
+            pattern = re.compile(
+                f"{re.escape(start_delim)}(.*?){re.escape(end_delim)}", re.DOTALL
+            )
+            match = pattern.search(string, start_index)
+            if match:
+                yield match.group(1).strip()
+                yield from extract_matches(string, start_delim, end_delim, match.end())
+
+        if as_string:
+            matches = list(extract_matches(string, start_delim, end_delim))
+            return " ".join(matches)
+        else:
+            return extract_matches(string, start_delim, end_delim)
 
     @staticmethod
     @core_utils.CoreUtils.listify(threading=True)
@@ -564,8 +564,8 @@ class StrUtils(core_utils.CoreUtils):
                         (^) match start. ex. re.match('^11', '011') #returns None
                         ($) match end. ex. re.match('11$', '011') #returns the regex object <11>
                         (|) or. ex. re.match('1|0', '011') #returns the regex object <0>
-                        (\A,\Z) beginning of a string and end of a string. ex. re.match(r'\A011\Z', '011') #
-                        (\b) empty string. (\B matches the empty string anywhere else). ex. re.match(r'\b(011)\b', '011 011 011') #
+                        (\\A,\\Z) beginning of a string and end of a string. ex. re.match(r'\\A011\\Z', '011') #
+                        (\\b) empty string. (\\B matches the empty string anywhere else). ex. re.match(r'\\b(011)\\b', '011 011 011') #
             strings (list): The string list to search.
             regex (bool): Use regular expressions instead of wildcards.
             ignore_case (bool): Search case insensitive.
@@ -578,51 +578,73 @@ class StrUtils(core_utils.CoreUtils):
             find_str('*Weight*', lst) #find any element that contains the string 'Weight'.
             find_str('Weight$|Weights$', lst, regex=True) #find any element that endswith 'Weight' or 'Weights'.
         """
+        import re
+
         # Filter out non-string values
         strings = [s for s in strings if isinstance(s, str)]
 
         if not find:  # Handle empty search string
             return []
 
-        if regex:
-            import re
+        if not strings:  # Early exit for empty list
+            return []
 
+        if regex:
             try:
-                if ignore_case:
-                    return [i for i in strings if re.search(find, i, re.IGNORECASE)]
-                return [i for i in strings if re.search(find, i)]
-            except Exception as e:
+                flags = re.IGNORECASE if ignore_case else 0
+                pattern = re.compile(find, flags)
+                return [s for s in strings if pattern.search(s)]
+            except re.error as e:
                 print(f"# Error find_str: in {find}: {e}. #")
                 return []
 
-        result = []
-        find_parts = find.split("|")  # Split multiple search terms
-
+        # Pre-process: parse all search terms once
+        find_parts = find.split("|")
+        search_terms = []
         for w in find_parts:
-            w_ = w.strip("*").rstrip("*")  # Remove wildcard modifiers
+            term = w.strip("*")
+            starts = w.startswith("*")
+            ends = w.endswith("*")
 
-            # Apply wildcard search with case-insensitivity while maintaining order
-            for i in strings:
-                check = i.lower() if ignore_case else i
-                term = w_.lower() if ignore_case else w_
+            if starts and ends:
+                mode = "contains"
+            elif starts:
+                mode = "endswith"
+            elif ends:
+                mode = "startswith"
+            else:
+                mode = "exact"
 
-                if w.startswith("*") and w.endswith("*"):  # Contains
-                    if term in check and i not in result:
-                        result.append(i)
+            # Pre-lowercase term if case-insensitive
+            search_terms.append((term.lower() if ignore_case else term, mode))
 
-                elif w.startswith("*"):  # Endswith
-                    if check.endswith(term) and i not in result:
-                        result.append(i)
+        # Use set for O(1) duplicate checking
+        seen = set()
+        result = []
 
-                elif w.endswith("*"):  # Startswith
-                    if check.startswith(term) and i not in result:
-                        result.append(i)
+        for s in strings:
+            if s in seen:
+                continue
 
-                else:  # Exact match
-                    if check == term and i not in result:
-                        result.append(i)
+            check = s.lower() if ignore_case else s
 
-        return result  # Order is now preserved
+            for term, mode in search_terms:
+                matched = False
+                if mode == "contains":
+                    matched = term in check
+                elif mode == "endswith":
+                    matched = check.endswith(term)
+                elif mode == "startswith":
+                    matched = check.startswith(term)
+                else:  # exact
+                    matched = check == term
+
+                if matched:
+                    seen.add(s)
+                    result.append(s)
+                    break  # Don't check other terms for this string
+
+        return result
 
     @classmethod
     def find_str_and_format(
@@ -659,128 +681,121 @@ class StrUtils(core_utils.CoreUtils):
         # Filter out non-string values
         strings = [s for s in strings if isinstance(s, str)]
 
-        # if 'fltr' is not an empty string; fltr 'strings' for matches using 'fltr'.
+        # If 'fltr' is not empty, filter 'strings' for matches
         if fltr:
             strings = cls.find_str(fltr, strings, regex=regex, ignore_case=ignore_case)
 
-        # re.sub('[^A-Za-z0-9_:]+', '', fltr) #strip any special chars other than '_'.
-        frm_ = fltr.strip("*").rstrip("*")
-        # remove any modifiers from the left and right end chars.
-        to_ = to.strip("*").rstrip("*")
+        if not strings:  # Early exit
+            return []
+
+        frm_ = fltr.strip("*")
+        to_ = to.strip("*")
+
+        # Pre-compile regex pattern if needed for case-insensitive operations
+        frm_pattern = None
+        if frm_ and ignore_case and not regex:
+            try:
+                frm_pattern = re.compile(re.escape(frm_), re.IGNORECASE)
+            except re.error:
+                frm_pattern = None
+
+        # Determine the formatting mode once
+        if to.startswith("*") and to.endswith("*") and len(to) > 1:
+            mode = "replace_chars"
+        elif to.startswith("**"):
+            mode = "append_suffix"
+        elif to.startswith("*"):
+            mode = "replace_suffix"
+        elif to.endswith("**"):
+            mode = "append_prefix"
+        elif to.endswith("*"):
+            mode = "replace_prefix"
+        elif not to_:
+            mode = "strip"
+        else:
+            mode = "replace_whole"
+
+        # Determine strip sub-mode if applicable
+        strip_mode = None
+        if mode == "strip" and frm_:
+            if fltr.endswith("*") and not fltr.startswith("*"):
+                strip_mode = "first"
+            elif fltr.startswith("*") and not fltr.endswith("*"):
+                strip_mode = "last"
+            else:
+                strip_mode = "all"
 
         result = []
         for orig_str in strings:
-            # modifiers
-            if to.startswith("*") and to.endswith("*"):  # replace chars
-                if frm_:  # Only if frm_ is not empty
-                    if ignore_case and not regex:
-                        # remove frm_ from the string (case in-sensitive).
-                        s = re.sub(re.escape(frm_), to_, orig_str, flags=re.IGNORECASE)
+            s = orig_str  # Default: no change
+
+            if mode == "replace_chars":
+                if frm_:
+                    if frm_pattern:
+                        s = frm_pattern.sub(to_, orig_str)
                     else:
                         s = orig_str.replace(frm_, to_)
-                else:
-                    s = orig_str  # No change if no filter pattern
 
-            elif to.startswith("**"):  # append suffix
+            elif mode == "append_suffix":
                 s = orig_str + to_
 
-            elif to.startswith("*"):  # replace suffix
-                if frm_:  # Only if frm_ is not empty
-                    if ignore_case and not regex:
-                        # get the starting index of 'frm_'.
-                        try:
-                            index = re.search(
-                                re.escape(frm_), orig_str, flags=re.IGNORECASE
-                            ).start()
-                            s = orig_str[:index] + to_
-                        except (AttributeError, re.error):
-                            s = orig_str + to_  # Fallback: append if pattern not found
+            elif mode == "replace_suffix":
+                if frm_:
+                    if frm_pattern:
+                        match = frm_pattern.search(orig_str)
+                        if match:
+                            s = orig_str[: match.start()] + to_
+                        else:
+                            s = orig_str + to_
                     else:
-                        try:
-                            s = orig_str.split(frm_)[0] + to_
-                        except ValueError:  # empty separator
-                            s = orig_str + to_  # Fallback: append
+                        parts = orig_str.split(frm_, 1)
+                        s = parts[0] + to_ if len(parts) > 1 else orig_str + to_
                 else:
-                    s = orig_str + to_  # Append if no filter pattern
+                    s = orig_str + to_
 
-            elif to.endswith("**"):  # append prefix
+            elif mode == "append_prefix":
                 s = to_ + orig_str
 
-            elif to.endswith("*"):  # replace prefix
-                if frm_:  # Only if frm_ is not empty
-                    if ignore_case and not regex:
-                        # get the ending index of 'frm_'.
-                        try:
-                            index = re.search(
-                                re.escape(frm_), orig_str, flags=re.IGNORECASE
-                            ).end()
-                            s = to_ + orig_str[index:]
-                        except (AttributeError, re.error):
-                            s = to_ + orig_str  # Fallback: prepend if pattern not found
-                    else:
-                        try:
-                            parts = orig_str.split(frm_)
-                            if len(parts) > 1:
-                                s = to_ + frm_ + orig_str.split(frm_)[-1]
-                            else:
-                                s = to_ + orig_str
-                        except ValueError:  # empty separator
-                            s = to_ + orig_str  # Fallback: prepend
-                else:
-                    s = to_ + orig_str  # Prepend if no filter pattern
-
-            elif not to_:  # if 'to_' is an empty string:
-                if frm_:  # Only process if there's something to remove
-                    if fltr.endswith("*") and not fltr.startswith(
-                        "*"
-                    ):  # strip only beginning chars.
-                        if ignore_case and not regex:
-                            # remove the first instance of frm_ from the string (case in-sensitive).
-                            s = re.sub(
-                                re.escape(frm_), "", orig_str, 1, flags=re.IGNORECASE
-                            )
+            elif mode == "replace_prefix":
+                if frm_:
+                    if frm_pattern:
+                        match = frm_pattern.search(orig_str)
+                        if match:
+                            s = to_ + orig_str[match.end() :]
                         else:
-                            # remove first instance of frm_ from the string.
+                            s = to_ + orig_str
+                    else:
+                        parts = orig_str.split(frm_, 1)
+                        if len(parts) > 1:
+                            s = to_ + frm_ + frm_.join(parts[1:])
+                        else:
+                            s = to_ + orig_str
+                else:
+                    s = to_ + orig_str
+
+            elif mode == "strip":
+                if frm_:
+                    if strip_mode == "first":
+                        if frm_pattern:
+                            s = frm_pattern.sub("", orig_str, count=1)
+                        else:
                             s = orig_str.replace(frm_, "", 1)
-
-                    elif fltr.startswith("*") and not fltr.endswith(
-                        "*"
-                    ):  # strip only ending chars.
-                        if ignore_case and not regex:
-                            # remove the last instance of frm_ from the string (case in-sensitive).
-                            try:
-                                s = re.sub(
-                                    r"(.*)" + re.escape(frm_),
-                                    r"\1",
-                                    orig_str,
-                                    flags=re.IGNORECASE,
-                                )
-                            except re.error:
-                                s = orig_str  # Fallback if regex fails
+                    elif strip_mode == "last":
+                        if frm_pattern:
+                            # Remove last occurrence
+                            matches = list(frm_pattern.finditer(orig_str))
+                            if matches:
+                                last = matches[-1]
+                                s = orig_str[: last.start()] + orig_str[last.end() :]
                         else:
-                            # remove last instance of frm_ from the string.
-                            try:
-                                s = "".join(orig_str.rsplit(frm_, 1))
-                            except ValueError:
-                                s = orig_str  # Fallback if empty separator
-
-                    else:
-                        if ignore_case and not regex:
-                            # remove frm_ from the string (case in-sensitive).
-                            try:
-                                s = re.sub(
-                                    re.escape(frm_), "", orig_str, flags=re.IGNORECASE
-                                )
-                            except re.error:
-                                s = orig_str  # Fallback if regex fails
+                            s = "".join(orig_str.rsplit(frm_, 1))
+                    else:  # all
+                        if frm_pattern:
+                            s = frm_pattern.sub("", orig_str)
                         else:
-                            s = orig_str.replace(
-                                frm_, ""
-                            )  # remove frm_ from the string.
-                else:
-                    s = orig_str  # No change if no filter pattern
+                            s = orig_str.replace(frm_, "")
 
-            else:  # else; replace whole string.
+            elif mode == "replace_whole":
                 s = to_
 
             if return_orig_strings:

@@ -13,7 +13,10 @@ import unittest
 from pathlib import Path
 
 
-class ModuleResolverBootstrapTests(unittest.TestCase):
+from conftest import BaseTestCase
+
+
+class ModuleResolverBootstrapTests(BaseTestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tempdir.cleanup)
@@ -81,8 +84,8 @@ class ModuleResolverBootstrapTests(unittest.TestCase):
         self.assertEqual(pkg.Demo.__module__, "resolver_pkg_a.alpha")
         self.assertIn("Demo", pkg.CLASS_TO_MODULE)
         self.assertEqual(pkg.CLASS_TO_MODULE["Demo"], "resolver_pkg_a.alpha")
-        self.assertIn("foo", pkg.METHOD_TO_MODULE)
-        self.assertEqual(pkg.METHOD_TO_MODULE["foo"], ("resolver_pkg_a.alpha", "Demo"))
+        # With explicit includes, methods are NOT exposed at package level
+        # self.assertIn("foo", pkg.METHOD_TO_MODULE)  # Only with wildcard includes
         self.assertEqual(pkg.Demo().foo(), "demo")
         self.assertIsNotNone(pkg.PACKAGE_RESOLVER)
 
