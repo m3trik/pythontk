@@ -4,18 +4,21 @@
 Main test runner for pythontk package.
 
 This script discovers and runs all test modules, collecting results
-and outputting them to both console and a log file.
+and outputting them to both console and a log file. It also updates
+the README.md badge with test results.
 
 Run with:
     python run_all_tests.py
     python run_all_tests.py -v          # Verbose output
     python run_all_tests.py --log       # Enable log file output
     python run_all_tests.py -v --log    # Both
+    python run_all_tests.py --no-badge  # Skip README badge update
 """
 import argparse
 import datetime
 import io
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -203,6 +206,60 @@ class DetailedTestResult(unittest.TextTestResult):
             self.stream.flush()
 
 
+def update_readme_badge(passed: int, failed: int, readme_path: Path) -> bool:
+    """Update the README with a test status badge.
+
+    Parameters:
+        passed: Number of passed tests.
+        failed: Number of failed tests.
+        readme_path: Path to the README.md file.
+
+    Returns:
+        True if README was updated successfully.
+    """
+    if not readme_path.exists():
+        print(f"README not found at {readme_path}")
+        return False
+
+    content = readme_path.read_text(encoding="utf-8")
+
+    total = passed + failed
+    if failed == 0:
+        color = "brightgreen"
+        status = f"{passed} passed"
+    elif passed == 0:
+        color = "red"
+        status = f"{failed} failed"
+    else:
+        color = "orange"
+        status = f"{passed} passed, {failed} failed"
+
+    # Create the new badge
+    new_badge = f"[![Tests](https://img.shields.io/badge/Tests-{status.replace(' ', '%20').replace(',', '')}-{color}.svg)](test/)"
+
+    # Check if a Tests badge already exists and replace it
+    tests_badge_pattern = r"\[!\[Tests\]\(https://img\.shields\.io/badge/Tests-[^\)]+\)\]\([^\)]+\)"
+
+    if re.search(tests_badge_pattern, content):
+        # Replace existing badge
+        new_content = re.sub(tests_badge_pattern, new_badge, content)
+    else:
+        # Add badge after the Python badge line
+        python_badge_pattern = r"(\[!\[Python\]\(https://img\.shields\.io/badge/Python-[^\)]+\)\]\([^\)]+\))"
+        match = re.search(python_badge_pattern, content)
+        if match:
+            # Insert after Python badge
+            insert_pos = match.end()
+            new_content = content[:insert_pos] + "\n" + new_badge + content[insert_pos:]
+        else:
+            # Fallback: add at the very beginning
+            new_content = new_badge + "\n" + content
+
+    readme_path.write_text(new_content, encoding="utf-8")
+    print(f"\nREADME badge updated: {status}")
+    return True
+
+
 def main():
     """Main entry point for the test runner."""
     parser = argparse.ArgumentParser(description="Run pythontk test suite")
@@ -215,6 +272,11 @@ def main():
     )
     parser.add_argument("--log", action="store_true", help="Save results to a log file")
     parser.add_argument("-q", "--quiet", action="store_true", help="Minimal output")
+    parser.add_argument(
+        "--no-badge",
+        action="store_true",
+        help="Skip updating README badge",
+    )
 
     args = parser.parse_args()
 
@@ -223,6 +285,7 @@ def main():
 
     # Get test directory (where this script lives)
     test_dir = Path(__file__).parent
+    root_dir = test_dir.parent
 
     # Ensure test directory is in path for imports
     if str(test_dir) not in sys.path:
@@ -231,6 +294,11 @@ def main():
     # Run tests
     runner = TestRunner(test_dir, verbosity=verbosity)
     result = runner.run(log_to_file=args.log)
+
+    # Update README badge unless --no-badge is specified
+    if not args.no_badge:
+        readme_path = root_dir / "docs" / "README.md"
+        update_readme_badge(result.passed, result.failures + result.errors, readme_path)
 
     # Exit with appropriate code
     sys.exit(0 if result.success else 1)

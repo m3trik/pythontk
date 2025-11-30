@@ -101,28 +101,83 @@ class FileUtils(core_utils.HelpMixin):
 
         path = os.path.expandvars(dirPath)
         options = iter_utils.IterUtils.make_iterable(content)
+        options_set = set(options)  # Fast lookup for option checks
+
+        # Pre-determine which types we need to collect
+        need_files = bool(options_set & {"file", "filename", "filepath"})
+        need_dirs = bool(options_set & {"dir", "dirpath"})
+
+        # Check if filtering is needed
+        has_file_filter = bool(inc_files or exc_files)
+        has_dir_filter = bool(inc_dirs or exc_dirs)
+
         grouped_result = {opt: [] for opt in options}
 
+        # Non-recursive: use scandir for single directory (faster than os.walk)
+        if not recursive:
+            try:
+                with os.scandir(path) as entries:
+                    files = []
+                    dirs = []
+                    for entry in entries:
+                        if entry.is_file() and need_files:
+                            files.append(entry.name)
+                        elif entry.is_dir() and need_dirs:
+                            dirs.append(entry.name)
+
+                    # Apply filters only if needed
+                    if has_file_filter and files:
+                        files = iter_utils.IterUtils.filter_list(
+                            files, inc_files, exc_files
+                        )
+                    if has_dir_filter and dirs:
+                        dirs = iter_utils.IterUtils.filter_list(
+                            dirs, inc_dirs, exc_dirs
+                        )
+
+                    # Build results based on requested options
+                    for opt in options:
+                        if opt == "file":
+                            grouped_result[opt] = files
+                        elif opt == "filename":
+                            grouped_result[opt] = [
+                                os.path.splitext(f)[0] for f in files
+                            ]
+                        elif opt == "filepath":
+                            grouped_result[opt] = [os.path.join(path, f) for f in files]
+                        elif opt == "dir":
+                            grouped_result[opt] = dirs
+                        elif opt == "dirpath":
+                            grouped_result[opt] = [os.path.join(path, d) for d in dirs]
+            except OSError:
+                pass  # Return empty results on error
+
+            return (
+                grouped_result
+                if group_by_type
+                else list(chain.from_iterable(grouped_result.values()))
+            )
+
+        # Recursive mode
         def process_directory(root, dirs, files):
-            temp_result = {opt: [] for opt in options}
+            # Apply filters only if needed
+            if has_dir_filter:
+                dirs = iter_utils.IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
+            if has_file_filter:
+                files = iter_utils.IterUtils.filter_list(files, inc_files, exc_files)
 
-            if not recursive and root != path:
-                return temp_result
-
-            dirs = iter_utils.IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
-            files = iter_utils.IterUtils.filter_list(files, inc_files, exc_files)
-
+            temp_result = {}
             for opt in options:
                 if opt == "dir":
-                    temp_result[opt].extend(dirs)
+                    temp_result[opt] = dirs
                 elif opt == "dirpath":
-                    temp_result[opt].extend([os.path.join(root, d) for d in dirs])
+                    temp_result[opt] = [os.path.join(root, d) for d in dirs]
                 elif opt == "file":
-                    temp_result[opt].extend(files)
+                    temp_result[opt] = files
                 elif opt == "filename":
-                    temp_result[opt].extend([os.path.splitext(f)[0] for f in files])
+                    temp_result[opt] = [os.path.splitext(f)[0] for f in files]
                 elif opt == "filepath":
-                    temp_result[opt].extend([os.path.join(root, f) for f in files])
+                    temp_result[opt] = [os.path.join(root, f) for f in files]
 
             return temp_result
 
