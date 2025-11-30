@@ -4,24 +4,12 @@
 [![Tests](https://img.shields.io/badge/Tests-423%20passed-brightgreen.svg)](test/)
 
 
-# PYTHONTK (Python Toolkit)
+# PYTHONTK
 
 ---
 <!-- short_description_start -->
-*A modular Python utility library providing class-based utilities for string manipulation, file operations, iteration helpers, math functions, and image/video processing.*
+*A Python utility library for game development, DCC pipelines, and technical art workflows. Features texture processing, PBR conversion, fuzzy matching, progression curves, and batch processing utilities.*
 <!-- short_description_end -->
-
-## Features
-
-pythontk organizes utilities into focused classes that can be used statically or inherited:
-
-- **StrUtils**: String sanitization, case conversion, text extraction, and fuzzy matching
-- **FileUtils**: Directory traversal, file I/O, path manipulation, and JSON handling
-- **IterUtils**: List flattening, filtering, grouping, and iterable transformations
-- **MathUtils**: Clamping, vector operations, interpolation, and numeric utilities
-- **ImgUtils**: Image channel packing, resizing, format conversion (requires Pillow)
-- **VidUtils**: Video frame extraction and compression (requires FFmpeg)
-- **CoreUtils**: Decorators (`@listify`, `@cached_property`) and helper mixins
 
 ## Installation
 
@@ -29,214 +17,223 @@ pythontk organizes utilities into focused classes that can be used statically or
 pip install pythontk
 ```
 
-**Development Installation:**
-```bash
-git clone https://github.com/m3trik/pythontk.git
-cd pythontk
-pip install -e .
-```
-
 **Optional Dependencies:**
-- `Pillow` - Required for image operations
-- `numpy` - Required for some math and image operations
-- `FFmpeg` - Required for video utilities (must be in PATH)
+- `Pillow` - Required for image/texture operations
+- `numpy` - Required for math and image operations
+- `FFmpeg` - Required for video utilities
 
-## Usage
+## Key Features
 
-pythontk uses a dynamic import system that exposes all utility methods at the package level:
+### Texture Channel Packing
 
-```python
-import pythontk as ptk
-
-# Access methods directly
-ptk.sanitize("Hello World!")  # 'hello_world'
-
-# Or via the utility class
-ptk.StrUtils.sanitize("Hello World!")  # 'hello_world'
-```
-
-## Examples
-
-### String Utilities
+Pack grayscale maps into RGBA channels for game engine workflows (Unity, Unreal):
 
 ```python
 import pythontk as ptk
 
-# Sanitize strings for filenames (removes special chars, lowercases)
-ptk.sanitize("My File Name!@#.txt")
-# Returns: 'my_file_name_txt'
-
-# Preserve case
-ptk.sanitize("CamelCase Name", preserve_case=True)
-# Returns: 'CamelCase_Name'
-
-# Case conversion
-ptk.set_case("hello world", case="title")  # 'Hello World'
-ptk.set_case("hello world", case="upper")  # 'HELLO WORLD'
-ptk.set_case("HelloWorld", case="camel")   # 'helloWorld'
-
-# Truncate long strings (mode='end' keeps start, trims end)
-ptk.truncate("This is a very long string", 20, mode="end")
-# Returns: 'This is a very lo..'
-
-# Find text between delimiters
-list(ptk.get_text_between_delimiters("Hello <world> and <python>", "<", ">"))
-# Returns: ['world', 'python']
-```
-
-### File Utilities
-
-```python
-import pythontk as ptk
-
-# Get directory contents with filtering
-files = ptk.get_dir_contents(
-    "/path/to/project",
-    content="filepath",           # Return full paths
-    recursive=True,               # Include subdirectories
-    inc_files=["*.py"],           # Only Python files
-    exc_files=["*test*"],         # Exclude test files
-    exc_dirs=["__pycache__", ".git"]
+# Create an ORM map (Occlusion, Roughness, Metallic)
+ptk.ImgUtils.pack_channels(
+    channel_files={
+        "R": "occlusion.png",
+        "G": "roughness.png",
+        "B": "metallic.png"
+    },
+    output_path="packed_ORM.png"
 )
-
-# Read file contents
-content = ptk.get_file_contents("/path/to/file.txt")
-
-# Read specific lines
-lines = ptk.get_file_contents("/path/to/file.txt", as_list=True)
-
-# Format/normalize paths
-ptk.format_path("C:\\Users\\name\\file.txt")
-# Returns: 'C:/Users/name/file.txt'
-
-# Create directories (like mkdir -p)
-ptk.create_dir("/path/to/new/directory")
 ```
 
-### Iteration Utilities
+### PBR Workflow Conversion
+
+Convert legacy Specular/Glossiness textures to modern Metal/Roughness:
 
 ```python
-import pythontk as ptk
-
-# Flatten nested lists
-ptk.flatten([[1, 2], [3, [4, 5]]], return_type=list)
-# Returns: [1, 2, 3, 4, 5]
-
-# Filter lists with include/exclude patterns
-files = ["test.py", "main.py", "test_utils.py", "config.json"]
-ptk.filter_list(files, inc=["*.py"], exc=["test*"])
-# Returns: ['main.py']
-
-# Make anything iterable (strings stay as single items)
-ptk.make_iterable("hello")      # Returns: ('hello',)
-ptk.make_iterable([1, 2, 3])    # Returns: [1, 2, 3]
-ptk.make_iterable(None)         # Returns: ()
-
-# Remove duplicates while preserving order
-ptk.remove_duplicates([1, 2, 2, 3, 1, 4])
-# Returns: [1, 2, 3, 4]
+base_color, metallic, roughness = ptk.ImgUtils.convert_spec_gloss_to_pbr(
+    specular_map="old_specular.png",
+    glossiness_map="old_gloss.png",
+    diffuse_map="old_diffuse.png"
+)
 ```
 
-### Math Utilities
+### Normal Map Generation
+
+Convert height/bump maps to tangent-space normal maps:
 
 ```python
-import pythontk as ptk
-
-# Clamp values to a range
-ptk.clamp(15, minimum=0, maximum=10)  # Returns: 10
-ptk.clamp(-5, minimum=0, maximum=10)  # Returns: 0
-
-# Works with lists via @listify decorator
-ptk.clamp([1, 5, 15, -3], minimum=0, maximum=10)
-# Returns: [1, 5, 10, 0]
-
-# Linear interpolation
-ptk.lerp(0, 100, 0.5)   # Returns: 50.0
-ptk.lerp(0, 100, 0.25)  # Returns: 25.0
-
-# Remap values from one range to another
-ptk.remap(50, old_range=(0, 100), new_range=(0, 1))  # Returns: 0.5
-ptk.remap(0.5, old_range=(0, 1), new_range=(0, 255))  # Returns: 127.5
-
-# Vector operations
-ptk.get_vector_from_two_points([0, 0, 0], [1, 2, 3])
-# Returns: (1, 2, 3)
-
-# Normalize a vector
-ptk.normalize((2, 3, 4))
-# Returns: (0.371..., 0.557..., 0.743...)
+ptk.ImgUtils.convert_bump_to_normal(
+    "height.png",
+    output_format="opengl",  # or "directx"
+    intensity=1.5,
+    edge_wrap=True  # for tileable textures
+)
 ```
 
-### Image Utilities
+### Automatic Texture Type Detection
+
+Identify texture types from filenames (100+ naming conventions):
 
 ```python
-import pythontk as ptk
+ptk.ImgUtils.resolve_map_type("character_arm_Normal_DirectX.png")
+# Returns: "Normal_DirectX"
 
-# Pack grayscale images into RGBA channels
-# Useful for game engine texture packing (e.g., ORM maps)
-packed = ptk.ImgUtils.pack_channels({
-    "R": "metallic.png",
-    "G": "roughness.png",
-    "B": "ao.png",
-    "A": "height.png"
+ptk.ImgUtils.resolve_map_type("material_BC.tga")
+# Returns: "Base_Color"
+```
+
+### @listify Decorator
+
+Make any function automatically handle both single items and lists, with optional threading:
+
+```python
+@ptk.CoreUtils.listify(threading=True)
+def process_texture(filepath):
+    return expensive_operation(filepath)
+
+# Works with single item OR list - parallelized automatically:
+process_texture("texture.png")                    # Single result
+process_texture(["a.png", "b.png", "c.png"])      # List of results
+```
+
+### Progression Curves
+
+11 easing functions for animation, procedural generation, and non-linear distributions:
+
+```python
+from pythontk import ProgressionCurves
+
+# Available: linear, exponential, logarithmic, ease_in, ease_out,
+# ease_in_out, ease_in_out_weighted, slow_in_out, bell_curve, s_curve, smooth_step
+
+for i in range(steps):
+    factor = ProgressionCurves.calculate_progression_factor(
+        i, steps, calculation_mode="ease_in_out"
+    )
+    # Smooth acceleration/deceleration curve
+```
+
+### Fuzzy Matching for DCC Pipelines
+
+Match objects with different numbering (essential for Maya, 3ds Max workflows):
+
+```python
+from pythontk import FuzzyMatcher
+
+# Find matching objects when numbering differs
+matches = FuzzyMatcher.find_trailing_digit_matches(
+    missing_paths=["group1|mesh_01", "group1|mesh_02"],
+    extra_paths=["group1|mesh_03", "group1|mesh_05"]
+)
+# Matches mesh_01→mesh_03, mesh_02→mesh_05 based on hierarchy
+```
+
+### Shell-Style Pattern Filtering
+
+Filter lists using Unix wildcards with include/exclude patterns:
+
+```python
+ptk.filter_list(
+    ["mesh_main", "mesh_backup", "cube_LOD0", "cube_old"],
+    inc=["mesh_*", "cube_*"],    # Include patterns
+    exc=["*_backup", "*_old"],   # Exclude patterns
+    ignore_case=True
+)
+# Returns: ['mesh_main', 'cube_LOD0']
+```
+
+### Integer Sequence Compression
+
+Collapse integer lists into readable range strings (frames, vertex IDs):
+
+```python
+ptk.collapse_integer_sequence([1, 2, 3, 5, 7, 8, 9, 15])
+# Returns: "1-3, 5, 7-9, 15"
+
+ptk.collapse_integer_sequence([1, 2, 3, 5, 7, 8, 9, 15], limit=3)
+# Returns: "1-3, 5, 7-9, ..."
+```
+
+### Execution Monitor
+
+Monitor long-running functions with native OS dialogs:
+
+```python
+from pythontk import ExecutionMonitor
+
+@ExecutionMonitor.execution_monitor(
+    threshold=30,  # Show dialog after 30 seconds
+    message="Processing textures",
+    allow_escape_cancel=True
+)
+def batch_process():
+    # Long operation - user can abort via dialog
+    ...
+```
+
+### Lazy Module Loading
+
+Speed up package imports with deferred loading:
+
+```python
+# In your package's __init__.py:
+from pythontk.core_utils.module_resolver import bootstrap_package
+
+bootstrap_package(globals(), lazy_import=True, include={
+    "heavy_module": "*",
 })
-ptk.ImgUtils.save_image(packed, "packed_orm.png")
-
-# Resize images
-img = ptk.ImgUtils.load_image("texture.png")
-resized = ptk.ImgUtils.resize_image(img, (512, 512))
-
-# Check if images are identical
-ptk.ImgUtils.are_identical("img1.png", "img2.png")
+# Modules only import when actually accessed
 ```
 
-### Core Utilities & Decorators
+### Plugin Discovery (AST-based)
+
+Discover classes without executing code (safe for plugin systems):
 
 ```python
-import pythontk as ptk
-
-# @listify - Make functions accept lists and return lists
-@ptk.CoreUtils.listify()
-def double(x):
-    return x * 2
-
-double(5)           # Returns: 10
-double([1, 2, 3])   # Returns: [2, 4, 6]
-
-# @cached_property - Cache expensive computations
-class MyClass:
-    @ptk.CoreUtils.cached_property
-    def expensive_data(self):
-        # Only computed once, then cached
-        return load_expensive_data()
+plugins = ptk.get_classes_from_path(
+    "plugins/",
+    returned_type=["classobj", "filepath"],
+    inc=["*Plugin"],  # Only classes ending with "Plugin"
+)
+# Returns: [(PluginClass, "/path/to/plugin.py"), ...]
 ```
+
+## Additional Utilities
+
+### Math
+- **`remap`**: Remap values between ranges (supports nested structures)
+- **`lerp`**: Linear interpolation
+- **`clamp`**: Constrain values to range
+- **`normalize`**: Normalize 2D/3D vectors
+- **`get_vector_from_two_points`**: Direction vector between points
+- **`order_points_by_distance`**: Sort 3D points into continuous path
+- **`smooth_points`**: Moving average smoothing for point sequences
+
+### String
+- **`sanitize`**: Clean strings for filenames with custom rules
+- **`find_str_and_format`**: Batch rename with wildcards
+- **`get_text_between_delimiters`**: Extract text between markers
+- **`truncate`**: Shorten strings with configurable ellipsis position
+
+### Iteration
+- **`flatten`**: Flatten arbitrarily nested lists
+- **`filter_dict`**: Filter dictionaries by key/value patterns
+- **`remove_duplicates`**: Dedupe while preserving order
+- **`nested_depth`**: Get maximum nesting level
+
+### Image
+- **`are_identical`**: Compare images for equality
+- **`linear_to_srgb` / `srgb_to_linear`**: Color space conversion
+- **`resize_image`**: Resize with various resampling modes
 
 ## Module Reference
 
-| Module | Class | Description |
-|--------|-------|-------------|
-| `core_utils` | `CoreUtils` | Decorators, format helpers, attribute utilities |
-| `str_utils` | `StrUtils` | String manipulation, sanitization, case conversion |
-| `file_utils` | `FileUtils` | File I/O, directory operations, path handling |
-| `iter_utils` | `IterUtils` | List operations, filtering, grouping, flattening |
-| `math_utils` | `MathUtils` | Numeric operations, clamping, interpolation, vectors |
-| `img_utils` | `ImgUtils` | Image loading, channel packing, resizing |
+| Module | Class | Purpose |
+|--------|-------|---------|
+| `core_utils` | `CoreUtils` | Decorators (`@listify`, `@cached_property`), attribute helpers |
+| `str_utils` | `StrUtils`, `FuzzyMatcher` | String manipulation, pattern matching |
+| `file_utils` | `FileUtils` | File operations, class discovery |
+| `iter_utils` | `IterUtils` | List/dict filtering, flattening, grouping |
+| `math_utils` | `MathUtils`, `ProgressionCurves` | Numeric ops, easing curves, vectors |
+| `img_utils` | `ImgUtils` | Texture processing, PBR conversion |
 | `vid_utils` | `VidUtils` | Video frame extraction, compression |
-
-### Additional Classes
-
-- **`HelpMixin`**: Adds `help()` method to print class documentation
-- **`FuzzyMatcher`**: Fuzzy string matching with configurable thresholds
-- **`ProgressionCurves`**: Easing functions for animations/interpolation
-- **`SingletonMixin`**: Mixin for singleton pattern
-- **`LoggingMixin`**: Structured logging support
-
-## Contributing
-
-Contributions welcome! Please ensure new utilities:
-- Follow the existing class-based pattern
-- Include docstrings with Parameters/Returns/Example sections
-- Add corresponding tests
 
 ## License
 
