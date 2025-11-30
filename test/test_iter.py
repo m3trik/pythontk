@@ -357,9 +357,7 @@ class IterTest(BaseTestCase):
 
     def test_remove_duplicates_with_none(self):
         """Test remove_duplicates with None values."""
-        self.assertEqual(
-            IterUtils.remove_duplicates([None, 1, None, 2]), [None, 1, 2]
-        )
+        self.assertEqual(IterUtils.remove_duplicates([None, 1, None, 2]), [None, 1, 2])
 
     def test_remove_duplicates_preserves_order(self):
         """Test remove_duplicates preserves order."""

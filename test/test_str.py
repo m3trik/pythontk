@@ -161,7 +161,9 @@ class StrTest(BaseTestCase):
 
     def test_get_text_between_delimiters_empty_content(self):
         """Test get_text_between_delimiters with empty content between delimiters."""
-        result = list(StrUtils.get_text_between_delimiters("[start][end]", "[start]", "[end]"))
+        result = list(
+            StrUtils.get_text_between_delimiters("[start][end]", "[start]", "[end]")
+        )
         self.assertEqual(result, [""])
 
     # -------------------------------------------------------------------------

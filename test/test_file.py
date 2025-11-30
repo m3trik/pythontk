@@ -169,7 +169,9 @@ class FileTest(BaseTestCase):
         """Test format_path with hidden files - files starting with . are NOT recognized as files."""
         # Hidden files starting with '.' are treated as directories, not files
         result = FileUtils.format_path("/path/to/.gitignore", "file")
-        self.assertEqual(result, "")  # Empty because .gitignore is not considered a file
+        self.assertEqual(
+            result, ""
+        )  # Empty because .gitignore is not considered a file
         # Use 'dir' to get the hidden file name instead
         result_dir = FileUtils.format_path("/path/to/.gitignore", "dir")
         self.assertEqual(result_dir, ".gitignore")

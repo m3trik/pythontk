@@ -496,7 +496,7 @@ class ImgTest(BaseTestCase):
 
     def test_are_identical_different_sizes(self):
         """Test are_identical - WARNING: Only compares overlap region, not full size.
-        
+
         Note: ImageChops.difference only compares the overlapping region of two images.
         If the overlapping pixels are identical, it returns True even if sizes differ.
         """

@@ -408,7 +408,9 @@ class MathTest(BaseTestCase):
     def test_get_angle_from_three_points_right_angle(self):
         """Test get_angle_from_three_points with right angle."""
         # Angle at origin between (1,0,0), (0,0,0), (0,1,0) should be 90 degrees
-        result = MathUtils.get_angle_from_three_points((1, 0, 0), (0, 0, 0), (0, 1, 0), True)
+        result = MathUtils.get_angle_from_three_points(
+            (1, 0, 0), (0, 0, 0), (0, 1, 0), True
+        )
         self.assertAlmostEqual(result, 90.0, places=2)
 
     # -------------------------------------------------------------------------
