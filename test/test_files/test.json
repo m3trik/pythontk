@@ -1,1 +1,1 @@
-{"key": "value"}
+{"key": "value", "array": [1, 2, 3, "four", null], "nested": {"a": {"b": {"c": 1}}}}
