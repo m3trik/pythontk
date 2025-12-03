@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pythontk"
+dynamic = ["version", "readme"]
+description = "A modular Python toolkit providing utilities for file handling, string processing, iteration, math operations, and more."
+authors = [{name = "Ryan Simpson", email = "m3trik@outlook.com"}]
+license = {text = "MIT"}
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+# Dependencies - exclude optional system deps (Pillow, numpy)
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/m3trik/pythontk"
+Repository = "https://github.com/m3trik/pythontk"
+
+[tool.setuptools.dynamic]
+version = {attr = "pythontk.__version__"}
+readme = {file = "docs/README.md", content-type = "text/markdown"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pythontk*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.ui", "*.json", "*.txt", "*.md"]

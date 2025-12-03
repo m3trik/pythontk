@@ -1,3 +1,2 @@
 numpy
 Pillow
-pywin32==311
