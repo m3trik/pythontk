@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.7.42"
+__version__ = "0.7.43"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -56,4 +56,4 @@ __all__ = [
     "FuzzyMatcher",
     "VidUtils",
 ]
-# Test trigger: 2025-12-02 21:07:29
+# Trigger publish: 21:10:02
