@@ -1,8 +1,13 @@
 # !/usr/bin/python
 # coding=utf-8
+from __future__ import annotations
+
 import os
 from contextlib import contextmanager
-from typing import List, Tuple, Dict, Union, Any, Optional
+from typing import List, Tuple, Dict, Union, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PIL import Image as PILImage
 
 try:
     import numpy as np
@@ -12,8 +17,7 @@ try:
     from PIL import Image, ImageEnhance, ImageOps, ImageFilter, ImageChops, ImageDraw
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
-
-# from this package:
+    Image = None  # type: ignore# from this package:
 from pythontk import core_utils
 from pythontk import file_utils
 from pythontk import iter_utils
