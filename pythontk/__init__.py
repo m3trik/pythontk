@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.7.48"
+__version__ = "0.7.49"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -13,6 +13,7 @@ DEFAULT_INCLUDE = {
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
     "file_utils._file_utils": "*",
+    "file_utils.metadata": "Metadata",
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
     "core_utils._core_utils": "*",
@@ -48,6 +49,7 @@ __all__ = [
     "reload_package",
     "ExecutionMonitor",
     "FileUtils",
+    "Metadata",
     "ImgUtils",
     "IterUtils",
     "MathUtils",
