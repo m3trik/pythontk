@@ -1,11 +1,12 @@
 # !/usr/bin/python
 # coding=utf-8
+"""Iteration utilities for Python.
 
-from pythontk.iter_utils._iter_utils import IterUtils
+All classes are lazy-loaded via pythontk root package.
+Import from pythontk directly: from pythontk import IterUtils
+"""
 
-__all__ = ["IterUtils"]
-
-# --------------------------------------------------------------------------------------------
+# Lazy-loaded via parent package - no explicit imports needed
 
 
 # --------------------------------------------------------------------------------------------

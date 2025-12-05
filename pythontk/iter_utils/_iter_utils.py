@@ -3,10 +3,10 @@
 from typing import Any, Callable, Iterable, List, Dict, Optional, Union
 
 # from this package:
-from pythontk import core_utils
+from pythontk.core_utils.help_mixin import HelpMixin
 
 
-class IterUtils(core_utils.HelpMixin):
+class IterUtils(HelpMixin):
     """ """
 
     @staticmethod

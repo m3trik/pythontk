@@ -3,12 +3,11 @@
 from typing import Union, List, Optional, Dict, Tuple, Callable
 
 # from this package:
-from pythontk import core_utils
-from pythontk import iter_utils
-from pythontk import file_utils
+from pythontk.core_utils._core_utils import CoreUtils
+from pythontk.iter_utils._iter_utils import IterUtils
 
 
-class StrUtils(core_utils.CoreUtils):
+class StrUtils(CoreUtils):
     """ """
 
     @staticmethod
@@ -59,16 +58,16 @@ class StrUtils(core_utils.CoreUtils):
             )
 
         # Ensure the input is always iterable using the make_iterable method
-        iterable_text = iter_utils.IterUtils.make_iterable(text)
+        iterable_text = IterUtils.make_iterable(text)
 
         # Sanitize each item in the iterable
         sanitized_list = [sanitize_single(t) for t in iterable_text]
 
         # Return the appropriate format using format_return
-        return core_utils.CoreUtils.format_return(sanitized_list, orig=text)
+        return CoreUtils.format_return(sanitized_list, orig=text)
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def set_case(string, case="title"):
         """Format the given string(s) in the given case.
 
@@ -174,9 +173,7 @@ class StrUtils(core_utils.CoreUtils):
         """
         import re
 
-        pattern = "|".join(
-            re.escape(d) for d in iter_utils.IterUtils.make_iterable(delimiters)
-        )
+        pattern = "|".join(re.escape(d) for d in IterUtils.make_iterable(delimiters))
         target_parts = re.split(pattern, target)
 
         def match_hierarchy(item_parts):
@@ -208,7 +205,7 @@ class StrUtils(core_utils.CoreUtils):
         return sorted(matches, key=lambda x: len(x), reverse=reverse)
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def split_delimited_string(
         string: str,
         delimiter: str = "|",
@@ -366,7 +363,7 @@ class StrUtils(core_utils.CoreUtils):
             return extract_matches(string, start_delim, end_delim)
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def split_at_delimiter(
         string: str,
         delimiter: str = "|",
@@ -462,7 +459,7 @@ class StrUtils(core_utils.CoreUtils):
             return str(new).join(string.rsplit(old))
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def truncate(string, length=75, mode="start", insert=".."):
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.
@@ -838,7 +835,7 @@ class StrUtils(core_utils.CoreUtils):
         s = string.split("|")[-1]
 
         if strip:
-            strip_items = iter_utils.IterUtils.make_iterable(strip)
+            strip_items = IterUtils.make_iterable(strip)
             for pattern in strip_items:
                 if isinstance(pattern, str) and is_regex(pattern) and len(pattern) > 1:
                     # Only treat as regex if it is a pattern (not a simple suffix string)
@@ -863,7 +860,7 @@ class StrUtils(core_utils.CoreUtils):
         return s + suffix
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def time_stamp(filepath, stamp="%m-%d-%Y  %H:%M"):
         """Attach or detach a modified timestamp and date to/from a given file path.
 
@@ -878,8 +875,9 @@ class StrUtils(core_utils.CoreUtils):
         from datetime import datetime
         import os.path
         import re
+        from pythontk.file_utils._file_utils import FileUtils
 
-        filepath = file_utils.FileUtils.format_path(filepath)
+        filepath = FileUtils.format_path(filepath)
 
         # Check if the file path has a timestamp using regular expression
         match = re.match(r"\d{2}:\d{2}  \d{2}-\d{2}-\d{4}", filepath)

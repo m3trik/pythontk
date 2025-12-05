@@ -1,7 +1,7 @@
 import weakref
 from functools import partial
 from typing import Callable, Optional, Any, Type
-from pythontk.core_utils import LoggingMixin
+from pythontk.core_utils.logging_mixin import LoggingMixin
 
 
 class Placeholder:

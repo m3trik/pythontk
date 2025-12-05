@@ -1,12 +1,12 @@
 # !/usr/bin/python
 # coding=utf-8
+"""String utilities for Python.
 
-from pythontk.str_utils._str_utils import StrUtils
-from pythontk.str_utils.fuzzy_matcher import FuzzyMatcher
+All classes are lazy-loaded via pythontk root package.
+Import from pythontk directly: from pythontk import StrUtils
+"""
 
-__all__ = ["StrUtils", "FuzzyMatcher"]
-
-# --------------------------------------------------------------------------------------------
+# Lazy-loaded via parent package - no explicit imports needed
 
 
 # --------------------------------------------------------------------------------------------

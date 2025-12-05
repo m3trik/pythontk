@@ -3,7 +3,7 @@
 import os
 import json
 from typing import Dict, Optional, Any, List
-from pythontk.core_utils import NamedTupleContainer
+from pythontk.core_utils.namedtuple_container import NamedTupleContainer
 
 
 class MetadataInternal:

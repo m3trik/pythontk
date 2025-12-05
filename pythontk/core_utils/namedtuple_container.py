@@ -2,7 +2,7 @@
 # coding=utf-8
 from collections import namedtuple
 from typing import List, Dict, Any, Optional, Union, Iterator, Callable
-from pythontk.core_utils import LoggingMixin
+from pythontk.core_utils.logging_mixin import LoggingMixin
 
 
 class NamedTupleContainer(LoggingMixin):

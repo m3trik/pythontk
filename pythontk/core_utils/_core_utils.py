@@ -7,8 +7,8 @@ from typing import Any, Callable, Tuple, Union
 from concurrent.futures import ThreadPoolExecutor
 
 # from this package:
-from pythontk.iter_utils import IterUtils
-from pythontk.core_utils import HelpMixin
+from pythontk.iter_utils._iter_utils import IterUtils
+from pythontk.core_utils.help_mixin import HelpMixin
 
 
 class CoreUtils(HelpMixin):

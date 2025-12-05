@@ -1,12 +1,12 @@
 # !/usr/bin/python
 # coding=utf-8
+"""Video utilities for Python.
 
-from pythontk.vid_utils._vid_utils import VidUtils
+All classes are lazy-loaded via pythontk root package.
+Import from pythontk directly: from pythontk import VidUtils
+"""
 
-__all__ = ["VidUtils"]
-
-
-# --------------------------------------------------------------------------------------------
+# Lazy-loaded via parent package - no explicit imports needed
 
 
 # --------------------------------------------------------------------------------------------

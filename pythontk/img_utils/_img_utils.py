@@ -18,12 +18,13 @@ try:
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
     Image = None  # type: ignore# from this package:
-from pythontk import core_utils
-from pythontk import file_utils
-from pythontk import iter_utils
+from pythontk.core_utils._core_utils import CoreUtils
+from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.file_utils._file_utils import FileUtils
+from pythontk.iter_utils._iter_utils import IterUtils
 
 
-class ImgUtils(core_utils.HelpMixin):
+class ImgUtils(HelpMixin):
     """Helper methods for working with image file formats."""
 
     map_types: Dict[str, Tuple[str, ...]] = {
@@ -600,7 +601,7 @@ class ImgUtils(core_utils.HelpMixin):
         cls.assert_pathlike(directory, "directory")
 
         images = {}
-        for f in file_utils.FileUtils.get_dir_contents(
+        for f in FileUtils.get_dir_contents(
             directory, "filepath", inc_files=inc, exc_files=exc
         ):
             im = cls.load_image(f)
@@ -625,7 +626,7 @@ class ImgUtils(core_utils.HelpMixin):
             ValueError: If the map type is not the expected type when 'validate' is provided.
         """
         cls.assert_pathlike(file, "file")
-        filename = file_utils.FileUtils.format_path(file, "name")
+        filename = FileUtils.format_path(file, "name")
 
         if key:
             result = next(
@@ -682,9 +683,9 @@ class ImgUtils(core_utils.HelpMixin):
         cls.assert_pathlike(texture_path, "texture_path")
 
         # Extract sections from the given path
-        directory = file_utils.FileUtils.format_path(texture_path, "path")
+        directory = FileUtils.format_path(texture_path, "path")
         base_name = cls.get_base_texture_name(texture_path)
-        original_ext = file_utils.FileUtils.format_path(texture_path, "ext")
+        original_ext = FileUtils.format_path(texture_path, "ext")
 
         # Ensure map_type does not start with an underscore
         map_type = map_type.lstrip("_")
@@ -769,7 +770,7 @@ class ImgUtils(core_utils.HelpMixin):
         Returns:
             (list)
         """
-        types = iter_utils.IterUtils.make_iterable(types)
+        types = IterUtils.make_iterable(types)
         return [f for f in files if cls.resolve_map_type(f) in types]
 
     @classmethod
@@ -825,7 +826,7 @@ class ImgUtils(core_utils.HelpMixin):
             # convert list to dict of the correct format.
             files = cls.sort_images_by_type(files)
 
-        map_types = iter_utils.IterUtils.make_iterable(map_types)
+        map_types = IterUtils.make_iterable(map_types)
 
         result = next(
             (True for i in files.keys() if cls.resolve_map_type(i) in map_types),
@@ -973,7 +974,7 @@ class ImgUtils(core_utils.HelpMixin):
             )
 
     @classmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
     ):
@@ -1541,9 +1542,9 @@ class ImgUtils(core_utils.HelpMixin):
         inverted_image = cls.invert_channels(file, "g")
 
         if output_path is None:
-            output_dir = file_utils.FileUtils.format_path(file, "path")
-            name = file_utils.FileUtils.format_path(file, "name")
-            ext = file_utils.FileUtils.format_path(file, "ext")
+            output_dir = FileUtils.format_path(file, "path")
+            name = FileUtils.format_path(file, "name")
+            ext = FileUtils.format_path(file, "ext")
 
             try:
                 index = cls.map_types["Normal_OpenGL"].index(typ)
@@ -1570,9 +1571,9 @@ class ImgUtils(core_utils.HelpMixin):
         inverted_image = cls.invert_channels(file, "g")
 
         if output_path is None:
-            output_dir = file_utils.FileUtils.format_path(file, "path")
-            name = file_utils.FileUtils.format_path(file, "name")
-            ext = file_utils.FileUtils.format_path(file, "ext")
+            output_dir = FileUtils.format_path(file, "path")
+            name = FileUtils.format_path(file, "name")
+            ext = FileUtils.format_path(file, "ext")
 
             try:
                 index = cls.map_types["Normal_DirectX"].index(typ)
@@ -2343,7 +2344,7 @@ class ImgUtils(core_utils.HelpMixin):
         # Move the old file to an archive folder if enabled
         if old_files_folder:
             old_folder = os.path.join(output_dir, old_files_folder)
-            file_utils.FileUtils.move_file(
+            FileUtils.move_file(
                 texture_path,
                 old_folder,
                 new_name=(
