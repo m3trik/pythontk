@@ -1,11 +1,12 @@
 # !/usr/bin/python
 # coding=utf-8
+"""Image utilities for Python.
 
-from pythontk.img_utils._img_utils import ImgUtils
+All classes are lazy-loaded via pythontk root package.
+Import from pythontk directly: from pythontk import ImgUtils
+"""
 
-__all__ = ["ImgUtils"]
-
-# --------------------------------------------------------------------------------------------
+# Lazy-loaded via parent package - no explicit imports needed
 
 
 # --------------------------------------------------------------------------------------------

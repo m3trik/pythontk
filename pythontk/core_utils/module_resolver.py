@@ -21,7 +21,12 @@ from typing import (
     Union,
 )
 
-__all__ = ["ModuleAttributeResolver", "PackageResolverHandle", "bootstrap_package"]
+__all__ = [
+    "ModuleAttributeResolver",
+    "PackageResolverHandle",
+    "bootstrap_package",
+    "create_namespace_aliases",
+]
 
 IncludeMapping = Mapping[str, Union[Sequence[str], str]]
 
@@ -34,7 +39,6 @@ class ModuleAttributeResolver:
         module: Union[ModuleType, str],
         *,
         include: Optional[Mapping[str, Union[Sequence[str], str]]] = None,
-        fallbacks: Optional[Mapping[str, str]] = None,
         module_to_parent: Optional[Mapping[str, str]] = None,
         on_import_error: Optional[Callable[[str, Exception], None]] = None,
         method_predicate: Optional[Callable[[str], bool]] = None,
@@ -55,9 +59,11 @@ class ModuleAttributeResolver:
         self._include_spec = include
         self._direct_include: Optional[Dict[str, Tuple[str, ...]]] = None
         self._absolute_include: Optional[Dict[str, Tuple[str, ...]]] = None
+        self.namespace_aliases: Dict[str, Tuple[str, Tuple[str, ...]]] = (
+            {}
+        )  # alias_name -> (module_key, class_list)
         self._set_include(include)
 
-        self.fallbacks: Dict[str, str] = dict(fallbacks or {})
         self.module_to_parent: Dict[str, str] = dict(module_to_parent or {})
         self.on_import_error = on_import_error
         self.method_predicate = method_predicate or (
@@ -68,7 +74,6 @@ class ModuleAttributeResolver:
         self.imported_modules: Dict[str, ModuleType] = {}
         self.class_to_module: Dict[str, str] = {}
         self.method_to_module: Dict[str, Tuple[str, str]] = {}
-        self.class_method_to_module: Dict[str, Tuple[str, str]] = {}
         self.submodules: set[str] = set()
 
     # ------------------------------------------------------------------
@@ -78,17 +83,15 @@ class ModuleAttributeResolver:
         """Populate resolver dictionaries based on current include spec."""
         self.class_to_module.clear()
         self.method_to_module.clear()
-        self.class_method_to_module.clear()
         self.submodules.clear()
 
         for _, modname, _ in pkgutil.walk_packages(
             self._package_path, prefix=f"{self.package_name}."
         ):
             # Register direct submodules for lazy resolution
-            if modname.startswith(f"{self.package_name}."):
-                rel_name = modname[len(self.package_name) + 1 :]
-                if "." not in rel_name:
-                    self.submodules.add(rel_name)
+            rel_name = modname[len(self.package_name) + 1 :]
+            if "." not in rel_name:
+                self.submodules.add(rel_name)
 
             classes = self._classes_for_module(modname)
             if classes is None:
@@ -115,13 +118,9 @@ class ModuleAttributeResolver:
                             self.class_to_module[class_name] = modname
                         for method_name, class_name in scanned_methods.items():
                             self.method_to_module[method_name] = (modname, class_name)
-                            self.class_method_to_module[method_name] = (
-                                modname,
-                                class_name,
-                            )
                         continue
                 except Exception as exc:
-                    # Fallback to eager import if scanning fails
+                    # If AST scanning fails, import eagerly below
                     self._handle_import_error(modname, exc)
 
             try:
@@ -148,39 +147,30 @@ class ModuleAttributeResolver:
 
     def resolve(self, name: str):
         """Resolve an attribute using the registered dictionaries."""
+        # Check package module itself first for namespace aliases and static attributes
+        if name in self._module.__dict__:
+            return self._module.__dict__[name]
+
+        # Check classes
         if name in self.class_to_module:
             module = self._import(self.class_to_module[name])
             return getattr(module, name)
 
+        # Check methods (includes class methods)
         if name in self.method_to_module:
             module_name, class_name = self.method_to_module[name]
             module = self._import(module_name)
             class_obj = getattr(module, class_name)
             return getattr(class_obj, name)
 
-        if name in self.class_method_to_module:
-            module_name, class_name = self.class_method_to_module[name]
-            module = self._import(module_name)
-            class_obj = getattr(module, class_name)
-            return getattr(class_obj, name)
-
+        # Check module parent mappings
         if name in self.module_to_parent:
             parent_module = self._import(self.module_to_parent[name])
             return getattr(parent_module, name)
 
+        # Check direct submodules
         if name in self.submodules:
             return self._import(f"{self.package_name}.{name}")
-
-        if name in self.fallbacks:
-            module = self._import(self.fallbacks[name])
-            attr = getattr(module, name)
-            self.class_to_module[name] = self.fallbacks[name]
-            return attr
-
-        # Check if the attribute is available in the module itself (e.g. static methods on the package)
-        # Use __dict__ lookup to avoid recursion if self._module has a __getattr__ that calls us
-        if name in self._module.__dict__:
-            return self._module.__dict__[name]
 
         raise AttributeError(f"module {self.package_name} has no attribute '{name}'")
 
@@ -206,8 +196,7 @@ class ModuleAttributeResolver:
             module_globals["__getattr__"] = _module_getattr
 
         if eager:
-            export_names = list(names or self.iter_registered_names())
-            for export_name in export_names:
+            for export_name in names or self.iter_registered_names():
                 module_globals[export_name] = self.resolve(export_name)
 
     def iter_registered_names(self) -> Iterable[str]:
@@ -216,9 +205,7 @@ class ModuleAttributeResolver:
         for container in (
             self.class_to_module,
             self.method_to_module,
-            self.class_method_to_module,
             self.module_to_parent,
-            self.fallbacks,
             self.submodules,
         ):
             for key in container:
@@ -303,16 +290,46 @@ class ModuleAttributeResolver:
         if include is None:
             self._direct_include = None
             self._absolute_include = None
+            self.namespace_aliases.clear()
             return
 
         direct: Dict[str, Tuple[str, ...]] = {}
         absolute: Dict[str, Tuple[str, ...]] = {}
+        self.namespace_aliases.clear()
+
         for key, value in include.items():
+            # Check for namespace alias using arrow delimiter
+            alias_name = None
+            module_key = key
+
+            if "->" in key:
+                # Split on arrow: "module.path->AliasName"
+                module_key, alias_name = key.split("->", 1)
+                module_key = module_key.strip()
+                alias_name = alias_name.strip()
+
             normalized = self._normalize_include_value(value)
-            if "." in key:
-                absolute[f"{self.package_name}.{key}"] = normalized
+
+            # Store namespace alias if detected
+            if alias_name:
+                if isinstance(normalized, tuple):
+                    self.namespace_aliases[alias_name] = (module_key, normalized)
+                else:
+                    # Convert to tuple for storage
+                    self.namespace_aliases[alias_name] = (
+                        module_key,
+                        (
+                            (normalized,)
+                            if isinstance(normalized, str)
+                            else tuple(normalized)
+                        ),
+                    )
+
+            # Register module with original (non-arrow) key
+            if "." in module_key:
+                absolute[f"{self.package_name}.{module_key}"] = normalized
             else:
-                direct[key] = normalized
+                direct[module_key] = normalized
 
         self._direct_include = direct
         self._absolute_include = absolute
@@ -333,11 +350,8 @@ class ModuleAttributeResolver:
 
     def _register_all_classes(self, module: ModuleType) -> None:
         for name, obj in module.__dict__.items():
-            if not inspect.isclass(obj):
-                continue
-            if obj.__module__ != module.__name__:
-                continue
-            self._register_class(name, obj, module.__name__, register_methods=True)
+            if inspect.isclass(obj) and obj.__module__ == module.__name__:
+                self._register_class(name, obj, module.__name__, register_methods=True)
 
     def _register_selected_classes(
         self, module: ModuleType, classes: Sequence[str]
@@ -370,7 +384,6 @@ class ModuleAttributeResolver:
                 member = attribute
             if callable(member):
                 self.method_to_module[method_name] = (module_name, class_name)
-                self.class_method_to_module[method_name] = (module_name, class_name)
 
     def _handle_import_error(self, modname: str, exc: Exception) -> None:
         if self.on_import_error:
@@ -386,11 +399,23 @@ class ModuleAttributeResolver:
     @staticmethod
     def _normalize_include_value(
         value: Union[Sequence[str], str, None],
-    ) -> Tuple[str, ...]:
+    ) -> Union[Tuple[str, ...], Tuple[str, Tuple[str, ...]]]:
+        """Normalize include value, detecting namespace alias tuples.
+
+        Returns:
+            Tuple of class names, OR
+            (alias_name, tuple_of_class_names) for namespace alias syntax
+        """
         if value is None:
             return ("*",)
         if isinstance(value, str):
             return ("*",) if value == "*" else (value,)
+        # Check if it's a tuple with (alias_name, [class_list]) pattern
+        if isinstance(value, tuple) and len(value) == 2:
+            alias_name, class_list = value
+            if isinstance(alias_name, str) and isinstance(class_list, (list, tuple)):
+                # This is a namespace alias definition
+                return (alias_name, tuple(class_list))
         return tuple(value)
 
 
@@ -403,7 +428,6 @@ class PackageResolverHandle:
         module_globals: MutableMapping[str, Any],
         *,
         default_include: Optional[IncludeMapping] = None,
-        default_fallbacks: Optional[Mapping[str, str]] = None,
         default_module_to_parent: Optional[Mapping[str, str]] = None,
         allow_getattr: bool = True,
         default_eager: bool = False,
@@ -418,13 +442,11 @@ class PackageResolverHandle:
         self._default_include = (
             dict(default_include) if default_include is not None else None
         )
-        self._default_fallbacks = dict(default_fallbacks or {})
         self._default_module_to_parent = dict(default_module_to_parent or {})
 
         self.include_spec: Optional[Dict[str, Union[Sequence[str], str]]] = (
             dict(self._default_include) if self._default_include is not None else None
         )
-        self.fallbacks_spec: Dict[str, str] = dict(self._default_fallbacks)
         self.module_parent_spec: Dict[str, str] = dict(self._default_module_to_parent)
 
     # ------------------------------------------------------------------
@@ -453,15 +475,11 @@ class PackageResolverHandle:
         if expose_maps:
             self.module_globals["CLASS_TO_MODULE"] = self.resolver.class_to_module
             self.module_globals["METHOD_TO_MODULE"] = self.resolver.method_to_module
-            self.module_globals["CLASS_METHOD_TO_MODULE"] = (
-                self.resolver.class_method_to_module
-            )
             self.module_globals["IMPORTED_MODULES"] = self.resolver.imported_modules
             self.module_globals["MODULE_TO_PARENT"] = self.resolver.module_to_parent
-            self.module_globals["FALLBACKS"] = self.resolver.fallbacks
 
         if install_helpers:
-            self.module_globals["configure_resolver"] = self.configure
+            self.module_globals["configure"] = self.configure
             self.module_globals["build_dictionaries"] = self.build_dictionaries
             self.module_globals["import_module"] = self.import_module
             self.module_globals["get_attribute_from_module"] = (
@@ -479,6 +497,9 @@ class PackageResolverHandle:
         if eager_flag:
             self.export_all()
 
+        # Create namespace aliases after everything else is set up
+        self._create_namespace_aliases()
+
     # ------------------------------------------------------------------
     # public facade methods (mirrors legacy API)
     # ------------------------------------------------------------------
@@ -486,7 +507,6 @@ class PackageResolverHandle:
         self,
         *,
         include: Optional[IncludeMapping] = None,
-        fallbacks: Optional[Mapping[str, str]] = None,
         module_to_parent: Optional[Mapping[str, str]] = None,
         merge: bool = True,
         eager: Optional[bool] = None,
@@ -496,9 +516,6 @@ class PackageResolverHandle:
 
         self.include_spec = self._merge_include(
             self.include_spec, self._default_include, include, merge
-        )
-        self.fallbacks_spec = self._merge_map(
-            self.fallbacks_spec, self._default_fallbacks, fallbacks, merge
         )
         self.module_parent_spec = self._merge_map(
             self.module_parent_spec,
@@ -514,8 +531,6 @@ class PackageResolverHandle:
                 self.module_globals["__getattr__"] = self.custom_getattr
         self._apply_configuration(eager_flag)
         return self.resolver
-
-    configure_resolver = configure
 
     def build_dictionaries(
         self,
@@ -558,21 +573,130 @@ class PackageResolverHandle:
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
+    def _create_namespace_aliases(self) -> None:
+        """Create multi-inheritance namespace classes from resolver's namespace_aliases."""
+        import pkgutil
+
+        for alias_name, (
+            module_key,
+            class_names,
+        ) in self.resolver.namespace_aliases.items():
+            base_classes = []
+            missing_classes = []
+
+            # Build the full module name
+            if "." in module_key:
+                full_module_name = f"{self.resolver.package_name}.{module_key}"
+            else:
+                full_module_name = f"{self.resolver.package_name}.{module_key}"
+
+            # Handle wildcard "*" - expand to all classes in the module/package
+            if class_names == ("*",):
+                try:
+                    module = self.resolver._import(full_module_name)
+                    expanded_class_names = []
+
+                    # Check if this is a package (has __path__)
+                    if hasattr(module, "__path__"):
+                        # It's a package - look in submodules
+                        for importer, modname, ispkg in pkgutil.iter_modules(
+                            module.__path__
+                        ):
+                            if not ispkg:  # Only process modules, not sub-packages
+                                try:
+                                    submodule = self.resolver._import(
+                                        f"{full_module_name}.{modname}"
+                                    )
+                                    for name in dir(submodule):
+                                        obj = getattr(submodule, name)
+                                        if isinstance(
+                                            obj, type
+                                        ) and not name.startswith("_"):
+                                            if (
+                                                name not in expanded_class_names
+                                            ):  # Avoid duplicates
+                                                expanded_class_names.append(name)
+                                            # Store the class in globals for later resolution
+                                            self.module_globals[name] = obj
+                                except (ImportError, AttributeError):
+                                    continue
+                    else:
+                        # It's a regular module - get classes directly
+                        for name in dir(module):
+                            obj = getattr(module, name)
+                            if isinstance(obj, type) and not name.startswith("_"):
+                                expanded_class_names.append(name)
+
+                    if not expanded_class_names:
+                        # No classes found, skip this alias
+                        continue
+
+                    class_names = tuple(expanded_class_names)
+                except (ImportError, AttributeError) as e:
+                    # If we can't expand wildcard, skip this alias
+                    continue
+
+            # Try to import the module to get all classes at once
+            try:
+                module = self.resolver._import(full_module_name)
+                for class_name in class_names:
+                    # Check if already in globals from wildcard expansion
+                    if class_name in self.module_globals:
+                        base_classes.append(self.module_globals[class_name])
+                    elif hasattr(module, class_name):
+                        cls = getattr(module, class_name)
+                        base_classes.append(cls)
+                        # Also register in globals
+                        self.module_globals[class_name] = cls
+                    else:
+                        missing_classes.append(class_name)
+            except (ImportError, AttributeError) as e:
+                # Module import failed, try individual class resolution
+                for class_name in class_names:
+                    if class_name in self.module_globals:
+                        base_classes.append(self.module_globals[class_name])
+                    else:
+                        try:
+                            cls = self.resolver.resolve(class_name)
+                            base_classes.append(cls)
+                            self.module_globals[class_name] = cls
+                        except AttributeError:
+                            missing_classes.append(class_name)
+
+            if missing_classes:
+                # Skip this alias if classes are missing (may be optional)
+                continue
+
+            if base_classes:
+                # Create multi-inheritance namespace class
+                namespace_class = type(
+                    alias_name,
+                    tuple(base_classes),
+                    {
+                        "__module__": self.module_globals.get("__name__", "unknown"),
+                        "__doc__": f"Unified namespace combining: {', '.join([cls.__name__ for cls in base_classes])}",
+                    },
+                )
+
+                # Register in module globals
+                self.module_globals[alias_name] = namespace_class
+                # Store reference so it appears in CLASS_TO_MODULE
+                self.resolver.class_to_module[alias_name] = (
+                    f"{self.resolver.package_name}._namespace_aliases"
+                )
+
     def _apply_configuration(self, eager: bool) -> None:
-        include_payload: Optional[IncludeMapping]
-        include_payload = self.include_spec if self.include_spec is not None else None
-
-        self.resolver.fallbacks.clear()
-        self.resolver.fallbacks.update(self.fallbacks_spec)
-
         self.resolver.module_to_parent.clear()
         self.resolver.module_to_parent.update(self.module_parent_spec)
 
-        self.resolver.rebuild(include_payload)
+        self.resolver.rebuild(self.include_spec)
         self.default_eager = eager
 
         if eager:
             self.export_all()
+
+        # Recreate namespace aliases after rebuild
+        self._create_namespace_aliases()
 
     @staticmethod
     def _merge_include(
@@ -581,27 +705,17 @@ class PackageResolverHandle:
         override: Optional[IncludeMapping],
         merge: bool,
     ) -> Optional[Dict[str, Union[Sequence[str], str]]]:
-        if merge:
-            if current is None:
-                base = dict(defaults) if defaults is not None else {}
-            else:
-                base = dict(current)
-            if override:
-                base.update(override)
-            if not base and current is None and defaults is None and not override:
-                return None
-            return (
-                base
-                if base
-                else (
-                    None
-                    if current is None and defaults is None and not override
-                    else {}
-                )
-            )
-        if override is None:
+        if not merge:
+            # Replace mode: use override, or fall back to defaults
+            if override is not None:
+                return dict(override)
             return dict(defaults) if defaults is not None else None
-        return dict(override)
+
+        # Merge mode: combine current + override
+        base = dict(current or defaults or {})
+        if override:
+            base.update(override)
+        return base if base else None
 
     @staticmethod
     def _merge_map(
@@ -611,7 +725,7 @@ class PackageResolverHandle:
         merge: bool,
     ) -> Dict[str, str]:
         if not merge:
-            return dict(defaults) if override is None else dict(override)
+            return dict(override) if override is not None else dict(defaults)
 
         base = dict(current)
         if override:
@@ -623,7 +737,6 @@ def bootstrap_package(
     module_globals: MutableMapping[str, Any],
     *,
     include: Optional[IncludeMapping] = None,
-    fallbacks: Optional[Mapping[str, str]] = None,
     module_to_parent: Optional[Mapping[str, str]] = None,
     eager: bool = False,
     allow_getattr: bool = True,
@@ -673,7 +786,6 @@ def bootstrap_package(
     resolver = ModuleAttributeResolver(
         module=module_obj,
         include=include,
-        fallbacks=fallbacks,
         module_to_parent=module_to_parent,
         on_import_error=on_import_error,
         method_predicate=method_predicate,
@@ -685,7 +797,6 @@ def bootstrap_package(
         resolver,
         module_globals,
         default_include=include,
-        default_fallbacks=fallbacks,
         default_module_to_parent=module_to_parent,
         allow_getattr=allow_getattr,
         default_eager=eager,
@@ -699,3 +810,123 @@ def bootstrap_package(
         custom_getattr=custom_getattr,
     )
     return handle
+
+
+def create_namespace_aliases(
+    module_globals: MutableMapping[str, Any],
+    aliases: Mapping[str, Union[str, Sequence[str]]],
+    *,
+    include_spec: Optional[IncludeMapping] = None,
+) -> None:
+    """Create multi-inheritance namespace classes from groups of related classes.
+
+    This helper allows you to group multiple classes under a single namespace alias,
+    creating a unified interface through multi-inheritance. Call this AFTER
+    bootstrap_package() to ensure all classes are available.
+
+    Args:
+        module_globals: The package's globals() dict (same as passed to bootstrap_package)
+        aliases: Dict mapping alias name -> module key or class list
+            Examples:
+                {"Instancing": "core_utils.auto_instancer"}  # Use classes from include_spec
+                {"MyAlias": ["ClassA", "ClassB", "ClassC"]}  # Explicit class list
+        include_spec: Optional DEFAULT_INCLUDE dict to lookup module keys.
+                     If not provided, will try to use module_globals.get('_INCLUDE_SPEC')
+
+    Example:
+        DEFAULT_INCLUDE = {
+            "core_utils.auto_instancer": ["AutoInstancer", "InstanceSeparator", ...],
+        }
+
+        bootstrap_package(globals(), include=DEFAULT_INCLUDE)
+
+        create_namespace_aliases(globals(), {
+            "Instancing": "core_utils.auto_instancer",  # Creates mayatk.Instancing
+        }, include_spec=DEFAULT_INCLUDE)
+
+        # Now you can use:
+        inst = mayatk.Instancing()  # Has all methods from all classes
+
+    Raises:
+        ValueError: If module key not found in include_spec
+        KeyError: If class name not found in module globals
+    """
+    # Try to get include_spec from module globals if not provided
+    if include_spec is None:
+        include_spec = module_globals.get("DEFAULT_INCLUDE") or module_globals.get(
+            "_INCLUDE_SPEC"
+        )
+
+    for alias_name, source in aliases.items():
+        # Determine class list
+        if isinstance(source, str):
+            # Source is a module key - lookup in include_spec
+            if include_spec is None:
+                raise ValueError(
+                    f"Cannot resolve module key '{source}' without include_spec. "
+                    "Pass include_spec parameter or define DEFAULT_INCLUDE in module."
+                )
+
+            if source not in include_spec:
+                raise ValueError(
+                    f"Module key '{source}' not found in include_spec. "
+                    f"Available keys: {list(include_spec.keys())}"
+                )
+
+            class_spec = include_spec[source]
+
+            # Normalize to list
+            if isinstance(class_spec, str):
+                if class_spec == "*":
+                    raise ValueError(
+                        f"Cannot create namespace alias for wildcard module '{source}'. "
+                        "Specify explicit class list in include_spec or use explicit class list in aliases."
+                    )
+                class_names = [class_spec]
+            else:
+                class_names = list(class_spec)
+        else:
+            # Source is already a class list
+            class_names = list(source)
+
+        # Resolve class objects from module globals
+        missing_classes = []
+        base_classes = []
+
+        # Get the resolver for lazy loading
+        resolver = module_globals.get("PACKAGE_RESOLVER")
+
+        for class_name in class_names:
+            if class_name in module_globals:
+                # Already loaded
+                base_classes.append(module_globals[class_name])
+            elif resolver:
+                # Try lazy loading via resolver
+                try:
+                    cls = resolver.resolver.resolve(class_name)
+                    base_classes.append(cls)
+                    # Also store in globals for future access
+                    module_globals[class_name] = cls
+                except AttributeError:
+                    missing_classes.append(class_name)
+            else:
+                missing_classes.append(class_name)
+
+        if missing_classes:
+            raise KeyError(
+                f"Cannot create alias '{alias_name}': classes not found in module globals: "
+                f"{missing_classes}. Ensure bootstrap_package() was called first."
+            )
+
+        # Create multi-inheritance namespace class
+        namespace_class = type(
+            alias_name,
+            tuple(base_classes),
+            {
+                "__module__": module_globals.get("__name__", "unknown"),
+                "__doc__": f"Unified namespace combining: {', '.join(class_names)}",
+            },
+        )
+
+        # Register in module globals
+        module_globals[alias_name] = namespace_class

@@ -8,14 +8,15 @@ if TYPE_CHECKING:
     import numpy as np
 
 # from this package:
-from pythontk import core_utils
+from pythontk.core_utils._core_utils import CoreUtils
+from pythontk.core_utils.help_mixin import HelpMixin
 
 
-class MathUtils(core_utils.HelpMixin):
+class MathUtils(HelpMixin):
     """ """
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def move_decimal_point(num, places):
         """Move the decimal place in a given number.
 
@@ -60,7 +61,7 @@ class MathUtils(core_utils.HelpMixin):
         return (b[0] - a[0], b[1] - a[1], b[2] - a[2])
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def clamp(n=0.0, minimum=0.0, maximum=1.0):
         """Clamps the value x between min and max.
 
@@ -1126,7 +1127,7 @@ class MathUtils(core_utils.HelpMixin):
             hash_points([(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]) #returns: [hash values]
             hash_points([[(1.0, 2.0, 3.0)], [(4.0, 5.0, 6.0)]]) #returns: [[hash values], [hash values]]
         """
-        nested = core_utils.CoreUtils.nested_depth(points) > 1
+        nested = CoreUtils.nested_depth(points) > 1
         sets = points if nested else [points]
 
         def clamp(p):
@@ -1135,7 +1136,7 @@ class MathUtils(core_utils.HelpMixin):
         result = []
         for pset in sets:
             result.append([hash(tuple(map(clamp, i))) for i in pset])
-        return core_utils.CoreUtils.format_return(result, nested)
+        return CoreUtils.format_return(result, nested)
 
 
 # -----------------------------------------------------------------------------

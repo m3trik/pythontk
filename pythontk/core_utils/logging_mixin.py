@@ -3,7 +3,7 @@
 import threading
 import logging as internal_logging
 from typing import Union, List, Optional
-from pythontk.core_utils import ClassProperty
+from pythontk.core_utils.class_property import ClassProperty
 
 
 class LoggerExt:

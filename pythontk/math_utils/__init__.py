@@ -1,12 +1,12 @@
 # !/usr/bin/python
 # coding=utf-8
+"""Math utilities for Python.
 
-from pythontk.math_utils._math_utils import MathUtils
-from pythontk.math_utils.progression import ProgressionCurves
+All classes are lazy-loaded via pythontk root package.
+Import from pythontk directly: from pythontk import MathUtils
+"""
 
-__all__ = ["MathUtils", "ProgressionCurves"]
-
-# --------------------------------------------------------------------------------------------
+# Lazy-loaded via parent package - no explicit imports needed
 
 
 # --------------------------------------------------------------------------------------------

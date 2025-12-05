@@ -6,10 +6,10 @@ import shutil
 import re
 
 # from this package:
-from pythontk import core_utils
+from pythontk.core_utils.help_mixin import HelpMixin
 
 
-class VidUtils(core_utils.HelpMixin):
+class VidUtils(HelpMixin):
     """ """
 
     @staticmethod

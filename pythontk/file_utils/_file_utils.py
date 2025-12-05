@@ -8,12 +8,12 @@ import traceback
 from typing import Union, List, Dict, Tuple, Optional, Any
 
 # From this package:
-from pythontk import core_utils
-from pythontk import iter_utils
-from pythontk import str_utils
+from pythontk.core_utils._core_utils import CoreUtils
+from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.iter_utils._iter_utils import IterUtils
 
 
-class FileUtils(core_utils.HelpMixin):
+class FileUtils(HelpMixin):
     """ """
 
     @staticmethod
@@ -100,7 +100,7 @@ class FileUtils(core_utils.HelpMixin):
         from itertools import chain
 
         path = os.path.expandvars(dirPath)
-        options = iter_utils.IterUtils.make_iterable(content)
+        options = IterUtils.make_iterable(content)
         options_set = set(options)  # Fast lookup for option checks
 
         # Pre-determine which types we need to collect
@@ -127,13 +127,9 @@ class FileUtils(core_utils.HelpMixin):
 
                     # Apply filters only if needed
                     if has_file_filter and files:
-                        files = iter_utils.IterUtils.filter_list(
-                            files, inc_files, exc_files
-                        )
+                        files = IterUtils.filter_list(files, inc_files, exc_files)
                     if has_dir_filter and dirs:
-                        dirs = iter_utils.IterUtils.filter_list(
-                            dirs, inc_dirs, exc_dirs
-                        )
+                        dirs = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
 
                     # Build results based on requested options
                     for opt in options:
@@ -162,9 +158,9 @@ class FileUtils(core_utils.HelpMixin):
         def process_directory(root, dirs, files):
             # Apply filters only if needed
             if has_dir_filter:
-                dirs = iter_utils.IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
+                dirs = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
             if has_file_filter:
-                files = iter_utils.IterUtils.filter_list(files, inc_files, exc_files)
+                files = IterUtils.filter_list(files, inc_files, exc_files)
 
             temp_result = {}
             for opt in options:
@@ -334,7 +330,7 @@ class FileUtils(core_utils.HelpMixin):
         """
         import shutil
 
-        file_paths = iter_utils.IterUtils.make_iterable(file_path)
+        file_paths = IterUtils.make_iterable(file_path)
         results = []
 
         if create_dir:
@@ -413,10 +409,10 @@ class FileUtils(core_utils.HelpMixin):
         from stat import filemode
         from pathlib import Path
 
-        options = iter_utils.IterUtils.make_iterable(info)
+        options = IterUtils.make_iterable(info)
         results = []
 
-        for _path in iter_utils.IterUtils.make_iterable(paths):
+        for _path in IterUtils.make_iterable(paths):
             path = os.path.expandvars(_path)
             path_obj = Path(path)
             if not path_obj.exists():
@@ -460,7 +456,7 @@ class FileUtils(core_utils.HelpMixin):
         return results
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def format_path(
         p: Union[str, List[str]],
         section: Union[str, None] = None,
@@ -521,12 +517,14 @@ class FileUtils(core_utils.HelpMixin):
         }.get(section, p)
 
         if replace:
-            result = str_utils.StrUtils.rreplace(p, result, replace, 1)
+            from pythontk.str_utils._str_utils import StrUtils
+
+            result = StrUtils.rreplace(p, result, replace, 1)
 
         return result
 
     @staticmethod
-    @core_utils.CoreUtils.listify(threading=True)
+    @CoreUtils.listify(threading=True)
     def convert_to_relative_path(
         file_path: str,
         base_dir: str,
@@ -802,7 +800,7 @@ class FileUtils(core_utils.HelpMixin):
             filenames = [os.path.basename(path)]
             path = os.path.dirname(path)
 
-        options = iter_utils.IterUtils.make_iterable(returned_type)
+        options = IterUtils.make_iterable(returned_type)
         results = []
 
         valid_options = {
@@ -862,7 +860,7 @@ class FileUtils(core_utils.HelpMixin):
                     results.append(tuple(info[option] for option in options))
 
         if inc or exc:
-            results = iter_utils.IterUtils.filter_list(
+            results = IterUtils.filter_list(
                 results, inc=inc, exc=exc, nested_as_unit=True
             )
         return results

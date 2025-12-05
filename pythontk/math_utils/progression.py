@@ -4,7 +4,7 @@ import math
 from typing import Union, List
 
 # From this package:
-from pythontk.math_utils import MathUtils
+from pythontk.math_utils._math_utils import MathUtils
 
 
 class ProgressionCurves:

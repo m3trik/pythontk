@@ -279,7 +279,7 @@ class _PkgVersionUtils:
             str: The new version number or empty string if not found.
         """
         import re
-        from pythontk.file_utils import FileUtils
+        from pythontk.file_utils._file_utils import FileUtils
 
         lines = FileUtils.get_file_contents(filepath, as_list=True)
 
@@ -372,7 +372,7 @@ class _PkgVersionUtils:
         import os
         import inspect
         import pkg_resources
-        from pythontk.iter_utils import IterUtils
+        from pythontk.iter_utils._iter_utils import IterUtils
 
         # Determine the caller's directory
         caller_frame = inspect.stack()[1]

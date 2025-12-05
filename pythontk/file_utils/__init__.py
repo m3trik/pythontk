@@ -1,12 +1,12 @@
 # !/usr/bin/python
 # coding=utf-8
+"""File utilities for Python.
 
-from pythontk.file_utils._file_utils import FileUtils
+All classes are lazy-loaded via pythontk root package.
+Import from pythontk directly: from pythontk import FileUtils
+"""
 
-__all__ = ["FileUtils"]
-
-
-# --------------------------------------------------------------------------------------------
+# Lazy-loaded via parent package - no explicit imports needed
 
 
 # --------------------------------------------------------------------------------------------
