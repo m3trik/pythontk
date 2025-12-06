@@ -36,7 +36,7 @@ class MapConversion:
 
 class ConversionRegistry:
     """Central registry for all map type conversions.
-    
+
     This eliminates duplicate conversion logic across methods.
     """
 
@@ -144,6 +144,154 @@ class ConversionRegistry:
             )
         )
 
+        # Unpacking conversions (Metallic_Smoothness)
+        self.register(
+            MapConversion(
+                target_type="Metallic",
+                source_types=["Metallic_Smoothness"],
+                converter=lambda inv, ctx: self._get_metallic_from_packed(
+                    inv["Metallic_Smoothness"], ctx
+                ),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Smoothness",
+                source_types=["Metallic_Smoothness"],
+                converter=lambda inv, ctx: self._get_smoothness_from_packed(
+                    inv["Metallic_Smoothness"], ctx
+                ),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Roughness",
+                source_types=["Metallic_Smoothness"],
+                converter=lambda inv, ctx: self._get_roughness_from_packed(
+                    inv["Metallic_Smoothness"], ctx
+                ),
+                priority=8,
+            )
+        )
+
+        # Unpacking conversions (MSAO)
+        self.register(
+            MapConversion(
+                target_type="Metallic",
+                source_types=["MSAO"],
+                converter=lambda inv, ctx: self._get_metallic_from_msao(
+                    inv["MSAO"], ctx
+                ),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Smoothness",
+                source_types=["MSAO"],
+                converter=lambda inv, ctx: self._get_smoothness_from_msao(
+                    inv["MSAO"], ctx
+                ),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Roughness",
+                source_types=["MSAO"],
+                converter=lambda inv, ctx: self._get_roughness_from_msao(
+                    inv["MSAO"], ctx
+                ),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Ambient_Occlusion",
+                source_types=["MSAO"],
+                converter=lambda inv, ctx: self._get_ao_from_msao(inv["MSAO"], ctx),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="AO",
+                source_types=["MSAO"],
+                converter=lambda inv, ctx: self._get_ao_from_msao(inv["MSAO"], ctx),
+                priority=8,
+            )
+        )
+
+        # Unpacking conversions (ORM)
+        self.register(
+            MapConversion(
+                target_type="Ambient_Occlusion",
+                source_types=["ORM"],
+                converter=lambda inv, ctx: self._get_ao_from_orm(inv["ORM"], ctx),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="AO",
+                source_types=["ORM"],
+                converter=lambda inv, ctx: self._get_ao_from_orm(inv["ORM"], ctx),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Roughness",
+                source_types=["ORM"],
+                converter=lambda inv, ctx: self._get_roughness_from_orm(
+                    inv["ORM"], ctx
+                ),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Smoothness",
+                source_types=["ORM"],
+                converter=lambda inv, ctx: self._get_smoothness_from_orm(
+                    inv["ORM"], ctx
+                ),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Metallic",
+                source_types=["ORM"],
+                converter=lambda inv, ctx: self._get_metallic_from_orm(inv["ORM"], ctx),
+                priority=8,
+            )
+        )
+
+        # Unpacking conversions (Albedo_Transparency)
+        self.register(
+            MapConversion(
+                target_type="Base_Color",
+                source_types=["Albedo_Transparency"],
+                converter=lambda inv, ctx: self._get_base_color_from_albedo_transparency(
+                    inv["Albedo_Transparency"], ctx
+                ),
+                priority=8,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Opacity",
+                source_types=["Albedo_Transparency"],
+                converter=lambda inv, ctx: self._get_opacity_from_albedo_transparency(
+                    inv["Albedo_Transparency"], ctx
+                ),
+                priority=8,
+            )
+        )
+
     # Conversion implementations
     @staticmethod
     def _convert_specular_to_metallic(
@@ -211,6 +359,160 @@ class ConversionRegistry:
         context.log("Generated normal from bump/height")
         return normal_path
 
+    @staticmethod
+    def _unpack_metallic_smoothness(
+        source_path: str, context: "ProcessingContext"
+    ) -> None:
+        """Helper to unpack and cache results."""
+        # Return cached if available
+        if "Metallic" in context.inventory and "Smoothness" in context.inventory:
+            return
+
+        metallic, smoothness = ImgUtils.unpack_metallic_smoothness(
+            source_path, context.output_dir
+        )
+        context.inventory["Metallic"] = metallic
+        context.inventory["Smoothness"] = smoothness
+        context.log("Unpacked Metallic and Smoothness from packed map")
+
+    @staticmethod
+    def _get_metallic_from_packed(
+        source_path: str, context: "ProcessingContext"
+    ) -> str:
+        ConversionRegistry._unpack_metallic_smoothness(source_path, context)
+        return context.inventory["Metallic"]
+
+    @staticmethod
+    def _get_smoothness_from_packed(
+        source_path: str, context: "ProcessingContext"
+    ) -> str:
+        ConversionRegistry._unpack_metallic_smoothness(source_path, context)
+        return context.inventory["Smoothness"]
+
+    @staticmethod
+    def _get_roughness_from_packed(
+        source_path: str, context: "ProcessingContext"
+    ) -> str:
+        ConversionRegistry._unpack_metallic_smoothness(source_path, context)
+        # Convert S -> R
+        return ConversionRegistry._convert_smoothness_to_roughness(
+            context.inventory["Smoothness"], context
+        )
+
+    @staticmethod
+    def _unpack_msao(source_path: str, context: "ProcessingContext") -> None:
+        """Helper to unpack MSAO and cache results."""
+        if (
+            "Metallic" in context.inventory
+            and "AO" in context.inventory
+            and "Smoothness" in context.inventory
+        ):
+            return
+
+        metallic, ao, smoothness = ImgUtils.unpack_msao_texture(
+            source_path, context.output_dir
+        )
+        context.inventory["Metallic"] = metallic
+        context.inventory["AO"] = ao
+        context.inventory["Ambient_Occlusion"] = ao
+        context.inventory["Smoothness"] = smoothness
+        context.log("Unpacked Metallic, AO, and Smoothness from MSAO map")
+
+    @staticmethod
+    def _get_metallic_from_msao(source_path: str, context: "ProcessingContext") -> str:
+        ConversionRegistry._unpack_msao(source_path, context)
+        return context.inventory["Metallic"]
+
+    @staticmethod
+    def _get_smoothness_from_msao(
+        source_path: str, context: "ProcessingContext"
+    ) -> str:
+        ConversionRegistry._unpack_msao(source_path, context)
+        return context.inventory["Smoothness"]
+
+    @staticmethod
+    def _get_roughness_from_msao(source_path: str, context: "ProcessingContext") -> str:
+        ConversionRegistry._unpack_msao(source_path, context)
+        return ConversionRegistry._convert_smoothness_to_roughness(
+            context.inventory["Smoothness"], context
+        )
+
+    @staticmethod
+    def _get_ao_from_msao(source_path: str, context: "ProcessingContext") -> str:
+        ConversionRegistry._unpack_msao(source_path, context)
+        return context.inventory["AO"]
+
+    @staticmethod
+    def _unpack_orm(source_path: str, context: "ProcessingContext") -> None:
+        """Helper to unpack ORM and cache results."""
+        if (
+            "AO" in context.inventory
+            and "Roughness" in context.inventory
+            and "Metallic" in context.inventory
+        ):
+            return
+
+        ao, roughness, metallic = ImgUtils.unpack_orm_texture(
+            source_path, context.output_dir
+        )
+        context.inventory["AO"] = ao
+        context.inventory["Ambient_Occlusion"] = ao
+        context.inventory["Roughness"] = roughness
+        context.inventory["Metallic"] = metallic
+        context.log("Unpacked AO, Roughness, and Metallic from ORM map")
+
+    @staticmethod
+    def _get_ao_from_orm(source_path: str, context: "ProcessingContext") -> str:
+        ConversionRegistry._unpack_orm(source_path, context)
+        return context.inventory["AO"]
+
+    @staticmethod
+    def _get_roughness_from_orm(source_path: str, context: "ProcessingContext") -> str:
+        ConversionRegistry._unpack_orm(source_path, context)
+        return context.inventory["Roughness"]
+
+    @staticmethod
+    def _get_smoothness_from_orm(source_path: str, context: "ProcessingContext") -> str:
+        ConversionRegistry._unpack_orm(source_path, context)
+        # Convert R -> S
+        return ConversionRegistry._convert_roughness_to_smoothness(
+            context.inventory["Roughness"], context
+        )
+
+    @staticmethod
+    def _get_metallic_from_orm(source_path: str, context: "ProcessingContext") -> str:
+        ConversionRegistry._unpack_orm(source_path, context)
+        return context.inventory["Metallic"]
+
+    @staticmethod
+    def _unpack_albedo_transparency(
+        source_path: str, context: "ProcessingContext"
+    ) -> None:
+        """Helper to unpack Albedo+Transparency and cache results."""
+        if "Base_Color" in context.inventory and "Opacity" in context.inventory:
+            return
+
+        base_color, opacity = ImgUtils.unpack_albedo_transparency(
+            source_path, context.output_dir
+        )
+        context.inventory["Base_Color"] = base_color
+        context.inventory["Opacity"] = opacity
+        context.log("Unpacked Base Color and Opacity from Albedo+Transparency map")
+
+    @staticmethod
+    def _get_base_color_from_albedo_transparency(
+        source_path: str, context: "ProcessingContext"
+    ) -> str:
+        ConversionRegistry._unpack_albedo_transparency(source_path, context)
+        return context.inventory["Base_Color"]
+
+    @staticmethod
+    def _get_opacity_from_albedo_transparency(
+        source_path: str, context: "ProcessingContext"
+    ) -> str:
+        ConversionRegistry._unpack_albedo_transparency(source_path, context)
+        return context.inventory["Opacity"]
+
 
 # =============================================================================
 # Processing Context - Shared state and utilities
@@ -244,13 +546,13 @@ class ProcessingContext:
         self, *preferred_types: str, allow_conversion: bool = True
     ) -> Optional[str]:
         """Intelligently resolve a map from inventory with fallback conversions.
-        
+
         This is the DRY replacement for repeated "get X or convert from Y" logic.
-        
+
         Args:
             *preferred_types: Ordered list of preferred map types
             allow_conversion: Whether to attempt conversions if direct match fails
-            
+
         Returns:
             Path to resolved map or None
         """
@@ -374,7 +676,9 @@ class MaskMapHandler(WorkflowHandler):
             context.log("No metallic map for Mask Map", "warning")
             return None
 
-        ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False) or metallic
+        ao = (
+            context.resolve_map("Ambient_Occlusion", allow_conversion=False) or metallic
+        )
 
         # Get smoothness with inversion tracking
         smoothness = None
@@ -508,6 +812,7 @@ class BaseColorHandler(WorkflowHandler):
 
     def process(self, context: ProcessingContext) -> Optional[str]:
         if "Albedo_Transparency" in context.inventory:
+            context.log("Processing albedo with transparency")
             context.mark_used(
                 "Albedo_Transparency",
                 "Base_Color",
@@ -524,6 +829,8 @@ class BaseColorHandler(WorkflowHandler):
         if not base_color:
             return None
 
+        context.log("Processing base color")
+
         # Pack transparency if requested
         if context.config.get("albedo_transparency", False):
             opacity = context.resolve_map(
@@ -531,7 +838,9 @@ class BaseColorHandler(WorkflowHandler):
             )
             if opacity:
                 try:
-                    combined = ImgUtils.pack_transparency_into_albedo(base_color, opacity)
+                    combined = ImgUtils.pack_transparency_into_albedo(
+                        base_color, opacity
+                    )
                     context.log("Packed transparency into albedo")
                     context.mark_used(
                         "Base_Color",
@@ -591,11 +900,16 @@ class NormalMapHandler(WorkflowHandler):
 
         # Try exact match, generic, converted, or generated
         normal = context.resolve_map(
-            target_key, "Normal", f"Normal_{self._opposite(target_format)}", "Bump", "Height",
-            allow_conversion=True
+            target_key,
+            "Normal",
+            f"Normal_{self._opposite(target_format)}",
+            "Bump",
+            "Height",
+            allow_conversion=True,
         )
 
         if normal:
+            context.log(f"Processing normal map ({target_format} format)")
             context.mark_used(
                 "Normal", "Normal_OpenGL", "Normal_DirectX", "Bump", "Height"
             )
@@ -621,11 +935,11 @@ class TextureMapFactory:
     _conversion_registry = ConversionRegistry()
     _workflow_handlers: List[Type[WorkflowHandler]] = [
         BaseColorHandler,
+        NormalMapHandler,
         ORMMapHandler,
         MaskMapHandler,
         MetallicSmoothnessHandler,
         SeparateMetallicRoughnessHandler,
-        NormalMapHandler,
     ]
 
     @classmethod
@@ -690,10 +1004,18 @@ class TextureMapFactory:
                         break  # Stop after first match for packed workflows
 
         # Pass through unconsumed maps
-        passthrough_types = ["Emissive", "Emission", "Ambient_Occlusion", "Height", "Displacement"]
+        passthrough_types = [
+            "Emissive",
+            "Emission",
+            "Ambient_Occlusion",
+            "AO",
+            "Height",
+            "Displacement",
+        ]
         for map_type in passthrough_types:
             if map_type in map_inventory and map_type not in context.used_maps:
                 output_maps.append(map_inventory[map_type])
+                callback(f"Passing through {map_type} map")
 
         return output_maps if output_maps else textures
 
@@ -727,7 +1049,8 @@ class TextureMapFactory:
             base_color_path, metallic_path, roughness_path = (
                 ImgUtils.convert_spec_gloss_to_pbr(
                     specular_map=inventory["Specular"],
-                    glossiness_map=inventory.get("Glossiness") or inventory.get("Smoothness"),
+                    glossiness_map=inventory.get("Glossiness")
+                    or inventory.get("Smoothness"),
                     diffuse_map=inventory.get("Diffuse"),
                     output_dir=output_dir,
                     write_files=True,
