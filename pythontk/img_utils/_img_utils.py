@@ -2411,7 +2411,7 @@ class ImgUtils(HelpMixin):
         ao_map_path: str,
         alpha_map_path: str,
         output_dir: str = None,
-        suffix: str = "_MetallicSmoothnessAO",
+        suffix: str = "_MSAO",
         invert_alpha: bool = False,
     ) -> str:
         """Packs Metallic (R), AO (G), and Smoothness/Roughness (A) into a single MSAO texture.

@@ -4,6 +4,7 @@ from typing import List, Union, Tuple, Dict, Any
 
 # from this package:
 from pythontk.img_utils._img_utils import ImgUtils
+from pythontk.img_utils.texture_map_factory import TextureMapFactory
 from pythontk.file_utils._file_utils import FileUtils
 
 
@@ -88,10 +89,10 @@ class MapConverterSlots(ImgUtils):
         )
 
     def tb001(self, widget):
-        """Batch converts Spec/Gloss maps to PBR Metal/Rough.
+        """Batch converts Spec/Gloss maps to PBR Metal/Rough using TextureMapFactory.
 
         User selects multiple texture sets. The function groups them per base name
-        and converts them accordingly.
+        and converts them accordingly using the DRY TextureMapFactory.
 
         Maps are saved as Metallic/Roughness maps in the same directory.
         """
@@ -115,52 +116,57 @@ class MapConverterSlots(ImgUtils):
         for base_name, texture_paths in texture_sets.items():
             print(f"Processing set: {base_name} with {len(texture_paths)} files")
 
-            sorted_maps = self.sort_images_by_type(texture_paths)
+            # Use TextureMapFactory for DRY conversion
+            workflow_config = {
+                "albedo_transparency": False,
+                "metallic_smoothness": create_metallic_smoothness,
+                "mask_map": False,
+                "normal_type": "OpenGL",
+                "output_extension": "png",
+            }
 
-            # Required maps for conversion
-            specular_map = sorted_maps.get("Specular", [None])[0]
-            glossiness_map = sorted_maps.get("Glossiness", [None])[0]
-            diffuse_map = sorted_maps.get("Diffuse", [None])[0]
-
-            if not specular_map:
-                print(f"Skipping {base_name}: No specular map found.")
-                continue
-
-            # Extract gloss if missing
-            if not glossiness_map:
-                print(
-                    f"No gloss map found for {base_name}. Checking specular for packed gloss..."
+            try:
+                processed_maps = TextureMapFactory.prepare_maps(
+                    texture_paths,
+                    workflow_config,
+                    callback=print,
                 )
-                glossiness_map = self.extract_gloss_from_spec(specular_map)
-                if glossiness_map:
-                    print(f"Extracted gloss map for {base_name}.")
-                else:
-                    print(
-                        f"No gloss found; estimating roughness from spec for {base_name}."
-                    )
+                print(f"Spec/Gloss to PBR conversion complete for {base_name}.")
+                print(f"// Processed {len(processed_maps)} maps")
+                for map_path in processed_maps:
+                    print(f"  - {map_path}")
+            except Exception as e:
+                print(f"Error processing {base_name}: {e}")
+                # Fallback to legacy method if factory fails
+                sorted_maps = self.sort_images_by_type(texture_paths)
+                specular_map = sorted_maps.get("Specular", [None])[0]
+                glossiness_map = sorted_maps.get("Glossiness", [None])[0]
+                diffuse_map = sorted_maps.get("Diffuse", [None])[0]
+
+                if not specular_map:
+                    print(f"Skipping {base_name}: No specular map found.")
+                    continue
+
+                if not glossiness_map:
                     glossiness_map = self.create_roughness_from_spec(specular_map)
 
-            # Convert to PBR Metal/Rough
-            base_color, metallic, roughness = self.convert_spec_gloss_to_pbr(
-                specular_map,
-                glossiness_map,
-                diffuse_map,
-                output_type="PNG",
-                optimize_bit_depth=True,
-                write_files=True,
-            )
-
-            if create_metallic_smoothness:
-                # Create MetallicSmoothness map
-                metallic_smoothness_map_path = self.pack_smoothness_into_metallic(
-                    metallic, roughness, invert_alpha=True
+                base_color, metallic, roughness = self.convert_spec_gloss_to_pbr(
+                    specular_map,
+                    glossiness_map,
+                    diffuse_map,
+                    output_type="PNG",
+                    optimize_bit_depth=True,
+                    write_files=True,
                 )
-                print(f"// Result: {metallic_smoothness_map_path}")
 
-            print(f"Spec/Gloss to PBR conversion complete for {base_name}.")
+                if create_metallic_smoothness:
+                    metallic_smoothness_map_path = self.pack_smoothness_into_metallic(
+                        metallic, roughness, invert_alpha=True
+                    )
+                    print(f"// Result: {metallic_smoothness_map_path}")
 
         try:
-            self.source_dir = FileUtils.format_path(specular_map, "path")
+            self.source_dir = FileUtils.format_path(spec_map_paths[0], "path")
         except Exception:
             pass
 
@@ -551,6 +557,149 @@ class MapConverterSlots(ImgUtils):
 
         try:
             self.source_dir = FileUtils.format_path(roughness_paths[0], "path")
+        except Exception:
+            pass
+
+    def b012(self):
+        """Batch prepare textures for PBR workflow using TextureMapFactory.
+
+        Supports multiple workflows:
+        - Standard PBR (separate maps)
+        - Unity URP (Albedo+Transparency, Metallic+Smoothness)
+        - Unity HDRP (MSAO Mask Map)
+        - Unreal Engine
+        - glTF 2.0
+        - Godot
+        - Specular/Glossiness
+        """
+        from uitk import Switchboard
+
+        # Get texture paths
+        texture_paths = self.sb.file_dialog(
+            file_types=self.texture_file_types,
+            title="Select texture maps for PBR workflow preparation:",
+            start_dir=self.source_dir,
+            allow_multiple=True,
+        )
+        if not texture_paths:
+            return
+
+        # Present workflow options
+        workflow_options = [
+            "Standard PBR (Separate Maps)",
+            "Unity URP (Packed: Albedo+Alpha, Metallic+Smoothness)",
+            "Unity HDRP (Mask Map: MSAO)",
+            "Unreal Engine (BaseColor+Alpha)",
+            "glTF 2.0 (Separate Maps)",
+            "Godot (Separate Maps)",
+            "Specular/Glossiness Workflow",
+        ]
+
+        from PySide2.QtWidgets import QInputDialog
+
+        workflow, ok = QInputDialog.getItem(
+            None,
+            "Select PBR Workflow",
+            "Choose target workflow:",
+            workflow_options,
+            0,
+            False,
+        )
+        if not ok:
+            return
+
+        # Map workflow to config
+        workflow_configs = {
+            "Standard PBR (Separate Maps)": {
+                "albedo_transparency": False,
+                "metallic_smoothness": False,
+                "mask_map": False,
+                "normal_type": "OpenGL",
+                "output_extension": "png",
+            },
+            "Unity URP (Packed: Albedo+Alpha, Metallic+Smoothness)": {
+                "albedo_transparency": True,
+                "metallic_smoothness": True,
+                "mask_map": False,
+                "normal_type": "OpenGL",
+                "output_extension": "png",
+            },
+            "Unity HDRP (Mask Map: MSAO)": {
+                "albedo_transparency": False,
+                "metallic_smoothness": False,
+                "mask_map": True,
+                "normal_type": "OpenGL",
+                "output_extension": "png",
+            },
+            "Unreal Engine (BaseColor+Alpha)": {
+                "albedo_transparency": True,
+                "metallic_smoothness": False,
+                "mask_map": False,
+                "normal_type": "DirectX",
+                "output_extension": "png",
+            },
+            "glTF 2.0 (Separate Maps)": {
+                "albedo_transparency": False,
+                "metallic_smoothness": False,
+                "mask_map": False,
+                "normal_type": "OpenGL",
+                "output_extension": "png",
+            },
+            "Godot (Separate Maps)": {
+                "albedo_transparency": False,
+                "metallic_smoothness": False,
+                "mask_map": False,
+                "normal_type": "OpenGL",
+                "output_extension": "png",
+            },
+            "Specular/Glossiness Workflow": {
+                "albedo_transparency": False,
+                "metallic_smoothness": True,
+                "mask_map": False,
+                "normal_type": "OpenGL",
+                "output_extension": "png",
+            },
+        }
+
+        config = workflow_configs.get(workflow)
+        if not config:
+            print(f"Unknown workflow: {workflow}")
+            return
+
+        print(f"\n{'='*60}")
+        print(f"Preparing textures for {workflow}")
+        print(f"{'='*60}\n")
+
+        # Group textures by set
+        texture_sets = self.group_textures_by_set(texture_paths)
+        print(f"Found {len(texture_sets)} texture set(s):\n")
+
+        for base_name, set_textures in texture_sets.items():
+            print(f"Processing: {base_name}")
+            print(f"Input files: {len(set_textures)}")
+
+            try:
+                processed_maps = TextureMapFactory.prepare_maps(
+                    set_textures,
+                    config,
+                    callback=print,
+                )
+
+                print(f"\n✓ Successfully processed {base_name}")
+                print(f"Output files: {len(processed_maps)}")
+                for map_path in processed_maps:
+                    print(f"  - {FileUtils.format_path(map_path, 'name')}")
+                print()
+
+            except Exception as e:
+                print(f"✗ Error processing {base_name}: {e}\n")
+
+        print(f"{'='*60}")
+        print(f"Workflow preparation complete!")
+        print(f"{'='*60}\n")
+
+        try:
+            self.source_dir = FileUtils.format_path(texture_paths[0], "path")
         except Exception:
             pass
 
