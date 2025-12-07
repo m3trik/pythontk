@@ -1554,3 +1554,74 @@ class TestModernGameEngineWorkflows(BaseTestCase):
         albedo_maps = [tex for tex in result if "Albedo" in tex]
         # Cleanup may or may not produce new file depending on convert_base_color_to_albedo implementation
         self.assertIsInstance(result, list)
+
+    def test_resolve_orm_map_via_registry(self):
+        """Test resolving ORM map via ConversionRegistry (used by GraphRestorer)."""
+        # Create context with inventory containing individual maps
+        # Note: self.texture_paths is a list, we need to map it to types
+        # Based on _create_test_textures:
+        # 0: Base_Color, 1: Metallic, 2: Roughness, 3: Normal_OpenGL, 4: Normal_DirectX, 5: AO
+
+        inventory = {
+            "Metallic": self.texture_paths[1],
+            "Roughness": self.texture_paths[2],
+            "Ambient_Occlusion": self.texture_paths[5],
+        }
+
+        registry = ConversionRegistry()
+
+        context = ProcessingContext(
+            inventory=inventory,
+            config={},
+            output_dir=self.test_files_dir,  # Use same dir as inputs
+            base_name="test_resolve",
+            ext="png",
+            callback=lambda x: None,
+            conversion_registry=registry,
+        )
+
+        # Resolve ORM
+        result = context.resolve_map("ORM", allow_conversion=True)
+
+        self.assertIsNotNone(result, "Failed to resolve ORM map")
+        self.assertTrue(os.path.exists(result), "Result file does not exist")
+        self.assertIn("ORM", os.path.basename(result), "Result name should contain ORM")
+        self.assertEqual(
+            os.path.dirname(result),
+            self.test_files_dir,
+            "Result should be in the same directory as inputs",
+        )
+
+    def test_resolve_msao_map_with_roughness(self):
+        """Test resolving MSAO map using Roughness (conversion) and missing AO."""
+        # Create context with inventory containing Metallic and Roughness (No AO, No Smoothness)
+        # Note: self.texture_paths is a list, we need to map it to types
+        # Based on _create_test_textures:
+        # 0: Base_Color, 1: Metallic, 2: Roughness, 3: Normal_OpenGL, 4: Normal_DirectX, 5: AO
+        inventory = {
+            "Metallic": self.texture_paths[1],
+            "Roughness": self.texture_paths[2],
+        }
+
+        registry = ConversionRegistry()
+
+        context = ProcessingContext(
+            inventory=inventory,
+            config={},
+            output_dir=self.test_files_dir,
+            base_name="test_resolve_msao",
+            ext="png",
+            callback=lambda x: None,
+            conversion_registry=registry,
+        )
+
+        # Resolve MSAO
+        result = context.resolve_map("MSAO", allow_conversion=True)
+
+        self.assertIsNotNone(
+            result, "Failed to resolve MSAO map from Metallic+Roughness"
+        )
+        self.assertTrue(os.path.exists(result), "Result file does not exist")
+        self.assertIn(
+            "MaskMap", os.path.basename(result), "Result name should contain MaskMap"
+        )

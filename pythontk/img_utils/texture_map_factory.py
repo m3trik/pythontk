@@ -14,7 +14,8 @@ Key improvements:
 import os
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Callable, Type, Any, Union
+from typing import List, Dict, Optional, Callable, Type, Any, Union, Tuple
+from collections import defaultdict
 
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.file_utils._file_utils import FileUtils
@@ -42,307 +43,317 @@ class ConversionRegistry:
     """
 
     def __init__(self):
-        self._conversions: List[MapConversion] = []
+        self._conversions: Dict[str, List[MapConversion]] = defaultdict(list)
         self._register_default_conversions()
 
-    def register(self, conversion: MapConversion):
-        """Register a new conversion strategy."""
-        self._conversions.append(conversion)
+    def register(
+        self,
+        target_type: Union[str, MapConversion],
+        source_types: Union[str, List[str]] = None,
+        converter: Callable = None,
+        priority: int = 0,
+    ):
+        """Register a new conversion strategy.
+
+        Can be called with a MapConversion object or with individual arguments.
+        """
+        if isinstance(target_type, MapConversion):
+            conversion = target_type
+        else:
+            if source_types is None or converter is None:
+                raise ValueError(
+                    "source_types and converter are required when registering by arguments"
+                )
+
+            if isinstance(source_types, str):
+                source_types = [source_types]
+
+            conversion = MapConversion(
+                target_type=target_type,
+                source_types=source_types,
+                converter=converter,
+                priority=priority,
+            )
+
+        self._conversions[conversion.target_type].append(conversion)
         # Sort by priority (higher first)
-        self._conversions.sort(key=lambda c: c.priority, reverse=True)
+        self._conversions[conversion.target_type].sort(
+            key=lambda c: c.priority, reverse=True
+        )
 
     def get_conversions_for(self, target_type: str) -> List[MapConversion]:
         """Get all conversions that can produce target type."""
-        return [c for c in self._conversions if c.target_type == target_type]
+        return self._conversions.get(target_type, [])
 
     def _register_default_conversions(self):
         """Register all standard PBR conversions."""
         # Metallic conversions
         self.register(
-            MapConversion(
-                target_type="Metallic",
-                source_types=["Specular"],
-                converter=lambda inv, ctx: self._convert_specular_to_metallic(
-                    inv["Specular"], ctx
-                ),
-                priority=5,
-            )
+            "Metallic",
+            "Specular",
+            lambda inv, ctx: self._convert_specular_to_metallic(inv["Specular"], ctx),
+            priority=5,
         )
 
         # Roughness conversions
         self.register(
-            MapConversion(
-                target_type="Roughness",
-                source_types=["Smoothness"],
-                converter=lambda inv, ctx: self._convert_smoothness_to_roughness(
-                    inv["Smoothness"], ctx
-                ),
-                priority=10,
-            )
+            "Roughness",
+            "Smoothness",
+            lambda inv, ctx: self._convert_smoothness_to_roughness(
+                inv["Smoothness"], ctx
+            ),
+            priority=10,
         )
         self.register(
-            MapConversion(
-                target_type="Roughness",
-                source_types=["Glossiness"],
-                converter=lambda inv, ctx: self._convert_smoothness_to_roughness(
-                    inv["Glossiness"], ctx
-                ),
-                priority=9,
-            )
+            "Roughness",
+            "Glossiness",
+            lambda inv, ctx: self._convert_smoothness_to_roughness(
+                inv["Glossiness"], ctx
+            ),
+            priority=9,
         )
         self.register(
-            MapConversion(
-                target_type="Roughness",
-                source_types=["Specular"],
-                converter=lambda inv, ctx: self._convert_specular_to_roughness(
-                    inv["Specular"], ctx
-                ),
-                priority=5,
-            )
+            "Roughness",
+            "Specular",
+            lambda inv, ctx: self._convert_specular_to_roughness(inv["Specular"], ctx),
+            priority=5,
         )
 
         # Glossiness conversions
         self.register(
-            MapConversion(
-                target_type="Glossiness",
-                source_types=["Specular"],
-                converter=lambda inv, ctx: self._extract_gloss_from_spec(
-                    inv["Specular"], ctx
-                ),
-                priority=5,
-            )
+            "Glossiness",
+            "Specular",
+            lambda inv, ctx: self._extract_gloss_from_spec(inv["Specular"], ctx),
+            priority=5,
         )
         self.register(
-            MapConversion(
-                target_type="Glossiness",
-                source_types=["Roughness"],
-                converter=lambda inv, ctx: self._convert_roughness_to_smoothness(
-                    inv["Roughness"], ctx
-                ),  # Inverted Roughness = Smoothness ≈ Glossiness
-                priority=9,
-            )
+            "Glossiness",
+            "Roughness",
+            lambda inv, ctx: self._convert_roughness_to_smoothness(
+                inv["Roughness"], ctx
+            ),  # Inverted Roughness = Smoothness ≈ Glossiness
+            priority=9,
         )
         self.register(
-            MapConversion(
-                target_type="Glossiness",
-                source_types=["Smoothness"],
-                converter=lambda inv, ctx: self._copy_map(
-                    inv["Smoothness"], "Glossiness", ctx
-                ),
-                priority=10,
-            )
+            "Glossiness",
+            "Smoothness",
+            lambda inv, ctx: self._copy_map(inv["Smoothness"], "Glossiness", ctx),
+            priority=10,
         )
 
         # Smoothness conversions
         self.register(
-            MapConversion(
-                target_type="Smoothness",
-                source_types=["Roughness"],
-                converter=lambda inv, ctx: self._convert_roughness_to_smoothness(
-                    inv["Roughness"], ctx
-                ),
-                priority=10,
-            )
+            "Smoothness",
+            "Roughness",
+            lambda inv, ctx: self._convert_roughness_to_smoothness(
+                inv["Roughness"], ctx
+            ),
+            priority=10,
         )
 
         # Normal conversions
         self.register(
-            MapConversion(
-                target_type="Normal_OpenGL",
-                source_types=["Normal_DirectX"],
-                converter=lambda inv, ctx: self._convert_dx_to_gl(
-                    inv["Normal_DirectX"], ctx
-                ),
-                priority=10,
-            )
+            "Normal_OpenGL",
+            "Normal_DirectX",
+            lambda inv, ctx: self._convert_dx_to_gl(inv["Normal_DirectX"], ctx),
+            priority=10,
         )
         self.register(
-            MapConversion(
-                target_type="Normal_DirectX",
-                source_types=["Normal_OpenGL"],
-                converter=lambda inv, ctx: self._convert_gl_to_dx(
-                    inv["Normal_OpenGL"], ctx
-                ),
-                priority=10,
-            )
+            "Normal_DirectX",
+            "Normal_OpenGL",
+            lambda inv, ctx: self._convert_gl_to_dx(inv["Normal_OpenGL"], ctx),
+            priority=10,
         )
         self.register(
-            MapConversion(
-                target_type="Normal",
-                source_types=["Bump", "Height"],
-                converter=lambda inv, ctx: self._convert_bump_to_normal(
-                    inv.get("Bump") or inv["Height"], ctx
-                ),
-                priority=5,
-            )
+            "Normal",
+            ["Bump", "Height"],
+            lambda inv, ctx: self._convert_bump_to_normal(
+                inv.get("Bump") or inv["Height"], ctx
+            ),
+            priority=5,
         )
 
         # Packing conversions (ORM)
+        # Priority 10: All components present, native Roughness
         self.register(
-            MapConversion(
-                target_type="ORM",
-                source_types=["Metallic", "Roughness", "Ambient_Occlusion"],
-                converter=lambda inv, ctx: self._create_orm_map(inv, ctx),
-                priority=10,
-            )
+            "ORM",
+            ["Metallic", "Roughness", "Ambient_Occlusion"],
+            lambda inv, ctx: self._create_orm_map(inv, ctx),
+            priority=10,
+        )
+        # Priority 9: All components present, converted Smoothness
+        self.register(
+            "ORM",
+            ["Metallic", "Smoothness", "Ambient_Occlusion"],
+            lambda inv, ctx: self._create_orm_map(inv, ctx),
+            priority=9,
+        )
+        # Priority 8: Missing AO, native Roughness
+        self.register(
+            "ORM",
+            ["Metallic", "Roughness"],
+            lambda inv, ctx: self._create_orm_map(inv, ctx),
+            priority=8,
+        )
+        # Priority 7: Missing AO, converted Smoothness
+        self.register(
+            "ORM",
+            ["Metallic", "Smoothness"],
+            lambda inv, ctx: self._create_orm_map(inv, ctx),
+            priority=7,
         )
 
         # Packing conversions (MSAO/MaskMap)
+        # Priority 10: All components present, native Smoothness
         self.register(
-            MapConversion(
-                target_type="MSAO",
-                source_types=["Metallic", "Ambient_Occlusion", "Smoothness"],
-                converter=lambda inv, ctx: self._create_mask_map(inv, ctx),
-                priority=10,
-            )
+            "MSAO",
+            ["Metallic", "Ambient_Occlusion", "Smoothness"],
+            lambda inv, ctx: self._create_mask_map(inv, ctx),
+            priority=10,
+        )
+        # Priority 9: All components present, converted Roughness
+        self.register(
+            "MSAO",
+            ["Metallic", "Ambient_Occlusion", "Roughness"],
+            lambda inv, ctx: self._create_mask_map(inv, ctx),
+            priority=9,
+        )
+        # Priority 8: Missing AO, native Smoothness
+        self.register(
+            "MSAO",
+            ["Metallic", "Smoothness"],
+            lambda inv, ctx: self._create_mask_map(inv, ctx),
+            priority=8,
+        )
+        # Priority 7: Missing AO, converted Roughness
+        self.register(
+            "MSAO",
+            ["Metallic", "Roughness"],
+            lambda inv, ctx: self._create_mask_map(inv, ctx),
+            priority=7,
+        )
+
+        # Packing conversions (Metallic_Smoothness)
+        self.register(
+            "Metallic_Smoothness",
+            ["Metallic", "Smoothness"],
+            lambda inv, ctx: self._create_metallic_smoothness_map(inv, ctx),
+            priority=10,
+        )
+        self.register(
+            "Metallic_Smoothness",
+            ["Metallic", "Roughness"],
+            lambda inv, ctx: self._create_metallic_smoothness_map(inv, ctx),
+            priority=9,
         )
 
         # Unpacking conversions (Metallic_Smoothness)
         self.register(
-            MapConversion(
-                target_type="Metallic",
-                source_types=["Metallic_Smoothness"],
-                converter=lambda inv, ctx: self._get_metallic_from_packed(
-                    inv["Metallic_Smoothness"], ctx
-                ),
-                priority=8,
-            )
+            "Metallic",
+            "Metallic_Smoothness",
+            lambda inv, ctx: self._get_metallic_from_packed(
+                inv["Metallic_Smoothness"], ctx
+            ),
+            priority=8,
+        )
+
+        self.register(
+            "Smoothness",
+            "Metallic_Smoothness",
+            lambda inv, ctx: self._get_smoothness_from_packed(
+                inv["Metallic_Smoothness"], ctx
+            ),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="Smoothness",
-                source_types=["Metallic_Smoothness"],
-                converter=lambda inv, ctx: self._get_smoothness_from_packed(
-                    inv["Metallic_Smoothness"], ctx
-                ),
-                priority=8,
-            )
-        )
-        self.register(
-            MapConversion(
-                target_type="Roughness",
-                source_types=["Metallic_Smoothness"],
-                converter=lambda inv, ctx: self._get_roughness_from_packed(
-                    inv["Metallic_Smoothness"], ctx
-                ),
-                priority=8,
-            )
+            "Roughness",
+            "Metallic_Smoothness",
+            lambda inv, ctx: self._get_roughness_from_packed(
+                inv["Metallic_Smoothness"], ctx
+            ),
+            priority=8,
         )
 
         # Unpacking conversions (MSAO)
         self.register(
-            MapConversion(
-                target_type="Metallic",
-                source_types=["MSAO"],
-                converter=lambda inv, ctx: self._get_metallic_from_msao(
-                    inv["MSAO"], ctx
-                ),
-                priority=8,
-            )
+            "Metallic",
+            "MSAO",
+            lambda inv, ctx: self._get_metallic_from_msao(inv["MSAO"], ctx),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="Smoothness",
-                source_types=["MSAO"],
-                converter=lambda inv, ctx: self._get_smoothness_from_msao(
-                    inv["MSAO"], ctx
-                ),
-                priority=8,
-            )
+            "Smoothness",
+            "MSAO",
+            lambda inv, ctx: self._get_smoothness_from_msao(inv["MSAO"], ctx),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="Roughness",
-                source_types=["MSAO"],
-                converter=lambda inv, ctx: self._get_roughness_from_msao(
-                    inv["MSAO"], ctx
-                ),
-                priority=8,
-            )
+            "Roughness",
+            "MSAO",
+            lambda inv, ctx: self._get_roughness_from_msao(inv["MSAO"], ctx),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="Ambient_Occlusion",
-                source_types=["MSAO"],
-                converter=lambda inv, ctx: self._get_ao_from_msao(inv["MSAO"], ctx),
-                priority=8,
-            )
+            "Ambient_Occlusion",
+            "MSAO",
+            lambda inv, ctx: self._get_ao_from_msao(inv["MSAO"], ctx),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="AO",
-                source_types=["MSAO"],
-                converter=lambda inv, ctx: self._get_ao_from_msao(inv["MSAO"], ctx),
-                priority=8,
-            )
+            "AO",
+            "MSAO",
+            lambda inv, ctx: self._get_ao_from_msao(inv["MSAO"], ctx),
+            priority=8,
         )
 
         # Unpacking conversions (ORM)
         self.register(
-            MapConversion(
-                target_type="Ambient_Occlusion",
-                source_types=["ORM"],
-                converter=lambda inv, ctx: self._get_ao_from_orm(inv["ORM"], ctx),
-                priority=8,
-            )
+            "Ambient_Occlusion",
+            "ORM",
+            lambda inv, ctx: self._get_ao_from_orm(inv["ORM"], ctx),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="AO",
-                source_types=["ORM"],
-                converter=lambda inv, ctx: self._get_ao_from_orm(inv["ORM"], ctx),
-                priority=8,
-            )
+            "AO",
+            "ORM",
+            lambda inv, ctx: self._get_ao_from_orm(inv["ORM"], ctx),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="Roughness",
-                source_types=["ORM"],
-                converter=lambda inv, ctx: self._get_roughness_from_orm(
-                    inv["ORM"], ctx
-                ),
-                priority=8,
-            )
+            "Roughness",
+            "ORM",
+            lambda inv, ctx: self._get_roughness_from_orm(inv["ORM"], ctx),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="Smoothness",
-                source_types=["ORM"],
-                converter=lambda inv, ctx: self._get_smoothness_from_orm(
-                    inv["ORM"], ctx
-                ),
-                priority=8,
-            )
+            "Smoothness",
+            "ORM",
+            lambda inv, ctx: self._get_smoothness_from_orm(inv["ORM"], ctx),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="Metallic",
-                source_types=["ORM"],
-                converter=lambda inv, ctx: self._get_metallic_from_orm(inv["ORM"], ctx),
-                priority=8,
-            )
+            "Metallic",
+            "ORM",
+            lambda inv, ctx: self._get_metallic_from_orm(inv["ORM"], ctx),
+            priority=8,
         )
 
         # Unpacking conversions (Albedo_Transparency)
         self.register(
-            MapConversion(
-                target_type="Base_Color",
-                source_types=["Albedo_Transparency"],
-                converter=lambda inv, ctx: self._get_base_color_from_albedo_transparency(
-                    inv["Albedo_Transparency"], ctx
-                ),
-                priority=8,
-            )
+            "Base_Color",
+            "Albedo_Transparency",
+            lambda inv, ctx: self._get_base_color_from_albedo_transparency(
+                inv["Albedo_Transparency"], ctx
+            ),
+            priority=8,
         )
         self.register(
-            MapConversion(
-                target_type="Opacity",
-                source_types=["Albedo_Transparency"],
-                converter=lambda inv, ctx: self._get_opacity_from_albedo_transparency(
-                    inv["Albedo_Transparency"], ctx
-                ),
-                priority=8,
-            )
+            "Opacity",
+            "Albedo_Transparency",
+            lambda inv, ctx: self._get_opacity_from_albedo_transparency(
+                inv["Albedo_Transparency"], ctx
+            ),
+            priority=8,
         )
 
     # Conversion implementations
@@ -650,6 +661,37 @@ class ConversionRegistry:
         return mask_map
 
     @staticmethod
+    def _create_metallic_smoothness_map(
+        inventory: Dict[str, str], context: "ProcessingContext"
+    ) -> str:
+        """Create Metallic-Smoothness map from components."""
+        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
+
+        smoothness = None
+        invert = False
+
+        if "Smoothness" in inventory:
+            smoothness = inventory["Smoothness"]
+        elif "Glossiness" in inventory:
+            smoothness = inventory["Glossiness"]
+        elif "Roughness" in inventory:
+            smoothness = inventory["Roughness"]
+            invert = True
+
+        if not metallic or not smoothness:
+            raise ValueError("Missing components for Metallic-Smoothness map")
+
+        ms_map = ImgUtils.pack_smoothness_into_metallic(
+            metallic_map_path=metallic,
+            alpha_map_path=smoothness,
+            output_dir=context.output_dir,
+            suffix="_MetallicSmoothness",
+            invert_alpha=invert,
+        )
+        context.log("Packed smoothness into metallic")
+        return ms_map
+
+    @staticmethod
     def _get_opacity_from_albedo_transparency(
         source_path: str, context: "ProcessingContext"
     ) -> str:
@@ -675,14 +717,15 @@ class ProcessingContext:
     conversion_registry: ConversionRegistry
     used_maps: set = field(default_factory=set)
 
+    _LOG_COLORS = {
+        "success": "rgb(100, 160, 100)",
+        "warning": "rgb(200, 200, 100)",
+        "error": "rgb(255, 100, 100)",
+    }
+
     def log(self, message: str, level: str = "success"):
         """Unified logging with color coding."""
-        colors = {
-            "success": "rgb(100, 160, 100)",
-            "warning": "rgb(200, 200, 100)",
-            "error": "rgb(255, 100, 100)",
-        }
-        color = colors.get(level, colors["success"])
+        color = self._LOG_COLORS.get(level, self._LOG_COLORS["success"])
         self.callback(f'<br><hl style="color:{color};">{message}</hl>')
 
     def resolve_map(
@@ -819,9 +862,9 @@ class MaskMapHandler(WorkflowHandler):
             context.log("No metallic map for Mask Map", "warning")
             return None
 
-        ao = (
-            context.resolve_map("Ambient_Occlusion", allow_conversion=False) or metallic
-        )
+        ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
+        if not ao:
+            context.log("No AO map, using white for Mask Map green channel", "warning")
 
         # Get smoothness with inversion tracking
         smoothness = None
@@ -837,14 +880,30 @@ class MaskMapHandler(WorkflowHandler):
             smoothness = metallic
 
         try:
-            mask_map = ImgUtils.pack_msao_texture(
-                metallic_map_path=metallic,
-                ao_map_path=ao,
-                alpha_map_path=smoothness,
-                output_dir=context.output_dir,
-                suffix="_MaskMap",
-                invert_alpha=invert,
+            # Use pack_channels directly to allow missing AO (defaults to white)
+            output_path = os.path.join(
+                context.output_dir, f"{context.base_name}_MaskMap.{context.ext}"
             )
+
+            mask_map = ImgUtils.pack_channels(
+                channel_files={
+                    "R": metallic,
+                    "G": ao,
+                    "B": None,
+                    "A": smoothness,
+                },
+                channels=["R", "G", "B", "A"],
+                out_mode="RGBA",
+                fill_values={"R": 0, "G": 255, "B": 0, "A": 0 if invert else 255},
+                output_path=output_path,
+            )
+
+            if invert:
+                # Invert the alpha channel after packing if needed
+                img = ImgUtils.ensure_image(mask_map)
+                img = ImgUtils.invert_channels(img, "A")
+                img.save(output_path)
+
             context.log("Created Unity HDRP Mask Map")
             return mask_map
         except Exception as e:
@@ -1085,6 +1144,34 @@ class TextureMapFactory:
         SeparateMetallicRoughnessHandler,
     ]
 
+    passthrough_maps = [
+        "Emissive",
+        "Emission",
+        "Ambient_Occlusion",
+        "AO",
+        "Height",
+        "Displacement",
+    ]
+
+    map_fallbacks = {
+        "Base_Color": ("Diffuse", "Albedo_Transparency"),
+        "Diffuse": ("Base_Color", "Albedo_Transparency"),
+        "Albedo_Transparency": ("Base_Color", "Diffuse"),
+        "Normal": ("Normal_OpenGL", "Normal_DirectX", "Bump", "Height"),
+        "Normal_OpenGL": ("Normal", "Normal_DirectX", "Bump", "Height"),
+        "Normal_DirectX": ("Normal", "Normal_OpenGL", "Bump", "Height"),
+        "Bump": ("Normal", "Normal_OpenGL", "Normal_DirectX", "Height"),
+        "Height": ("Displacement", "Bump", "Normal"),
+        "Roughness": ("Glossiness", "Smoothness"),
+        "Glossiness": ("Roughness", "Smoothness"),
+        "Smoothness": ("Roughness", "Glossiness"),
+        "Metallic": ("Specular", "Metalness"),
+        "Specular": ("Metallic", "Metalness"),
+        "Ambient_Occlusion": ("AO", "Occlusion"),
+        "Opacity": ("Transparency", "Alpha"),
+        "Emissive": ("Emission",),
+    }
+
     @classmethod
     def register_handler(cls, handler_class: Type[WorkflowHandler]):
         """Register a custom workflow handler (extensibility)."""
@@ -1094,6 +1181,18 @@ class TextureMapFactory:
     def register_conversion(cls, conversion: MapConversion):
         """Register a custom map conversion (extensibility)."""
         cls._conversion_registry.register(conversion)
+
+    @classmethod
+    def get_map_fallbacks(cls, map_type: str) -> Tuple[str, ...]:
+        """Get fallback map types for a given map type.
+
+        Parameters:
+            map_type (str): The map type to get fallbacks for.
+
+        Returns:
+            Tuple[str, ...]: A tuple of fallback map types.
+        """
+        return cls.map_fallbacks.get(map_type, ())
 
     @classmethod
     def prepare_maps(
@@ -1220,15 +1319,7 @@ class TextureMapFactory:
                         break  # Stop after first match for packed workflows
 
         # Pass through unconsumed maps
-        passthrough_types = [
-            "Emissive",
-            "Emission",
-            "Ambient_Occlusion",
-            "AO",
-            "Height",
-            "Displacement",
-        ]
-        for map_type in passthrough_types:
+        for map_type in TextureMapFactory.passthrough_maps:
             if map_type in map_inventory and map_type not in context.used_maps:
                 output_maps.append(map_inventory[map_type])
                 callback(f"Passing through {map_type} map")
@@ -1239,10 +1330,10 @@ class TextureMapFactory:
     def _build_map_inventory(textures: List[str]) -> Dict[str, str]:
         """Build map inventory using ImgUtils."""
         inventory = {}
-        for map_type in ImgUtils.map_types.keys():
-            maps = ImgUtils.filter_images_by_type(textures, map_type)
-            if maps:
-                inventory[map_type] = maps[0]
+        for texture in textures:
+            map_type = ImgUtils.resolve_map_type(texture)
+            if map_type and map_type not in inventory:
+                inventory[map_type] = texture
         return inventory
 
     @staticmethod
