@@ -323,6 +323,8 @@ class ImgUtils(HelpMixin):
             "AOMap",
             "Occlusion",
             "OcclusionMap",
+            "MixedAO",
+            "Mixed_AO",
             "Occ",
             "Occl",
             "Cavity",

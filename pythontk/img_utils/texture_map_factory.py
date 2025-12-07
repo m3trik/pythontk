@@ -1201,6 +1201,7 @@ class TextureMapFactory:
         workflow_config: dict,
         output_dir: str = None,
         callback: Callable = print,
+        group_by_set: bool = True,
     ) -> Union[List[str], Dict[str, List[str]]]:
         """
         Main factory method. Automatically handles batch processing.
@@ -1210,6 +1211,8 @@ class TextureMapFactory:
             workflow_config: Configuration dictionary.
             output_dir: Optional output directory.
             callback: Logging callback.
+            group_by_set: Whether to automatically group textures into sets (default: True).
+                          If False, all input files are treated as a single set.
 
         Returns:
             List[str] if a single asset was processed.
@@ -1233,8 +1236,14 @@ class TextureMapFactory:
             callback("No input files found.")
             return []
 
-        # Group by texture set
-        texture_sets = ImgUtils.group_textures_by_set(files)
+        if group_by_set:
+            # Group by texture set
+            texture_sets = ImgUtils.group_textures_by_set(files)
+        else:
+            # Treat all files as a single set
+            # Use the common prefix or just the first file's base name as the key
+            base_name = ImgUtils.get_base_texture_name(files[0])
+            texture_sets = {base_name: files}
 
         results = {}
         total_sets = len(texture_sets)
