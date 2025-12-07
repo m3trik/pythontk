@@ -107,63 +107,41 @@ class MapConverterSlots(ImgUtils):
 
         create_metallic_smoothness = widget.menu.chk000.isChecked()
 
-        # **Group maps by set using base names**
-        texture_sets = self.group_textures_by_set(spec_map_paths)
-        print(f"Found {len(texture_sets)} texture sets:")
-        for key in texture_sets:
-            print(f" - {key}: {texture_sets[key]}")
+        # Use TextureMapFactory for DRY conversion
+        workflow_config = {
+            "albedo_transparency": False,
+            "metallic_smoothness": create_metallic_smoothness,
+            "mask_map": False,
+            "normal_type": "OpenGL",
+            "output_extension": "png",
+            "convert_specgloss_to_pbr": True,
+        }
 
-        for base_name, texture_paths in texture_sets.items():
-            print(f"Processing set: {base_name} with {len(texture_paths)} files")
+        print(f"Processing {len(spec_map_paths)} files...")
 
-            # Use TextureMapFactory for DRY conversion
-            workflow_config = {
-                "albedo_transparency": False,
-                "metallic_smoothness": create_metallic_smoothness,
-                "mask_map": False,
-                "normal_type": "OpenGL",
-                "output_extension": "png",
-            }
+        try:
+            results = TextureMapFactory.prepare_maps(
+                spec_map_paths,
+                workflow_config,
+                callback=print,
+            )
 
-            try:
-                processed_maps = TextureMapFactory.prepare_maps(
-                    texture_paths,
-                    workflow_config,
-                    callback=print,
-                )
-                print(f"Spec/Gloss to PBR conversion complete for {base_name}.")
-                print(f"// Processed {len(processed_maps)} maps")
-                for map_path in processed_maps:
-                    print(f"  - {map_path}")
-            except Exception as e:
-                print(f"Error processing {base_name}: {e}")
-                # Fallback to legacy method if factory fails
-                sorted_maps = self.sort_images_by_type(texture_paths)
-                specular_map = sorted_maps.get("Specular", [None])[0]
-                glossiness_map = sorted_maps.get("Glossiness", [None])[0]
-                diffuse_map = sorted_maps.get("Diffuse", [None])[0]
+            if isinstance(results, dict):
+                print(f"Processed {len(results)} texture sets.")
+                for base_name, maps in results.items():
+                    print(f"Set: {base_name}")
+                    for m in maps:
+                        print(f"  - {m}")
+            else:
+                print("Processed single set.")
+                for m in results:
+                    print(f"  - {m}")
 
-                if not specular_map:
-                    print(f"Skipping {base_name}: No specular map found.")
-                    continue
+        except Exception as e:
+            print(f"Error during batch processing: {e}")
+            import traceback
 
-                if not glossiness_map:
-                    glossiness_map = self.create_roughness_from_spec(specular_map)
-
-                base_color, metallic, roughness = self.convert_spec_gloss_to_pbr(
-                    specular_map,
-                    glossiness_map,
-                    diffuse_map,
-                    output_type="PNG",
-                    optimize_bit_depth=True,
-                    write_files=True,
-                )
-
-                if create_metallic_smoothness:
-                    metallic_smoothness_map_path = self.pack_smoothness_into_metallic(
-                        metallic, roughness, invert_alpha=True
-                    )
-                    print(f"// Result: {metallic_smoothness_map_path}")
+            traceback.print_exc()
 
         try:
             self.source_dir = FileUtils.format_path(spec_map_paths[0], "path")
@@ -670,29 +648,26 @@ class MapConverterSlots(ImgUtils):
         print(f"Preparing textures for {workflow}")
         print(f"{'='*60}\n")
 
-        # Group textures by set
-        texture_sets = self.group_textures_by_set(texture_paths)
-        print(f"Found {len(texture_sets)} texture set(s):\n")
+        try:
+            results = TextureMapFactory.prepare_maps(
+                texture_paths,
+                config,
+                callback=print,
+            )
 
-        for base_name, set_textures in texture_sets.items():
-            print(f"Processing: {base_name}")
-            print(f"Input files: {len(set_textures)}")
+            if isinstance(results, dict):
+                print(f"Processed {len(results)} texture sets.")
+                for base_name, maps in results.items():
+                    print(f"\n✓ Set: {base_name}")
+                    for m in maps:
+                        print(f"  - {FileUtils.format_path(m, 'name')}")
+            else:
+                print("\n✓ Processed single set.")
+                for m in results:
+                    print(f"  - {FileUtils.format_path(m, 'name')}")
 
-            try:
-                processed_maps = TextureMapFactory.prepare_maps(
-                    set_textures,
-                    config,
-                    callback=print,
-                )
-
-                print(f"\n✓ Successfully processed {base_name}")
-                print(f"Output files: {len(processed_maps)}")
-                for map_path in processed_maps:
-                    print(f"  - {FileUtils.format_path(map_path, 'name')}")
-                print()
-
-            except Exception as e:
-                print(f"✗ Error processing {base_name}: {e}\n")
+        except Exception as e:
+            print(f"Error during batch processing: {e}")
 
         print(f"{'='*60}")
         print(f"Workflow preparation complete!")

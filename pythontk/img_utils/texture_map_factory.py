@@ -12,11 +12,12 @@ Key improvements:
 - Declarative workflow configuration
 """
 import os
-from typing import List, Dict, Optional, Callable, Type, Any
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
+from typing import List, Dict, Optional, Callable, Type, Any, Union
 
 from pythontk.img_utils._img_utils import ImgUtils
+from pythontk.file_utils._file_utils import FileUtils
 
 
 # =============================================================================
@@ -100,6 +101,38 @@ class ConversionRegistry:
             )
         )
 
+        # Glossiness conversions
+        self.register(
+            MapConversion(
+                target_type="Glossiness",
+                source_types=["Specular"],
+                converter=lambda inv, ctx: self._extract_gloss_from_spec(
+                    inv["Specular"], ctx
+                ),
+                priority=5,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Glossiness",
+                source_types=["Roughness"],
+                converter=lambda inv, ctx: self._convert_roughness_to_smoothness(
+                    inv["Roughness"], ctx
+                ),  # Inverted Roughness = Smoothness ≈ Glossiness
+                priority=9,
+            )
+        )
+        self.register(
+            MapConversion(
+                target_type="Glossiness",
+                source_types=["Smoothness"],
+                converter=lambda inv, ctx: self._copy_map(
+                    inv["Smoothness"], "Glossiness", ctx
+                ),
+                priority=10,
+            )
+        )
+
         # Smoothness conversions
         self.register(
             MapConversion(
@@ -141,6 +174,26 @@ class ConversionRegistry:
                     inv.get("Bump") or inv["Height"], ctx
                 ),
                 priority=5,
+            )
+        )
+
+        # Packing conversions (ORM)
+        self.register(
+            MapConversion(
+                target_type="ORM",
+                source_types=["Metallic", "Roughness", "Ambient_Occlusion"],
+                converter=lambda inv, ctx: self._create_orm_map(inv, ctx),
+                priority=10,
+            )
+        )
+
+        # Packing conversions (MSAO/MaskMap)
+        self.register(
+            MapConversion(
+                target_type="MSAO",
+                source_types=["Metallic", "Ambient_Occlusion", "Smoothness"],
+                converter=lambda inv, ctx: self._create_mask_map(inv, ctx),
+                priority=10,
             )
         )
 
@@ -360,6 +413,33 @@ class ConversionRegistry:
         return normal_path
 
     @staticmethod
+    def _extract_gloss_from_spec(
+        specular_path: str, context: "ProcessingContext"
+    ) -> str:
+        gloss_img = ImgUtils.extract_gloss_from_spec(specular_path)
+        if not gloss_img:
+            raise ValueError("Could not extract gloss from specular map")
+
+        gloss_path = os.path.join(
+            context.output_dir, f"{context.base_name}_Glossiness.{context.ext}"
+        )
+        gloss_img.save(gloss_path)
+        context.log("Extracted glossiness from specular")
+        return gloss_path
+
+    @staticmethod
+    def _copy_map(
+        source_path: str, target_type: str, context: "ProcessingContext"
+    ) -> str:
+        """Simple copy/rename for compatible maps (e.g. Smoothness -> Glossiness)."""
+        target_path = os.path.join(
+            context.output_dir, f"{context.base_name}_{target_type}.{context.ext}"
+        )
+        ImgUtils.save_image(source_path, target_path)
+        context.log(f"Created {target_type} from source map")
+        return target_path
+
+    @staticmethod
     def _unpack_metallic_smoothness(
         source_path: str, context: "ProcessingContext"
     ) -> None:
@@ -505,6 +585,69 @@ class ConversionRegistry:
     ) -> str:
         ConversionRegistry._unpack_albedo_transparency(source_path, context)
         return context.inventory["Base_Color"]
+
+    @staticmethod
+    def _create_orm_map(inventory: Dict[str, str], context: "ProcessingContext") -> str:
+        """Create ORM map from components."""
+        # Resolve required components
+        ao = context.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
+        roughness = context.resolve_map(
+            "Roughness", "Smoothness", "Glossiness", allow_conversion=True
+        )
+        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
+
+        if not (ao or roughness or metallic):
+            raise ValueError("Missing components for ORM map")
+
+        orm_map = ImgUtils.pack_channels(
+            channel_files={"R": ao, "G": roughness, "B": metallic},
+            output_path=os.path.join(
+                context.output_dir, f"{context.base_name}_ORM.{context.ext}"
+            ),
+            fill_values={"R": 255} if not ao else None,
+        )
+        context.log("Created ORM map from components")
+        return orm_map
+
+    @staticmethod
+    def _create_mask_map(
+        inventory: Dict[str, str], context: "ProcessingContext"
+    ) -> str:
+        """Create Mask Map (MSAO) from components."""
+        # Resolve required components
+        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
+        ao = (
+            context.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
+            or metallic
+        )
+
+        # Get smoothness with inversion tracking
+        smoothness = None
+        invert = False
+
+        if "Smoothness" in inventory:
+            smoothness = inventory["Smoothness"]
+        elif "Glossiness" in inventory:
+            smoothness = inventory["Glossiness"]
+        elif "Roughness" in inventory:
+            smoothness = inventory["Roughness"]
+            invert = True
+        else:
+            smoothness = metallic
+
+        if not metallic:
+            raise ValueError("Missing Metallic map for Mask Map")
+
+        mask_map = ImgUtils.pack_msao_texture(
+            metallic_map_path=metallic,
+            ao_map_path=ao,
+            alpha_map_path=smoothness,
+            output_dir=context.output_dir,
+            suffix="_MaskMap",
+            invert_alpha=invert,
+        )
+        context.log("Created Mask Map from components")
+        return mask_map
 
     @staticmethod
     def _get_opacity_from_albedo_transparency(
@@ -952,13 +1095,86 @@ class TextureMapFactory:
         """Register a custom map conversion (extensibility)."""
         cls._conversion_registry.register(conversion)
 
-    @staticmethod
+    @classmethod
     def prepare_maps(
+        cls,
+        source: Union[str, List[str]],
+        workflow_config: dict,
+        output_dir: str = None,
+        callback: Callable = print,
+    ) -> Union[List[str], Dict[str, List[str]]]:
+        """
+        Main factory method. Automatically handles batch processing.
+
+        Parameters:
+            source: A directory path (str), a single file path (str), or a list of file paths.
+            workflow_config: Configuration dictionary.
+            output_dir: Optional output directory.
+            callback: Logging callback.
+
+        Returns:
+            List[str] if a single asset was processed.
+            Dict[str, List[str]] if multiple assets were processed (keyed by asset name).
+        """
+        # Resolve input files
+        files = []
+        if isinstance(source, str):
+            if os.path.isdir(source):
+                files = FileUtils.get_dir_contents(
+                    source,
+                    "filepath",
+                    inc_files=["*.png", "*.jpg", "*.tga", "*.tif", "*.tiff", "*.exr"],
+                )
+            elif os.path.isfile(source):
+                files = [source]
+        else:
+            files = source
+
+        if not files:
+            callback("No input files found.")
+            return []
+
+        # Group by texture set
+        texture_sets = ImgUtils.group_textures_by_set(files)
+
+        results = {}
+        total_sets = len(texture_sets)
+
+        if total_sets > 1:
+            callback(f"Found {total_sets} texture sets. Processing batch...")
+
+        for i, (base_name, textures) in enumerate(texture_sets.items(), 1):
+            if total_sets > 1:
+                callback(f"Processing set {i}/{total_sets}: {base_name}")
+
+            try:
+                generated = cls._process_map_set(
+                    textures,
+                    workflow_config,
+                    output_dir=output_dir,
+                    callback=callback,
+                )
+                results[base_name] = generated
+            except Exception as e:
+                callback(f"Error processing set {base_name}: {e}", "error")
+                import traceback
+
+                traceback.print_exc()
+
+        # Smart return: if single set, return list directly
+        if len(results) == 1:
+            return next(iter(results.values()))
+
+        return results
+
+    @staticmethod
+    def _process_map_set(
         textures: List[str],
         workflow_config: dict,
+        output_dir: str = None,
         callback: Callable = print,
     ) -> List[str]:
-        """Main factory method - now much simpler."""
+        """Internal method to process a single set of textures (one asset)."""
         # Build inventory
         map_inventory = TextureMapFactory._build_map_inventory(textures)
 
@@ -976,7 +1192,7 @@ class TextureMapFactory:
         context = ProcessingContext(
             inventory=map_inventory,
             config=workflow_config,
-            output_dir=os.path.dirname(first_map),
+            output_dir=output_dir or os.path.dirname(first_map),
             base_name=ImgUtils.get_base_texture_name(first_map),
             ext=workflow_config.get("output_extension", "png"),
             callback=callback,

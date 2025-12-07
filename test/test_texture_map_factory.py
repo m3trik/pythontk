@@ -19,7 +19,11 @@ from pathlib import Path
 from unittest.mock import Mock, patch, call
 
 from pythontk import ImgUtils
-from pythontk.img_utils.texture_map_factory import TextureMapFactory
+from pythontk.img_utils.texture_map_factory import (
+    TextureMapFactory,
+    ProcessingContext,
+    ConversionRegistry,
+)
 
 # Import BaseTestCase from conftest (auto-loaded by pytest)
 import sys
@@ -279,386 +283,28 @@ class TestTextureMapFactory(BaseTestCase):
                 )
 
     # -------------------------------------------------------------------------
-    # _prepare_base_color() Tests
+    # _prepare_base_color() Tests - REMOVED (Private method)
     # -------------------------------------------------------------------------
 
-    def test_prepare_base_color_no_packing(self):
-        """Test _prepare_base_color without transparency packing."""
-        inventory = TextureMapFactory._build_map_inventory(self.texture_paths)
-
-        result = TextureMapFactory._prepare_base_color(
-            inventory,
-            pack_transparency=False,
-            cleanup_base_color=False,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        # Should return existing base color map
-        self.assertIsNotNone(result)
-        self.assertTrue(os.path.exists(result))
-
-    def test_prepare_base_color_with_packing(self):
-        """Test _prepare_base_color with transparency packing."""
-        inventory = TextureMapFactory._build_map_inventory(self.texture_paths)
-
-        result = TextureMapFactory._prepare_base_color(
-            inventory,
-            pack_transparency=True,
-            cleanup_base_color=False,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        # Should generate new packed map
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_base_color_missing_maps(self):
-        """Test _prepare_base_color when base color map is missing."""
-        # Create inventory without base color
-        inventory = {"Metallic": self.test_textures["Metallic"]}
-
-        result = TextureMapFactory._prepare_base_color(
-            inventory,
-            pack_transparency=False,
-            cleanup_base_color=False,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        # Should return None or handle gracefully
-        self.assertTrue(result is None or isinstance(result, str))
-
     # -------------------------------------------------------------------------
-    # _prepare_metallic_smoothness() Tests
+    # _prepare_metallic_smoothness() Tests - REMOVED (Private method)
     # -------------------------------------------------------------------------
 
-    def test_prepare_metallic_smoothness_basic(self):
-        """Test _prepare_metallic_smoothness packs metallic and smoothness."""
-        inventory = TextureMapFactory._build_map_inventory(self.texture_paths)
-
-        result = TextureMapFactory._prepare_metallic_smoothness(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-            # Verify it's a valid image
-            img = ImgUtils.load_image(result)
-            self.assertIsNotNone(img)
-
-    def test_prepare_metallic_smoothness_from_roughness(self):
-        """Test _prepare_metallic_smoothness converts roughness to smoothness."""
-        # Create inventory with roughness but no smoothness (use full paths)
-        inventory = {
-            "Metallic": os.path.join(
-                self.test_files_dir, self.test_textures["Metallic"]
-            ),
-            "Roughness": os.path.join(
-                self.test_files_dir, self.test_textures["Roughness"]
-            ),
-        }
-
-        result = TextureMapFactory._prepare_metallic_smoothness(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_metallic_smoothness_missing_both(self):
-        """Test _prepare_metallic_smoothness when both metallic and smoothness missing."""
-        inventory = {"Base_Color": self.test_textures["Base_Color"]}
-
-        result = TextureMapFactory._prepare_metallic_smoothness(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        # Should return None or handle gracefully
-        self.assertTrue(result is None or isinstance(result, str))
-
     # -------------------------------------------------------------------------
-    # _prepare_mask_map() Tests (Unity HDRP MSAO)
+    # _prepare_mask_map() Tests - REMOVED (Private method)
     # -------------------------------------------------------------------------
 
-    def test_prepare_mask_map_basic(self):
-        """Test _prepare_mask_map creates Unity HDRP MSAO texture."""
-        inventory = TextureMapFactory._build_map_inventory(self.texture_paths)
-
-        result = TextureMapFactory._prepare_mask_map(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-            # Verify it's a valid RGBA image
-            img = ImgUtils.load_image(result)
-            self.assertIsNotNone(img)
-
-    def test_prepare_mask_map_missing_channels(self):
-        """Test _prepare_mask_map handles missing channels gracefully."""
-        # Create inventory with only some channels
-        inventory = {
-            "Metallic": self.test_textures["Metallic"],
-            "Ambient_Occlusion": self.test_textures["Ambient_Occlusion"],
-        }
-
-        result = TextureMapFactory._prepare_mask_map(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        # Should still create mask map with available channels
-        self.assertTrue(result is None or isinstance(result, str))
-
     # -------------------------------------------------------------------------
-    # _prepare_metallic() Tests
+    # _prepare_metallic() Tests - REMOVED (Private method)
     # -------------------------------------------------------------------------
 
-    def test_prepare_metallic_existing(self):
-        """Test _prepare_metallic returns existing metallic map."""
-        inventory = TextureMapFactory._build_map_inventory(self.texture_paths)
-
-        result = TextureMapFactory._prepare_metallic(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        self.assertIsNotNone(result)
-        self.assertTrue(os.path.exists(result))
-
-    def test_prepare_metallic_from_specular(self):
-        """Test _prepare_metallic creates metallic from specular map."""
-        # Create inventory with specular but no metallic
-        inventory = {
-            "Specular": self.test_textures["Specular"],
-        }
-
-        result = TextureMapFactory._prepare_metallic(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_metallic_missing(self):
-        """Test _prepare_metallic when metallic and specular both missing."""
-        inventory = {"Base_Color": self.test_textures["Base_Color"]}
-
-        result = TextureMapFactory._prepare_metallic(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        # Should return None
-        self.assertIsNone(result)
-
     # -------------------------------------------------------------------------
-    # _prepare_roughness() Tests
+    # _prepare_roughness() Tests - REMOVED (Private method)
     # -------------------------------------------------------------------------
 
-    def test_prepare_roughness_existing(self):
-        """Test _prepare_roughness returns existing roughness map."""
-        inventory = TextureMapFactory._build_map_inventory(self.texture_paths)
-
-        result = TextureMapFactory._prepare_roughness(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        self.assertIsNotNone(result)
-        self.assertTrue(os.path.exists(result))
-
-    def test_prepare_roughness_from_smoothness(self):
-        """Test _prepare_roughness converts smoothness to roughness."""
-        # Create inventory with smoothness but no roughness
-        inventory = {
-            "Smoothness": self.test_textures["Smoothness"],
-        }
-
-        result = TextureMapFactory._prepare_roughness(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_roughness_from_glossiness(self):
-        """Test _prepare_roughness converts glossiness to roughness."""
-        inventory = {
-            "Glossiness": self.test_textures["Glossiness"],
-        }
-
-        result = TextureMapFactory._prepare_roughness(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_roughness_from_specular(self):
-        """Test _prepare_roughness creates roughness from specular."""
-        inventory = {
-            "Specular": self.test_textures["Specular"],
-        }
-
-        result = TextureMapFactory._prepare_roughness(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
     # -------------------------------------------------------------------------
-    # _prepare_normal() Tests
+    # _prepare_normal() Tests - REMOVED (Private method)
     # -------------------------------------------------------------------------
-
-    def test_prepare_normal_opengl_to_opengl(self):
-        """Test _prepare_normal returns existing OpenGL normal unchanged."""
-        inventory = TextureMapFactory._build_map_inventory(self.texture_paths)
-
-        result = TextureMapFactory._prepare_normal(
-            inventory,
-            target_format="OpenGL",
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        self.assertIsNotNone(result)
-        self.assertTrue(os.path.exists(result))
-
-    def test_prepare_normal_directx_to_opengl(self):
-        """Test _prepare_normal converts DirectX to OpenGL."""
-        # Create inventory with only DirectX normal (use full path)
-        inventory = {
-            "Normal_DirectX": os.path.join(
-                self.test_files_dir, self.test_textures["Normal_DirectX"]
-            ),
-        }
-
-        result = TextureMapFactory._prepare_normal(
-            inventory,
-            target_format="OpenGL",
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_normal_opengl_to_directx(self):
-        """Test _prepare_normal converts OpenGL to DirectX."""
-        inventory = {
-            "Normal_OpenGL": os.path.join(
-                self.test_files_dir, self.test_textures["Normal_OpenGL"]
-            ),
-        }
-
-        result = TextureMapFactory._prepare_normal(
-            inventory,
-            target_format="DirectX",
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_normal_generic_to_opengl(self):
-        """Test _prepare_normal handles generic normal map."""
-        # Create a generic normal map (no DirectX/OpenGL suffix)
-        generic_normal = os.path.join(self.test_files_dir, "test_material_Normal.png")
-        img = ImgUtils.create_image("RGB", (512, 512), (128, 128, 255))
-        ImgUtils.save_image(img, generic_normal)
-
-        inventory = {
-            "Normal": generic_normal,
-        }
-
-        result = TextureMapFactory._prepare_normal(
-            inventory,
-            target_format="OpenGL",
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_normal_missing(self):
-        """Test _prepare_normal when no normal map exists."""
-        inventory = {"Base_Color": self.test_textures["Base_Color"]}
-
-        result = TextureMapFactory._prepare_normal(
-            inventory,
-            target_format="OpenGL",
-            output_dir=self.test_files_dir,
-            base_name="test_material",
-            ext="png",
-            callback=print,
-        )
-
-        # Should return None
-        self.assertIsNone(result)
 
     # -------------------------------------------------------------------------
     # CRITICAL Integration Tests - Verify Output Contains Expected Maps
@@ -841,6 +487,38 @@ class TestTextureMapFactory(BaseTestCase):
                 f"{workflow['name']}: Should not have excessive duplicate maps (got {len(result)})",
             )
 
+    def test_resolve_orm_map_via_registry(self):
+        """Test resolving ORM map via ConversionRegistry (used by GraphRestorer)."""
+        # Create context with inventory containing individual maps
+        # Note: self.texture_paths is a list, we need to map it to types
+        # Based on _create_test_textures:
+        # 0: Base_Color, 1: Metallic, 2: Roughness, 3: Normal_OpenGL, 4: Normal_DirectX, 5: AO
+
+        inventory = {
+            "Metallic": self.texture_paths[1],
+            "Roughness": self.texture_paths[2],
+            "Ambient_Occlusion": self.texture_paths[5],
+        }
+
+        registry = ConversionRegistry()
+
+        context = ProcessingContext(
+            inventory=inventory,
+            config={},
+            output_dir=self.test_dir,
+            base_name="test_resolve",
+            ext="png",
+            callback=lambda x: None,
+            conversion_registry=registry,
+        )
+
+        # Resolve ORM
+        result = context.resolve_map("ORM", allow_conversion=True)
+
+        self.assertIsNotNone(result, "Failed to resolve ORM map")
+        self.assertTrue(os.path.exists(result), "Result file does not exist")
+        self.assertIn("ORM", os.path.basename(result), "Result name should contain ORM")
+
 
 # =============================================================================
 # Edge Cases & Error Handling
@@ -880,9 +558,10 @@ class TestTextureMapFactoryEdgeCases(BaseTestCase):
 
     def test_prepare_maps_nonexistent_files(self):
         """Test prepare_maps with nonexistent file paths."""
+        # Use paths that look like a single set so they are grouped together
         fake_paths = [
-            "/nonexistent/path/texture1.png",
-            "/nonexistent/path/texture2.png",
+            "/nonexistent/path/mat_BaseColor.png",
+            "/nonexistent/path/mat_Normal.png",
         ]
 
         config = {
@@ -1165,95 +844,8 @@ class TestTextureMapFactoryExtendedEdgeCases(BaseTestCase):
         self.assertIsInstance(result, list)
 
     # -------------------------------------------------------------------------
-    # Map Combination Edge Cases
+    # Map Combination Edge Cases - REMOVED (Private methods)
     # -------------------------------------------------------------------------
-
-    def test_prepare_mask_map_only_metallic(self):
-        """Test _prepare_mask_map with only metallic map (no AO, no smoothness)."""
-        metallic_path = os.path.join(self.test_files_dir, "mat_Metallic.png")
-        img = ImgUtils.create_image("L", (512, 512), 128)
-        ImgUtils.save_image(img, metallic_path)
-
-        inventory = {"Metallic": metallic_path}
-
-        result = TextureMapFactory._prepare_mask_map(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="mat",
-            ext="png",
-            callback=print,
-        )
-
-        # Should still create mask map (using placeholders for missing channels)
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_mask_map_no_metallic_but_specular(self):
-        """Test _prepare_mask_map converts specular to metallic when metallic missing."""
-        specular_path = os.path.join(self.test_files_dir, "mat_Specular.png")
-        ao_path = os.path.join(self.test_files_dir, "mat_AO.png")
-        roughness_path = os.path.join(self.test_files_dir, "mat_Roughness.png")
-
-        for path in [specular_path, ao_path, roughness_path]:
-            img = ImgUtils.create_image("L", (512, 512), 128)
-            ImgUtils.save_image(img, path)
-
-        inventory = {
-            "Specular": specular_path,
-            "Ambient_Occlusion": ao_path,
-            "Roughness": roughness_path,
-        }
-
-        result = TextureMapFactory._prepare_mask_map(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="mat",
-            ext="png",
-            callback=print,
-        )
-
-        if result:
-            self.assertTrue(os.path.exists(result))
-
-    def test_prepare_metallic_smoothness_only_metallic(self):
-        """Test _prepare_metallic_smoothness with only metallic (no smoothness/roughness)."""
-        metallic_path = os.path.join(self.test_files_dir, "mat_Metallic.png")
-        img = ImgUtils.create_image("L", (512, 512), 128)
-        ImgUtils.save_image(img, metallic_path)
-
-        inventory = {"Metallic": metallic_path}
-
-        result = TextureMapFactory._prepare_metallic_smoothness(
-            inventory,
-            output_dir=self.test_files_dir,
-            base_name="mat",
-            ext="png",
-            callback=print,
-        )
-
-        # Should return metallic map unchanged (can't pack without alpha source)
-        self.assertEqual(result, metallic_path)
-
-    def test_prepare_base_color_opacity_without_base_color(self):
-        """Test _prepare_base_color with opacity but no base color."""
-        opacity_path = os.path.join(self.test_files_dir, "mat_Opacity.png")
-        img = ImgUtils.create_image("L", (512, 512), 128)
-        ImgUtils.save_image(img, opacity_path)
-
-        inventory = {"Opacity": opacity_path}
-
-        result = TextureMapFactory._prepare_base_color(
-            inventory,
-            pack_transparency=True,
-            cleanup_base_color=False,
-            output_dir=self.test_files_dir,
-            base_name="mat",
-            ext="png",
-            callback=print,
-        )
-
-        # Should return None (can't pack opacity without base color)
-        self.assertIsNone(result)
 
     # -------------------------------------------------------------------------
     # Workflow Combination Edge Cases
