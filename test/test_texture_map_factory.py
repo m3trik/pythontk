@@ -1625,3 +1625,61 @@ class TestModernGameEngineWorkflows(BaseTestCase):
         self.assertIn(
             "MaskMap", os.path.basename(result), "Result name should contain MaskMap"
         )
+
+    def test_pack_metallic_smoothness_pixel_values(self):
+        """Verify pixel values of packed Metallic_Smoothness map (Metallic=RGB, Smoothness=A)."""
+        # Create specific test textures for this verification
+        # Metallic (Black) -> Should be in RGB channels
+        # Roughness (White) -> Smoothness should be Black (Inverted Roughness) in Alpha channel
+
+        from PIL import Image
+
+        temp_dir = tempfile.mkdtemp(prefix="ms_pixel_test_")
+        try:
+            size = (64, 64)
+
+            # Create Metallic (Black)
+            metallic_path = os.path.join(temp_dir, "test_mat_Metallic.png")
+            Image.new("L", size, 0).save(metallic_path)
+
+            # Create Roughness (White) -> Smoothness should be Black
+            roughness_path = os.path.join(temp_dir, "test_mat_Roughness.png")
+            Image.new("L", size, 255).save(roughness_path)
+
+            config = {"metallic_smoothness": True}
+
+            # Run factory
+            result = TextureMapFactory.prepare_maps(
+                source=temp_dir, workflow_config=config
+            )
+
+            # Find Metallic_Smoothness map
+            ms_map = None
+            for path in result:
+                if "MetallicSmoothness" in os.path.basename(
+                    path
+                ) or "Metallic_Smoothness" in os.path.basename(path):
+                    ms_map = path
+                    break
+
+            self.assertIsNotNone(ms_map, "Metallic_Smoothness map was not created")
+
+            # Verify content
+            with Image.open(ms_map) as img:
+                self.assertEqual(img.mode, "RGBA")
+                r, g, b, a = img.split()
+
+                # Check Metallic (R channel) - Should be 0 (Black)
+                self.assertEqual(
+                    r.getpixel((0, 0)), 0, "Metallic channel should be black"
+                )
+
+                # Check Smoothness (Alpha channel) - Should be 0 (Black) because Roughness was 255 (White)
+                self.assertEqual(
+                    a.getpixel((0, 0)),
+                    0,
+                    "Smoothness channel should be black (inverted white roughness)",
+                )
+
+        finally:
+            shutil.rmtree(temp_dir)

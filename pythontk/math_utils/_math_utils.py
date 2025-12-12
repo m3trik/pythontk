@@ -1138,6 +1138,103 @@ class MathUtils(HelpMixin):
             result.append([hash(tuple(map(clamp, i))) for i in pset])
         return CoreUtils.format_return(result, nested)
 
+    @staticmethod
+    def calculate_rotation_distance(
+        r1_vals: Tuple[float, float, float],
+        r2_vals: Tuple[float, float, float],
+        bbox_points: Optional[List[Any]] = None,
+        om_module: Optional[Any] = None,
+    ) -> float:
+        """Calculate the effective rotation distance between two Euler rotations.
+
+        This method calculates the arc length traveled by the furthest point on an object's
+        bounding box as it rotates from r1 to r2. This provides a "surface speed" equivalent
+        for rotation, useful for motion-based retiming.
+
+        If OpenMaya (om_module) and bbox_points are provided, it uses accurate quaternion
+        math and axis-projection to find the maximum arc length.
+        If not, it falls back to a simple Euler distance approximation.
+
+        Parameters:
+            r1_vals: Start rotation in degrees (x, y, z).
+            r2_vals: End rotation in degrees (x, y, z).
+            bbox_points: List of object-space bounding box points (MVector or similar).
+                         Required for accurate surface speed calculation.
+            om_module: The maya.api.OpenMaya module (passed to avoid dependency).
+                       Required for accurate quaternion math.
+
+        Returns:
+            float: The calculated rotation distance (arc length).
+        """
+        dist_rot = 0.0
+        deg_to_rad = math.pi / 180.0
+
+        if om_module and bbox_points:
+            try:
+                # Convert Euler (degrees) to MQuaternion
+                e1 = om_module.MEulerRotation(
+                    math.radians(r1_vals[0]),
+                    math.radians(r1_vals[1]),
+                    math.radians(r1_vals[2]),
+                )
+                e2 = om_module.MEulerRotation(
+                    math.radians(r2_vals[0]),
+                    math.radians(r2_vals[1]),
+                    math.radians(r2_vals[2]),
+                )
+
+                q1 = e1.asQuaternion()
+                q2 = e2.asQuaternion()
+
+                # Calculate relative rotation: q_diff = q1.inverse() * q2
+                # This gives the rotation needed to go from q1 to q2, in the local frame of q1
+                q_diff = q1.inverse() * q2
+
+                # Extract axis and angle
+                # getAxisAngle returns (MVector axis, float angle)
+                axis, angle_rad = q_diff.getAxisAngle()
+
+                # Normalize angle to [-pi, pi] for shortest path
+                if angle_rad > math.pi:
+                    angle_rad -= 2 * math.pi
+                angle_rad = abs(angle_rad)
+
+                if angle_rad > 1e-6:
+                    # Calculate effective radius: max distance of any corner from the rotation axis
+                    # Distance from point P to line (origin, axis) is |P x axis| if axis is normalized
+                    max_radius = 0.0
+                    for point in bbox_points:
+                        # Cross product magnitude gives distance to axis
+                        # (assuming axis passes through origin, which is object center)
+                        dist = (point ^ axis).length()
+                        if dist > max_radius:
+                            max_radius = dist
+
+                    dist_rot = angle_rad * max_radius
+                return dist_rot
+
+            except Exception:
+                # Fall through to fallback if OM fails
+                pass
+
+        # Fallback to simple Euler distance
+        d_rx = abs(r2_vals[0] - r1_vals[0])
+        d_ry = abs(r2_vals[1] - r1_vals[1])
+        d_rz = abs(r2_vals[2] - r1_vals[2])
+        angle_dist_deg = math.sqrt(d_rx * d_rx + d_ry * d_ry + d_rz * d_rz)
+
+        # Fallback radius (average of dimensions or unit radius)
+        avg_radius = 1.0
+        if bbox_points:
+            # Rough estimate from first point if available (assuming it's a vector-like object)
+            try:
+                avg_radius = bbox_points[0].length()
+            except AttributeError:
+                pass
+
+        dist_rot = angle_dist_deg * deg_to_rad * avg_radius
+        return dist_rot
+
 
 # -----------------------------------------------------------------------------
 
