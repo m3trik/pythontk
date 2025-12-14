@@ -45,12 +45,15 @@ class MetadataInternal:
 
             # Hide the file on Windows
             if os.name == "nt":
-                import ctypes
+                try:
+                    import ctypes
 
-                FILE_ATTRIBUTE_HIDDEN = 0x02
-                ctypes.windll.kernel32.SetFileAttributesW(
-                    sidecar_path, FILE_ATTRIBUTE_HIDDEN
-                )
+                    FILE_ATTRIBUTE_HIDDEN = 0x02
+                    ctypes.windll.kernel32.SetFileAttributesW(
+                        sidecar_path, FILE_ATTRIBUTE_HIDDEN
+                    )
+                except ImportError:
+                    pass
         except OSError as e:
             print(f"Error saving sidecar metadata: {e}")
 

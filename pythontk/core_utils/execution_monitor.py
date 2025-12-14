@@ -16,52 +16,63 @@ class ExecutionMonitor:
         """Check if the Escape key is currently pressed (Windows & Linux)."""
         import sys
 
-        if sys.platform == "win32":
-            import ctypes
+        try:
+            if sys.platform == "win32":
+                import ctypes
 
-            # VK_ESCAPE is 0x1B
-            # GetAsyncKeyState returns a 16-bit integer.
-            # The most significant bit indicates whether the key is currently up or down.
-            return ctypes.windll.user32.GetAsyncKeyState(0x1B) & 0x8000
+                # VK_ESCAPE is 0x1B
+                # GetAsyncKeyState returns a 16-bit integer.
+                # The most significant bit indicates whether the key is currently up or down.
+                return ctypes.windll.user32.GetAsyncKeyState(0x1B) & 0x8000
 
-        elif sys.platform.startswith("linux"):
-            import ctypes
+            elif sys.platform.startswith("linux"):
+                import ctypes
 
-            try:
-                if ExecutionMonitor._x11_lib is None:
-                    ExecutionMonitor._x11_lib = ctypes.cdll.LoadLibrary("libX11.so.6")
-                    ExecutionMonitor._x11_lib.XOpenDisplay.restype = ctypes.c_void_p
-                    ExecutionMonitor._x11_lib.XKeysymToKeycode.restype = ctypes.c_ubyte
-                    ExecutionMonitor._x11_lib.XQueryKeymap.argtypes = [
-                        ctypes.c_void_p,
-                        ctypes.c_char * 32,
-                    ]
+                try:
+                    if ExecutionMonitor._x11_lib is None:
+                        ExecutionMonitor._x11_lib = ctypes.cdll.LoadLibrary(
+                            "libX11.so.6"
+                        )
+                        ExecutionMonitor._x11_lib.XOpenDisplay.restype = ctypes.c_void_p
+                        ExecutionMonitor._x11_lib.XKeysymToKeycode.restype = (
+                            ctypes.c_ubyte
+                        )
+                        ExecutionMonitor._x11_lib.XQueryKeymap.argtypes = [
+                            ctypes.c_void_p,
+                            ctypes.c_char * 32,
+                        ]
 
-                if ExecutionMonitor._x11_display is None:
-                    ExecutionMonitor._x11_display = ExecutionMonitor._x11_lib.XOpenDisplay(None)
+                    if ExecutionMonitor._x11_display is None:
+                        ExecutionMonitor._x11_display = (
+                            ExecutionMonitor._x11_lib.XOpenDisplay(None)
+                        )
 
-                if not ExecutionMonitor._x11_display:
+                    if not ExecutionMonitor._x11_display:
+                        return False
+
+                    # XK_Escape is 0xFF1B
+                    keycode = ExecutionMonitor._x11_lib.XKeysymToKeycode(
+                        ExecutionMonitor._x11_display, 0xFF1B
+                    )
+
+                    keys = (ctypes.c_char * 32)()
+                    ExecutionMonitor._x11_lib.XQueryKeymap(
+                        ExecutionMonitor._x11_display, keys
+                    )
+
+                    byte_index = keycode // 8
+                    bit_index = keycode % 8
+
+                    # In Python 3, accessing c_char array returns bytes of length 1
+                    key_byte = keys[byte_index]
+                    # Convert to int
+                    key_val = key_byte[0] if isinstance(key_byte, bytes) else key_byte
+
+                    return (key_val & (1 << bit_index)) != 0
+                except Exception:
                     return False
-
-                # XK_Escape is 0xFF1B
-                keycode = ExecutionMonitor._x11_lib.XKeysymToKeycode(
-                    ExecutionMonitor._x11_display, 0xFF1B
-                )
-
-                keys = (ctypes.c_char * 32)()
-                ExecutionMonitor._x11_lib.XQueryKeymap(ExecutionMonitor._x11_display, keys)
-
-                byte_index = keycode // 8
-                bit_index = keycode % 8
-
-                # In Python 3, accessing c_char array returns bytes of length 1
-                key_byte = keys[byte_index]
-                # Convert to int
-                key_val = key_byte[0] if isinstance(key_byte, bytes) else key_byte
-
-                return (key_val & (1 << bit_index)) != 0
-            except Exception:
-                return False
+        except ImportError:
+            return False
 
         return False
 
@@ -152,21 +163,24 @@ class ExecutionMonitor:
         import sys
 
         if sys.platform == "win32":
-            import ctypes
+            try:
+                import ctypes
 
-            # MB_YESNOCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL | MB_TOPMOST
-            # 0x03 | 0x30 | 0x1000 | 0x40000
-            flags = 0x03 | 0x30 | 0x1000 | 0x40000
+                # MB_YESNOCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL | MB_TOPMOST
+                # 0x03 | 0x30 | 0x1000 | 0x40000
+                flags = 0x03 | 0x30 | 0x1000 | 0x40000
 
-            response = ctypes.windll.user32.MessageBoxW(0, message, title, flags)
+                response = ctypes.windll.user32.MessageBoxW(0, message, title, flags)
 
-            # IDYES=6, IDNO=7, IDCANCEL=2
-            if response == 6:
+                # IDYES=6, IDNO=7, IDCANCEL=2
+                if response == 6:
+                    return True
+                if response == 7:
+                    return False
+                if response == 2:
+                    return "STOP_MONITORING"
+            except ImportError:
                 return True
-            if response == 7:
-                return False
-            if response == 2:
-                return "STOP_MONITORING"
 
         elif sys.platform.startswith("linux"):
             import subprocess
