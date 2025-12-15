@@ -28,6 +28,7 @@ class ModuleReloader:
         after_reload: Optional[Callable[[ModuleType], None]] = None,
         import_missing: bool = True,
         verbose: Union[bool, int] = False,
+        max_passes: int = 2,
     ) -> None:
         self.include_submodules = include_submodules
         self.dependencies_first = list(dependencies_first or [])
@@ -38,6 +39,7 @@ class ModuleReloader:
         self.import_missing = import_missing
         # Convert bool to int: False->0, True->1
         self.verbose = int(verbose) if isinstance(verbose, bool) else verbose
+        self.max_passes = max_passes
 
     # ------------------------------------------------------------------
     def reload(
@@ -52,6 +54,7 @@ class ModuleReloader:
         after_reload: Optional[Callable[[ModuleType], None]] = None,
         import_missing: Optional[bool] = None,
         verbose: Optional[Union[bool, int]] = None,
+        max_passes: Optional[int] = None,
     ) -> List[ModuleType]:
         """Reload a package and return the modules processed.
 
@@ -60,6 +63,9 @@ class ModuleReloader:
                 - 0 or False: Silent (no output)
                 - 1 or True: Basic (module names only)
                 - 2: Detailed (include skip reasons and errors)
+            max_passes: Number of reload passes to perform (default: 2).
+                       Multiple passes help resolve circular and sibling dependencies
+                       where module A imports B, but A is reloaded before B.
         """
 
         include_submodules = (
@@ -84,6 +90,7 @@ class ModuleReloader:
         verbose_level = (
             int(verbose_level) if isinstance(verbose_level, bool) else verbose_level
         )
+        max_passes = self.max_passes if max_passes is None else max_passes
 
         target_package = self._resolve_module(package, import_missing=import_missing)
 
@@ -114,46 +121,54 @@ class ModuleReloader:
         ordered_modules.sort(key=lambda mod: mod.__name__.count("."), reverse=True)
 
         reloaded: List[ModuleType] = []
-        for module in ordered_modules:
-            canonical_name = self._canonical_module_name(module)
-            target_module = module
 
-            if canonical_name not in sys.modules:
-                if import_missing:
-                    try:
-                        target_module = importlib.import_module(canonical_name)
-                    except ImportError as exc:
+        for pass_num in range(1, max_passes + 1):
+            if verbose_level >= 1 and max_passes > 1:
+                print(f"Reload pass {pass_num}/{max_passes}...")
+
+            for module in ordered_modules:
+                canonical_name = self._canonical_module_name(module)
+                target_module = module
+
+                if canonical_name not in sys.modules:
+                    if import_missing:
+                        try:
+                            target_module = importlib.import_module(canonical_name)
+                        except ImportError as exc:
+                            if verbose_level >= 2:
+                                print(
+                                    f"Skipping reload for {canonical_name}: import failed ({exc})."
+                                )
+                            continue
+                    else:
                         if verbose_level >= 2:
                             print(
-                                f"Skipping reload for {canonical_name}: import failed ({exc})."
+                                f"Skipping reload for {canonical_name}: not present in sys.modules."
                             )
                         continue
                 else:
+                    target_module = sys.modules[canonical_name]
+
+                # Only run hooks on the first pass to avoid double-execution side effects
+                if pass_num == 1 and before_reload:
+                    before_reload(target_module)
+
+                if verbose_level >= 1:
+                    print(f"Reloading {canonical_name}")
+
+                try:
+                    refreshed = importlib.reload(target_module)
+                except ImportError as exc:
                     if verbose_level >= 2:
-                        print(
-                            f"Skipping reload for {canonical_name}: not present in sys.modules."
-                        )
+                        print(f"Skipping reload for {canonical_name}: {exc}")
                     continue
-            else:
-                target_module = sys.modules[canonical_name]
 
-            if before_reload:
-                before_reload(target_module)
+                if pass_num == 1:
+                    reloaded.append(refreshed)
 
-            if verbose_level >= 1:
-                print(f"Reloading {canonical_name}")
-
-            try:
-                refreshed = importlib.reload(target_module)
-            except ImportError as exc:
-                if verbose_level >= 2:
-                    print(f"Skipping reload for {canonical_name}: {exc}")
-                continue
-
-            reloaded.append(refreshed)
-
-            if after_reload:
-                after_reload(refreshed)
+                # Only run hooks on the last pass
+                if pass_num == max_passes and after_reload:
+                    after_reload(refreshed)
 
         return reloaded
 

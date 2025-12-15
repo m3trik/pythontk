@@ -211,6 +211,55 @@ class FileUtils(HelpMixin):
         )
 
     @staticmethod
+    def open_explorer(path: str, create_dir: bool = False, logger=None) -> bool:
+        """Open the file explorer at the given path.
+
+        Parameters:
+            path (str): The path to open.
+            create_dir (bool): If True, create the directory if it doesn't exist.
+            logger (logging.Logger, optional): Logger to output warnings/errors.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        import subprocess
+
+        if not path:
+            if logger:
+                logger.warning("open_explorer: No path provided.")
+            return False
+
+        path = os.path.expandvars(path)
+
+        if create_dir and not os.path.exists(path):
+            try:
+                os.makedirs(path)
+            except OSError as e:
+                if logger:
+                    logger.error(
+                        f"open_explorer: Failed to create directory {path}: {e}"
+                    )
+                return False
+
+        if not os.path.exists(path):
+            if logger:
+                logger.warning(f"open_explorer: Path does not exist: {path}")
+            return False
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+            return True
+        except Exception as e:
+            if logger:
+                logger.error(f"open_explorer: Failed to open path {path}: {e}")
+            return False
+
+    @staticmethod
     def get_file(filepath, mode="a+"):
         """Return a file object with the given mode.
 

@@ -67,6 +67,14 @@ class ImgUtils(HelpMixin):
             "_R",
             "_Roughness",
         ),
+        # glTF/Unreal-style packed Occlusion (R) + Roughness (G) + Metallic (B)
+        "ORM": (
+            "ORM",
+            "OcclusionRoughnessMetallic",
+            "Occlusion_Roughness_Metallic",
+            "ORMMap",
+            "_ORM",
+        ),
         "Metallic": (
             "Metallic",
             "MetallicMap",
@@ -315,6 +323,8 @@ class ImgUtils(HelpMixin):
             "AOMap",
             "Occlusion",
             "OcclusionMap",
+            "MixedAO",
+            "Mixed_AO",
             "Occ",
             "Occl",
             "Cavity",
@@ -336,6 +346,12 @@ class ImgUtils(HelpMixin):
             0,
             255,
         ),  # R=metallic(black), G=AO(white), B=empty(black), A=smoothness(white)
+        "ORM": (
+            255,
+            255,
+            0,
+            255,
+        ),  # R=AO(white), G=Roughness(white), B=Metallic(black)
         "Normal": (127, 127, 255, 255),
         "Normal_DirectX": (127, 127, 255, 255),
         "Normal_OpenGL": (127, 127, 255, 255),
@@ -365,6 +381,7 @@ class ImgUtils(HelpMixin):
         "Metallic": "L",  # Grayscale map defining metallic properties.
         "Metallic_Smoothness": "RGBA",  # Multi-channel map for metallic and smoothness.
         "Metallic_SmoothnessAO": "RGBA",  # Multi-channel map for metallic, smoothness, and ambient occlusion.
+        "ORM": "RGB",  # Multi-channel map for occlusion, roughness, and metallic.
         "Normal": "RGB",  # Full color normal map.
         "Normal_DirectX": "RGB",  # DirectX normal map with Y-axis inversion.
         "Normal_OpenGL": "RGB",  # OpenGL normal map with standard Y-axis.
@@ -2411,7 +2428,7 @@ class ImgUtils(HelpMixin):
         ao_map_path: str,
         alpha_map_path: str,
         output_dir: str = None,
-        suffix: str = "_MetallicSmoothnessAO",
+        suffix: str = "_MSAO",
         invert_alpha: bool = False,
     ) -> str:
         """Packs Metallic (R), AO (G), and Smoothness/Roughness (A) into a single MSAO texture.
@@ -2464,6 +2481,148 @@ class ImgUtils(HelpMixin):
             img.save(output_path)
 
         return output_path
+
+    @classmethod
+    def unpack_orm_texture(
+        cls,
+        orm_map_path: str,
+        output_dir: str = None,
+        ao_suffix: str = "_AO",
+        roughness_suffix: str = "_Roughness",
+        metallic_suffix: str = "_Metallic",
+        invert_roughness: bool = False,
+    ) -> Tuple[str, str, str]:
+        """Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.
+
+        Parameters:
+            orm_map_path (str): Path to the ORM texture map.
+            output_dir (str, optional): Directory path for the output. If None, uses input map directory.
+            ao_suffix (str, optional): Suffix for the AO output file name.
+            roughness_suffix (str, optional): Suffix for the roughness output file name.
+            metallic_suffix (str, optional): Suffix for the metallic output file name.
+            invert_roughness (bool, optional): If True, inverts the roughness to create smoothness.
+
+        Returns:
+            Tuple[str, str, str]: Paths to the extracted AO, roughness/smoothness, and metallic maps.
+        """
+        cls.assert_pathlike(orm_map_path, "orm_map_path")
+
+        if not os.path.exists(orm_map_path):
+            raise FileNotFoundError(f"Input file not found: {orm_map_path}")
+
+        # Load the combined texture
+        combined_image = cls.ensure_image(orm_map_path)
+        if combined_image.mode != "RGB" and combined_image.mode != "RGBA":
+            combined_image = combined_image.convert("RGB")
+
+        # Get base name for output files
+        base_name = cls.get_base_texture_name(orm_map_path)
+
+        # Determine output directory
+        if output_dir is None:
+            output_dir = os.path.dirname(orm_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        # Extract channels
+        # R = Occlusion
+        ao_channel = combined_image.getchannel("R").convert("L")
+        # G = Roughness
+        roughness_channel = combined_image.getchannel("G").convert("L")
+        # B = Metallic
+        metallic_channel = combined_image.getchannel("B").convert("L")
+
+        # Invert roughness if requested (to create smoothness)
+        if invert_roughness:
+            roughness_channel = ImageOps.invert(roughness_channel)
+            if roughness_suffix == "_Roughness":
+                roughness_suffix = "_Smoothness"
+
+        # Create output file paths
+        ao_output_path = os.path.join(output_dir, f"{base_name}{ao_suffix}.png")
+        roughness_output_path = os.path.join(
+            output_dir, f"{base_name}{roughness_suffix}.png"
+        )
+        metallic_output_path = os.path.join(
+            output_dir, f"{base_name}{metallic_suffix}.png"
+        )
+
+        # Save the extracted maps
+        ao_channel.save(ao_output_path, format="PNG")
+        roughness_channel.save(roughness_output_path, format="PNG")
+        metallic_channel.save(metallic_output_path, format="PNG")
+
+        return ao_output_path, roughness_output_path, metallic_output_path
+
+    @classmethod
+    def unpack_albedo_transparency(
+        cls,
+        albedo_map_path: str,
+        output_dir: str = None,
+        base_color_suffix: str = "_BaseColor",
+        opacity_suffix: str = "_Opacity",
+    ) -> Tuple[str, str]:
+        """Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.
+
+        Parameters:
+            albedo_map_path (str): Path to the Albedo texture map.
+            output_dir (str, optional): Directory path for the output. If None, uses input map directory.
+            base_color_suffix (str, optional): Suffix for the base color output file name.
+            opacity_suffix (str, optional): Suffix for the opacity output file name.
+
+        Returns:
+            Tuple[str, str]: Paths to the extracted base color and opacity maps.
+        """
+        cls.assert_pathlike(albedo_map_path, "albedo_map_path")
+
+        if not os.path.exists(albedo_map_path):
+            raise FileNotFoundError(f"Input file not found: {albedo_map_path}")
+
+        # Load the combined texture
+        combined_image = cls.ensure_image(albedo_map_path)
+
+        # Check for alpha channel
+        if "A" not in combined_image.getbands():
+            # If no alpha, just return the original as base color and None for opacity
+            # But to be consistent with unpacking, we might want to save a copy?
+            # For now, let's assume the user knows what they are doing if they call this.
+            # Or better, just return the original path and a white opacity map?
+            # Let's stick to extraction.
+            pass
+
+        if combined_image.mode != "RGBA":
+            combined_image = combined_image.convert("RGBA")
+
+        # Get base name for output files
+        base_name = cls.get_base_texture_name(albedo_map_path)
+
+        # Determine output directory
+        if output_dir is None:
+            output_dir = os.path.dirname(albedo_map_path)
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        # Extract channels
+        base_color_image = combined_image.convert("RGB")
+        opacity_channel = combined_image.getchannel("A").convert("L")
+
+        # Create output file paths
+        base_color_output_path = os.path.join(
+            output_dir, f"{base_name}{base_color_suffix}.png"
+        )
+        opacity_output_path = os.path.join(
+            output_dir, f"{base_name}{opacity_suffix}.png"
+        )
+
+        # Save the extracted maps
+        base_color_image.save(base_color_output_path, format="PNG")
+        opacity_channel.save(opacity_output_path, format="PNG")
+
+        return base_color_output_path, opacity_output_path
 
     @classmethod
     def unpack_msao_texture(

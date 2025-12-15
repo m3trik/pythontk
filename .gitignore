@@ -41,6 +41,9 @@
 *.bak
 *.rar
 
+# Generated UI python modules
+*_ui.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
