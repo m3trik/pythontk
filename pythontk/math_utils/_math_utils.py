@@ -16,6 +16,139 @@ class MathUtils(HelpMixin):
     """ """
 
     @staticmethod
+    def linear_sum_assignment(
+        cost_matrix: Sequence[Sequence[float]],
+        maximize: bool = False,
+    ) -> Tuple[List[int], List[int]]:
+        """Solve the linear sum assignment problem (Hungarian algorithm).
+
+        This is a lightweight, dependency-free alternative to
+        ``scipy.optimize.linear_sum_assignment``.
+
+        Parameters:
+            cost_matrix: Rectangular or square cost matrix (rows x cols). Each entry
+                is the cost of assigning row i to column j.
+            maximize: If True, finds the assignment with maximum total score instead
+                of minimum total cost.
+
+        Returns:
+            Tuple[List[int], List[int]]: (row_indices, col_indices) such that
+                pairing row_indices[k] -> col_indices[k] yields the optimal assignment.
+                The number of pairs is ``min(n_rows, n_cols)``.
+
+        Example:
+            cost = [[4, 1, 3],
+                    [2, 0, 5],
+                    [3, 2, 2]]
+            rows, cols = MathUtils.linear_sum_assignment(cost)
+        """
+
+        def _hungarian_square(cost_sq: List[List[float]]) -> List[int]:
+            """Return assignment list where assignment[i] = j for square matrix."""
+            n = len(cost_sq)
+            if n == 0:
+                return []
+
+            u = [0.0] * (n + 1)
+            v = [0.0] * (n + 1)
+            p = [0] * (n + 1)
+            way = [0] * (n + 1)
+
+            for i in range(1, n + 1):
+                p[0] = i
+                j0 = 0
+                minv = [float("inf")] * (n + 1)
+                used = [False] * (n + 1)
+
+                while True:
+                    used[j0] = True
+                    i0 = p[j0]
+                    delta = float("inf")
+                    j1 = 0
+                    for j in range(1, n + 1):
+                        if used[j]:
+                            continue
+                        cur = cost_sq[i0 - 1][j - 1] - u[i0] - v[j]
+                        if cur < minv[j]:
+                            minv[j] = cur
+                            way[j] = j0
+                        if minv[j] < delta:
+                            delta = minv[j]
+                            j1 = j
+
+                    for j in range(0, n + 1):
+                        if used[j]:
+                            u[p[j]] += delta
+                            v[j] -= delta
+                        else:
+                            minv[j] -= delta
+
+                    j0 = j1
+                    if p[j0] == 0:
+                        break
+
+                while True:
+                    j1 = way[j0]
+                    p[j0] = p[j1]
+                    j0 = j1
+                    if j0 == 0:
+                        break
+
+            assignment = [0] * n
+            for j in range(1, n + 1):
+                assignment[p[j] - 1] = j - 1
+            return assignment
+
+        # Validate matrix and extract dimensions
+        if not cost_matrix:
+            return ([], [])
+
+        n_rows = len(cost_matrix)
+        n_cols = len(cost_matrix[0]) if n_rows else 0
+        if n_cols == 0:
+            return ([], [])
+
+        for row in cost_matrix:
+            if len(row) != n_cols:
+                raise ValueError(
+                    "cost_matrix must be rectangular (all rows same length)"
+                )
+
+        # Convert to a mutable list-of-lists and optionally transform for maximize
+        costs: List[List[float]] = [list(map(float, row)) for row in cost_matrix]
+
+        flat = [c for row in costs for c in row]
+        if not flat:
+            return ([], [])
+
+        if maximize:
+            max_val = max(flat)
+            costs = [[max_val - c for c in row] for row in costs]
+            flat = [c for row in costs for c in row]
+
+        # Pad to square with a large dummy cost
+        max_cost = max(flat)
+        pad_cost = max_cost + abs(max_cost) + 1.0
+
+        n = max(n_rows, n_cols)
+        square = [[pad_cost] * n for _ in range(n)]
+        for i in range(n_rows):
+            for j in range(n_cols):
+                square[i][j] = costs[i][j]
+
+        assignment = _hungarian_square(square)
+
+        row_ind: List[int] = []
+        col_ind: List[int] = []
+        for i in range(n_rows):
+            j = assignment[i]
+            if j < n_cols:
+                row_ind.append(i)
+                col_ind.append(j)
+
+        return (row_ind, col_ind)
+
+    @staticmethod
     @CoreUtils.listify(threading=True)
     def move_decimal_point(num, places):
         """Move the decimal place in a given number.
