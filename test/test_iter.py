@@ -463,6 +463,125 @@ class IterTest(BaseTestCase):
         self.assertEqual(IterUtils.filter_list([42], [42], None), [42])
         self.assertEqual(IterUtils.filter_list([42], None, [42]), [])
 
+    def test_filter_list_delimiter_comma(self):
+        """Test filter_list with comma delimiter (default)."""
+        files = ["scene.ma", "scene.mb", "scene.fbx", "scene.obj"]
+        result = IterUtils.filter_list(files, inc="*.ma, *.mb")
+        self.assertEqual(result, ["scene.ma", "scene.mb"])
+
+    def test_filter_list_delimiter_semicolon(self):
+        """Test filter_list with semicolon delimiter."""
+        files = ["scene.ma", "scene.mb", "scene.fbx", "scene.obj"]
+        result = IterUtils.filter_list(files, inc="*.ma; *.mb", delimiter=";")
+        self.assertEqual(result, ["scene.ma", "scene.mb"])
+
+    def test_filter_list_delimiter_tuple(self):
+        """Test filter_list with tuple of delimiters."""
+        files = ["scene.ma", "scene.mb", "scene.fbx", "scene.obj", "scene.abc"]
+        # Mixed delimiters: comma and semicolon
+        result = IterUtils.filter_list(
+            files, inc="*.ma, *.mb; *.fbx", delimiter=(",", ";")
+        )
+        self.assertEqual(result, ["scene.ma", "scene.mb", "scene.fbx"])
+
+    def test_filter_list_delimiter_tuple_with_exclusion(self):
+        """Test filter_list with tuple delimiters for both inc and exc."""
+        files = ["test_a.ma", "test_b.ma", "backup_c.ma", "final_d.ma"]
+        result = IterUtils.filter_list(
+            files,
+            inc="test_*, backup_*; final_*",
+            exc="*_b*",
+            delimiter=(",", ";"),
+        )
+        self.assertEqual(result, ["test_a.ma", "backup_c.ma", "final_d.ma"])
+
+    def test_filter_list_delimiter_no_split_needed(self):
+        """Test filter_list when pattern has no delimiters."""
+        files = ["scene.ma", "scene.mb", "scene.fbx"]
+        result = IterUtils.filter_list(files, inc="*.ma", delimiter=(",", ";"))
+        self.assertEqual(result, ["scene.ma"])
+
+    def test_filter_list_delimiter_with_whitespace(self):
+        """Test filter_list strips whitespace around patterns."""
+        files = ["a.txt", "b.txt", "c.txt"]
+        result = IterUtils.filter_list(files, inc="  a.txt  ,  b.txt  ")
+        self.assertEqual(result, ["a.txt", "b.txt"])
+
+    def test_filter_list_match_all_and_logic(self):
+        """Test filter_list with match_all=True for AND logic."""
+        files = [
+            "C130_cockpit_module.ma",
+            "C130_wing_module.ma",
+            "A320_cockpit_module.ma",
+            "C130_engine.ma",
+            "random_file.ma",
+        ]
+        result = IterUtils.filter_list(
+            files,
+            inc="*_module.ma;C130*",
+            delimiter=(",", ";"),
+            match_all=True,
+        )
+        self.assertEqual(result, ["C130_cockpit_module.ma", "C130_wing_module.ma"])
+
+    def test_filter_list_match_all_false_or_logic(self):
+        """Test filter_list with match_all=False (default) for OR logic."""
+        files = [
+            "C130_cockpit_module.ma",
+            "C130_wing_module.ma",
+            "A320_cockpit_module.ma",
+            "C130_engine.ma",
+        ]
+        result = IterUtils.filter_list(
+            files,
+            inc="*_module.ma;C130*",
+            delimiter=(",", ";"),
+            match_all=False,
+        )
+        # OR logic: matches either pattern
+        self.assertEqual(
+            result,
+            [
+                "C130_cockpit_module.ma",
+                "C130_wing_module.ma",
+                "A320_cockpit_module.ma",
+                "C130_engine.ma",
+            ],
+        )
+
+    def test_filter_list_match_all_single_pattern(self):
+        """Test filter_list with match_all=True and single pattern."""
+        files = ["test.ma", "test.mb", "other.ma"]
+        result = IterUtils.filter_list(files, inc="*.ma", match_all=True)
+        self.assertEqual(result, ["test.ma", "other.ma"])
+
+    def test_filter_list_match_all_no_match(self):
+        """Test filter_list with match_all=True when no item matches all patterns."""
+        files = ["file_a.ma", "file_b.mb", "other.fbx"]
+        result = IterUtils.filter_list(
+            files,
+            inc="*.ma;*_c*",  # No file ends with .ma AND contains _c
+            delimiter=(",", ";"),
+            match_all=True,
+        )
+        self.assertEqual(result, [])
+
+    def test_filter_list_match_all_with_exclusion(self):
+        """Test filter_list with match_all=True combined with exclusion."""
+        files = [
+            "C130_cockpit_module.ma",
+            "C130_wing_module.ma",
+            "C130_backup_module.ma",
+        ]
+        result = IterUtils.filter_list(
+            files,
+            inc="*_module.ma;C130*",
+            exc="*backup*",
+            delimiter=(",", ";"),
+            match_all=True,
+        )
+        self.assertEqual(result, ["C130_cockpit_module.ma", "C130_wing_module.ma"])
+
     # -------------------------------------------------------------------------
     # filter_dict Tests
     # -------------------------------------------------------------------------

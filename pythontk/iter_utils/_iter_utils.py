@@ -322,6 +322,7 @@ class IterUtils(HelpMixin):
         basename_only: bool = False,
         ignore_case: bool = False,
         delimiter: str = ",",
+        match_all: bool = False,
     ) -> List:
         """Filters the given list based on inclusion/exclusion criteria using shell-style wildcards. This method can also apply
         the filter to nested structures like lists, tuples, or sets. If 'nested_as_unit' is True, then the entire structure is
@@ -351,16 +352,22 @@ class IterUtils(HelpMixin):
             basename_only (bool, optional): Use only the base name of the file paths when filtering.
             ignore_case (bool, optional): If True, the matching will be case-insensitive.
                 This applies to string patterns in both `inc` and `exc` lists.
-            delimiter (str, optional): Character to split pattern strings on for multi-pattern support.
-                If `inc` or `exc` is a string containing this delimiter, it will be automatically split
+            delimiter (str or tuple, optional): Character(s) to split pattern strings on for multi-pattern support.
+                Can be a single string or a tuple of strings for multiple delimiters.
+                If `inc` or `exc` is a string containing any delimiter, it will be automatically split
                 into multiple patterns. Whitespace around patterns is automatically stripped.
                 Defaults to ',' (comma). Examples:
                     - "*.ma, *.mb" becomes ["*.ma", "*.mb"]
                     - "test_*; backup_*" with delimiter=';' becomes ["test_*", "backup_*"]
+                    - "*.ma, *.mb; *.fbx" with delimiter=(',', ';') becomes ["*.ma", "*.mb", "*.fbx"]
+            match_all (bool, optional): If True, an item must match ALL inclusion patterns to be included
+                (AND logic). If False (default), an item is included if it matches ANY pattern (OR logic).
+                This is useful for filtering with multiple criteria like "*_module.ma" AND "C130*".
 
         Returns:
             list: The filtered list.
         """
+        import re
         from fnmatch import fnmatchcase
         from os.path import basename
 
@@ -368,11 +375,25 @@ class IterUtils(HelpMixin):
         if not lst:
             return []
 
-        # Handle multi-pattern strings with delimiter
-        if isinstance(inc, str) and delimiter in inc:
-            inc = [p.strip() for p in inc.split(delimiter) if p.strip()]
-        if isinstance(exc, str) and delimiter in exc:
-            exc = [p.strip() for p in exc.split(delimiter) if p.strip()]
+        # Handle multi-pattern strings with delimiter(s)
+        def split_by_delimiters(text, delims):
+            """Split text by one or more delimiters."""
+            if isinstance(delims, tuple):
+                # Build regex pattern to split on any delimiter
+                pattern = "|".join(re.escape(d) for d in delims)
+                return [p.strip() for p in re.split(pattern, text) if p.strip()]
+            elif delims in text:
+                return [p.strip() for p in text.split(delims) if p.strip()]
+            return None  # No split needed
+
+        if isinstance(inc, str):
+            split_inc = split_by_delimiters(inc, delimiter)
+            if split_inc is not None:
+                inc = split_inc
+        if isinstance(exc, str):
+            split_exc = split_by_delimiters(exc, delimiter)
+            if split_exc is not None:
+                exc = split_exc
 
         inc = list(cls.make_iterable(inc))
         exc = list(cls.make_iterable(exc))
@@ -397,24 +418,46 @@ class IterUtils(HelpMixin):
         has_inc = bool(inc)
         has_exc = bool(exc)
 
-        def match_patterns(item, str_patterns, other_patterns):
-            """Check if item matches any pattern. Returns True on first match."""
+        def match_single_pattern(item_str, pattern):
+            """Check if item matches a single pattern."""
+            if isinstance(pattern, str):
+                return fnmatchcase(
+                    item_str, pattern.lower() if ignore_case else pattern
+                )
+            else:
+                # For non-string patterns, compare with original item
+                return False  # Will be handled separately
+
+        def match_patterns(item, str_patterns, other_patterns, require_all=False):
+            """Check if item matches patterns. Returns True based on require_all mode."""
             # Prepare item string once
             item_str = basename(str(item)) if basename_only else str(item)
             if ignore_case:
                 item_str = item_str.lower()
 
-            # Check string patterns with fnmatch
-            for pattern in str_patterns:
-                if fnmatchcase(item_str, pattern):
-                    return True
-
-            # Check non-string patterns with equality
-            for pattern in other_patterns:
-                if item == pattern:
-                    return True
-
-            return False
+            if require_all:
+                # AND logic: must match ALL patterns
+                # Check all string patterns
+                for pattern in str_patterns:
+                    if not fnmatchcase(item_str, pattern):
+                        return False
+                # Check all non-string patterns with equality
+                for pattern in other_patterns:
+                    if item != pattern:
+                        return False
+                # If we have patterns, we matched all; if no patterns, consider it a match
+                return bool(str_patterns or other_patterns)
+            else:
+                # OR logic: match ANY pattern (original behavior)
+                # Check string patterns with fnmatch
+                for pattern in str_patterns:
+                    if fnmatchcase(item_str, pattern):
+                        return True
+                # Check non-string patterns with equality
+                for pattern in other_patterns:
+                    if item == pattern:
+                        return True
+                return False
 
         def check_item(item):
             """Determine if an item should be included in the result."""
@@ -423,18 +466,26 @@ class IterUtils(HelpMixin):
             except Exception:
                 mapped_item = item
 
-            # Check exclusion first (fail fast)
-            if has_exc and match_patterns(mapped_item, exc_str, exc_other):
+            # Check exclusion first (fail fast) - exclusion always uses OR logic
+            if has_exc and match_patterns(
+                mapped_item, exc_str, exc_other, require_all=False
+            ):
                 return False
 
-            # Check inclusion
-            if not has_inc or match_patterns(mapped_item, inc_str, inc_other):
+            # Check inclusion with match_all parameter
+            if not has_inc or match_patterns(
+                mapped_item, inc_str, inc_other, require_all=match_all
+            ):
                 return True
 
             # Check unmapped if enabled
             if check_unmapped:
-                if (not has_inc or match_patterns(item, inc_str, inc_other)) and not (
-                    has_exc and match_patterns(item, exc_str, exc_other)
+                if (
+                    not has_inc
+                    or match_patterns(item, inc_str, inc_other, require_all=match_all)
+                ) and not (
+                    has_exc
+                    and match_patterns(item, exc_str, exc_other, require_all=False)
                 ):
                     return True
 
@@ -451,7 +502,7 @@ class IterUtils(HelpMixin):
                         if (
                             not match_exc
                             and has_exc
-                            and match_patterns(i, exc_str, exc_other)
+                            and match_patterns(i, exc_str, exc_other, require_all=False)
                         ):
                             match_exc = True
                         # Early exit if we've determined both
@@ -470,6 +521,7 @@ class IterUtils(HelpMixin):
                         basename_only,
                         ignore_case,
                         delimiter,
+                        match_all,
                     )
                     if filtered_sublist:
                         result.append(type(original_item)(filtered_sublist))

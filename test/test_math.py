@@ -26,6 +26,58 @@ class MathTest(BaseTestCase):
     """Math utilities test class with comprehensive edge case coverage."""
 
     # -------------------------------------------------------------------------
+    # Linear Sum Assignment (Hungarian) Tests
+    # -------------------------------------------------------------------------
+
+    def test_linear_sum_assignment_square_min_cost(self):
+        """Test Hungarian assignment on a known 3x3 minimum-cost matrix."""
+        cost = [
+            [4, 1, 3],
+            [2, 0, 5],
+            [3, 2, 2],
+        ]
+        rows, cols = MathUtils.linear_sum_assignment(cost)
+
+        # Canonical optimal solution: (0->1), (1->0), (2->2) cost = 1+2+2 = 5
+        pairs = set(zip(rows, cols))
+        self.assertEqual(pairs, {(0, 1), (1, 0), (2, 2)})
+
+    def test_linear_sum_assignment_rectangular(self):
+        """Test Hungarian assignment supports rectangular matrices."""
+        # 2 rows, 3 cols; expect 2 assignments
+        cost = [
+            [10, 1, 10],
+            [10, 10, 1],
+        ]
+        rows, cols = MathUtils.linear_sum_assignment(cost)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(cols), 2)
+        self.assertEqual(set(zip(rows, cols)), {(0, 1), (1, 2)})
+
+    def test_linear_sum_assignment_maximize(self):
+        """Test maximize=True chooses maximum total score assignment."""
+        score = [
+            [1, 2],
+            [3, 4],
+        ]
+        rows, cols = MathUtils.linear_sum_assignment(score, maximize=True)
+        # Best is (0->1)=2 and (1->0)=3 total 5 (vs 1+4=5 tie)
+        # Both are optimal; accept either.
+        pairs = set(zip(rows, cols))
+        self.assertTrue(pairs in ({(0, 1), (1, 0)}, {(0, 0), (1, 1)}))
+
+    def test_linear_sum_assignment_empty(self):
+        """Test empty input returns empty assignment."""
+        rows, cols = MathUtils.linear_sum_assignment([])
+        self.assertEqual(rows, [])
+        self.assertEqual(cols, [])
+
+    def test_linear_sum_assignment_jagged_raises(self):
+        """Test jagged matrices raise a clear error."""
+        with self.assertRaises(ValueError):
+            MathUtils.linear_sum_assignment([[1, 2], [3]])
+
+    # -------------------------------------------------------------------------
     # Vector from Two Points Tests
     # -------------------------------------------------------------------------
 
