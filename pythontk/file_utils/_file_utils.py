@@ -884,15 +884,22 @@ class FileUtils(HelpMixin):
                     ]
 
             module_name = Path(filename).stem
-            spec = importlib.util.spec_from_file_location(module_name, filepath)
+            # Use a unique name to avoid polluting sys.modules
+            unique_module_name = f"{module_name}_ptk_loader_{id(filepath)}"
+
+            spec = importlib.util.spec_from_file_location(unique_module_name, filepath)
             module_obj = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module_obj
+            sys.modules[unique_module_name] = module_obj
             try:
                 spec.loader.exec_module(module_obj)
             except Exception as e:
                 raise RuntimeError(
                     f"The following error occurred while loading the module {module_name} from {filepath}: {e}"
                 ) from e
+            finally:
+                # Clean up sys.modules
+                if unique_module_name in sys.modules:
+                    del sys.modules[unique_module_name]
 
             for clss in classes:
                 info = {
