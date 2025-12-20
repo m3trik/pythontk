@@ -29,6 +29,7 @@ class ModuleReloader:
         import_missing: bool = True,
         verbose: Union[bool, int] = False,
         max_passes: int = 2,
+        exclude_modules: Optional[Iterable[str]] = None,
     ) -> None:
         self.include_submodules = include_submodules
         self.dependencies_first = list(dependencies_first or [])
@@ -40,6 +41,7 @@ class ModuleReloader:
         # Convert bool to int: False->0, True->1
         self.verbose = int(verbose) if isinstance(verbose, bool) else verbose
         self.max_passes = max_passes
+        self.exclude_modules = list(exclude_modules or [])
 
     # ------------------------------------------------------------------
     def reload(
@@ -55,6 +57,7 @@ class ModuleReloader:
         import_missing: Optional[bool] = None,
         verbose: Optional[Union[bool, int]] = None,
         max_passes: Optional[int] = None,
+        exclude_modules: Optional[Iterable[str]] = None,
     ) -> List[ModuleType]:
         """Reload a package and return the modules processed.
 
@@ -66,6 +69,7 @@ class ModuleReloader:
             max_passes: Number of reload passes to perform (default: 2).
                        Multiple passes help resolve circular and sibling dependencies
                        where module A imports B, but A is reloaded before B.
+            exclude_modules: List of glob patterns to exclude from reload (e.g. ["*_ui", "test_*"]).
         """
 
         include_submodules = (
@@ -91,6 +95,9 @@ class ModuleReloader:
             int(verbose_level) if isinstance(verbose_level, bool) else verbose_level
         )
         max_passes = self.max_passes if max_passes is None else max_passes
+        exclude_modules = self._merge_dependencies(
+            self.exclude_modules, exclude_modules
+        )
 
         target_package = self._resolve_module(package, import_missing=import_missing)
 
@@ -105,7 +112,10 @@ class ModuleReloader:
         if include_submodules:
             module_order.extend(
                 self._iter_package_modules(
-                    target_package, import_missing=import_missing, predicate=predicate
+                    target_package,
+                    import_missing=import_missing,
+                    predicate=predicate,
+                    exclude_modules=exclude_modules,
                 )
             )
 
@@ -200,13 +210,24 @@ class ModuleReloader:
         *,
         import_missing: bool,
         predicate: Optional[Callable[[ModuleType], bool]],
+        exclude_modules: Optional[List[str]] = None,
     ) -> Iterable[ModuleType]:
         if not hasattr(package, "__path__"):
             return []
 
+        import fnmatch
+
         for module_info in pkgutil.walk_packages(
             package.__path__, package.__name__ + "."
         ):
+            # Check exclusions before importing
+            if exclude_modules:
+                if any(
+                    fnmatch.fnmatch(module_info.name, pattern)
+                    for pattern in exclude_modules
+                ):
+                    continue
+
             module = sys.modules.get(module_info.name)
             if module is None and import_missing:
                 module = importlib.import_module(module_info.name)

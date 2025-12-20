@@ -244,48 +244,70 @@ class StrTest(BaseTestCase):
         )
 
     # -------------------------------------------------------------------------
-    # split_at_delimiter Tests
+    # split_delimited_string Tests
     # -------------------------------------------------------------------------
 
-    def test_split_at_delimiter_basic(self):
-        """Test split_at_delimiter splits strings correctly."""
+    def test_split_delimited_string_basic(self):
+        """Test split_delimited_string splits strings correctly."""
+        # Test list output (default)
         self.assertEqual(
-            StrUtils.split_at_delimiter(["str|ing", "string"]),
+            StrUtils.split_delimited_string("str|ing"),
+            ["str", "ing"],
+        )
+        # Test tuple output (occurrence specified)
+        self.assertEqual(
+            StrUtils.split_delimited_string("str|ing", occurrence=-1),
+            ("str", "ing"),
+        )
+        # Test list input (vectorized)
+        self.assertEqual(
+            StrUtils.split_delimited_string(["str|ing", "string"], occurrence=-1),
             [("str", "ing"), ("string", "")],
         )
 
-    def test_split_at_delimiter_with_occurrence(self):
-        """Test split_at_delimiter with specific occurrence."""
+    def test_split_delimited_string_with_occurrence(self):
+        """Test split_delimited_string with specific occurrence."""
         self.assertEqual(
-            StrUtils.split_at_delimiter("aCHARScCHARSd", "CHARS", 0),
+            StrUtils.split_delimited_string("aCHARScCHARSd", "CHARS", occurrence=0),
             ("", "a"),
         )
 
-    def test_split_at_delimiter_empty_string(self):
-        """Test split_at_delimiter with empty string."""
-        result = StrUtils.split_at_delimiter("")
-        self.assertEqual(result, ("", ""))
+    def test_split_delimited_string_empty_string(self):
+        """Test split_delimited_string with empty string."""
+        # List mode
+        self.assertEqual(StrUtils.split_delimited_string(""), [])
+        # Tuple mode
+        self.assertEqual(StrUtils.split_delimited_string("", occurrence=-1), ("", ""))
 
-    def test_split_at_delimiter_no_delimiter(self):
-        """Test split_at_delimiter when delimiter not found."""
-        result = StrUtils.split_at_delimiter("hello", "|")
-        self.assertEqual(result, ("hello", ""))
+    def test_split_delimited_string_no_delimiter(self):
+        """Test split_delimited_string when delimiter not found."""
+        # List mode
+        self.assertEqual(StrUtils.split_delimited_string("hello", "|"), ["hello"])
+        # Tuple mode
+        self.assertEqual(
+            StrUtils.split_delimited_string("hello", "|", occurrence=-1), ("hello", "")
+        )
 
-    def test_split_at_delimiter_delimiter_at_start(self):
-        """Test split_at_delimiter with delimiter at start."""
-        result = StrUtils.split_at_delimiter("|hello")
-        self.assertEqual(result, ("", "hello"))
+    def test_split_delimited_string_delimiter_at_start(self):
+        """Test split_delimited_string with delimiter at start."""
+        self.assertEqual(
+            StrUtils.split_delimited_string("|hello", occurrence=-1), ("", "hello")
+        )
 
-    def test_split_at_delimiter_delimiter_at_end(self):
-        """Test split_at_delimiter with delimiter at end."""
-        result = StrUtils.split_at_delimiter("hello|")
-        self.assertEqual(result, ("hello", ""))
+    def test_split_delimited_string_delimiter_at_end(self):
+        """Test split_delimited_string with delimiter at end."""
+        self.assertEqual(
+            StrUtils.split_delimited_string("hello|", occurrence=-1), ("hello", "")
+        )
 
-    def test_split_at_delimiter_multiple_delimiters(self):
-        """Test split_at_delimiter with multiple occurrences - splits at last."""
-        result = StrUtils.split_at_delimiter("a|b|c")
-        # Default splits at last occurrence
-        self.assertEqual(result, ("a|b", "c"))
+    def test_split_delimited_string_multiple_delimiters(self):
+        """Test split_delimited_string with multiple occurrences."""
+        # Default splits all
+        self.assertEqual(StrUtils.split_delimited_string("a|b|c"), ["a", "b", "c"])
+        # Split at last
+        self.assertEqual(
+            StrUtils.split_delimited_string("a|b|c", occurrence=-1), ("a|b", "c")
+        )
 
     # -------------------------------------------------------------------------
     # insert Tests

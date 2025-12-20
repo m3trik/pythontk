@@ -2,7 +2,7 @@
 # coding=utf-8
 import threading
 import logging as internal_logging
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Any
 from pythontk.core_utils.class_property import ClassProperty
 
 
@@ -529,7 +529,134 @@ class DefaultTextLogHandler(internal_logging.Handler):
         )  # fallback: pure white
 
 
-class LoggingMixin:
+class TableMixin:
+    """Mixin for formatting data as ASCII tables."""
+
+    def format_table(
+        self,
+        data: List[List[Any]],
+        headers: List[str],
+        title: Optional[str] = None,
+        col_max_width: int = 60,
+    ) -> str:
+        """Formats a list of lists as an ASCII table.
+
+        Args:
+            data: List of rows, where each row is a list of values.
+            headers: List of column headers.
+            title: Optional title for the table.
+            col_max_width: Maximum width for any column.
+
+        Returns:
+            Formatted table string.
+        """
+        if not data:
+            return ""
+
+        # Ensure data matches headers
+        num_cols = len(headers)
+        processed_data = []
+        for row in data:
+            # Pad row if too short
+            if len(row) < num_cols:
+                row = list(row) + [""] * (num_cols - len(row))
+            # Truncate row if too long
+            elif len(row) > num_cols:
+                row = row[:num_cols]
+            processed_data.append([str(item) for item in row])
+
+        # Calculate column widths
+        col_widths = [len(h) for h in headers]
+        for row in processed_data:
+            for i, val in enumerate(row):
+                col_widths[i] = max(col_widths[i], len(val))
+
+        # Clamp widths
+        col_widths = [min(w, col_max_width) for w in col_widths]
+
+        # Create format string
+        # e.g. "{:<20} | {:<10} | {:<10}"
+        fmt = " | ".join([f"{{:<{w}}}" for w in col_widths])
+
+        lines = []
+
+        # Title
+        if title:
+            lines.append(title)
+            lines.append("-" * len(title))
+
+        # Header
+        lines.append(fmt.format(*headers))
+        lines.append("-+-".join(["-" * w for w in col_widths]))
+
+        # Rows
+        for row in processed_data:
+            # Truncate values if needed
+            trunc_row = []
+            for i, val in enumerate(row):
+                w = col_widths[i]
+                if len(val) > w:
+                    val = val[: w - 3] + "..."
+                trunc_row.append(val)
+
+            lines.append(fmt.format(*trunc_row))
+
+        return "\n".join(lines)
+
+    def log_table(
+        self,
+        data: List[List[Any]],
+        headers: List[str],
+        title: Optional[str] = None,
+        level: str = "info",
+    ) -> None:
+        """Logs a formatted table.
+
+        Args:
+            data: List of rows.
+            headers: List of column headers.
+            title: Optional title.
+            level: Logging level (info, warning, error, etc.)
+        """
+        table_str = self.format_table(data, headers, title)
+        if not table_str:
+            return
+
+        # Log each line
+        # Assumes self has a logger property or attribute
+        logger = getattr(self, "logger", None)
+
+        if logger:
+            # If logger is a standard python logger
+            log_method = getattr(logger, level.lower(), logger.info)
+
+            # If using LoggerExt custom levels, handle them if passed as string
+            if hasattr(logger, "log_raw"):
+                # Use log_raw if available to avoid prefix duplication if any
+                # But log_raw might not respect level.
+                # Let's stick to standard logging for now, or check if log_raw exists.
+                pass
+
+            # For tables, we often want to print them raw without prefixes if possible,
+            # or just log them line by line.
+
+            # If the logger has a 'log_raw' method (from LoggerExt maybe?), use it?
+            # LoggerExt doesn't seem to have log_raw in the snippet I read,
+            # but SceneDiagnostics uses self.logger.log_raw.
+            # Let's check if log_raw is available.
+            if hasattr(logger, "log_raw"):
+                # We rely on format_table to include the title if provided.
+                lines = table_str.split("\n")
+                for line in lines:
+                    logger.log_raw(line)
+            else:
+                for line in table_str.split("\n"):
+                    log_method(line)
+        else:
+            print(table_str)
+
+
+class LoggingMixin(TableMixin):
     """Mixin class for logging utilities.
 
     Provides a logger for each class and a shared class logger across instances.

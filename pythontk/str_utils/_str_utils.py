@@ -67,6 +67,45 @@ class StrUtils(CoreUtils):
         return CoreUtils.format_return(sanitized_list, orig=text)
 
     @staticmethod
+    def replace_placeholders(text: str, **kwargs) -> str:
+        """Replace placeholders in a string with provided values.
+
+        Supports standard Python string formatting syntax (e.g. {value:03d}).
+        Missing keys are preserved as placeholders.
+
+        Args:
+            text (str): The string containing placeholders.
+            **kwargs: Key-value pairs corresponding to placeholders.
+
+        Returns:
+            str: The string with placeholders replaced.
+
+        Example:
+            >>> StrUtils.replace_placeholders("File: {name}_{ver:03d}.{ext}", name="shot", ver=5, ext="ma")
+            'File: shot_005.ma'
+            >>> StrUtils.replace_placeholders("Path: {root}/{missing}", root="C:/Projects")
+            'Path: C:/Projects/{missing}'
+        """
+        import string
+
+        class SafeFormatter(string.Formatter):
+            def get_value(self, key, args, kwargs):
+                if isinstance(key, str):
+                    return kwargs.get(key, "{" + key + "}")
+                return super().get_value(key, args, kwargs)
+
+            def format_field(self, value, format_spec):
+                if (
+                    isinstance(value, str)
+                    and value.startswith("{")
+                    and value.endswith("}")
+                ):
+                    return value
+                return super().format_field(value, format_spec)
+
+        return SafeFormatter().format(text, **kwargs)
+
+    @staticmethod
     @CoreUtils.listify(threading=True)
     def set_case(string, case="title"):
         """Format the given string(s) in the given case.
@@ -361,47 +400,6 @@ class StrUtils(CoreUtils):
             return " ".join(matches)
         else:
             return extract_matches(string, start_delim, end_delim)
-
-    @staticmethod
-    @CoreUtils.listify(threading=True)
-    def split_at_delimiter(
-        string: str,
-        delimiter: str = "|",
-        occurrence: int = -1,
-    ) -> Tuple[str, str]:
-        """Split ``string`` into a tuple around a specific delimiter occurrence.
-
-        Parameters:
-            string (str): The source string to split.
-            delimiter (str): The delimiter to split on. Defaults to ``"|"``.
-            occurrence (int): Which occurrence to split on. Positive values count from
-                the start, negative values from the end (-1 = last). Defaults to -1.
-
-        Returns:
-            tuple[str, str]: A 2-tuple of (left, right). When the delimiter does not
-            exist in the string, returns (string, "").
-        """
-
-        if not isinstance(string, str) or not delimiter:
-            return (string if isinstance(string, str) else "", "")
-
-        if delimiter not in string:
-            return (string, "")
-
-        parts = string.split(delimiter)
-        if occurrence is None:
-            index = len(parts) - 1
-        else:
-            index = occurrence
-            if occurrence < 0:
-                index = len(parts) + occurrence
-
-        if index < 0 or index >= len(parts):
-            return (string, "")
-
-        left = delimiter.join(parts[:index])
-        right = parts[index]
-        return (left, right)
 
     @classmethod
     def insert(cls, src, ins, at, occurrence=1, before=False):
