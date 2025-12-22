@@ -551,6 +551,357 @@ class MathTest(BaseTestCase):
         result = MathUtils.lerp(0.0, 1.0, 0.333333333)
         self.assertAlmostEqual(result, 0.333333333, places=7)
 
+    # -------------------------------------------------------------------------
+    # K-Means 1D Tests
+    # -------------------------------------------------------------------------
+
+    def test_kmeans_1d_basic_two_clusters(self):
+        """Test kmeans_1d separates obvious clusters."""
+        values = [1, 2, 3, 50, 55, 60]
+        centers, groups = MathUtils.kmeans_1d(values, k=2)
+        self.assertEqual(len(centers), 2)
+        self.assertEqual(len(groups), 2)
+        # First cluster should contain small values, second large
+        self.assertTrue(all(v < 10 for v in groups[0]))
+        self.assertTrue(all(v > 40 for v in groups[1]))
+
+    def test_kmeans_1d_preserves_duplicates(self):
+        """Test kmeans_1d preserves duplicate values."""
+        values = [1, 1, 1, 50, 50]
+        centers, groups = MathUtils.kmeans_1d(values, k=2)
+        # Should preserve all 5 values across groups
+        total_values = sum(len(g) for g in groups)
+        self.assertEqual(total_values, 5)
+        # First group should have 3 ones
+        self.assertEqual(groups[0], [1, 1, 1])
+        # Second group should have 2 fifties
+        self.assertEqual(groups[1], [50, 50])
+
+    def test_kmeans_1d_three_clusters(self):
+        """Test kmeans_1d with 3 clusters (small/medium/large)."""
+        values = [1, 2, 3, 20, 25, 30, 100, 150, 200]
+        centers, groups = MathUtils.kmeans_1d(values, k=3)
+        self.assertEqual(len(centers), 3)
+        self.assertEqual(len(groups), 3)
+        # Centers should be sorted ascending
+        self.assertEqual(centers, sorted(centers))
+
+    def test_kmeans_1d_single_value(self):
+        """Test kmeans_1d with single unique value."""
+        values = [5, 5, 5]
+        centers, groups = MathUtils.kmeans_1d(values, k=3)
+        self.assertEqual(len(centers), 1)
+        self.assertEqual(groups[0], [5, 5, 5])
+
+    def test_kmeans_1d_empty_input(self):
+        """Test kmeans_1d with empty input."""
+        centers, groups = MathUtils.kmeans_1d([], k=3)
+        self.assertEqual(centers, [])
+        self.assertEqual(groups, [])
+
+    def test_kmeans_1d_k_exceeds_unique(self):
+        """Test kmeans_1d when k exceeds unique values."""
+        values = [1, 1, 2, 2]  # Only 2 unique values
+        centers, groups = MathUtils.kmeans_1d(values, k=5)
+        # Should clamp to 2 clusters
+        self.assertEqual(len(centers), 2)
+
+    def test_kmeans_1d_negative_values(self):
+        """Test kmeans_1d with negative values."""
+        values = [-100, -90, -80, 10, 20, 30]
+        centers, groups = MathUtils.kmeans_1d(values, k=2)
+        self.assertTrue(all(v < 0 for v in groups[0]))
+        self.assertTrue(all(v > 0 for v in groups[1]))
+
+    def test_kmeans_1d_floats(self):
+        """Test kmeans_1d with floating point values."""
+        values = [0.1, 0.2, 0.3, 10.5, 10.6, 10.7]
+        centers, groups = MathUtils.kmeans_1d(values, k=2)
+        self.assertAlmostEqual(centers[0], 0.2, places=1)
+        self.assertAlmostEqual(centers[1], 10.6, places=1)
+
+    def test_kmeans_1d_k_greater_than_3(self):
+        """Test kmeans_1d with k > 3 uses quantile initialization."""
+        values = list(range(0, 100, 10))  # [0, 10, 20, ..., 90]
+        centers, groups = MathUtils.kmeans_1d(values, k=5)
+        self.assertEqual(len(centers), 5)
+        # Verify centers are sorted
+        self.assertEqual(centers, sorted(centers))
+
+    # -------------------------------------------------------------------------
+    # K-Means N-Dimensional Tests
+    # -------------------------------------------------------------------------
+
+    def test_kmeans_clustering_basic(self):
+        """Test kmeans_clustering separates 2D clusters."""
+        points = [(0, 0), (1, 0), (0, 1), (10, 10), (11, 10), (10, 11)]
+        groups = MathUtils.kmeans_clustering(points, k=2)
+        self.assertEqual(len(groups), 2)
+        # Should have 3 points in each cluster
+        self.assertEqual(sorted(len(g) for g in groups), [3, 3])
+
+    def test_kmeans_clustering_3d(self):
+        """Test kmeans_clustering with 3D points."""
+        points = [
+            (0, 0, 0),
+            (1, 1, 1),
+            (100, 100, 100),
+            (101, 101, 101),
+        ]
+        groups = MathUtils.kmeans_clustering(points, k=2)
+        self.assertEqual(len(groups), 2)
+        # Each cluster should have 2 points
+        self.assertTrue(all(len(g) == 2 for g in groups))
+
+    def test_kmeans_clustering_empty(self):
+        """Test kmeans_clustering with empty input."""
+        groups = MathUtils.kmeans_clustering([], k=3)
+        self.assertEqual(groups, [])
+
+    def test_kmeans_clustering_k_one(self):
+        """Test kmeans_clustering with k=1 returns all points."""
+        points = [(0, 0), (10, 10), (20, 20)]
+        groups = MathUtils.kmeans_clustering(points, k=1)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]), 3)
+
+    def test_kmeans_clustering_seed_indices(self):
+        """Test kmeans_clustering with explicit seed indices."""
+        points = [(0, 0), (1, 0), (10, 0), (11, 0)]
+        groups = MathUtils.kmeans_clustering(points, k=2, seed_indices=[0, 2])
+        self.assertEqual(len(groups), 2)
+
+    # -------------------------------------------------------------------------
+    # K-Means Threshold Tests
+    # -------------------------------------------------------------------------
+
+    def test_get_kmeans_threshold_basic(self):
+        """Test get_kmeans_threshold finds natural breakpoint."""
+        values = [0.8, 1.2, 2.1, 12.4, 15.0]
+        threshold = MathUtils.get_kmeans_threshold(values, k=3)
+        # Threshold should be between small/medium and large
+        self.assertGreater(threshold, 2.5)
+        self.assertLess(threshold, 12.0)
+
+    def test_get_kmeans_threshold_empty(self):
+        """Test get_kmeans_threshold with empty input."""
+        threshold = MathUtils.get_kmeans_threshold([], k=3)
+        self.assertEqual(threshold, 0.0)
+
+    def test_get_kmeans_threshold_single_value(self):
+        """Test get_kmeans_threshold with single unique value."""
+        threshold = MathUtils.get_kmeans_threshold([5, 5, 5], k=3)
+        self.assertEqual(threshold, 2.5)  # Half of 5
+
+    def test_get_kmeans_threshold_two_clusters(self):
+        """Test get_kmeans_threshold with k=2."""
+        values = [1, 2, 3, 100, 200, 300]
+        threshold = MathUtils.get_kmeans_threshold(values, k=2)
+        # Should be between the two cluster centers (~2 and ~200)
+        self.assertGreater(threshold, 3)  # Above the small cluster
+        self.assertLess(threshold, 200)  # Below the large cluster
+
+    def test_get_kmeans_threshold_merge_logic(self):
+        """Test get_kmeans_threshold merge logic for close clusters."""
+        # Small and medium are close (ratio < 3.0), so merge them
+        values = [1.0, 1.5, 2.0, 2.5, 100.0, 150.0]
+        threshold = MathUtils.get_kmeans_threshold(values, k=3)
+        # Should threshold between merged small+medium and large
+        self.assertGreater(threshold, 10)
+
+    # -------------------------------------------------------------------------
+    # PCA Transform Tests
+    # -------------------------------------------------------------------------
+
+    def test_get_pca_transform_identity(self):
+        """Test get_pca_transform with identical points returns identity-like matrix."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+        try:
+            result = MathUtils.get_pca_transform(pts, pts, tolerance=0.001)
+        except (ImportError, ValueError) as e:
+            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
+                self.skipTest(f"scipy/numpy incompatibility: {e}")
+            raise
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 16)  # 4x4 matrix
+
+    def test_get_pca_transform_translated(self):
+        """Test get_pca_transform finds translation."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        pts_a = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+        pts_b = pts_a + np.array([10, 20, 30])  # Translated copy
+        try:
+            result = MathUtils.get_pca_transform(pts_a, pts_b, tolerance=0.1)
+        except (ImportError, ValueError) as e:
+            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
+                self.skipTest(f"scipy/numpy incompatibility: {e}")
+            raise
+        self.assertIsNotNone(result)
+
+    def test_get_pca_transform_rotated(self):
+        """Test get_pca_transform finds rotation alignment."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        # Create a shape
+        pts_a = np.array(
+            [[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0], [1, 0.5, 0.5]], dtype=float
+        )
+
+        # Rotate 90 degrees around Z axis
+        theta = np.pi / 2
+        R = np.array(
+            [
+                [np.cos(theta), -np.sin(theta), 0],
+                [np.sin(theta), np.cos(theta), 0],
+                [0, 0, 1],
+            ]
+        )
+        pts_b = pts_a @ R.T
+
+        try:
+            result = MathUtils.get_pca_transform(pts_a, pts_b, tolerance=0.1)
+        except (ImportError, ValueError) as e:
+            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
+                self.skipTest(f"scipy/numpy incompatibility: {e}")
+            raise
+        self.assertIsNotNone(result)
+
+    def test_get_pca_transform_insufficient_points(self):
+        """Test get_pca_transform with too few points returns None."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        pts = np.array([[0, 0, 0], [1, 1, 1]], dtype=float)
+        try:
+            result = MathUtils.get_pca_transform(pts, pts, tolerance=0.1)
+        except (ImportError, ValueError) as e:
+            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
+                self.skipTest(f"scipy/numpy incompatibility: {e}")
+            raise
+        self.assertIsNone(result)
+
+    def test_get_pca_transform_no_match(self):
+        """Test get_pca_transform returns None when shapes don't match."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        pts_a = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+        pts_b = np.array(
+            [[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], dtype=float
+        )  # Different scale
+        try:
+            result = MathUtils.get_pca_transform(pts_a, pts_b, tolerance=0.001)
+        except (ImportError, ValueError) as e:
+            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
+                self.skipTest(f"scipy/numpy incompatibility: {e}")
+            raise
+        self.assertIsNone(result)
+
+    def test_get_pca_transform_robust_mode(self):
+        """Test get_pca_transform robust mode with different point counts."""
+        try:
+            import numpy as np
+            from scipy.spatial import KDTree  # noqa: F401
+        except (ImportError, ValueError) as e:
+            self.skipTest(f"numpy or scipy not available: {e}")
+
+        np.random.seed(42)
+        pts_a = np.random.rand(100, 3)
+        pts_b = np.random.rand(80, 3)  # Different count
+
+        try:
+            # Robust mode should handle different point counts
+            result = MathUtils.get_pca_transform(
+                pts_a, pts_b, tolerance=10.0, robust=True
+            )
+        except (ImportError, ValueError) as e:
+            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
+                self.skipTest(f"scipy/numpy incompatibility: {e}")
+            raise
+        # May or may not find a match depending on data, but shouldn't crash
+        self.assertTrue(result is None or len(result) == 16)
+
+    def test_get_pca_transform_caching(self):
+        """Test get_pca_transform caches base rotations."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not available")
+
+        pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+
+        try:
+            # First call creates cache
+            MathUtils.get_pca_transform(pts, pts, tolerance=0.1)
+        except (ImportError, ValueError) as e:
+            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
+                self.skipTest(f"scipy/numpy incompatibility: {e}")
+            raise
+
+        # Verify cache exists
+        self.assertTrue(hasattr(MathUtils, "_pca_base_rotations"))
+        self.assertEqual(len(MathUtils._pca_base_rotations), 24)
+
+    # -------------------------------------------------------------------------
+    # Clamp Range Tests
+    # -------------------------------------------------------------------------
+
+    def test_clamp_range_no_boundaries(self):
+        """Test clamp_range with no boundaries."""
+        result = MathUtils.clamp_range(5, 15)
+        self.assertEqual(result, (5, 15))
+
+    def test_clamp_range_start_only(self):
+        """Test clamp_range with only start boundary."""
+        result = MathUtils.clamp_range(5, 15, clamp_start=10)
+        self.assertEqual(result, (10, 15))
+
+    def test_clamp_range_end_only(self):
+        """Test clamp_range with only end boundary."""
+        result = MathUtils.clamp_range(5, 15, clamp_end=12)
+        self.assertEqual(result, (5, 12))
+
+    def test_clamp_range_both_boundaries(self):
+        """Test clamp_range with both boundaries."""
+        result = MathUtils.clamp_range(5, 15, clamp_start=10, clamp_end=12)
+        self.assertEqual(result, (10, 12))
+
+    def test_clamp_range_invalid_input(self):
+        """Test clamp_range with start >= end."""
+        result = MathUtils.clamp_range(15, 5)
+        self.assertIsNone(result)
+
+    def test_clamp_range_clamping_makes_invalid(self):
+        """Test clamp_range when clamping creates invalid range."""
+        result = MathUtils.clamp_range(5, 15, clamp_start=20)
+        self.assertIsNone(result)
+
+    def test_clamp_range_none_input(self):
+        """Test clamp_range with None values."""
+        result = MathUtils.clamp_range(None, 15)
+        self.assertIsNone(result)
+
+    def test_clamp_range_no_validation(self):
+        """Test clamp_range with validate=False."""
+        result = MathUtils.clamp_range(15, 5, validate=False)
+        self.assertEqual(result, (15, 5))
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

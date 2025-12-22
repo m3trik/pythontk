@@ -1,5 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
+import sys
+import ctypes
 import threading
 import _thread
 from functools import wraps
@@ -14,20 +16,14 @@ class ExecutionMonitor:
     @staticmethod
     def is_escape_pressed():
         """Check if the Escape key is currently pressed (Windows & Linux)."""
-        import sys
-
         try:
             if sys.platform == "win32":
-                import ctypes
-
                 # VK_ESCAPE is 0x1B
                 # GetAsyncKeyState returns a 16-bit integer.
                 # The most significant bit indicates whether the key is currently up or down.
                 return ctypes.windll.user32.GetAsyncKeyState(0x1B) & 0x8000
 
             elif sys.platform.startswith("linux"):
-                import ctypes
-
                 try:
                     if ExecutionMonitor._x11_lib is None:
                         ExecutionMonitor._x11_lib = ctypes.cdll.LoadLibrary(

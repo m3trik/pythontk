@@ -22,8 +22,8 @@ class MathUtils(HelpMixin):
     ) -> Tuple[List[int], List[int]]:
         """Solve the linear sum assignment problem (Hungarian algorithm).
 
-        This is a lightweight, dependency-free alternative to
-        ``scipy.optimize.linear_sum_assignment``.
+        Uses scipy.optimize.linear_sum_assignment when available (10-100x faster),
+        otherwise falls back to a pure Python implementation.
 
         Parameters:
             cost_matrix: Rectangular or square cost matrix (rows x cols). Each entry
@@ -42,6 +42,18 @@ class MathUtils(HelpMixin):
                     [3, 2, 2]]
             rows, cols = MathUtils.linear_sum_assignment(cost)
         """
+        # Fast path: use scipy if available
+        try:
+            import numpy as np
+            from scipy.optimize import linear_sum_assignment as scipy_lsa
+
+            arr = np.asarray(cost_matrix, dtype=float)
+            if arr.size == 0:
+                return ([], [])
+            row_ind, col_ind = scipy_lsa(arr, maximize=maximize)
+            return (row_ind.tolist(), col_ind.tolist())
+        except ImportError:
+            pass
 
         def _hungarian_square(cost_sq: List[List[float]]) -> List[int]:
             """Return assignment list where assignment[i] = j for square matrix."""
@@ -147,6 +159,537 @@ class MathUtils(HelpMixin):
                 col_ind.append(j)
 
         return (row_ind, col_ind)
+
+    @staticmethod
+    def get_pca_transform(
+        points_a: "np.ndarray",
+        points_b: "np.ndarray",
+        tolerance: float = 0.001,
+        robust: bool = False,
+        sample_size: int = 500,
+        symmetry_threshold: float = 0.1,
+    ) -> Optional[List[float]]:
+        """
+        Calculate the transformation matrix to align points_b to points_a using PCA axis alignment.
+
+        This method is robust against vertex reordering as it aligns the principal axes of the shapes.
+        It tests all 24 possible orthogonal alignments of the principal axes to find the best fit.
+
+        Parameters:
+            points_a: (N, 3) array of points for the target shape.
+            points_b: (N, 3) array of points for the source shape (to be transformed).
+            tolerance: Maximum allowed average distance for a valid match.
+            robust: If True, enables enhanced handling for:
+                - Cylindrical symmetry (eigenvalue degeneracy)
+                - Large point clouds (via sampling)
+                - Arbitrary rotations (tests spin around symmetric axis)
+                Note: robust=True requires scipy.spatial.KDTree.
+            sample_size: Max points to use for KDTree queries when robust=True.
+            symmetry_threshold: Relative eigenvalue difference to detect cylindrical symmetry.
+                If two eigenvalues are within this ratio of each other, treat as symmetric.
+
+        Returns:
+            A 16-element list representing the 4x4 transformation matrix (row-major).
+            Returns None if no alignment is found within tolerance or if dependencies unavailable.
+
+        Note:
+            Requires numpy. scipy.spatial.KDTree is optional but improves performance.
+            When robust=True, scipy.spatial.KDTree is required.
+        """
+        try:
+            import numpy as np
+            import itertools
+        except ImportError:
+            return None
+
+        try:
+            from scipy.spatial import KDTree
+        except ImportError:
+            KDTree = None
+            if robust:
+                return None  # robust mode requires KDTree
+
+        pts_a = np.array(points_a)
+        pts_b = np.array(points_b)
+
+        if len(pts_a) < 3 or len(pts_b) < 3:
+            return None
+        if not robust and len(pts_a) != len(pts_b):
+            return None
+
+        # 1. Centroids
+        c_a = np.mean(pts_a, axis=0)
+        c_b = np.mean(pts_b, axis=0)
+
+        # 2. Center points
+        p_a = pts_a - c_a
+        p_b = pts_b - c_b
+
+        # 3. PCA (Eigenvectors)
+        cov_a = np.cov(p_a, rowvar=False)
+        cov_b = np.cov(p_b, rowvar=False)
+
+        val_a, vec_a = np.linalg.eigh(cov_a)
+        val_b, vec_b = np.linalg.eigh(cov_b)
+
+        # Sort by eigenvalue (descending)
+        idx_a = np.argsort(val_a)[::-1]
+        idx_b = np.argsort(val_b)[::-1]
+
+        val_a = val_a[idx_a]
+        val_b = val_b[idx_b]
+        vec_a = vec_a[:, idx_a]
+        vec_b = vec_b[:, idx_b]
+
+        # Ensure right-handed coordinate systems
+        if np.linalg.det(vec_a) < 0:
+            vec_a[:, 2] *= -1
+        if np.linalg.det(vec_b) < 0:
+            vec_b[:, 2] *= -1
+
+        # 4. Generate all 24 base rotations (cached for performance)
+        if not hasattr(MathUtils, "_pca_base_rotations"):
+            axes = [np.array([1, 0, 0]), np.array([0, 1, 0]), np.array([0, 0, 1])]
+            rotations = []
+            for p in itertools.permutations([0, 1, 2]):
+                for sx in [-1, 1]:
+                    for sy in [-1, 1]:
+                        col0 = axes[p[0]] * sx
+                        col1 = axes[p[1]] * sy
+                        col2 = np.cross(col0, col1)
+                        P = np.column_stack((col0, col1, col2))
+                        rotations.append(P)
+            MathUtils._pca_base_rotations = rotations
+        base_rotations = MathUtils._pca_base_rotations
+
+        # 5. Symmetry detection and spin angles (robust mode only)
+        sym_axis_b = None
+        spin_angles = [0.0]
+
+        if robust:
+            # Detect cylindrical symmetry
+            def detect_symmetry(eigenvalues):
+                e = eigenvalues
+                max_e = max(abs(e[0]), abs(e[-1]))
+                if max_e < 1e-9:
+                    return None
+                if abs(e[1] - e[2]) < symmetry_threshold * max_e:
+                    return 0  # Symmetry around axis 0
+                if abs(e[0] - e[1]) < symmetry_threshold * max_e:
+                    return 2  # Symmetry around axis 2
+                return None
+
+            sym_axis_b = detect_symmetry(val_b)
+            if sym_axis_b is not None:
+                spin_angles = [
+                    i * np.pi / 12 for i in range(24)
+                ]  # 15-degree increments
+
+            # Subsample for performance
+            p_a_work = (
+                p_a[np.random.choice(len(p_a), sample_size, replace=False)]
+                if len(p_a) > sample_size
+                else p_a
+            )
+            p_b_work = (
+                p_b[np.random.choice(len(p_b), sample_size, replace=False)]
+                if len(p_b) > sample_size
+                else p_b
+            )
+        else:
+            p_a_work = p_a
+            p_b_work = p_b
+
+        # 6. Build KDTree or prepare fallback
+        tree = KDTree(p_a_work) if KDTree else None
+
+        if not tree:
+            a_sq = np.sum(p_a_work**2, axis=1)
+            b_sq = np.sum(p_b_work**2, axis=1)
+
+        def axis_angle_matrix(axis, angle):
+            c = np.cos(angle)
+            s = np.sin(angle)
+            t = 1 - c
+            x, y, z = axis / np.linalg.norm(axis)
+            return np.array(
+                [
+                    [t * x * x + c, t * x * y - z * s, t * x * z + y * s],
+                    [t * x * y + z * s, t * y * y + c, t * y * z - x * s],
+                    [t * x * z - y * s, t * y * z + x * s, t * z * z + c],
+                ]
+            )
+
+        best_diff = float("inf")
+        best_matrix = None
+
+        for P in base_rotations:
+            R_base = vec_a @ P @ vec_b.T
+
+            # Generate spins to try
+            if sym_axis_b is not None:
+                spin_axis = vec_b[:, sym_axis_b]
+                spins = [axis_angle_matrix(spin_axis, angle) for angle in spin_angles]
+            else:
+                spins = [np.eye(3)]
+
+            for R_spin in spins:
+                R = R_base @ R_spin
+                p_b_rot = p_b_work @ R.T
+
+                # Measure distance
+                if tree:
+                    dists, _ = tree.query(p_b_rot, k=1)
+                    avg_dist = np.mean(dists)
+                else:
+                    dists_sq = (
+                        b_sq[:, np.newaxis]
+                        + a_sq[np.newaxis, :]
+                        - 2 * np.dot(p_b_rot, p_a_work.T)
+                    )
+                    dists_sq = np.maximum(dists_sq, 0)
+                    min_dists = np.sqrt(np.min(dists_sq, axis=1))
+                    avg_dist = np.mean(min_dists)
+
+                if avg_dist < best_diff:
+                    best_diff = avg_dist
+                    best_matrix = R
+                    # Early exit on near-perfect match
+                    if best_diff < tolerance * 0.01:
+                        break
+            if best_diff < tolerance * 0.01:
+                break
+
+        if best_diff > tolerance:
+            return None
+
+        # Construct 4x4 Matrix (Row-Major for Maya)
+        R = best_matrix
+        T = c_a - R @ c_b
+
+        M = np.eye(4)
+        M[:3, :3] = R.T
+        M[3, :3] = T
+
+        return M.flatten().tolist()
+
+    @staticmethod
+    def kmeans_clustering(
+        points: Sequence[Sequence[float]],
+        k: int,
+        max_iterations: int = 30,
+        seed_indices: Optional[List[int]] = None,
+    ) -> List[List[int]]:
+        """
+        Perform K-Means clustering on a set of points.
+
+        Parameters:
+            points: List of (x, y, z) tuples or list of lists.
+            k: Number of clusters.
+            max_iterations: Maximum number of iterations.
+            seed_indices: Optional list of indices to use as initial centers.
+                          If provided, the first k indices will be used as seeds.
+                          If None, uses farthest-point sampling.
+
+        Returns:
+            List of lists, where each inner list contains the indices of points in that cluster.
+        """
+        try:
+            import numpy as np
+        except ImportError:
+            np = None
+
+        n = len(points)
+        if n == 0:
+            return []
+        if k <= 1:
+            return [list(range(n))]
+        k = min(k, n)
+
+        if np is not None:
+            pts = np.asarray(points, dtype=float)
+
+            # Initialization
+            centers = []
+            if seed_indices and len(seed_indices) >= k:
+                centers = pts[seed_indices[:k]]
+            else:
+                # Farthest Point Sampling
+                centers_list = []
+                first_idx = 0
+                centers_list.append(pts[first_idx])
+
+                while len(centers_list) < k:
+                    c = np.vstack(centers_list)
+                    d2 = np.min(
+                        np.sum((pts[:, None, :] - c[None, :, :]) ** 2, axis=2), axis=1
+                    )
+                    next_idx = np.argmax(d2)
+                    centers_list.append(pts[next_idx])
+                centers = np.vstack(centers_list)
+
+            labels = None
+            pts_sq = np.sum(pts**2, axis=1)
+
+            for _ in range(max_iterations):
+                # Assign to nearest center
+                centers_sq = np.sum(centers**2, axis=1)
+                d2 = (
+                    pts_sq[:, np.newaxis]
+                    + centers_sq[np.newaxis, :]
+                    - 2 * np.dot(pts, centers.T)
+                )
+                new_labels = np.argmin(d2, axis=1)
+
+                if labels is not None and np.array_equal(new_labels, labels):
+                    break
+                labels = new_labels
+
+                # Update centers
+                new_centers = centers.copy()
+                for i in range(k):
+                    mask = labels == i
+                    if np.any(mask):
+                        new_centers[i] = pts[mask].mean(axis=0)
+
+                if np.allclose(new_centers, centers):
+                    centers = new_centers
+                    break
+                centers = new_centers
+
+            groups = [np.where(labels == i)[0].tolist() for i in range(k)]
+            return [g for g in groups if g]
+
+        else:
+            # Fallback without numpy
+            import math
+
+            # Initialization (Farthest Point)
+            centers = [points[0]]
+            while len(centers) < k:
+                max_dist = -1
+                farthest_pt = None
+
+                for p in points:
+                    min_d_to_center = float("inf")
+                    for c in centers:
+                        d = sum((p[i] - c[i]) ** 2 for i in range(len(p)))
+                        if d < min_d_to_center:
+                            min_d_to_center = d
+
+                    if min_d_to_center > max_dist:
+                        max_dist = min_d_to_center
+                        farthest_pt = p
+
+                if farthest_pt:
+                    centers.append(farthest_pt)
+                else:
+                    break
+
+            labels = [-1] * n
+            for _ in range(max_iterations):
+                changes = 0
+                groups = [[] for _ in range(k)]
+                for i, p in enumerate(points):
+                    best_idx = -1
+                    min_dist = float("inf")
+                    for c_idx, c in enumerate(centers):
+                        d = sum((p[j] - c[j]) ** 2 for j in range(len(p)))
+                        if d < min_dist:
+                            min_dist = d
+                            best_idx = c_idx
+
+                    if labels[i] != best_idx:
+                        changes += 1
+                    labels[i] = best_idx
+                    groups[best_idx].append(i)
+
+                if changes == 0:
+                    break
+
+                # Recompute centers
+                for i in range(k):
+                    g_indices = groups[i]
+                    if g_indices:
+                        dim = len(points[0])
+                        mean_pt = [0.0] * dim
+                        for idx in g_indices:
+                            for d in range(dim):
+                                mean_pt[d] += points[idx][d]
+                        mean_pt = [x / len(g_indices) for x in mean_pt]
+                        centers[i] = mean_pt
+
+            return [g for g in groups if g]
+
+    @staticmethod
+    def kmeans_1d(
+        values: Sequence[float],
+        k: int = 3,
+        max_iterations: int = 10,
+    ) -> Tuple[List[float], List[List[float]]]:
+        """
+        Perform 1D K-Means clustering to find natural breakpoints in scalar data.
+
+        Useful for separating "small", "medium", and "large" items based on size.
+        Uses numpy for vectorized operations when available.
+
+        Parameters:
+            values: Sequence of scalar values to cluster.
+            k: Number of clusters (default 3 for small/medium/large classification).
+            max_iterations: Maximum iterations for convergence.
+
+        Returns:
+            Tuple of (centers, groups) where:
+                - centers: List of cluster center values (sorted ascending).
+                - groups: List of lists, each containing ALL input values belonging to that cluster.
+
+        Example:
+            centers, groups = kmeans_1d([1, 2, 3, 50, 55, 60], k=2)
+            # centers ≈ [2.0, 55.0]
+            # groups ≈ [[1, 2, 3], [50, 55, 60]]
+
+            # Duplicates are preserved:
+            centers, groups = kmeans_1d([1, 1, 1, 50, 50], k=2)
+            # groups ≈ [[1, 1, 1], [50, 50]]
+        """
+        if not values:
+            return [], []
+
+        vals = list(values)
+        n = len(vals)
+        n_unique = len(set(vals))
+
+        if n_unique == 1:
+            return [vals[0]], [vals]
+
+        k = min(k, n_unique)
+
+        # Try numpy fast path
+        try:
+            import numpy as np
+
+            arr = np.asarray(vals, dtype=float)
+            sorted_vals = np.sort(arr)
+
+            # Initialize centers using quantiles
+            indices = ((np.arange(k) + 0.5) * n / k).astype(int)
+            indices = np.clip(indices, 0, n - 1)
+            centers = sorted_vals[indices].copy()
+
+            labels = np.zeros(n, dtype=int)
+            for _ in range(max_iterations):
+                # Vectorized distance calculation: |arr - centers|
+                dists = np.abs(arr[:, np.newaxis] - centers[np.newaxis, :])
+                new_labels = np.argmin(dists, axis=1)
+
+                if np.array_equal(new_labels, labels):
+                    break
+                labels = new_labels
+
+                # Recompute centers
+                for i in range(k):
+                    mask = labels == i
+                    if np.any(mask):
+                        centers[i] = arr[mask].mean()
+
+            # Sort by center value
+            order = np.argsort(centers)
+            centers = centers[order].tolist()
+
+            # Build groups in sorted order
+            groups = [arr[labels == order[i]].tolist() for i in range(k)]
+            return centers, groups
+
+        except ImportError:
+            pass
+
+        # Pure Python fallback
+        sorted_vals = sorted(vals)
+        centers = []
+        for i in range(k):
+            idx = int((i + 0.5) * n / k)
+            idx = min(idx, n - 1)
+            centers.append(sorted_vals[idx])
+
+        labels = [-1] * n
+        for _ in range(max_iterations):
+            new_labels = []
+            for v in vals:
+                dists = [abs(v - c) for c in centers]
+                new_labels.append(dists.index(min(dists)))
+
+            if new_labels == labels:
+                break
+            labels = new_labels
+
+            new_centers = []
+            for i in range(k):
+                cluster_vals = [vals[j] for j in range(n) if labels[j] == i]
+                if cluster_vals:
+                    new_centers.append(sum(cluster_vals) / len(cluster_vals))
+                else:
+                    new_centers.append(centers[i])
+            centers = new_centers
+
+        # Build groups and sort by center value
+        groups = [[] for _ in range(k)]
+        for j, lbl in enumerate(labels):
+            groups[lbl].append(vals[j])
+
+        sorted_indices = sorted(range(k), key=lambda i: centers[i])
+        centers = [centers[i] for i in sorted_indices]
+        groups = [groups[i] for i in sorted_indices]
+
+        return centers, groups
+
+    @classmethod
+    def get_kmeans_threshold(
+        cls,
+        values: Sequence[float],
+        k: int = 3,
+    ) -> float:
+        """
+        Use K-Means to find an adaptive threshold separating "parts" from "bodies".
+
+        For assembly classification (e.g., separating small lids from large containers),
+        this finds the natural breakpoint between the smallest cluster(s) and the largest.
+
+        Parameters:
+            values: Sequence of size values (e.g., volumes, areas).
+            k: Number of clusters to use (default 3 for small/medium/large).
+
+        Returns:
+            A threshold value such that items below it are "parts" and above are "bodies".
+            Returns 0.0 if values is empty.
+
+        Example:
+            threshold = get_kmeans_threshold([0.8, 1.2, 2.1, 12.4, 15.0], k=3)
+            # threshold ≈ 7.25 (midpoint between medium and large clusters)
+        """
+        if not values:
+            return 0.0
+
+        if len(set(values)) < 2:
+            return values[0] * 0.5 if values else 0.0
+
+        centers, groups = cls.kmeans_1d(values, k=k)
+
+        if len(centers) < 2:
+            return centers[0] * 0.5 if centers else 0.0
+
+        # Merge logic: if middle cluster is close to small cluster (ratio < 3.0),
+        # treat them as the same class and threshold between merged and large.
+        if len(centers) >= 3:
+            c0, c1, c2 = centers[0], centers[1], centers[2]
+            if c1 < c0 * 3.0:
+                # Merge small + medium; threshold between c1 and c2
+                return (c1 + c2) / 2.0
+            else:
+                # Threshold between c0 and c1
+                return (c0 + c1) / 2.0
+        else:
+            # Only 2 clusters
+            return (centers[0] + centers[1]) / 2.0
 
     @staticmethod
     @CoreUtils.listify(threading=True)
