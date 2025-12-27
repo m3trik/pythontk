@@ -247,7 +247,11 @@ class MapRegistry:
             default_background=(0, 255, 0, 255),
             is_packed=True,
             scale_as_mask=True,
-            output_fallbacks=["Metallic_Smoothness", "Ambient_Occlusion", "Detail_Mask"],
+            output_fallbacks=[
+                "Metallic_Smoothness",
+                "Ambient_Occlusion",
+                "Detail_Mask",
+            ],
             replaces=[
                 "Metallic",
                 "Ambient_Occlusion",
@@ -376,6 +380,7 @@ class MapRegistry:
             mode="L",
             default_background=(255, 255, 255, 255),
             scale_as_mask=True,
+            output_fallbacks=["Metallic_Smoothness", "Ambient_Occlusion"],
         ),
         "Specular": MapType(
             name="Specular",
@@ -559,7 +564,13 @@ class MapRegistry:
     def get_passthrough_maps(self) -> List[str]:
         """Get list of maps that typically don't need processing (heuristic)."""
         # This is a bit subjective, but we can define it based on usage
-        return ["Emissive", "Ambient_Occlusion", "Height", "Displacement", "Detail_Mask"]
+        return [
+            "Emissive",
+            "Ambient_Occlusion",
+            "Height",
+            "Displacement",
+            "Detail_Mask",
+        ]
 
     def get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]:
         """Generate the map backgrounds dictionary."""

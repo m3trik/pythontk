@@ -18,6 +18,19 @@ class ExecutionMonitor:
     _x11_display = None
 
     @staticmethod
+    def _force_kill_process():
+        """Force kill the current process."""
+        try:
+            import signal
+
+            os.kill(os.getpid(), signal.SIGTERM)
+        except Exception:
+            try:
+                os._exit(1)
+            except Exception:
+                pass
+
+    @staticmethod
     def is_escape_pressed():
         """Check if the Escape key is currently pressed (Windows & Linux)."""
         try:
@@ -108,7 +121,7 @@ class ExecutionMonitor:
 
     @staticmethod
     def on_long_execution(
-        threshold, callback, interval=None, allow_escape_cancel=False, gif_path=None
+        threshold, callback, interval=None, allow_escape_cancel=False, indicator=None
     ):
         """
         Decorator that triggers a callback if the decorated function
@@ -122,8 +135,9 @@ class ExecutionMonitor:
             interval (float|bool, optional): If True, repeats every `threshold` seconds.
                                              If float, repeats every `interval` seconds.
             allow_escape_cancel (bool): If True, holding Escape will interrupt the main thread immediately.
-            gif_path (str, optional): Path to an animated GIF to display during execution.
-                                      Runs in a separate process to ensure animation during blocking tasks.
+            indicator (bool|str, optional): If True, displays the default 'task_indicator.gif'.
+                                            If a string, displays the GIF at the specified path.
+                                            Runs in a separate process to ensure animation during blocking tasks.
         """
         # If interval is True, use threshold as the interval
         repeat_interval = threshold if interval is True else interval
@@ -134,8 +148,19 @@ class ExecutionMonitor:
                 stop_event = threading.Event()
 
                 gif_process = None
-                if gif_path and os.path.exists(gif_path):
-                    gif_process = ExecutionMonitor._start_gif_process(gif_path)
+                resolved_gif_path = indicator
+                if resolved_gif_path:
+                    if resolved_gif_path is True:
+                        # Use default bundled GIF
+                        current_dir = os.path.dirname(os.path.abspath(__file__))
+                        resolved_gif_path = os.path.join(
+                            current_dir, "task_indicator.gif"
+                        )
+
+                    if os.path.exists(resolved_gif_path):
+                        gif_process = ExecutionMonitor._start_gif_process(
+                            resolved_gif_path
+                        )
 
                 def wait_for_stop_or_timeout(duration):
                     """Returns True if stopped (event set or aborted), False if timeout."""
@@ -161,6 +186,11 @@ class ExecutionMonitor:
                         result = callback()
                         if result is False:
                             _thread.interrupt_main()
+                            # If interrupt_main fails to stop the process (e.g. stuck in C extension),
+                            # we can try to raise it again after a short delay or escalate.
+                            return
+                        elif result == "FORCE_KILL":
+                            ExecutionMonitor._force_kill_process()
                             return
                         elif result == "STOP_MONITORING":
                             return
@@ -171,6 +201,9 @@ class ExecutionMonitor:
                                 result = callback()
                                 if result is False:
                                     _thread.interrupt_main()
+                                    return
+                                elif result == "FORCE_KILL":
+                                    ExecutionMonitor._force_kill_process()
                                     return
                                 elif result == "STOP_MONITORING":
                                     return
@@ -196,7 +229,7 @@ class ExecutionMonitor:
         """Show a native blocking dialog to ask the user how to proceed with a long operation.
 
         Returns:
-            bool/str: True to continue waiting, False to abort, "STOP_MONITORING" to ignore.
+            bool/str: True to continue waiting, False to abort, "STOP_MONITORING" to ignore, "FORCE_KILL" to kill.
         """
         import sys
 
@@ -208,6 +241,13 @@ class ExecutionMonitor:
                 # 0x03 | 0x30 | 0x1000 | 0x40000
                 flags = 0x03 | 0x30 | 0x1000 | 0x40000
 
+                # Add MB_DEFBUTTON2 (0x100) to make "No" (Stop) the default if desired,
+                # but usually "Yes" (Wait) is safer as default.
+
+                # Add MB_ABORTRETRYIGNORE style? No, YESNOCANCEL is standard.
+                # But we can interpret Cancel as "Force Quit" if we change the prompt?
+                # For now, let's stick to standard buttons but handle the result.
+
                 response = ctypes.windll.user32.MessageBoxW(0, message, title, flags)
 
                 # IDYES=6, IDNO=7, IDCANCEL=2
@@ -216,7 +256,8 @@ class ExecutionMonitor:
                 if response == 7:
                     return False
                 if response == 2:
-                    return "STOP_MONITORING"
+                    # Remap Cancel to Force Kill based on new prompt
+                    return "FORCE_KILL"
             except ImportError:
                 return True
 
@@ -240,15 +281,15 @@ class ExecutionMonitor:
                     "--cancel-label",
                     "Stop Operation",
                     "--extra-button",
-                    "Stop Monitoring",
+                    "Force Kill",
                 ]
                 try:
                     result = subprocess.run(
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
                     )
                     if result.returncode == 0:
-                        if result.stdout.strip() == "Stop Monitoring":
-                            return "STOP_MONITORING"
+                        if result.stdout.strip() == "Force Kill":
+                            return "FORCE_KILL"
                         return True  # Keep Waiting
                     else:
                         return False  # Stop Operation
@@ -300,6 +341,7 @@ class ExecutionMonitor:
         watchdog_check_interval: float = 1.0,
         watchdog_kill_tree: bool = True,
         watchdog_heartbeat_path: str | None = None,
+        indicator: bool | str | None = None,
     ):
         """
         Decorator that monitors execution time and (optionally) prompts the user via a native
@@ -318,6 +360,8 @@ class ExecutionMonitor:
             watchdog_check_interval (float): Watchdog polling interval in seconds.
             watchdog_kill_tree (bool): If True, attempt to kill child processes too.
             watchdog_heartbeat_path (str|None): Optional heartbeat file path override.
+            indicator (bool|str, optional): If True, displays the default 'task_indicator.gif'.
+                                            If a string, displays the GIF at the specified path.
         """
 
         def callback():
@@ -335,7 +379,7 @@ class ExecutionMonitor:
                 "Do you want to continue waiting?\n\n"
                 "Yes:\tKeep waiting (ask again later).\n"
                 "No:\tStop the operation.\n"
-                "Cancel:\tKeep waiting (don't ask again).",
+                "Cancel:\tForce Quit Application (if stuck).",
             )
 
             if logger:
@@ -345,11 +389,17 @@ class ExecutionMonitor:
                     logger.warning("Aborting execution by user request.")
                 elif result == "STOP_MONITORING":
                     logger.info("Continuing execution (monitoring disabled).")
+                elif result == "FORCE_KILL":
+                    logger.critical("Force killing application by user request.")
 
             return result
 
         monitored = ExecutionMonitor.on_long_execution(
-            threshold, callback, interval=True, allow_escape_cancel=allow_escape_cancel
+            threshold,
+            callback,
+            interval=True,
+            allow_escape_cancel=allow_escape_cancel,
+            indicator=indicator,
         )
 
         if watchdog_timeout is None:

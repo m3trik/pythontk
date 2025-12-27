@@ -649,26 +649,27 @@ class ProcessingContext:
         img_obj = ImgUtils.ensure_image(image)
 
         if should_optimize:
-            # 1. Depalettize
-            img_obj = ImgUtils.depalettize_image(img_obj)
+            # Determine if resizing is needed
+            will_resize = False
+            if max_size:
+                width, height = img_obj.size
+                if max(width, height) > max_size:
+                    will_resize = True
+
+            # 1. Depalettize ONLY if resizing
+            if will_resize:
+                img_obj = ImgUtils.depalettize_image(img_obj)
 
             # 2. Enforce Mode
             map_def = MapRegistry().get(map_type)
             if map_def:
-                if map_def.mode == "RGB" and img_obj.mode != "RGB":
-                    img_obj = img_obj.convert("RGB")
-                elif map_def.mode == "RGBA" and img_obj.mode != "RGBA":
-                    img_obj = img_obj.convert("RGBA")
-                elif map_def.mode == "L" and img_obj.mode == "P":
-                    img_obj = img_obj.convert("L")
+                img_obj = ImgUtils.enforce_mode(img_obj, map_def.mode)
 
             # 3. Resize
-            if max_size:
-                width, height = img_obj.size
-                if max(width, height) > max_size:
-                    from PIL import Image
+            if will_resize:
+                from PIL import Image
 
-                    img_obj.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                img_obj.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 
             # 4. Save with optimization
             ImgUtils.save_image(img_obj, output_path, optimize=True)
@@ -814,18 +815,35 @@ class ORMMapHandler(WorkflowHandler):
             context.log("No AO map, using white for ORM red channel", "warning")
 
         if not roughness:
-            context.log("No roughness map for ORM green channel", "warning")
-            return None
+            if not context.config.get("force_packed_maps", False):
+                context.log("No roughness map for ORM green channel", "warning")
+                return None
+            context.log(
+                "No roughness map for ORM green channel, using black (forced)",
+                "warning",
+            )
 
         if not metallic:
-            context.log("No metallic map for ORM blue channel", "warning")
-            return None
+            if not context.config.get("force_packed_maps", False):
+                context.log("No metallic map for ORM blue channel", "warning")
+                return None
+            context.log(
+                "No metallic map for ORM blue channel, using black (forced)", "warning"
+            )
 
         try:
+            fill_values = {}
+            if not ao:
+                fill_values["R"] = 255
+            if not roughness:
+                fill_values["G"] = 0  # Default to smooth? Or rough? Using 0 (Black)
+            if not metallic:
+                fill_values["B"] = 0  # Default to non-metal
+
             orm_map = ImgUtils.pack_channels(
                 channel_files={"R": ao, "G": roughness, "B": metallic},
                 output_path=None,
-                fill_values={"R": 255} if not ao else None,
+                fill_values=fill_values if fill_values else None,
                 optimize=False,
             )
             context.log("Created Unreal/glTF ORM map")
@@ -908,9 +926,15 @@ class MaskMapHandler(WorkflowHandler):
 
         # Special case: If only AO is present, skip Mask Map generation
         # to avoid creating a misleading packed map with blank Metallic/Smoothness.
+        # UNLESS explicitly forced by the user.
         if ao and not metallic and not smoothness:
-            context.log("Only AO map present, skipping Mask Map generation", "warning")
-            return None
+            # Check if forced
+            if not context.config.get("force_packed_maps", False):
+                context.log(
+                    "Only AO map present, skipping Mask Map generation (use force_packed_maps=True to override)",
+                    "warning",
+                )
+                return None
 
         if not metallic:
             context.log("No metallic map for Mask Map, using black", "warning")
@@ -3035,7 +3059,13 @@ class TextureMapFactory(LoggingMixin):
         Returns:
             albedo: PIL Image (True Albedo map).
         """
-        base_color = ImgUtils.ensure_image(base_color, "RGB")
+        base_color = ImgUtils.ensure_image(base_color)
+        original_mode = base_color.mode
+
+        # Ensure we have at least RGB
+        if base_color.mode not in ["RGB", "RGBA"]:
+            base_color = base_color.convert("RGB")
+
         metalness = ImgUtils.ensure_image(metalness, "L")
 
         # Convert metalness to grayscale and threshold (Metal = 1, Non-Metal = 0)
@@ -3044,10 +3074,12 @@ class TextureMapFactory(LoggingMixin):
         metal_mask = metalness.point(lambda p: 255 if p > 128 else 0)
 
         # Create a black image for metals
-        black_image = Image.new("RGB", base_color.size, (0, 0, 0))
-
-        # Composite to replace metallic areas with black
-        # Mask 255 (Metal) -> Uses black_image
+        # Match base color mode (RGB or RGBA)
+        black_image = Image.new(
+            base_color.mode,
+            base_color.size,
+            (0, 0, 0, 0) if "A" in base_color.mode else (0, 0, 0),
+        )
         # Mask 0 (Non-Metal) -> Uses base_color
         albedo = Image.composite(black_image, base_color, metal_mask)
 

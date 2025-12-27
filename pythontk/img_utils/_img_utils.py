@@ -26,7 +26,6 @@ except ImportError as e:
 from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils._file_utils import FileUtils
-from pythontk.iter_utils._iter_utils import IterUtils
 from pythontk.img_utils.map_registry import MapRegistry
 
 
@@ -173,6 +172,44 @@ class ImgUtils(HelpMixin):
             )
 
         return image.convert(mode) if mode else image
+
+    @classmethod
+    def enforce_mode(
+        cls, image: Image.Image, target_mode: str, allow_compatible: bool = True
+    ) -> Image.Image:
+        """Converts image to target_mode, optionally allowing compatible modes to preserve file size.
+
+        Compatible modes:
+        - Target RGB: Allows P (Indexed) and L (Grayscale)
+        - Target RGBA: Allows P (Indexed)
+        - Target L: Strict conversion (P is converted to L)
+
+        Parameters:
+            image (PIL.Image.Image): Input image.
+            target_mode (str): Desired mode (RGB, RGBA, L).
+            allow_compatible (bool): If True, allows smaller compatible modes.
+
+        Returns:
+            PIL.Image.Image: The converted (or original) image.
+        """
+        if not allow_compatible:
+            return image.convert(target_mode) if image.mode != target_mode else image
+
+        if target_mode == "RGB":
+            if image.mode in ["RGB", "P", "L"]:
+                return image
+            return image.convert("RGB")
+        elif target_mode == "RGBA":
+            if image.mode in ["RGBA", "P"]:
+                return image
+            return image.convert("RGBA")
+        elif target_mode == "L":
+            # Always enforce L for grayscale maps to ensure single channel
+            if image.mode != "L":
+                return image.convert("L")
+            return image
+
+        return image.convert(target_mode) if image.mode != target_mode else image
 
     @staticmethod
     def assert_pathlike(obj: object, name: str = "argument") -> None:
@@ -467,7 +504,16 @@ class ImgUtils(HelpMixin):
             return inverted_channels["R"]  # 'R' channel holds the grayscale data
         elif len(split_channels) == 2:  # Grayscale image with alpha
             return Image.merge("LA", (inverted_channels["R"], inverted_channels["A"]))
-        else:  # RGB or RGBA image
+        elif len(split_channels) == 3:  # RGB image
+            return Image.merge(
+                "RGB",
+                (
+                    inverted_channels["R"],
+                    inverted_channels["G"],
+                    inverted_channels["B"],
+                ),
+            )
+        else:  # RGBA image
             return Image.merge(
                 "RGBA",
                 (
@@ -626,7 +672,7 @@ class ImgUtils(HelpMixin):
         )
         data[:, :, :4][mask] = to_color if len(to_color) == 4 else to_color + (255,)
 
-        return Image.fromarray(data).convert("RGBA")
+        return Image.fromarray(data).convert(mode)
 
     @classmethod
     def set_contrast(cls, image, level=255):
