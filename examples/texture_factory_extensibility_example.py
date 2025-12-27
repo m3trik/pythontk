@@ -269,7 +269,7 @@ class GameEngineXHandler(WorkflowHandler):
             try:
                 bc_img = ImgUtils.load_image(base_color)
                 em_img = ImgUtils.load_image(emissive)
-                em_gray = ImgUtils.convert_to_grayscale(em_img)
+                em_gray = em_img.convert("L")
 
                 # Pack emissive into alpha
                 combined = ImgUtils.pack_channels(

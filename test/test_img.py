@@ -18,8 +18,12 @@ Run with:
 """
 import os
 import unittest
+import shutil
+import tempfile
+import numpy as np
+from PIL import Image
 
-from pythontk import FileUtils, ImgUtils
+from pythontk import FileUtils, ImgUtils, TextureMapFactory
 
 from conftest import BaseTestCase
 
@@ -31,6 +35,42 @@ class ImgTest(BaseTestCase):
     im_h = ImgUtils.create_image("RGB", (1024, 1024), (0, 0, 0))
     im_n = ImgUtils.create_image("RGB", (1024, 1024), (127, 127, 255))
 
+    @classmethod
+    def setUpClass(cls):
+        cls.test_dir = os.path.join(
+            os.path.dirname(__file__), "test_files", "imgtk_test"
+        )
+        if os.path.exists(cls.test_dir):
+            shutil.rmtree(cls.test_dir)
+        os.makedirs(cls.test_dir)
+
+        # Create base images
+        cls.im_h.save(os.path.join(cls.test_dir, "im_h.png"))
+        cls.im_n.save(os.path.join(cls.test_dir, "im_n.png"))
+
+        # Create other expected images
+        ImgUtils.create_image("RGB", (1024, 1024), (255, 0, 0)).save(
+            os.path.join(cls.test_dir, "im_Base_color.png")
+        )
+        # Create 16-bit height map
+        ImgUtils.create_image("I", (1024, 1024), 32767).save(
+            os.path.join(cls.test_dir, "im_Height_16.png")
+        )
+        # Create 8-bit height map
+        ImgUtils.create_image("L", (1024, 1024), 128).save(
+            os.path.join(cls.test_dir, "im_Height_8.png")
+        )
+        # Create grayscale AO map (L mode)
+        ImgUtils.create_image("L", (1024, 1024), 128).save(
+            os.path.join(cls.test_dir, "im_Mixed_AO_L.png")
+        )
+        ImgUtils.create_image("RGB", (1024, 1024), (128, 128, 255)).save(
+            os.path.join(cls.test_dir, "im_Normal_DirectX.png")
+        )
+        ImgUtils.create_image("RGB", (1024, 1024), (128, 128, 255)).save(
+            os.path.join(cls.test_dir, "im_Normal_OpenGL.png")
+        )
+
     # -------------------------------------------------------------------------
     # Image Creation Tests
     # -------------------------------------------------------------------------
@@ -38,7 +78,7 @@ class ImgTest(BaseTestCase):
     def test_create_image_basic(self):
         """Test create_image creates images with correct properties."""
         img = ImgUtils.create_image("RGB", (1024, 1024), (0, 0, 0))
-        self.assertEqual(img, self.im_h)
+        self.assertEqual(img.tobytes(), self.im_h.tobytes())
 
     def test_create_image_rgb(self):
         """Test create_image with RGB mode."""
@@ -110,14 +150,16 @@ class ImgTest(BaseTestCase):
 
     def test_save_image_file(self):
         """Test save_image writes image to disk."""
-        result_h = ImgUtils.save_image(self.im_h, "test_files/imgtk_test/im_h.png")
-        result_n = ImgUtils.save_image(self.im_n, "test_files/imgtk_test/im_n.png")
+        path_h = os.path.join(self.test_dir, "im_h.png")
+        path_n = os.path.join(self.test_dir, "im_n.png")
+        result_h = ImgUtils.save_image(self.im_h, path_h)
+        result_n = ImgUtils.save_image(self.im_n, path_n)
         self.assertIsNone(result_h)
         self.assertIsNone(result_n)
 
     def test_save_image_overwrites(self):
         """Test save_image can overwrite existing files."""
-        path = "test_files/imgtk_test/im_h.png"
+        path = os.path.join(self.test_dir, "im_h.png")
         img1 = ImgUtils.create_image("RGB", (100, 100), (255, 0, 0))
         ImgUtils.save_image(img1, path)
         img2 = ImgUtils.create_image("RGB", (100, 100), (0, 255, 0))
@@ -130,23 +172,24 @@ class ImgTest(BaseTestCase):
 
     def test_get_images_pattern(self):
         """Test get_images finds images by pattern."""
-        images = ImgUtils.get_images("test_files/imgtk_test/", "*Normal*")
-        self.assertEqual(
-            list(images.keys()),
-            [
-                "test_files/imgtk_test/im_Normal_DirectX.png",
-                "test_files/imgtk_test/im_Normal_OpenGL.png",
-            ],
-        )
+        images = ImgUtils.get_images(self.test_dir, "*Normal*")
+        expected = [
+            os.path.join(self.test_dir, "im_Normal_DirectX.png"),
+            os.path.join(self.test_dir, "im_Normal_OpenGL.png"),
+        ]
+        # Normalize paths for comparison
+        found = sorted([os.path.normpath(p) for p in images.keys()])
+        expected = sorted([os.path.normpath(p) for p in expected])
+        self.assertEqual(found, expected)
 
     def test_get_images_all(self):
         """Test get_images with wildcard to get all images."""
-        images = ImgUtils.get_images("test_files/imgtk_test/", "*")
+        images = ImgUtils.get_images(self.test_dir, "*")
         self.assertGreater(len(images), 0)
 
     def test_get_images_no_match(self):
         """Test get_images with pattern that matches nothing."""
-        images = ImgUtils.get_images("test_files/imgtk_test/", "*NonexistentPattern*")
+        images = ImgUtils.get_images(self.test_dir, "*NonexistentPattern*")
         self.assertEqual(len(images), 0)
 
     # -------------------------------------------------------------------------
@@ -156,28 +199,32 @@ class ImgTest(BaseTestCase):
     def test_resolve_map_type_height(self):
         """Test resolve_map_type identifies height maps."""
         self.assertEqual(
-            ImgUtils.resolve_map_type("test_files/imgtk_test/im_h.png"),
+            TextureMapFactory.resolve_map_type(os.path.join(self.test_dir, "im_h.png")),
             "Height",
         )
         self.assertEqual(
-            ImgUtils.resolve_map_type("test_files/imgtk_test/im_h.png", key=False),
+            TextureMapFactory.resolve_map_type(
+                os.path.join(self.test_dir, "im_h.png"), key=False
+            ),
             "_H",
         )
 
     def test_resolve_map_type_normal(self):
         """Test resolve_map_type identifies normal maps."""
         self.assertEqual(
-            ImgUtils.resolve_map_type("test_files/imgtk_test/im_n.png"),
+            TextureMapFactory.resolve_map_type(os.path.join(self.test_dir, "im_n.png")),
             "Normal",
         )
         self.assertEqual(
-            ImgUtils.resolve_map_type("test_files/imgtk_test/im_n.png", key=False),
+            TextureMapFactory.resolve_map_type(
+                os.path.join(self.test_dir, "im_n.png"), key=False
+            ),
             "_N",
         )
 
     def test_resolve_map_type_unknown(self):
         """Test resolve_map_type with unknown map type."""
-        result = ImgUtils.resolve_map_type("random_file.png")
+        result = TextureMapFactory.resolve_map_type("random_file.png")
         # Should return None or empty for unknown types
         self.assertTrue(result is None or result == "")
 
@@ -187,20 +234,20 @@ class ImgTest(BaseTestCase):
 
     def test_filter_images_by_type_height(self):
         """Test filter_images_by_type filters by texture type."""
-        files = FileUtils.get_dir_contents("test_files/imgtk_test")
-        self.assertEqual(
-            ImgUtils.filter_images_by_type(files, "Height"),
-            ["im_h.png", "im_Height.png"],
-        )
+        files = FileUtils.get_dir_contents(self.test_dir)
+        filtered = TextureMapFactory.filter_images_by_type(files, "Height")
+        expected = ["im_h.png"]
+        # Sort for comparison
+        self.assertEqual(sorted(filtered), sorted(expected))
 
     def test_filter_images_by_type_empty_list(self):
         """Test filter_images_by_type with empty list."""
-        result = ImgUtils.filter_images_by_type([], "Height")
+        result = TextureMapFactory.filter_images_by_type([], "Height")
         self.assertEqual(result, [])
 
     def test_filter_images_by_type_no_match(self):
         """Test filter_images_by_type when no images match."""
-        result = ImgUtils.filter_images_by_type(["random.txt"], "Height")
+        result = TextureMapFactory.filter_images_by_type(["random.txt"], "Height")
         self.assertEqual(result, [])
 
     # -------------------------------------------------------------------------
@@ -210,7 +257,7 @@ class ImgTest(BaseTestCase):
     def test_sort_images_by_type_list(self):
         """Test sort_images_by_type groups images by texture type."""
         self.assertEqual(
-            ImgUtils.sort_images_by_type(
+            TextureMapFactory.sort_images_by_type(
                 [("im_h.png", "<im_h>"), ("im_n.png", "<im_n>")]
             ),
             {
@@ -222,7 +269,9 @@ class ImgTest(BaseTestCase):
     def test_sort_images_by_type_dict(self):
         """Test sort_images_by_type with dict input."""
         self.assertEqual(
-            ImgUtils.sort_images_by_type({"im_h.png": "<im_h>", "im_n.png": "<im_n>"}),
+            TextureMapFactory.sort_images_by_type(
+                {"im_h.png": "<im_h>", "im_n.png": "<im_n>"}
+            ),
             {
                 "Height": [("im_h.png", "<im_h>")],
                 "Normal": [("im_n.png", "<im_n>")],
@@ -231,7 +280,7 @@ class ImgTest(BaseTestCase):
 
     def test_sort_images_by_type_empty(self):
         """Test sort_images_by_type with empty input."""
-        result = ImgUtils.sort_images_by_type([])
+        result = TextureMapFactory.sort_images_by_type([])
         self.assertEqual(result, {})
 
     # -------------------------------------------------------------------------
@@ -240,12 +289,14 @@ class ImgTest(BaseTestCase):
 
     def test_contains_map_types_list(self):
         """Test contains_map_types with list input."""
-        self.assertTrue(ImgUtils.contains_map_types([("im_h.png", "<im_h>")], "Height"))
+        self.assertTrue(
+            TextureMapFactory.contains_map_types([("im_h.png", "<im_h>")], "Height")
+        )
 
     def test_contains_map_types_dict(self):
         """Test contains_map_types with dict input."""
         self.assertTrue(
-            ImgUtils.contains_map_types(
+            TextureMapFactory.contains_map_types(
                 {"im_h.png": "<im_h>", "im_n.png": "<im_n>"}, "Height"
             )
         )
@@ -253,13 +304,15 @@ class ImgTest(BaseTestCase):
     def test_contains_map_types_sorted_dict(self):
         """Test contains_map_types with pre-sorted dict."""
         self.assertTrue(
-            ImgUtils.contains_map_types({"Height": [("im_h.png", "<im_h>")]}, "Height")
+            TextureMapFactory.contains_map_types(
+                {"Height": [("im_h.png", "<im_h>")]}, "Height"
+            )
         )
 
     def test_contains_map_types_multiple(self):
         """Test contains_map_types with multiple types."""
         self.assertTrue(
-            ImgUtils.contains_map_types(
+            TextureMapFactory.contains_map_types(
                 {"Height": [("im_h.png", "<im_h>")]}, ["Height", "Normal"]
             )
         )
@@ -267,7 +320,7 @@ class ImgTest(BaseTestCase):
     def test_contains_map_types_not_found(self):
         """Test contains_map_types when type not present."""
         self.assertFalse(
-            ImgUtils.contains_map_types([("im_h.png", "<im_h>")], "Roughness")
+            TextureMapFactory.contains_map_types([("im_h.png", "<im_h>")], "Roughness")
         )
 
     # -------------------------------------------------------------------------
@@ -276,23 +329,23 @@ class ImgTest(BaseTestCase):
 
     def test_is_normal_map_false(self):
         """Test is_normal_map returns False for non-normal maps."""
-        self.assertFalse(ImgUtils.is_normal_map("im_h.png"))
+        self.assertFalse(TextureMapFactory.is_normal_map("im_h.png"))
 
     def test_is_normal_map_true(self):
         """Test is_normal_map returns True for normal maps."""
-        self.assertTrue(ImgUtils.is_normal_map("im_n.png"))
+        self.assertTrue(TextureMapFactory.is_normal_map("im_n.png"))
 
     def test_is_normal_map_explicit_name(self):
         """Test is_normal_map with explicit normal map name."""
-        self.assertTrue(ImgUtils.is_normal_map("texture_Normal.png"))
+        self.assertTrue(TextureMapFactory.is_normal_map("texture_Normal.png"))
 
     def test_is_normal_map_directx(self):
         """Test is_normal_map with DirectX normal map."""
-        self.assertTrue(ImgUtils.is_normal_map("im_Normal_DirectX.png"))
+        self.assertTrue(TextureMapFactory.is_normal_map("im_Normal_DirectX.png"))
 
     def test_is_normal_map_opengl(self):
         """Test is_normal_map with OpenGL normal map."""
-        self.assertTrue(ImgUtils.is_normal_map("im_Normal_OpenGL.png"))
+        self.assertTrue(TextureMapFactory.is_normal_map("im_Normal_OpenGL.png"))
 
     # -------------------------------------------------------------------------
     # Channel Operations Tests
@@ -320,34 +373,22 @@ class ImgTest(BaseTestCase):
     # Normal Map Conversion Tests
     # -------------------------------------------------------------------------
 
-    def test_create_dx_from_gl(self):
-        """Test create_dx_from_gl converts OpenGL to DirectX normal maps."""
-        dx_path = ImgUtils.create_dx_from_gl(
-            "test_files/imgtk_test/im_Normal_OpenGL.png"
+    def test_convert_normal_map_format_gl_to_dx(self):
+        """Test convert_normal_map_format converts OpenGL to DirectX normal maps."""
+        input_path = os.path.join(self.test_dir, "im_Normal_OpenGL.png")
+        dx_path = TextureMapFactory.convert_normal_map_format(
+            input_path, target_format="directx"
         )
-        expected = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "test_files",
-                "imgtk_test",
-                "im_Normal_DirectX.png",
-            )
-        )
+        expected = os.path.join(self.test_dir, "im_Normal_DirectX.png")
         self.assertEqual(os.path.normpath(dx_path), os.path.normpath(expected))
 
-    def test_create_gl_from_dx(self):
-        """Test create_gl_from_dx converts DirectX to OpenGL normal maps."""
-        gl_path = ImgUtils.create_gl_from_dx(
-            "test_files/imgtk_test/im_Normal_DirectX.png"
+    def test_convert_normal_map_format_dx_to_gl(self):
+        """Test convert_normal_map_format converts DirectX to OpenGL normal maps."""
+        input_path = os.path.join(self.test_dir, "im_Normal_DirectX.png")
+        gl_path = TextureMapFactory.convert_normal_map_format(
+            input_path, target_format="opengl"
         )
-        expected = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "test_files",
-                "imgtk_test",
-                "im_Normal_OpenGL.png",
-            )
-        )
+        expected = os.path.join(self.test_dir, "im_Normal_OpenGL.png")
         self.assertEqual(os.path.normpath(gl_path), os.path.normpath(expected))
 
     # -------------------------------------------------------------------------
@@ -356,15 +397,17 @@ class ImgTest(BaseTestCase):
 
     def test_create_mask_from_background(self):
         """Test create_mask generates image masks from background color."""
-        bg = ImgUtils.get_background("test_files/imgtk_test/im_Base_color.png", "RGB")
-        mask = ImgUtils.create_mask("test_files/imgtk_test/im_Base_color.png", bg)
+        input_path = os.path.join(self.test_dir, "im_Base_color.png")
+        bg = ImgUtils.get_background(input_path, "RGB")
+        mask = ImgUtils.create_mask(input_path, bg)
         self.assertEqual(mask.mode, "L")
 
     def test_create_mask_from_image(self):
         """Test create_mask generates mask from another image."""
+        input_path = os.path.join(self.test_dir, "im_Base_color.png")
         mask = ImgUtils.create_mask(
-            "test_files/imgtk_test/im_Base_color.png",
-            "test_files/imgtk_test/im_Base_color.png",
+            input_path,
+            input_path,
         )
         self.assertEqual(mask.mode, "L")
 
@@ -374,26 +417,25 @@ class ImgTest(BaseTestCase):
 
     def test_fill_masked_area(self):
         """Test fill_masked_area fills masked regions with color."""
-        bg = ImgUtils.get_background("test_files/imgtk_test/im_Base_color.png", "RGB")
-        mask = ImgUtils.create_mask("test_files/imgtk_test/im_Base_color.png", bg)
-        result = ImgUtils.fill_masked_area(
-            "test_files/imgtk_test/im_Base_color.png", (0, 255, 0), mask
-        )
+        input_path = os.path.join(self.test_dir, "im_Base_color.png")
+        bg = ImgUtils.get_background(input_path, "RGB")
+        mask = ImgUtils.create_mask(input_path, bg)
+        result = ImgUtils.fill_masked_area(input_path, (0, 255, 0), mask)
         self.assertEqual(result.mode, "RGB")
 
     def test_fill_solid_color(self):
         """Test fill fills image with color."""
-        result = ImgUtils.fill(self.im_h, (127, 127, 127))
+        result = ImgUtils.fill(self.im_h.copy(), (127, 127, 127))
         self.assertEqual(result.mode, "RGB")
 
     def test_fill_black(self):
         """Test fill with black color."""
-        result = ImgUtils.fill(self.im_h, (0, 0, 0))
+        result = ImgUtils.fill(self.im_h.copy(), (0, 0, 0))
         self.assertEqual(result.mode, "RGB")
 
     def test_fill_white(self):
         """Test fill with white color."""
-        result = ImgUtils.fill(self.im_h, (255, 255, 255))
+        result = ImgUtils.fill(self.im_h.copy(), (255, 255, 255))
         self.assertEqual(result.mode, "RGB")
 
     # -------------------------------------------------------------------------
@@ -403,19 +445,25 @@ class ImgTest(BaseTestCase):
     def test_get_background_i_mode(self):
         """Test get_background with I mode."""
         self.assertEqual(
-            ImgUtils.get_background("test_files/imgtk_test/im_Height.png", "I"), 32767
+            ImgUtils.get_background(
+                os.path.join(self.test_dir, "im_Height_16.png"), "I"
+            ),
+            32767,
         )
 
     def test_get_background_l_mode(self):
         """Test get_background with L mode."""
         self.assertEqual(
-            ImgUtils.get_background("test_files/imgtk_test/im_Height.png", "L"), 255
+            ImgUtils.get_background(
+                os.path.join(self.test_dir, "im_Height_8.png"), "L"
+            ),
+            128,
         )
 
     def test_get_background_rgb_mode(self):
         """Test get_background with RGB mode."""
         self.assertEqual(
-            ImgUtils.get_background("test_files/imgtk_test/im_n.png", "RGB"),
+            ImgUtils.get_background(os.path.join(self.test_dir, "im_n.png"), "RGB"),
             (127, 127, 255),
         )
 
@@ -425,10 +473,9 @@ class ImgTest(BaseTestCase):
 
     def test_replace_color(self):
         """Test replace_color substitutes colors in image."""
-        bg = ImgUtils.get_background("test_files/imgtk_test/im_Base_color.png", "RGB")
-        result = ImgUtils.replace_color(
-            "test_files/imgtk_test/im_Base_color.png", bg, (255, 0, 0)
-        )
+        input_path = os.path.join(self.test_dir, "im_Base_color.png")
+        bg = ImgUtils.get_background(input_path, "RGB")
+        result = ImgUtils.replace_color(input_path, bg, (255, 0, 0))
         self.assertEqual(result.mode, "RGBA")
 
     def test_replace_color_black_to_white(self):
@@ -443,17 +490,23 @@ class ImgTest(BaseTestCase):
 
     def test_set_contrast(self):
         """Test set_contrast adjusts image contrast."""
-        result = ImgUtils.set_contrast("test_files/imgtk_test/im_Mixed_AO.png", 255)
+        result = ImgUtils.set_contrast(
+            os.path.join(self.test_dir, "im_Mixed_AO_L.png"), 255
+        )
         self.assertEqual(result.mode, "L")
 
     def test_set_contrast_zero(self):
         """Test set_contrast with zero value (no contrast)."""
-        result = ImgUtils.set_contrast("test_files/imgtk_test/im_Mixed_AO.png", 0)
+        result = ImgUtils.set_contrast(
+            os.path.join(self.test_dir, "im_Mixed_AO_L.png"), 0
+        )
         self.assertEqual(result.mode, "L")
 
     def test_set_contrast_mid(self):
         """Test set_contrast with mid value."""
-        result = ImgUtils.set_contrast("test_files/imgtk_test/im_Mixed_AO.png", 128)
+        result = ImgUtils.set_contrast(
+            os.path.join(self.test_dir, "im_Mixed_AO_L.png"), 128
+        )
         self.assertEqual(result.mode, "L")
 
     # -------------------------------------------------------------------------
@@ -519,6 +572,154 @@ class ImgTest(BaseTestCase):
         # ImageChops.difference raises ValueError when modes don't match
         with self.assertRaises(ValueError):
             ImgUtils.are_identical(rgb, gray)
+
+
+class TestImgUtilsMemory(unittest.TestCase):
+    """Test ImgUtils methods with save=False (in-memory processing)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.test_dir = tempfile.mkdtemp()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.test_dir)
+
+    def setUp(self):
+        # Create simple test images
+        self.size = (64, 64)
+        self.rgb_img = Image.new("RGB", self.size, (100, 150, 200))
+        self.rgba_img = Image.new("RGBA", self.size, (100, 150, 200, 128))
+        self.gray_img = Image.new("L", self.size, 128)
+
+        # Save some to disk for methods that require paths (though most should accept images now)
+        self.rgb_path = os.path.join(self.test_dir, "test_rgb.png")
+        self.rgb_img.save(self.rgb_path)
+
+        self.rgba_path = os.path.join(self.test_dir, "test_rgba.png")
+        self.rgba_img.save(self.rgba_path)
+
+    def test_convert_normal_map_format_dx_to_gl_memory(self):
+        """Test convert_normal_map_format returns Image when save=False (DX -> GL)."""
+        # Create a mock normal map (OpenGL style)
+        # R=128, G=128, B=255 (Flat normal)
+        gl_normal = Image.new("RGB", self.size, (128, 128, 255))
+        gl_path = os.path.join(self.test_dir, "normal_gl.png")
+        gl_normal.save(gl_path)
+
+        result = TextureMapFactory.convert_normal_map_format(
+            gl_path, target_format="directx", save=False
+        )
+        self.assertIsInstance(result, Image.Image)
+
+    def test_convert_normal_map_format_gl_to_dx_memory(self):
+        """Test convert_normal_map_format returns Image when save=False (GL -> DX)."""
+        dx_normal = Image.new("RGB", self.size, (128, 128, 255))
+        dx_path = os.path.join(self.test_dir, "normal_dx.png")
+        dx_normal.save(dx_path)
+
+        result = TextureMapFactory.convert_normal_map_format(
+            dx_path, target_format="opengl", save=False
+        )
+        self.assertIsInstance(result, Image.Image)
+
+    def test_convert_bump_to_normal_memory(self):
+        """Test convert_bump_to_normal returns Image when save=False."""
+        result = TextureMapFactory.convert_bump_to_normal(self.gray_img, save=False)
+        self.assertIsInstance(result, Image.Image)
+        self.assertEqual(result.mode, "RGB")
+
+    def test_convert_smoothness_to_roughness_memory(self):
+        """Test convert_smoothness_to_roughness returns Image when save=False."""
+        # Now accepts Image object directly
+        result = TextureMapFactory.convert_smoothness_to_roughness(
+            self.gray_img, save=False
+        )
+        self.assertIsInstance(result, Image.Image)
+        self.assertEqual(result.mode, "L")
+        # 128 inverted is 127
+        self.assertEqual(result.getpixel((0, 0)), 127)
+
+    def test_convert_roughness_to_smoothness_memory(self):
+        """Test convert_roughness_to_smoothness returns Image when save=False."""
+        # Now accepts Image object directly
+        result = TextureMapFactory.convert_roughness_to_smoothness(
+            self.gray_img, save=False
+        )
+        self.assertIsInstance(result, Image.Image)
+        self.assertEqual(result.mode, "L")
+
+    def test_unpack_specular_gloss_memory(self):
+        """Test unpack_specular_gloss returns tuple of Images when save=False."""
+        # Specular map usually has gloss in alpha
+        spec_gloss = Image.new("RGBA", self.size, (100, 100, 100, 200))
+        spec_path = os.path.join(self.test_dir, "spec_gloss.png")
+        spec_gloss.save(spec_path)
+
+        spec, gloss = TextureMapFactory.unpack_specular_gloss(spec_path, save=False)
+        self.assertIsInstance(spec, Image.Image)
+        self.assertIsInstance(gloss, Image.Image)
+        self.assertEqual(spec.mode, "RGB")
+        self.assertEqual(gloss.mode, "L")
+
+    def test_unpack_orm_texture_memory(self):
+        """Test unpack_orm_texture returns tuple of Images when save=False."""
+        # ORM: R=AO, G=Roughness, B=Metallic
+        orm = Image.new("RGB", self.size, (50, 100, 150))
+        orm_path = os.path.join(self.test_dir, "orm.png")
+        orm.save(orm_path)
+
+        ao, rough, metal = TextureMapFactory.unpack_orm_texture(orm_path, save=False)
+        self.assertIsInstance(ao, Image.Image)
+        self.assertIsInstance(rough, Image.Image)
+        self.assertIsInstance(metal, Image.Image)
+
+        self.assertEqual(ao.getpixel((0, 0)), 50)
+        self.assertEqual(rough.getpixel((0, 0)), 100)
+        self.assertEqual(metal.getpixel((0, 0)), 150)
+
+    def test_unpack_albedo_transparency_memory(self):
+        """Test unpack_albedo_transparency returns tuple of Images when save=False."""
+        albedo = Image.new("RGBA", self.size, (200, 100, 50, 128))
+        albedo_path = os.path.join(self.test_dir, "albedo.png")
+        albedo.save(albedo_path)
+
+        base, opacity = TextureMapFactory.unpack_albedo_transparency(
+            albedo_path, save=False
+        )
+        self.assertIsInstance(base, Image.Image)
+        self.assertIsInstance(opacity, Image.Image)
+        self.assertEqual(base.mode, "RGB")
+        self.assertEqual(opacity.mode, "L")
+        self.assertEqual(opacity.getpixel((0, 0)), 128)
+
+    def test_unpack_msao_texture_memory(self):
+        """Test unpack_msao_texture returns tuple of Images when save=False."""
+        # MSAO: R=Metallic, G=AO, B=Detail, A=Smoothness
+        msao = Image.new("RGBA", self.size, (200, 50, 0, 100))
+        msao_path = os.path.join(self.test_dir, "msao.png")
+        msao.save(msao_path)
+
+        metal, ao, smooth = TextureMapFactory.unpack_msao_texture(msao_path, save=False)
+        self.assertIsInstance(metal, Image.Image)
+        self.assertIsInstance(ao, Image.Image)
+        self.assertIsInstance(smooth, Image.Image)
+
+        self.assertEqual(metal.getpixel((0, 0)), 200)
+        self.assertEqual(ao.getpixel((0, 0)), 50)
+        self.assertEqual(smooth.getpixel((0, 0)), 100)
+
+    def test_unpack_metallic_smoothness_memory(self):
+        """Test unpack_metallic_smoothness returns tuple of Images when save=False."""
+        # Metallic Smoothness: RGB=Metallic (usually), A=Smoothness
+        met_smooth = Image.new("RGBA", self.size, (200, 200, 200, 150))
+        path = os.path.join(self.test_dir, "met_smooth.png")
+        met_smooth.save(path)
+
+        metal, smooth = TextureMapFactory.unpack_metallic_smoothness(path, save=False)
+        self.assertIsInstance(metal, Image.Image)
+        self.assertIsInstance(smooth, Image.Image)
+        self.assertEqual(smooth.getpixel((0, 0)), 150)
 
 
 if __name__ == "__main__":

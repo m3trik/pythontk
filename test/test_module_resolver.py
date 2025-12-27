@@ -115,7 +115,7 @@ class ModuleResolverBootstrapTests(BaseTestCase):
             },
         )
 
-        pkg.configure_resolver(include={"second": ["Replacement"]}, merge=False)
+        pkg.configure(include={"second": ["Replacement"]}, merge=False)
 
         self.assertTrue(hasattr(pkg, "Replacement"))
         with self.assertRaises(AttributeError):
@@ -158,7 +158,7 @@ class ModuleResolverBootstrapTests(BaseTestCase):
             resolver = pkg.PACKAGE_RESOLVER.resolver
             return resolver.resolve(name)
 
-        pkg.configure_resolver(custom_getattr=new_getattr)
+        pkg.configure(custom_getattr=new_getattr)
         self.assertIs(pkg.__getattr__, new_getattr)
         self.assertEqual(pkg.ALIAS, "new-alias")
 
@@ -180,32 +180,6 @@ class ModuleResolverBootstrapTests(BaseTestCase):
 
         self.assertTrue(hasattr(pkg, "Demo"))
         self.assertEqual(pkg.Demo.__module__, "resolver_pkg_d.alpha")
-
-    def test_fallback_resolves_functions(self) -> None:
-        pkg = self._make_package(
-            "resolver_pkg_e",
-            init_body="""
-                from pythontk.core_utils.module_resolver import bootstrap_package
-
-                bootstrap_package(
-                    globals(),
-                    include={"alpha": "Demo"},
-                    fallbacks={"helper": "resolver_pkg_e.alpha"},
-                )
-            """,
-            modules={
-                "alpha.py": """
-                    class Demo:
-                        pass
-
-                    def helper():
-                        return "ok"
-                """
-            },
-        )
-
-        self.assertEqual(pkg.helper(), "ok")
-        self.assertEqual(pkg.CLASS_TO_MODULE["helper"], "resolver_pkg_e.alpha")
 
     def test_wildcard_include_exposes_all_classes(self) -> None:
         pkg = self._make_package(

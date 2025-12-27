@@ -358,7 +358,11 @@ class ModuleAttributeResolver:
     ) -> None:
         for class_name in classes:
             obj = getattr(module, class_name, None)
-            if obj and inspect.isclass(obj) and obj.__module__ == module.__name__:
+            if obj is not None:
+                # For classes, ensure they are defined in this module (not imported)
+                if inspect.isclass(obj) and obj.__module__ != module.__name__:
+                    continue
+
                 self._register_class(
                     class_name, obj, module.__name__, register_methods=False
                 )

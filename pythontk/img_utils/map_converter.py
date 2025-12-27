@@ -2,7 +2,7 @@
 # coding=utf-8
 from typing import List, Union, Tuple, Dict, Any
 
-# from this package:
+# From this package:
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.img_utils.texture_map_factory import TextureMapFactory
 from pythontk.file_utils._file_utils import FileUtils
@@ -122,8 +122,8 @@ class MapConverterSlots(ImgUtils):
         try:
             results = TextureMapFactory.prepare_maps(
                 spec_map_paths,
-                workflow_config,
                 callback=print,
+                **workflow_config,
             )
 
             if isinstance(results, dict):
@@ -225,7 +225,9 @@ class MapConverterSlots(ImgUtils):
             return
 
         print(f"Converting: {dx_map_path} ..")
-        gl_map_path = self.create_gl_from_dx(dx_map_path)
+        gl_map_path = TextureMapFactory.convert_normal_map_format(
+            dx_map_path, target_format="opengl"
+        )
         print(f"// Result: {gl_map_path}")
         self.source_dir = FileUtils.format_path(gl_map_path, "path")
 
@@ -241,7 +243,9 @@ class MapConverterSlots(ImgUtils):
             return
 
         print(f"Converting: {gl_map_path} ..")
-        dx_map_path = self.create_dx_from_gl(gl_map_path)
+        dx_map_path = TextureMapFactory.convert_normal_map_format(
+            gl_map_path, target_format="directx"
+        )
         print(f"// Result: {dx_map_path}")
         self.source_dir = FileUtils.format_path(dx_map_path, "path")
 
@@ -256,10 +260,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = self.group_textures_by_set(paths)
+        texture_sets = TextureMapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
+            sorted_maps = TextureMapFactory.sort_images_by_type(files)
 
             albedo_map_path = sorted_maps.get("Albedo_Transparency", [None])[0]
             base_color_path = sorted_maps.get("Base_Color", [None])[0]
@@ -302,10 +306,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = self.group_textures_by_set(paths)
+        texture_sets = TextureMapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
+            sorted_maps = TextureMapFactory.sort_images_by_type(files)
 
             metallic_map_path = sorted_maps.get("Metallic", [None])[0]
             smooth_map_path = sorted_maps.get("Smoothness", [None])[0]
@@ -410,10 +414,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = self.group_textures_by_set(paths)
+        texture_sets = TextureMapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
+            sorted_maps = TextureMapFactory.sort_images_by_type(files)
 
             metallic_map_path = sorted_maps.get("Metallic", [None])[0]
             ao_map_path = sorted_maps.get("Ambient_Occlusion", [None])[0]
@@ -651,8 +655,8 @@ class MapConverterSlots(ImgUtils):
         try:
             results = TextureMapFactory.prepare_maps(
                 texture_paths,
-                config,
                 callback=print,
+                **config,
             )
 
             if isinstance(results, dict):

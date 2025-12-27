@@ -4,6 +4,10 @@ import sys
 import ctypes
 import threading
 import _thread
+import os
+import time
+import subprocess
+import tempfile
 from functools import wraps
 
 
@@ -247,22 +251,45 @@ class ExecutionMonitor:
         return True  # Default to continue if platform not supported
 
     @staticmethod
-    def execution_monitor(threshold, message, logger=None, allow_escape_cancel=False):
+    def execution_monitor(
+        threshold,
+        message,
+        logger=None,
+        allow_escape_cancel=False,
+        show_dialog: bool = True,
+        watchdog_timeout: float | None = None,
+        watchdog_heartbeat_interval: float = 1.0,
+        watchdog_check_interval: float = 1.0,
+        watchdog_kill_tree: bool = True,
+        watchdog_heartbeat_path: str | None = None,
+    ):
         """
-        Decorator that monitors execution time and prompts the user via a native dialog
-        if the threshold is exceeded.
+        Decorator that monitors execution time and (optionally) prompts the user via a native
+        dialog if the threshold is exceeded. Can also (optionally) enable an external heartbeat
+        watchdog that can force-kill the process if the host application hard-hangs.
 
         Args:
             threshold (float): Time in seconds before warning.
             message (str): Message to display in the dialog/logs.
             logger (logging.Logger, optional): Logger to use for status updates.
             allow_escape_cancel (bool): If True, holding Escape will interrupt the main thread immediately.
+            show_dialog (bool): If False, do not show a blocking dialog; only log warnings.
+            watchdog_timeout (float|None): If set, starts an external watchdog that kills this process
+                if the heartbeat stalls for longer than this many seconds.
+            watchdog_heartbeat_interval (float): Heartbeat write interval in seconds.
+            watchdog_check_interval (float): Watchdog polling interval in seconds.
+            watchdog_kill_tree (bool): If True, attempt to kill child processes too.
+            watchdog_heartbeat_path (str|None): Optional heartbeat file path override.
         """
 
         def callback():
             full_msg = f"{message} (taking longer than {threshold}s...)"
             if logger:
                 logger.warning(full_msg)
+
+            if not show_dialog:
+                # Non-interactive mode: keep waiting, continue monitoring.
+                return True
 
             result = ExecutionMonitor.show_long_execution_dialog(
                 "Long Execution Warning",
@@ -283,6 +310,276 @@ class ExecutionMonitor:
 
             return result
 
-        return ExecutionMonitor.on_long_execution(
+        monitored = ExecutionMonitor.on_long_execution(
             threshold, callback, interval=True, allow_escape_cancel=allow_escape_cancel
         )
+
+        if watchdog_timeout is None:
+            return monitored
+
+        # Layer the external watchdog outside the timer-based monitor.
+        return ExecutionMonitor.external_watchdog(
+            timeout=float(watchdog_timeout),
+            message=message,
+            heartbeat_interval=float(watchdog_heartbeat_interval),
+            check_interval=float(watchdog_check_interval),
+            kill_tree=bool(watchdog_kill_tree),
+            logger=logger,
+            heartbeat_path=watchdog_heartbeat_path,
+        )(monitored)
+
+    @staticmethod
+    def _default_heartbeat_path(tag: str = "execution_monitor") -> str:
+        safe_tag = "".join(
+            c if c.isalnum() or c in ("-", "_", ".") else "_" for c in (tag or "")
+        )
+        filename = f"{safe_tag}_hb_{os.getpid()}.txt"
+        return os.path.join(tempfile.gettempdir(), filename)
+
+    @staticmethod
+    def _start_heartbeat_writer(heartbeat_path: str, interval: float, logger=None):
+        """Start a daemon thread that touches/writes a heartbeat file periodically."""
+        stop_event = threading.Event()
+
+        def _write_once():
+            try:
+                # Ensure directory exists (temp should, but be safe)
+                os.makedirs(os.path.dirname(heartbeat_path), exist_ok=True)
+                with open(heartbeat_path, "w", encoding="utf-8") as f:
+                    f.write(str(time.time()))
+                # Ensure mtime updates even if contents identical
+                os.utime(heartbeat_path, None)
+            except Exception as e:
+                if logger:
+                    logger.warning(f"Heartbeat write failed: {e}")
+
+        def _loop():
+            # Initial heartbeat immediately
+            _write_once()
+            while not stop_event.wait(max(0.05, float(interval))):
+                _write_once()
+
+        t = threading.Thread(target=_loop, name="ExecutionMonitorHeartbeat")
+        t.daemon = True
+        t.start()
+
+        def stop():
+            stop_event.set()
+            try:
+                # Best-effort cleanup
+                if os.path.exists(heartbeat_path):
+                    os.remove(heartbeat_path)
+            except Exception:
+                pass
+
+        return stop
+
+    @staticmethod
+    def _spawn_watchdog_subprocess(
+        pid: int,
+        heartbeat_path: str,
+        timeout: float,
+        check_interval: float,
+        kill_tree: bool,
+        logger=None,
+    ):
+        """Spawn a small external watchdog process that kills `pid` if heartbeat stalls."""
+
+        # Use an inline Python program to avoid PYTHONPATH/import issues.
+        # Args: pid heartbeat_path timeout check_interval kill_tree stop_file
+        stop_file = heartbeat_path + ".stop"
+        code = r"""
+import os, sys, time, subprocess, signal
+
+pid = int(sys.argv[1])
+heartbeat_path = sys.argv[2]
+timeout = float(sys.argv[3])
+check_interval = float(sys.argv[4])
+kill_tree = sys.argv[5].lower() in ("1","true","yes","y")
+stop_file = sys.argv[6]
+
+is_win = sys.platform == "win32"
+
+def process_alive(p):
+    if is_win:
+        # Avoid heavy polling; attempt a lightweight OpenProcess.
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, p)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return True
+    else:
+        try:
+            os.kill(p, 0)
+            return True
+        except Exception:
+            return False
+
+def kill_process(p):
+    if is_win:
+        cmd = ["taskkill", "/PID", str(p), "/F"]
+        if kill_tree:
+            cmd.insert(3, "/T")
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+    else:
+        try:
+            if kill_tree:
+                try:
+                    os.killpg(os.getpgid(p), signal.SIGKILL)
+                    return
+                except Exception:
+                    pass
+            os.kill(p, signal.SIGKILL)
+        except Exception:
+            pass
+
+start = time.time()
+
+while True:
+    if os.path.exists(stop_file):
+        break
+
+    # If process is gone, exit
+    if not process_alive(pid):
+        break
+
+    now = time.time()
+
+    # If heartbeat doesn't exist yet, allow a grace period
+    if not os.path.exists(heartbeat_path):
+        if now - start > timeout:
+            kill_process(pid)
+            break
+        time.sleep(check_interval)
+        continue
+
+    try:
+        age = now - os.path.getmtime(heartbeat_path)
+    except Exception:
+        age = timeout + 1.0
+
+    if age > timeout:
+        kill_process(pid)
+        break
+
+    time.sleep(check_interval)
+"""
+
+        args = [
+            sys.executable,
+            "-c",
+            code,
+            str(int(pid)),
+            str(heartbeat_path),
+            str(float(timeout)),
+            str(float(check_interval)),
+            "1" if kill_tree else "0",
+            str(stop_file),
+        ]
+
+        try:
+            # Detach from console on Windows to reduce UI interference.
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            proc = subprocess.Popen(
+                args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            if logger:
+                logger.warning(f"Failed to start watchdog subprocess: {e}")
+            return None, None
+
+        def stop():
+            # Signal watchdog to exit
+            try:
+                with open(stop_file, "w", encoding="utf-8") as f:
+                    f.write("stop")
+            except Exception:
+                pass
+            try:
+                if proc and proc.poll() is None:
+                    proc.terminate()
+            except Exception:
+                pass
+            try:
+                if os.path.exists(stop_file):
+                    os.remove(stop_file)
+            except Exception:
+                pass
+
+        return proc, stop
+
+    @staticmethod
+    def external_watchdog(
+        timeout: float,
+        message: str = "Operation appears to have stalled",
+        heartbeat_interval: float = 1.0,
+        check_interval: float = 1.0,
+        kill_tree: bool = True,
+        logger=None,
+        heartbeat_path: str | None = None,
+    ):
+        """Decorator that starts an OS-level watchdog for the current process.
+
+        This is meant for cases where the host application can hard-hang (e.g. Maya). The
+        watchdog runs in a separate process and will force-kill this process if the heartbeat
+        file stops updating for longer than `timeout`.
+
+        Notes:
+            - Works on Windows and Linux.
+            - If the entire process is frozen, the watchdog can still kill it.
+            - This is an aggressive safety valve; prefer cooperative cancellation when possible.
+        """
+
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                hb_path = heartbeat_path or ExecutionMonitor._default_heartbeat_path(
+                    "watchdog"
+                )
+                if logger:
+                    logger.info(
+                        f"Starting external watchdog (timeout={timeout}s, heartbeat={hb_path})"
+                    )
+
+                stop_hb = ExecutionMonitor._start_heartbeat_writer(
+                    hb_path, heartbeat_interval, logger=logger
+                )
+                proc, stop_watchdog = ExecutionMonitor._spawn_watchdog_subprocess(
+                    os.getpid(),
+                    hb_path,
+                    timeout,
+                    check_interval,
+                    kill_tree,
+                    logger=logger,
+                )
+
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    # Best-effort shutdown of watchdog + heartbeat
+                    try:
+                        stop_hb()
+                    except Exception:
+                        pass
+                    try:
+                        if stop_watchdog:
+                            stop_watchdog()
+                    except Exception:
+                        pass
+
+            return wrapper
+
+        return decorator

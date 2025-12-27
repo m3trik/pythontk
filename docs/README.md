@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/Version-0.7.34-blue.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-423%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/Tests-829%20passed%2063%20failed-orange.svg)](test/)
 
 # pythontk
 
@@ -161,9 +161,9 @@ ptk.ImgUtils.convert_bump_to_normal(
 Identify texture types from filenames (100+ naming conventions):
 
 ```python
-ptk.ImgUtils.resolve_map_type("character_Normal_DirectX.png")  # "Normal_DirectX"
-ptk.ImgUtils.resolve_map_type("material_BC.tga")               # "Base_Color"
-ptk.ImgUtils.resolve_map_type("metal_AO.jpg")                  # "Ambient_Occlusion"
+ptk.TextureMapFactory.resolve_map_type("character_Normal_DirectX.png")  # "Normal_DirectX"
+ptk.TextureMapFactory.resolve_map_type("material_BC.tga")               # "Base_Color"
+ptk.TextureMapFactory.resolve_map_type("metal_AO.jpg")                  # "Ambient_Occlusion"
 ```
 
 ---

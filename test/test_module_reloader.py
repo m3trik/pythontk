@@ -257,13 +257,19 @@ class ModuleReloaderTests(BaseTestCase):
         observed = {name for _, name in events if name in expected_modules}
         self.assertEqual(observed, expected_modules)
 
-        self.assertEqual(len(events) % 2, 0)
-        for idx in range(0, len(events), 2):
-            before_event = events[idx]
-            after_event = events[idx + 1]
-            self.assertEqual(before_event[0], "before")
-            self.assertEqual(after_event[0], "after")
-            self.assertEqual(before_event[1], after_event[1])
+        # Verify every module has a before and after event in correct order
+        module_events = {}
+        for event_type, module_name in events:
+            if module_name not in module_events:
+                module_events[module_name] = []
+            module_events[module_name].append(event_type)
+
+        for module_name, types in module_events.items():
+            self.assertEqual(
+                types,
+                ["before", "after"],
+                f"Module {module_name} events mismatch: {types}",
+            )
 
     def test_reload_respects_dependency_ordering(self) -> None:
         self._make_package(

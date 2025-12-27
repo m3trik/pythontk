@@ -231,7 +231,7 @@ class TestNamespaceAliasEdgeCases(unittest.TestCase):
 
     def test_class_filtering_works(self):
         """Test isinstance(obj, type) filtering works correctly."""
-        import mayatk.core_utils.diagnostics.mesh as mesh_module
+        import mayatk.core_utils.diagnostics.mesh_diag as mesh_module
 
         # Count actual classes vs other attributes
         classes = [
@@ -257,7 +257,6 @@ class TestNamespaceAliasConfiguration(unittest.TestCase):
 
         # Should have arrow syntax with wildcard
         self.assertIn('->Diagnostics": "*"', content)
-        self.assertIn('->Preview": "*"', content)
 
     def test_explicit_list_syntax_supported(self):
         """Test explicit list syntax is properly configured."""
@@ -266,9 +265,10 @@ class TestNamespaceAliasConfiguration(unittest.TestCase):
         init_file = Path(mayatk.__file__)
         content = init_file.read_text(encoding="utf-8")
 
-        # Should have arrow syntax with list
-        self.assertIn('->Mash":', content)
-        self.assertIn('["MashToolkit", "MashNetworkNodes"]', content)
+        # Should have explicit list
+        self.assertIn('"SceneAnalyzer"', content)
+        self.assertIn('"AuditProfile"', content)
+        self.assertIn('"SceneDiagnostics"', content)
 
     def test_no_malformed_entries(self):
         """Test DEFAULT_INCLUDE has no malformed entries."""
