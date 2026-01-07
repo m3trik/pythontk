@@ -181,10 +181,16 @@ class TestAllPackagesNamespaceAliases(unittest.TestCase):
 
     def setUp(self):
         """Clear cached modules before each test."""
+        self._modules_snapshot = sys.modules.copy()
         for package in self.PACKAGES_TO_TEST:
             for key in list(sys.modules.keys()):
                 if key.startswith(package):
                     del sys.modules[key]
+
+    def tearDown(self):
+        """Restore modules after test."""
+        sys.modules.clear()
+        sys.modules.update(self._modules_snapshot)
 
     def test_mayatk_namespace_aliases(self):
         """Test mayatk namespace aliases."""

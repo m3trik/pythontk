@@ -10,7 +10,7 @@ __version__ = "0.7.55"
 
 DEFAULT_INCLUDE = {
     "img_utils._img_utils": "*",
-    "img_utils.texture_map_factory": ["TextureMapFactory"],
+    "img_utils.map_factory": ["MapFactory"],
     "img_utils.map_registry": "MapRegistry",
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",

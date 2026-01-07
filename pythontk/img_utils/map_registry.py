@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Any, Union
+from pythontk.core_utils.singleton_mixin import SingletonMixin
 
 
 class WF:
@@ -29,6 +30,7 @@ class _WorkflowPreset:
     convert_specgloss_to_pbr: bool = False
     normal_type: str = "OpenGL"
     cleanup_base_color: bool = False
+    description: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -57,19 +59,35 @@ class MapType:
     workflows: List[str] = field(default_factory=list)  # Workflows that use this map
 
 
-class MapRegistry:
+class MapRegistry(SingletonMixin):
     """Central registry for map type definitions."""
 
-    _instance = None
     _precedence_rules = None
     _workflow_settings = {
-        WF.STD: {},
-        WF.URP: {},
-        WF.HDRP: {},
-        WF.UE: {"normal_type": "DirectX"},
-        WF.GLTF: {},
-        WF.GODOT: {"normal_type": "OpenGL"},
-        WF.SPEC: {"convert_specgloss_to_pbr": True},
+        WF.STD: {
+            "description": "Standard PBR workflow (Metallic/Roughness). Best for general use."
+        },
+        WF.URP: {
+            "description": "Unity Universal Render Pipeline. Packs Metallic (R) and Smoothness (A)."
+        },
+        WF.HDRP: {
+            "description": "Unity High Definition Render Pipeline. Uses Mask Map (Metallic, AO, Detail, Smoothness)."
+        },
+        WF.UE: {
+            "normal_type": "DirectX",
+            "description": "Unreal Engine. Uses ORM (Occlusion, Roughness, Metallic) and DirectX Normals.",
+        },
+        WF.GLTF: {
+            "description": "glTF 2.0 standard. Uses ORM (Occlusion, Roughness, Metallic)."
+        },
+        WF.GODOT: {
+            "normal_type": "OpenGL",
+            "description": "Godot Engine. Uses ORM and OpenGL Normals.",
+        },
+        WF.SPEC: {
+            "convert_specgloss_to_pbr": True,
+            "description": "Converts Specular/Glossiness maps to PBR Metallic/Roughness.",
+        },
     }
     _maps: Dict[str, MapType] = {
         "Base_Color": MapType(
@@ -87,9 +105,7 @@ class MapRegistry:
                 "BaseMapTexture",
                 "ColorMap",
                 "Color",
-                "_BC",
-                "_BaseColor",
-                "_BaseMap",
+                "BC",
             ],
             color_space="sRGB",
             mode="RGB",
@@ -101,9 +117,7 @@ class MapRegistry:
             aliases=[
                 "DiffuseMap",
                 "Diff",
-                "_Diff",
-                "_DIFF",
-                "_D",
+                "D",
             ],
             color_space="sRGB",
             mode="RGB",
@@ -119,7 +133,7 @@ class MapRegistry:
                 "BaseColorTransparency",
                 "BaseColorAlpha",
                 "BaseMapAlpha",
-                "_AT",
+                "AT",
             ],
             color_space="sRGB",
             mode="RGBA",
@@ -136,8 +150,7 @@ class MapRegistry:
                 "Ruff",
                 "Rgh",
                 "RGH",
-                "_R",
-                "_Roughness",
+                "R",
             ],
             color_space="Linear",
             mode="L",
@@ -153,8 +166,7 @@ class MapRegistry:
                 "Metalness",
                 "Met",
                 "MTL",
-                "_M",
-                "_Metallic",
+                "M",
             ],
             color_space="Linear",
             mode="L",
@@ -168,11 +180,9 @@ class MapRegistry:
                 "Normal_Map",
                 "Norm",
                 "NRM",
-                "_N",
-                "_Normal",
+                "N",
                 "TangentSpaceNormal",
                 "TSN",
-                "_TSN",
             ],
             color_space="Linear",
             mode="RGB",
@@ -186,8 +196,8 @@ class MapRegistry:
                 "Normal_GL",
                 "Normal_Tangent_GL",
                 "NormalMap_GL",
-                "_NGL",
-                "_GL",
+                "NGL",
+                "GL",
             ],
             color_space="Linear",
             mode="RGB",
@@ -201,9 +211,9 @@ class MapRegistry:
                 "Normal_DX",
                 "Normal_Tangent_DX",
                 "NormalMap_DX",
-                "_NDX",
-                "_DX",
-                "_DXN",
+                "NDX",
+                "DX",
+                "DXN",
             ],
             color_space="Linear",
             mode="RGB",
@@ -216,7 +226,6 @@ class MapRegistry:
                 "OcclusionRoughnessMetallic",
                 "Occlusion_Roughness_Metallic",
                 "ORMMap",
-                "_ORM",
             ],
             color_space="Linear",
             mode="RGB",
@@ -238,9 +247,7 @@ class MapRegistry:
                 "MetallicSmoothnessOcclusion",
                 "MaskMap",
                 "Mask_Map",
-                "_MSA",
-                "_MaskMap",
-                "_MSAO",
+                "MSA",
             ],
             color_space="Linear",
             mode="RGBA",
@@ -260,6 +267,7 @@ class MapRegistry:
                 "Glossiness",
                 "Detail",
                 "Detail_Mask",
+                "Metallic_Smoothness",
             ],
             workflows=[WF.HDRP],
         ),
@@ -275,10 +283,7 @@ class MapRegistry:
                 "MetallicGloss",
                 "MetalGloss",
                 "MetallicGlossMap",
-                "_MS",
-                "_MetalSmooth",
-                "_MetallicSmoothness",
-                "_MetallicGloss",
+                "MS",
             ],
             color_space="Linear",
             mode="RGBA",
@@ -292,12 +297,15 @@ class MapRegistry:
             name="Ambient_Occlusion",
             aliases=[
                 "AmbientOcclusion",
+                "Ambient",
+                "Amb",
                 "AO",
                 "Occlusion",
                 "Occ",
                 "AO_Map",
                 "AOMap",
-                "_AO",
+                "Mixed_AO",
+                "MixedAO",
             ],
             color_space="Linear",
             mode="L",
@@ -315,8 +323,7 @@ class MapRegistry:
                 "ParallaxMap",
                 "ParallaxOcclusion",
                 "POM",
-                "_H",
-                "_Height",
+                "H",
             ],
             color_space="Linear",
             mode="L",
@@ -330,9 +337,8 @@ class MapRegistry:
                 "Bump_Map",
                 "Bumpiness",
                 "BumpinessMap",
-                "_Bump",
-                "_BP",
-                "_B",
+                "BP",
+                "B",
             ],
             color_space="Linear",
             mode="L",
@@ -349,9 +355,8 @@ class MapRegistry:
                 "Glow",
                 "GlowMap",
                 "EMI",
-                "_E",
-                "_EM",
-                "_Emissive",
+                "E",
+                "EM",
             ],
             color_space="sRGB",
             mode="RGB",
@@ -365,8 +370,7 @@ class MapRegistry:
                 "Detail_Map",
                 "DetailMap",
                 "Detail",
-                "_Detail",
-                "_DetailMask",
+                "DTL",
             ],
             color_space="Linear",
             mode="L",
@@ -375,7 +379,7 @@ class MapRegistry:
         ),
         "Mask": MapType(
             name="Mask",
-            aliases=["Mask", "_Mask"],
+            aliases=["Mask"],
             color_space="Linear",
             mode="L",
             default_background=(255, 255, 255, 255),
@@ -384,7 +388,7 @@ class MapRegistry:
         ),
         "Specular": MapType(
             name="Specular",
-            aliases=["SpecularMap", "Spec", "SPC", "_S", "_Spec", "_Specular"],
+            aliases=["SpecularMap", "Spec", "SPC", "S"],
             color_space="sRGB",
             mode="RGB",
             default_background=(0, 0, 0, 255),
@@ -396,9 +400,7 @@ class MapRegistry:
                 "GlossinessMap",
                 "Gloss",
                 "Gls",
-                "_G",
-                "_Gloss",
-                "_Glossiness",
+                "G",
             ],
             color_space="Linear",
             mode="L",
@@ -407,7 +409,7 @@ class MapRegistry:
         ),
         "Smoothness": MapType(
             name="Smoothness",
-            aliases=["SmoothnessMap", "Smooth", "_Smooth", "_Smoothness"],
+            aliases=["SmoothnessMap", "Smooth"],
             color_space="Linear",
             mode="L",
             default_background=(0, 0, 0, 255),
@@ -415,7 +417,7 @@ class MapRegistry:
         ),
         "Opacity": MapType(
             name="Opacity",
-            aliases=["OpacityMap", "Transparency", "Alpha", "_Opacity", "_Alpha"],
+            aliases=["OpacityMap", "Transparency", "Alpha"],
             color_space="Linear",
             mode="L",
             default_background=(255, 255, 255, 255),
@@ -423,7 +425,7 @@ class MapRegistry:
         ),
         "Displacement": MapType(
             name="Displacement",
-            aliases=["DisplacementMap", "Disp", "DSP", "_Disp", "_Displacement"],
+            aliases=["DisplacementMap", "Disp", "DSP"],
             color_space="Linear",
             mode="L",
             default_background=(128, 128, 128, 255),
@@ -431,21 +433,21 @@ class MapRegistry:
         ),
         "Refraction": MapType(
             name="Refraction",
-            aliases=["RefractionMap", "Refr", "_Refraction"],
+            aliases=["RefractionMap", "Refr"],
             color_space="Linear",
             mode="L",
             default_background=(0, 0, 0, 255),
         ),
         "Reflection": MapType(
             name="Reflection",
-            aliases=["ReflectionMap", "Refl", "_Reflection"],
+            aliases=["ReflectionMap", "Refl"],
             color_space="Linear",
             mode="L",
             default_background=(0, 0, 0, 255),
         ),
         "Thickness": MapType(
             name="Thickness",
-            aliases=["ThicknessMap", "Thick", "_Thickness"],
+            aliases=["ThicknessMap", "Thick"],
             color_space="Linear",
             mode="L",
             default_background=(0, 0, 0, 255),
@@ -453,21 +455,21 @@ class MapRegistry:
         ),
         "Anisotropy": MapType(
             name="Anisotropy",
-            aliases=["AnisotropyMap", "Aniso", "_Anisotropy"],
+            aliases=["AnisotropyMap", "Aniso"],
             color_space="Linear",
             mode="L",
             default_background=(127, 127, 127, 255),
         ),
         "Subsurface_Scattering": MapType(
             name="Subsurface_Scattering",
-            aliases=["SSS", "Subsurface", "Scattering", "_SSS"],
+            aliases=["SSS", "Subsurface", "Scattering"],
             color_space="sRGB",
             mode="RGB",
             default_background=(255, 255, 255, 255),
         ),
         "Sheen": MapType(
             name="Sheen",
-            aliases=["SheenMap", "_Sheen"],
+            aliases=["SheenMap"],
             color_space="Linear",
             mode="L",
             default_background=(127, 127, 127, 255),
@@ -475,7 +477,7 @@ class MapRegistry:
         ),
         "Clearcoat": MapType(
             name="Clearcoat",
-            aliases=["ClearcoatMap", "Coat", "_Clearcoat", "_Coat"],
+            aliases=["ClearcoatMap", "Coat"],
             color_space="Linear",
             mode="L",
             default_background=(127, 127, 127, 255),
@@ -483,26 +485,52 @@ class MapRegistry:
         ),
     }
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(MapRegistry, cls).__new__(cls)
-        return cls._instance
-
     def get(self, name: str) -> Optional[MapType]:
         """Get a map type by name."""
         return self._maps.get(name)
 
     def resolve_type_from_path(self, path: str) -> Optional[str]:
-        """Resolve the map type key from a file path."""
+        """Resolve the map type key from a file path.
+
+        Prioritizes longer matches to prevent short aliases (e.g. 'S') from
+        matching longer names (e.g. 'Smoothness').
+        """
         filename = os.path.basename(path)
         name_only, _ = os.path.splitext(filename)
-        name_lower = name_only.lower()
 
+        # Collect all candidates: (alias, map_name)
+        all_candidates = []
         for name, m in self._maps.items():
-            candidates = [name] + m.aliases
-            for alias in candidates:
-                if name_lower.endswith(alias.lower()):
-                    return name
+            # Add main name
+            all_candidates.append((name, name))
+            # Add aliases
+            for alias in m.aliases:
+                all_candidates.append((alias, name))
+
+        # Sort by length descending to ensure longest match first
+        all_candidates.sort(key=lambda x: len(x[0]), reverse=True)
+
+        for alias, map_name in all_candidates:
+            # Logic for short aliases (<= 3 chars)
+            if len(alias) <= 3:
+                # Must match case for first letter, rest case-insensitive
+                # And must be at the end of the string
+                if name_only.lower().endswith(alias.lower()):
+                    # Check case sensitivity for short aliases
+                    suffix_start_index = len(name_only) - len(alias)
+                    suffix_in_name = name_only[suffix_start_index:]
+
+                    # If alias starts with uppercase, require uppercase in filename
+                    if alias[0].isupper():
+                        if suffix_in_name[0] == alias[0]:
+                            return map_name
+                    else:
+                        return map_name
+            else:
+                # Long aliases: Case-insensitive
+                if name_only.lower().endswith(alias.lower()):
+                    return map_name
+
         return None
 
     def get_workflow_presets(self) -> Dict[str, Dict[str, Any]]:
@@ -562,15 +590,9 @@ class MapRegistry:
         return [name for name, m in self._maps.items() if m.scale_as_mask]
 
     def get_passthrough_maps(self) -> List[str]:
-        """Get list of maps that typically don't need processing (heuristic)."""
-        # This is a bit subjective, but we can define it based on usage
-        return [
-            "Emissive",
-            "Ambient_Occlusion",
-            "Height",
-            "Displacement",
-            "Detail_Mask",
-        ]
+        """Get list of maps that should be passed through if not consumed."""
+        # Return all registered maps so anything not consumed by a handler is passed through
+        return list(self._maps.keys())
 
     def get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]:
         """Generate the map backgrounds dictionary."""
@@ -583,6 +605,54 @@ class MapRegistry:
     def get_map_modes(self) -> Dict[str, str]:
         """Generate the map modes dictionary."""
         return {name: m.mode for name, m in self._maps.items() if m.mode is not None}
+
+    def resolve_config(
+        self, config: Union[str, Dict[str, Any]] = None, **kwargs
+    ) -> Dict[str, Any]:
+        """Resolve configuration from presets, dicts, and kwargs.
+
+        Args:
+            config: Configuration preset name (str) or dictionary.
+            **kwargs: Configuration overrides.
+
+        Returns:
+            Dict[str, Any]: Fully resolved configuration dictionary.
+        """
+        cfg = {}
+        presets = self.get_workflow_presets()
+
+        if isinstance(config, str):
+            if config in presets:
+                cfg = presets[config].copy()
+        elif isinstance(config, dict):
+            # Check for preset inheritance
+            preset_name = config.get("preset")
+            if preset_name and preset_name in presets:
+                cfg = presets[preset_name].copy()
+
+            # Apply overrides from dict
+            overrides = {k: v for k, v in config.items() if v is not None}
+            cfg.update(overrides)
+
+        # Apply kwargs overrides
+        overrides = {k: v for k, v in kwargs.items() if v is not None}
+        cfg.update(overrides)
+
+        # --- Standardization Logic (DRY) ---
+
+        # Handle aliases
+        if "output_type" in cfg:
+            cfg["output_extension"] = cfg.pop("output_type")
+
+        # Derive resize from max_size
+        if "max_size" in cfg and "resize" not in cfg:
+            cfg["resize"] = cfg["max_size"] is not None
+
+        # Derive convert_format from output_extension
+        if "output_extension" in cfg and "convert_format" not in cfg:
+            cfg["convert_format"] = cfg["output_extension"] is not None
+
+        return cfg
 
 
 if __name__ == "__main__":

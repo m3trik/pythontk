@@ -45,8 +45,8 @@ class ImgTest(BaseTestCase):
         os.makedirs(cls.test_dir)
 
         # Create base images
-        cls.im_h.save(os.path.join(cls.test_dir, "im_h.png"))
-        cls.im_n.save(os.path.join(cls.test_dir, "im_n.png"))
+        cls.im_h.save(os.path.join(cls.test_dir, "im_H.png"))
+        cls.im_n.save(os.path.join(cls.test_dir, "im_N.png"))
 
         # Create other expected images
         ImgUtils.create_image("RGB", (1024, 1024), (255, 0, 0)).save(
@@ -199,27 +199,27 @@ class ImgTest(BaseTestCase):
     def test_resolve_map_type_height(self):
         """Test resolve_map_type identifies height maps."""
         self.assertEqual(
-            TextureMapFactory.resolve_map_type(os.path.join(self.test_dir, "im_h.png")),
+            TextureMapFactory.resolve_map_type(os.path.join(self.test_dir, "im_H.png")),
             "Height",
         )
         self.assertEqual(
             TextureMapFactory.resolve_map_type(
-                os.path.join(self.test_dir, "im_h.png"), key=False
+                os.path.join(self.test_dir, "im_H.png"), key=False
             ),
-            "_H",
+            "H",
         )
 
     def test_resolve_map_type_normal(self):
         """Test resolve_map_type identifies normal maps."""
         self.assertEqual(
-            TextureMapFactory.resolve_map_type(os.path.join(self.test_dir, "im_n.png")),
+            TextureMapFactory.resolve_map_type(os.path.join(self.test_dir, "im_N.png")),
             "Normal",
         )
         self.assertEqual(
             TextureMapFactory.resolve_map_type(
-                os.path.join(self.test_dir, "im_n.png"), key=False
+                os.path.join(self.test_dir, "im_N.png"), key=False
             ),
-            "_N",
+            "N",
         )
 
     def test_resolve_map_type_unknown(self):
@@ -236,7 +236,7 @@ class ImgTest(BaseTestCase):
         """Test filter_images_by_type filters by texture type."""
         files = FileUtils.get_dir_contents(self.test_dir)
         filtered = TextureMapFactory.filter_images_by_type(files, "Height")
-        expected = ["im_h.png"]
+        expected = ["im_H.png"]
         # Sort for comparison
         self.assertEqual(sorted(filtered), sorted(expected))
 
@@ -258,11 +258,11 @@ class ImgTest(BaseTestCase):
         """Test sort_images_by_type groups images by texture type."""
         self.assertEqual(
             TextureMapFactory.sort_images_by_type(
-                [("im_h.png", "<im_h>"), ("im_n.png", "<im_n>")]
+                [("im_H.png", "<im_h>"), ("im_N.png", "<im_n>")]
             ),
             {
-                "Height": [("im_h.png", "<im_h>")],
-                "Normal": [("im_n.png", "<im_n>")],
+                "Height": [("im_H.png", "<im_h>")],
+                "Normal": [("im_N.png", "<im_n>")],
             },
         )
 
@@ -270,11 +270,11 @@ class ImgTest(BaseTestCase):
         """Test sort_images_by_type with dict input."""
         self.assertEqual(
             TextureMapFactory.sort_images_by_type(
-                {"im_h.png": "<im_h>", "im_n.png": "<im_n>"}
+                {"im_H.png": "<im_h>", "im_N.png": "<im_n>"}
             ),
             {
-                "Height": [("im_h.png", "<im_h>")],
-                "Normal": [("im_n.png", "<im_n>")],
+                "Height": [("im_H.png", "<im_h>")],
+                "Normal": [("im_N.png", "<im_n>")],
             },
         )
 
@@ -290,14 +290,14 @@ class ImgTest(BaseTestCase):
     def test_contains_map_types_list(self):
         """Test contains_map_types with list input."""
         self.assertTrue(
-            TextureMapFactory.contains_map_types([("im_h.png", "<im_h>")], "Height")
+            TextureMapFactory.contains_map_types([("im_H.png", "<im_h>")], "Height")
         )
 
     def test_contains_map_types_dict(self):
         """Test contains_map_types with dict input."""
         self.assertTrue(
             TextureMapFactory.contains_map_types(
-                {"im_h.png": "<im_h>", "im_n.png": "<im_n>"}, "Height"
+                {"im_H.png": "<im_h>", "im_N.png": "<im_n>"}, "Height"
             )
         )
 
@@ -305,7 +305,7 @@ class ImgTest(BaseTestCase):
         """Test contains_map_types with pre-sorted dict."""
         self.assertTrue(
             TextureMapFactory.contains_map_types(
-                {"Height": [("im_h.png", "<im_h>")]}, "Height"
+                {"Height": [("im_H.png", "<im_h>")]}, "Height"
             )
         )
 
@@ -313,14 +313,14 @@ class ImgTest(BaseTestCase):
         """Test contains_map_types with multiple types."""
         self.assertTrue(
             TextureMapFactory.contains_map_types(
-                {"Height": [("im_h.png", "<im_h>")]}, ["Height", "Normal"]
+                {"Height": [("im_H.png", "<im_h>")]}, ["Height", "Normal"]
             )
         )
 
     def test_contains_map_types_not_found(self):
         """Test contains_map_types when type not present."""
         self.assertFalse(
-            TextureMapFactory.contains_map_types([("im_h.png", "<im_h>")], "Roughness")
+            TextureMapFactory.contains_map_types([("im_H.png", "<im_h>")], "Roughness")
         )
 
     # -------------------------------------------------------------------------
@@ -329,11 +329,11 @@ class ImgTest(BaseTestCase):
 
     def test_is_normal_map_false(self):
         """Test is_normal_map returns False for non-normal maps."""
-        self.assertFalse(TextureMapFactory.is_normal_map("im_h.png"))
+        self.assertFalse(TextureMapFactory.is_normal_map("im_H.png"))
 
     def test_is_normal_map_true(self):
         """Test is_normal_map returns True for normal maps."""
-        self.assertTrue(TextureMapFactory.is_normal_map("im_n.png"))
+        self.assertTrue(TextureMapFactory.is_normal_map("im_N.png"))
 
     def test_is_normal_map_explicit_name(self):
         """Test is_normal_map with explicit normal map name."""
@@ -475,13 +475,15 @@ class ImgTest(BaseTestCase):
         """Test replace_color substitutes colors in image."""
         input_path = os.path.join(self.test_dir, "im_Base_color.png")
         bg = ImgUtils.get_background(input_path, "RGB")
-        result = ImgUtils.replace_color(input_path, bg, (255, 0, 0))
+        result = ImgUtils.replace_color(input_path, bg, (255, 0, 0), mode="RGBA")
         self.assertEqual(result.mode, "RGBA")
 
     def test_replace_color_black_to_white(self):
         """Test replace_color black to white."""
         black_img = ImgUtils.create_image("RGB", (100, 100), (0, 0, 0))
-        result = ImgUtils.replace_color(black_img, (0, 0, 0), (255, 255, 255))
+        result = ImgUtils.replace_color(
+            black_img, (0, 0, 0), (255, 255, 255), mode="RGBA"
+        )
         self.assertEqual(result.mode, "RGBA")
 
     # -------------------------------------------------------------------------

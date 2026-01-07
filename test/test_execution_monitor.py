@@ -9,6 +9,17 @@ from pythontk.core_utils.execution_monitor import ExecutionMonitor
 
 
 from conftest import BaseTestCase
+import inspect
+import sys
+
+print(f"DEBUG: ExecutionMonitor file: {inspect.getfile(ExecutionMonitor)}")
+print(
+    f"DEBUG: pythontk.core_utils.execution_monitor in sys.modules: {'pythontk.core_utils.execution_monitor' in sys.modules}"
+)
+if "pythontk.core_utils.execution_monitor" in sys.modules:
+    print(
+        f"DEBUG: pythontk.core_utils.execution_monitor file: {getattr(sys.modules['pythontk.core_utils.execution_monitor'], '__file__', 'unknown')}"
+    )
 
 
 class TestExecutionMonitor(BaseTestCase):
@@ -207,11 +218,11 @@ class TestExecutionMonitor(BaseTestCase):
                     ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                 )
 
-                # IDCANCEL=2 -> "STOP_MONITORING"
+                # IDCANCEL=2 -> "FORCE_KILL"
                 mock_msg_box.return_value = 2
                 self.assertEqual(
                     ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
-                    "STOP_MONITORING",
+                    "FORCE_KILL",
                 )
 
     def test_is_escape_pressed_linux(self):
@@ -275,13 +286,13 @@ class TestExecutionMonitor(BaseTestCase):
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                     )
 
-                    # Zenity returns 0 with "Stop Monitoring" stdout -> "STOP_MONITORING"
+                    # Zenity returns 0 with "Force Kill" stdout -> "FORCE_KILL"
                     mock_run.return_value = MagicMock(
-                        returncode=0, stdout="Stop Monitoring\n"
+                        returncode=0, stdout="Force Kill\n"
                     )
                     self.assertEqual(
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
-                        "STOP_MONITORING",
+                        "FORCE_KILL",
                     )
 
     def test_show_long_execution_dialog_linux_kdialog(self):

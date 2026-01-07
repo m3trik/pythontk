@@ -128,7 +128,7 @@ def _prepare_orm_map(inventory, output_dir, base_name, ext, callback):
 **After**: Context object with utilities
 ```python
 @dataclass
-class ProcessingContext:
+class TextureProcessor:
     inventory: Dict[str, str]
     config: Dict[str, Any]
     output_dir: str
@@ -142,7 +142,7 @@ class ProcessingContext:
     def mark_used(self, *types): ...
 
 # Used in handlers:
-def process(self, context: ProcessingContext):
+def process(self, context: TextureProcessor):
     context.log("Processing...")
     metallic = context.resolve_map("Metallic", "Specular")
 ```

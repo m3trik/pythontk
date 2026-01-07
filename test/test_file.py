@@ -380,11 +380,11 @@ class FileTest(BaseTestCase):
                     "file2",
                     "test",
                     "im_Base_color",
-                    "im_h",
+                    "im_H",
                     "im_Height_16",
                     "im_Height_8",
                     "im_Mixed_AO_L",
-                    "im_n",
+                    "im_N",
                     "im_Normal_DirectX",
                     "im_Normal_OpenGL",
                 ]

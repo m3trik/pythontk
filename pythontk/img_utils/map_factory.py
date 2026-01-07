@@ -26,6 +26,7 @@ from typing import (
     TYPE_CHECKING,
 )
 from collections import defaultdict
+import inspect
 
 try:
     import numpy as np
@@ -44,8 +45,13 @@ from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.iter_utils._iter_utils import IterUtils
+from pythontk.str_utils._str_utils import StrUtils
 from pythontk.img_utils.map_registry import MapRegistry
 import re
+
+# Constants
+DEFAULT_EXTENSION = "png"  # Default extension for saved maps
+ALPHA_EXTENSION = "png"  # Default extension for maps requiring alpha channel
 
 
 @dataclass
@@ -66,7 +72,22 @@ class ConversionRegistry:
 
     def __init__(self):
         self._conversions: Dict[str, List[MapConversion]] = defaultdict(list)
-        self._register_default_conversions()
+        self._registered_classes = set()
+        self._pending_plugins = set()
+
+    def add_plugin(self, cls):
+        """Register a class to be scanned for conversions later."""
+        self._pending_plugins.add(cls)
+
+    def _scan_pending(self):
+        """Scan any pending plugins."""
+        while self._pending_plugins:
+            cls = self._pending_plugins.pop()
+            if hasattr(cls, "register_conversions"):
+                cls.register_conversions(self)
+            else:
+                # Fallback for backward compatibility or mixed usage
+                self.register_from_class(cls)
 
     def register(
         self,
@@ -97,336 +118,49 @@ class ConversionRegistry:
                 priority=priority,
             )
 
+        # Prevent duplicate registrations
+        current_list = self._conversions[conversion.target_type]
+        for existing in current_list:
+            if (
+                existing.converter == conversion.converter
+                and existing.source_types == conversion.source_types
+            ):
+                return
+
         self._conversions[conversion.target_type].append(conversion)
         # Sort by priority (higher first)
         self._conversions[conversion.target_type].sort(
             key=lambda c: c.priority, reverse=True
         )
 
+    def register_from_class(self, cls):
+        """Register all decorated conversion methods from a class."""
+        if cls in self._registered_classes:
+            return
+
+        for name, method in inspect.getmembers(cls):
+            if hasattr(method, "_conversion_info"):
+                infos = method._conversion_info
+                if isinstance(infos, dict):
+                    infos = [infos]
+                for info in infos:
+                    self.register(
+                        target_type=info["target_type"],
+                        source_types=info["source_types"],
+                        converter=method,
+                        priority=info["priority"],
+                    )
+
+        self._registered_classes.add(cls)
+
     def get_conversions_for(self, target_type: str) -> List[MapConversion]:
         """Get all conversions that can produce target type."""
+        self._scan_pending()
         return self._conversions.get(target_type, [])
 
-    def _register_default_conversions(self):
-        """Register all standard PBR conversions."""
-        # Metallic conversions
-        self.register(
-            "Metallic",
-            "Specular",
-            lambda inv, ctx: TextureMapFactory._convert_specular_to_metallic(
-                inv["Specular"], ctx
-            ),
-            priority=5,
-        )
-
-        # Roughness conversions
-        self.register(
-            "Roughness",
-            "Smoothness",
-            lambda inv, ctx: TextureMapFactory._convert_smoothness_to_roughness(
-                inv["Smoothness"], ctx
-            ),
-            priority=10,
-        )
-        self.register(
-            "Roughness",
-            "Glossiness",
-            lambda inv, ctx: TextureMapFactory._convert_smoothness_to_roughness(
-                inv["Glossiness"], ctx
-            ),
-            priority=9,
-        )
-        self.register(
-            "Roughness",
-            "Specular",
-            lambda inv, ctx: TextureMapFactory._convert_specular_to_roughness(
-                inv["Specular"], ctx
-            ),
-            priority=5,
-        )
-
-        # Glossiness conversions
-        self.register(
-            "Glossiness",
-            "Specular",
-            lambda inv, ctx: TextureMapFactory._extract_gloss_from_spec(
-                inv["Specular"], ctx
-            ),
-            priority=5,
-        )
-        self.register(
-            "Glossiness",
-            "Roughness",
-            lambda inv, ctx: TextureMapFactory._convert_roughness_to_smoothness(
-                inv["Roughness"], ctx
-            ),  # Inverted Roughness = Smoothness ≈ Glossiness
-            priority=9,
-        )
-        self.register(
-            "Glossiness",
-            "Smoothness",
-            lambda inv, ctx: TextureMapFactory._copy_map(
-                inv["Smoothness"], "Glossiness", ctx
-            ),
-            priority=10,
-        )
-
-        # Smoothness conversions
-        self.register(
-            "Smoothness",
-            "Roughness",
-            lambda inv, ctx: TextureMapFactory._convert_roughness_to_smoothness(
-                inv["Roughness"], ctx
-            ),
-            priority=10,
-        )
-
-        # Normal conversions
-        self.register(
-            "Normal_OpenGL",
-            "Normal_DirectX",
-            lambda inv, ctx: TextureMapFactory._convert_dx_to_gl(
-                inv["Normal_DirectX"], ctx
-            ),
-            priority=10,
-        )
-        self.register(
-            "Normal_DirectX",
-            "Normal_OpenGL",
-            lambda inv, ctx: TextureMapFactory._convert_gl_to_dx(
-                inv["Normal_OpenGL"], ctx
-            ),
-            priority=10,
-        )
-
-        # Bump/Height to Normal conversions
-        for target in ["Normal_OpenGL", "Normal_DirectX", "Normal"]:
-            for source in ["Bump", "Height"]:
-                self.register(
-                    target,
-                    source,
-                    lambda inv, ctx: TextureMapFactory._convert_bump_to_normal(
-                        inv[source], ctx
-                    ),
-                    priority=5,
-                )
-        self.register(
-            "Normal",
-            ["Bump", "Height"],
-            lambda inv, ctx: TextureMapFactory._convert_bump_to_normal(
-                inv.get("Bump") or inv["Height"], ctx
-            ),
-            priority=5,
-        )
-
-        # Packing conversions (ORM)
-        # Priority 10: All components present, native Roughness
-        self.register(
-            "ORM",
-            ["Metallic", "Roughness", "Ambient_Occlusion"],
-            lambda inv, ctx: TextureMapFactory._create_orm_map(inv, ctx),
-            priority=10,
-        )
-        # Priority 9: All components present, converted Smoothness
-        self.register(
-            "ORM",
-            ["Metallic", "Smoothness", "Ambient_Occlusion"],
-            lambda inv, ctx: TextureMapFactory._create_orm_map(inv, ctx),
-            priority=9,
-        )
-        # Priority 8: Missing AO, native Roughness
-        self.register(
-            "ORM",
-            ["Metallic", "Roughness"],
-            lambda inv, ctx: TextureMapFactory._create_orm_map(inv, ctx),
-            priority=8,
-        )
-        # Priority 7: Missing AO, converted Smoothness
-        self.register(
-            "ORM",
-            ["Metallic", "Smoothness"],
-            lambda inv, ctx: TextureMapFactory._create_orm_map(inv, ctx),
-            priority=7,
-        )
-
-        # Packing conversions (MSAO/MaskMap)
-        # Priority 10: All components present, native Smoothness
-        self.register(
-            "MSAO",
-            ["Metallic", "Ambient_Occlusion", "Smoothness"],
-            lambda inv, ctx: TextureMapFactory._create_mask_map(inv, ctx),
-            priority=10,
-        )
-        # Priority 9: All components present, converted Roughness
-        self.register(
-            "MSAO",
-            ["Metallic", "Ambient_Occlusion", "Roughness"],
-            lambda inv, ctx: TextureMapFactory._create_mask_map(inv, ctx),
-            priority=9,
-        )
-        # Priority 8: Missing AO, native Smoothness
-        self.register(
-            "MSAO",
-            ["Metallic", "Smoothness"],
-            lambda inv, ctx: TextureMapFactory._create_mask_map(inv, ctx),
-            priority=8,
-        )
-        # Priority 7: Missing AO, converted Roughness
-        self.register(
-            "MSAO",
-            ["Metallic", "Roughness"],
-            lambda inv, ctx: TextureMapFactory._create_mask_map(inv, ctx),
-            priority=7,
-        )
-        # Priority 6: Missing Smoothness (Metallic + AO)
-        self.register(
-            "MSAO",
-            ["Metallic", "Ambient_Occlusion"],
-            lambda inv, ctx: TextureMapFactory._create_mask_map(inv, ctx),
-            priority=6,
-        )
-        # Priority 5: Missing Metallic (Smoothness + AO)
-        self.register(
-            "MSAO",
-            ["Ambient_Occlusion", "Smoothness"],
-            lambda inv, ctx: TextureMapFactory._create_mask_map(inv, ctx),
-            priority=5,
-        )
-
-        # Packing conversions (Metallic_Smoothness)
-        self.register(
-            "Metallic_Smoothness",
-            ["Metallic", "Smoothness"],
-            lambda inv, ctx: TextureMapFactory._create_metallic_smoothness_map(
-                inv, ctx
-            ),
-            priority=10,
-        )
-        self.register(
-            "Metallic_Smoothness",
-            ["Metallic", "Roughness"],
-            lambda inv, ctx: TextureMapFactory._create_metallic_smoothness_map(
-                inv, ctx
-            ),
-            priority=9,
-        )
-
-        # Unpacking conversions (Metallic_Smoothness)
-        self.register(
-            "Metallic",
-            "Metallic_Smoothness",
-            lambda inv, ctx: TextureMapFactory._get_metallic_from_packed(
-                inv["Metallic_Smoothness"], ctx
-            ),
-            priority=8,
-        )
-
-        self.register(
-            "Smoothness",
-            "Metallic_Smoothness",
-            lambda inv, ctx: TextureMapFactory._get_smoothness_from_packed(
-                inv["Metallic_Smoothness"], ctx
-            ),
-            priority=8,
-        )
-        self.register(
-            "Roughness",
-            "Metallic_Smoothness",
-            lambda inv, ctx: TextureMapFactory._get_roughness_from_packed(
-                inv["Metallic_Smoothness"], ctx
-            ),
-            priority=8,
-        )
-
-        # Unpacking conversions (MSAO)
-        self.register(
-            "Metallic",
-            "MSAO",
-            lambda inv, ctx: TextureMapFactory._get_metallic_from_msao(
-                inv["MSAO"], ctx
-            ),
-            priority=8,
-        )
-        self.register(
-            "Smoothness",
-            "MSAO",
-            lambda inv, ctx: TextureMapFactory._get_smoothness_from_msao(
-                inv["MSAO"], ctx
-            ),
-            priority=8,
-        )
-        self.register(
-            "Roughness",
-            "MSAO",
-            lambda inv, ctx: TextureMapFactory._get_roughness_from_msao(
-                inv["MSAO"], ctx
-            ),
-            priority=8,
-        )
-        self.register(
-            "Ambient_Occlusion",
-            "MSAO",
-            lambda inv, ctx: TextureMapFactory._get_ao_from_msao(inv["MSAO"], ctx),
-            priority=8,
-        )
-        self.register(
-            "AO",
-            "MSAO",
-            lambda inv, ctx: TextureMapFactory._get_ao_from_msao(inv["MSAO"], ctx),
-            priority=8,
-        )
-
-        # Unpacking conversions (ORM)
-        self.register(
-            "Ambient_Occlusion",
-            "ORM",
-            lambda inv, ctx: TextureMapFactory._get_ao_from_orm(inv["ORM"], ctx),
-            priority=8,
-        )
-        self.register(
-            "AO",
-            "ORM",
-            lambda inv, ctx: TextureMapFactory._get_ao_from_orm(inv["ORM"], ctx),
-            priority=8,
-        )
-        self.register(
-            "Roughness",
-            "ORM",
-            lambda inv, ctx: TextureMapFactory._get_roughness_from_orm(inv["ORM"], ctx),
-            priority=8,
-        )
-        self.register(
-            "Smoothness",
-            "ORM",
-            lambda inv, ctx: TextureMapFactory._get_smoothness_from_orm(
-                inv["ORM"], ctx
-            ),
-            priority=8,
-        )
-        self.register(
-            "Metallic",
-            "ORM",
-            lambda inv, ctx: TextureMapFactory._get_metallic_from_orm(inv["ORM"], ctx),
-            priority=8,
-        )
-
-        # Unpacking conversions (Albedo_Transparency)
-        self.register(
-            "Base_Color",
-            "Albedo_Transparency",
-            lambda inv, ctx: TextureMapFactory._get_base_color_from_albedo_transparency(
-                inv["Albedo_Transparency"], ctx
-            ),
-            priority=8,
-        )
-        self.register(
-            "Opacity",
-            "Albedo_Transparency",
-            lambda inv, ctx: TextureMapFactory._get_opacity_from_albedo_transparency(
-                inv["Albedo_Transparency"], ctx
-            ),
-            priority=8,
-        )
+    def __getattr__(self, name):
+        """Allow property-style access to conversions (e.g. registry.Metallic)."""
+        return self.get_conversions_for(name)
 
 
 # =============================================================================
@@ -435,40 +169,18 @@ class ConversionRegistry:
 
 
 @dataclass
-class ProcessingContext:
-    """Shared context for all processing operations."""
+class TextureProcessor:
+    """Shared context and processor for all map operations."""
 
     inventory: Dict[str, Union[str, "Image.Image"]]
     config: Dict[str, Any]
     output_dir: str
     base_name: str
     ext: Optional[str]
-    callback: Callable
     conversion_registry: ConversionRegistry
     logger: Any = None
     used_maps: set = field(default_factory=set)
     created_files: set = field(default_factory=set)
-
-    _LOG_COLORS = {
-        "success": "rgb(100, 160, 100)",
-        "warning": "rgb(200, 200, 100)",
-        "error": "rgb(255, 100, 100)",
-    }
-
-    def log(self, message: str, level: str = "success"):
-        """Unified logging with color coding."""
-        color = self._LOG_COLORS.get(level, self._LOG_COLORS["success"])
-        self.callback(f'<br><hl style="color:{color};">{message}</hl>')
-
-        if self.logger:
-            # Strip HTML tags for logger
-            clean_msg = re.sub(r"<[^>]+>", "", message)
-            if level == "error":
-                self.logger.error(clean_msg)
-            elif level == "warning":
-                self.logger.warning(clean_msg)
-            else:
-                self.logger.info(clean_msg)
 
     def save_map(
         self,
@@ -497,10 +209,8 @@ class ProcessingContext:
             optimize = self.config.get("optimize", True)
 
         # Determine suffix
-        if suffix is None:
-            suffix = f"_{map_type}"
-        elif not suffix.startswith("_"):
-            suffix = f"_{suffix}"
+        suffix = suffix or map_type
+        suffix = f"_{suffix.lstrip('_')}"
 
         # Determine extension
         ext = self.ext
@@ -508,7 +218,7 @@ class ProcessingContext:
             if isinstance(image, str):
                 ext = os.path.splitext(image)[1].lstrip(".")
             else:
-                ext = "png"  # Fallback for generated images
+                ext = DEFAULT_EXTENSION  # Fallback for generated images
 
         # Force PNG for maps requiring alpha if source was JPG
         if ext.lower() in ["jpg", "jpeg"] and map_type in [
@@ -517,10 +227,23 @@ class ProcessingContext:
             "ORM",
             "Albedo_Transparency",
         ]:
-            ext = "png"
+            ext = ALPHA_EXTENSION
 
         # Generate output path
-        output_path = os.path.join(self.output_dir, f"{self.base_name}{suffix}.{ext}")
+        filename = StrUtils.replace_placeholders(
+            "{base_name}{suffix}.{ext}",
+            base_name=self.base_name,
+            suffix=suffix,
+            ext=ext,
+        )
+        output_path = os.path.join(self.output_dir, filename)
+
+        # Ensure output directory exists
+        try:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error creating output directory: {e}")
 
         # Check for dry run
         if self.config.get("dry_run", False):
@@ -558,7 +281,7 @@ class ProcessingContext:
             # Target Info
             max_size = self.config.get("max_size")
             if max_size:
-                if map_type in TextureMapFactory.packed_grayscale_maps:
+                if map_type in MapFactory.packed_grayscale_maps:
                     scale = self.config.get("mask_map_scale", 1.0)
                     max_size = int(max_size * scale)
                 details.append(f"Limit: {max_size}px")
@@ -568,7 +291,7 @@ class ProcessingContext:
                 if details
                 else ""
             )
-            self.log(f"[Dry Run] Would save {map_type} to {output_path}{info}")
+            self.logger.info(f"[Dry Run] Would save {map_type} to {output_path}{info}", extra={"preset": "highlight"})
             return output_path
 
         # Check if we can skip (only for file-based inputs)
@@ -579,21 +302,44 @@ class ProcessingContext:
             and os.path.exists(output_path)
             and os.path.exists(image)
         ):
+            out_mtime = os.path.getmtime(output_path)
+            in_mtime = os.path.getmtime(image)
             # Check if output is newer than input
-            if os.path.getmtime(output_path) > os.path.getmtime(image):
-                # self.log(f"Skipping {map_type} (up to date)", "warning")
+            if out_mtime > in_mtime:
+                self.logger.info(f"Skipping {map_type} (up to date)")
                 return output_path
 
         # Determine if we should optimize
-        should_optimize = optimize and self.config.get("optimize", True)
+        # Legacy support: 'optimize' implies resize
+        # New support: 'resize' explicitly controls resizing
+        allow_resize = self.config.get("resize", self.config.get("optimize", True))
+        should_optimize = optimize and allow_resize
+
         max_size = self.config.get("max_size")
-        if max_size and map_type in TextureMapFactory.packed_grayscale_maps:
+        if max_size and map_type in MapFactory.packed_grayscale_maps:
             scale = self.config.get("mask_map_scale", 1.0)
             max_size = int(max_size * scale)
 
         # Smart Copy: If input is a file and no optimization is needed, just copy
         if isinstance(image, str) and os.path.exists(image):
-            if should_optimize:
+            # Check if format conversion is needed
+            _, src_ext = os.path.splitext(image)
+            _, dst_ext = os.path.splitext(output_path)
+            format_changed = src_ext.lower() != dst_ext.lower()
+
+            # Legacy support: 'convert' implies format conversion
+            # New support: 'convert_format' explicitly controls format conversion
+            allow_format_conversion = self.config.get(
+                "convert_format", self.config.get("convert", True)
+            )
+
+            if format_changed and not allow_format_conversion:
+                # If format changed but conversion not allowed, revert extension
+                output_path = os.path.splitext(output_path)[0] + src_ext
+                dst_ext = src_ext
+                format_changed = False
+
+            if should_optimize or format_changed:
                 try:
                     # Check if optimization is actually needed
                     from PIL import Image
@@ -601,7 +347,9 @@ class ProcessingContext:
                     with Image.open(image) as img:
                         width, height = img.size
                         # Check resize
-                        needs_resize = max_size and max(width, height) > max_size
+                        needs_resize = (
+                            allow_resize and max_size and max(width, height) > max_size
+                        )
 
                         # Check mode enforcement
                         needs_mode_change = False
@@ -615,7 +363,11 @@ class ProcessingContext:
                                 needs_mode_change = True
 
                         # If we don't need resize or mode change, we can likely skip re-encoding
-                        if not needs_resize and not needs_mode_change:
+                        if (
+                            not needs_resize
+                            and not needs_mode_change
+                            and not format_changed
+                        ):
                             should_optimize = False
                 except Exception:
                     pass  # Fallback to full processing if check fails
@@ -651,7 +403,7 @@ class ProcessingContext:
         if should_optimize:
             # Determine if resizing is needed
             will_resize = False
-            if max_size:
+            if allow_resize and max_size:
                 width, height = img_obj.size
                 if max(width, height) > max_size:
                     will_resize = True
@@ -713,32 +465,418 @@ class ProcessingContext:
                             self.inventory[target_type] = result
                             return result
                         except Exception as e:
-                            self.log(
-                                f"Error converting to {target_type}: {str(e)}", "error"
-                            )
+                            if self.logger:
+                                self.logger.error(f"Error converting to {target_type}: {str(e)}")
 
         # 3. Try registry fallbacks (Safe Substitutes)
         # Only use fallbacks that DON'T have a registered conversion (otherwise step 2 would have caught them)
-        for map_type in preferred_types:
-            map_def = MapRegistry().get(map_type)
-            if map_def:
-                for fb in map_def.input_fallbacks:
-                    if fb in self.inventory:
-                        # Check if a conversion exists for this fallback
-                        # We can check if any conversion for map_type uses fb as source
-                        conversions = self.conversion_registry.get_conversions_for(
-                            map_type
-                        )
-                        has_conversion = any(fb in c.source_types for c in conversions)
+        if self.config.get("use_input_fallbacks", True):
+            for map_type in preferred_types:
+                map_def = MapRegistry().get(map_type)
+                if map_def:
+                    for fb in map_def.input_fallbacks:
+                        if fb in self.inventory:
+                            # Check if a conversion exists for this fallback
+                            # We can check if any conversion for map_type uses fb as source
+                            conversions = self.conversion_registry.get_conversions_for(
+                                map_type
+                            )
+                            has_conversion = any(
+                                fb in c.source_types for c in conversions
+                            )
 
-                        if not has_conversion:
-                            return self.inventory[fb]
+                            if not has_conversion:
+                                return self.inventory[fb]
 
         return None
 
     def mark_used(self, *map_types: str):
         """Mark map types as consumed."""
         self.used_maps.update(map_types)
+
+    def convert_specular_to_metallic(
+        self, specular_path: Union[str, "Image.Image"]
+    ) -> "Image.Image":
+        if not specular_path:
+            raise ValueError(
+                "Cannot convert Specular to Metallic: Input map is missing"
+            )
+        metallic_img = MapFactory.create_metallic_from_spec(specular_path)
+        if self.logger:
+            self.logger.info("Created metallic from specular", extra={"preset": "highlight"})
+        return metallic_img
+
+    def convert_smoothness_to_roughness(
+        self, smoothness_path: Union[str, "Image.Image"]
+    ) -> "Image.Image":
+        if not smoothness_path:
+            raise ValueError(
+                "Cannot convert Smoothness to Roughness: Input map is missing"
+            )
+        roughness_img = MapFactory.convert_smoothness_to_roughness(
+            smoothness_path, self.output_dir, save=False
+        )
+        if self.logger:
+            self.logger.info("Converted smoothness to roughness", extra={"preset": "highlight"})
+        return roughness_img
+
+    def convert_roughness_to_smoothness(
+        self, roughness_path: Union[str, "Image.Image"]
+    ) -> "Image.Image":
+        if not roughness_path:
+            raise ValueError(
+                "Cannot convert Roughness to Smoothness: Input map is missing"
+            )
+        smooth_img = MapFactory.convert_roughness_to_smoothness(
+            roughness_path, self.output_dir, save=False
+        )
+        if self.logger:
+            self.logger.info("Converted roughness to smoothness", extra={"preset": "highlight"})
+        return smooth_img
+
+    def convert_specular_to_roughness(
+        self, specular_path: Union[str, "Image.Image"]
+    ) -> "Image.Image":
+        if not specular_path:
+            raise ValueError(
+                "Cannot convert Specular to Roughness: Input map is missing"
+            )
+        rough_img = MapFactory.create_roughness_from_spec(specular_path)
+        if self.logger:
+            self.logger.info("Created roughness from specular", extra={"preset": "highlight"})
+        return rough_img
+
+    def convert_dx_to_gl(
+        self, dx_path: Union[str, "Image.Image"]
+    ) -> "Image.Image":
+        if not dx_path:
+            raise ValueError(
+                "Cannot convert DirectX Normal to OpenGL: Input map is missing"
+            )
+        gl_img = MapFactory.convert_normal_map_format(
+            dx_path, target_format="opengl", save=False
+        )
+        if self.logger:
+            self.logger.info("Converted DirectX normal to OpenGL", extra={"preset": "highlight"})
+        return gl_img
+
+    def convert_gl_to_dx(
+        self, gl_path: Union[str, "Image.Image"]
+    ) -> "Image.Image":
+        if not gl_path:
+            raise ValueError(
+                "Cannot convert OpenGL Normal to DirectX: Input map is missing"
+            )
+        dx_img = MapFactory.convert_normal_map_format(
+            gl_path, target_format="directx", save=False
+        )
+        if self.logger:
+            self.logger.info("Converted OpenGL normal to DirectX", extra={"preset": "highlight"})
+        return dx_img
+
+    def convert_bump_to_normal(
+        self, bump_path: Union[str, "Image.Image"]
+    ) -> "Image.Image":
+        if not bump_path:
+            raise ValueError("Cannot convert Bump to Normal: Input map is missing")
+        normal_img = MapFactory.convert_bump_to_normal(
+            bump_path,
+            output_format=self.config.get("normal_type", "opengl").lower(),
+            save=False,
+        )
+        if self.logger:
+            self.logger.info("Generated normal from bump/height", extra={"preset": "highlight"})
+        return normal_img
+
+    def extract_gloss_from_spec(
+        self, specular_path: Union[str, "Image.Image"]
+    ) -> "Image.Image":
+        if not specular_path:
+            raise ValueError(
+                "Cannot extract Glossiness from Specular: Input map is missing"
+            )
+        gloss_img = MapFactory.extract_gloss_from_spec(specular_path)
+        if not gloss_img:
+            raise ValueError("Could not extract gloss from specular map")
+
+        if self.logger:
+            self.logger.info("Extracted glossiness from specular", extra={"preset": "highlight"})
+        return gloss_img
+
+    def copy_map(
+        self, source_path: Union[str, "Image.Image"], target_type: str
+    ) -> Union[str, "Image.Image"]:
+        """Simple copy/rename for compatible maps (e.g. Smoothness -> Glossiness)."""
+        if self.logger:
+            self.logger.info(f"Created {target_type} from source map", extra={"preset": "highlight"})
+        return source_path
+
+    def unpack_metallic_smoothness(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> None:
+        """Helper to unpack and cache results."""
+        # Return cached if available
+        if "Metallic" in self.inventory and "Smoothness" in self.inventory:
+            return
+
+        metallic_img, smoothness_img = MapFactory.unpack_metallic_smoothness(
+            source_path, self.output_dir, optimize=False, save=False
+        )
+
+        self.inventory["Metallic"] = metallic_img
+        self.inventory["Smoothness"] = smoothness_img
+        if self.logger:
+            self.logger.info("Unpacked Metallic and Smoothness from packed map", extra={"preset": "highlight"})
+
+    def get_metallic_from_packed(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_metallic_smoothness(source_path)
+        return self.inventory["Metallic"]
+
+    def get_smoothness_from_packed(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_metallic_smoothness(source_path)
+        return self.inventory["Smoothness"]
+
+    def get_roughness_from_packed(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_metallic_smoothness(source_path)
+
+        if not self.inventory.get("Smoothness"):
+            return None
+
+        # Convert S -> R
+        return self.convert_smoothness_to_roughness(self.inventory["Smoothness"])
+
+    def unpack_msao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> None:
+        """Helper to unpack MSAO and cache results."""
+        if (
+            "Metallic" in self.inventory
+            and "AO" in self.inventory
+            and "Smoothness" in self.inventory
+        ):
+            return
+
+        metallic_img, ao_img, smoothness_img = MapFactory.unpack_msao_texture(
+            source_path, self.output_dir, optimize=False, save=False
+        )
+
+        self.inventory["Metallic"] = metallic_img
+        self.inventory["AO"] = ao_img
+        self.inventory["Ambient_Occlusion"] = self.inventory["AO"]
+        self.inventory["Smoothness"] = smoothness_img
+        if self.logger:
+            self.logger.info("Unpacked Metallic, AO, and Smoothness from MSAO map", extra={"preset": "highlight"})
+
+    def get_metallic_from_msao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_msao(source_path)
+        return self.inventory["Metallic"]
+
+    def get_smoothness_from_msao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_msao(source_path)
+        return self.inventory["Smoothness"]
+
+    def get_roughness_from_msao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_msao(source_path)
+
+        if not self.inventory.get("Smoothness"):
+            return None
+
+        return self.convert_smoothness_to_roughness(self.inventory["Smoothness"])
+
+    def get_ao_from_msao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_msao(source_path)
+        return self.inventory["AO"]
+
+    def unpack_orm(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> None:
+        """Helper to unpack ORM and cache results."""
+        if (
+            "AO" in self.inventory
+            and "Roughness" in self.inventory
+            and "Metallic" in self.inventory
+        ):
+            return
+
+        ao_img, roughness_img, metallic_img = MapFactory.unpack_orm_texture(
+            source_path, self.output_dir, optimize=False, save=False
+        )
+
+        self.inventory["AO"] = ao_img
+        self.inventory["Ambient_Occlusion"] = self.inventory["AO"]
+        self.inventory["Roughness"] = roughness_img
+        self.inventory["Metallic"] = metallic_img
+        if self.logger:
+            self.logger.info("Unpacked AO, Roughness, and Metallic from ORM map", extra={"preset": "highlight"})
+
+    def get_ao_from_orm(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_orm(source_path)
+        return self.inventory["AO"]
+
+    def get_roughness_from_orm(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_orm(source_path)
+        return self.inventory["Roughness"]
+
+    def get_smoothness_from_orm(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_orm(source_path)
+        # Convert R -> S
+        return self.convert_roughness_to_smoothness(self.inventory["Roughness"])
+
+    def get_metallic_from_orm(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_orm(source_path)
+        return self.inventory["Metallic"]
+
+    def unpack_albedo_transparency(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> None:
+        """Helper to unpack Albedo+Transparency and cache results."""
+        if "Base_Color" in self.inventory and "Opacity" in self.inventory:
+            return
+
+        base_color_img, opacity_img = MapFactory.unpack_albedo_transparency(
+            source_path, self.output_dir, optimize=False, save=False
+        )
+
+        self.inventory["Base_Color"] = base_color_img
+        self.inventory["Opacity"] = opacity_img
+        if self.logger:
+            self.logger.info("Unpacked Base Color and Opacity from Albedo+Transparency map", extra={"preset": "highlight"})
+
+    def get_base_color_from_albedo_transparency(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_albedo_transparency(source_path)
+        return self.inventory["Base_Color"]
+
+    def get_opacity_from_albedo_transparency(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_albedo_transparency(source_path)
+        return self.inventory["Opacity"]
+
+    def create_orm_map(
+        self, inventory: Dict[str, Union[str, "Image.Image"]]
+    ) -> "Image.Image":
+        """Create ORM map from components."""
+        # Resolve required components
+        ao = self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
+        roughness = self.resolve_map(
+            "Roughness", "Smoothness", "Glossiness", allow_conversion=True
+        )
+        metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
+
+        if not (ao or roughness or metallic):
+            raise ValueError("Missing components for ORM map")
+
+        orm_img = ImgUtils.pack_channels(
+            channel_files={"R": ao, "G": roughness, "B": metallic},
+            output_path=None,
+            fill_values={"R": 255} if not ao else None,
+        )
+        if self.logger:
+            self.logger.info("Created ORM map from components", extra={"preset": "highlight"})
+        return orm_img
+
+    def create_mask_map(
+        self, inventory: Dict[str, Union[str, "Image.Image"]]
+    ) -> "Image.Image":
+        """Create Mask Map (MSAO) from components."""
+        # Resolve required components
+        metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
+        ao = (
+            self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
+            or None
+        )
+        detail = (
+            self.resolve_map("Detail_Mask", "Detail", allow_conversion=False) or None
+        )
+
+        # Get smoothness with inversion tracking
+        smoothness = None
+        invert = False
+
+        if "Smoothness" in inventory:
+            smoothness = inventory["Smoothness"]
+        elif "Glossiness" in inventory:
+            smoothness = inventory["Glossiness"]
+        elif "Roughness" in inventory:
+            smoothness = inventory["Roughness"]
+            invert = True
+        else:
+            smoothness = None
+
+        if not metallic and not ao and not smoothness:
+            raise ValueError(
+                "Missing components for Mask Map (need at least Metallic, AO, or Smoothness)"
+            )
+
+        mask_map = MapFactory.pack_msao_texture(
+            metallic_map_path=metallic,
+            ao_map_path=ao,
+            alpha_map_path=smoothness,
+            detail_map_path=detail,
+            output_dir=self.output_dir,
+            suffix="_MaskMap",
+            invert_alpha=invert,
+            save=False,
+        )
+        if self.logger:
+            self.logger.info("Created Mask Map from components", extra={"preset": "highlight"})
+        return mask_map
+
+    def create_metallic_smoothness_map(
+        self, inventory: Dict[str, Union[str, "Image.Image"]]
+    ) -> "Image.Image":
+        """Create Metallic-Smoothness map from components."""
+        metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
+
+        smoothness = None
+        invert = False
+
+        if "Smoothness" in inventory:
+            smoothness = inventory["Smoothness"]
+        elif "Glossiness" in inventory:
+            smoothness = inventory["Glossiness"]
+        elif "Roughness" in inventory:
+            smoothness = inventory["Roughness"]
+            invert = True
+
+        if not metallic or not smoothness:
+            raise ValueError("Missing components for Metallic-Smoothness map")
+
+        ms_map = MapFactory.pack_smoothness_into_metallic(
+            metallic_map_path=metallic,
+            alpha_map_path=smoothness,
+            output_dir=self.output_dir,
+            suffix="_MetallicSmoothness",
+            invert_alpha=invert,
+            save=False,
+        )
+        if self.logger:
+            self.logger.info("Packed smoothness into metallic", extra={"preset": "highlight"})
+        return ms_map
 
 
 # =============================================================================
@@ -750,12 +888,12 @@ class WorkflowHandler(ABC):
     """Abstract base for workflow-specific map processing."""
 
     @abstractmethod
-    def can_handle(self, context: ProcessingContext) -> bool:
+    def can_handle(self, context: TextureProcessor) -> bool:
         """Check if this handler should process the workflow."""
         pass
 
     @abstractmethod
-    def process(self, context: ProcessingContext) -> Optional[str]:
+    def process(self, context: TextureProcessor) -> Optional[str]:
         """Process and return the output map path."""
         pass
 
@@ -765,7 +903,7 @@ class WorkflowHandler(ABC):
         pass
 
     def is_explicitly_requested(
-        self, context: ProcessingContext, map_type: str
+        self, context: TextureProcessor, map_type: str
     ) -> bool:
         """Check if a map type is explicitly requested in the config.
 
@@ -782,54 +920,48 @@ class WorkflowHandler(ABC):
 class ORMMapHandler(WorkflowHandler):
     """Handles Unreal Engine / glTF ORM packing."""
 
-    def can_handle(self, context: ProcessingContext) -> bool:
-        if not context.config.get("convert", True):
+    def can_handle(self, context: TextureProcessor) -> bool:
+        # Legacy support: 'convert' implies packing
+        # New support: 'pack' explicitly controls packing
+        if not context.config.get("pack", context.config.get("convert", True)):
+            return False
+
+        # Explicitly disabled?
+        if context.config.get("orm_map") is False:
             return False
 
         # Explicit Logic: Config requests ORM
         if self.is_explicitly_requested(context, "ORM"):
             return True
 
-        # Implicit Logic: Only generate ORM if we started with Roughness (Standard/Unreal/glTF workflow)
-        if "Roughness" not in context.inventory:
-            return False
+        # Implicit Logic: Disabled to prevent greedy generation
+        return False
 
-        # Check if components are already consumed
-        if any(
-            k in context.used_maps
-            for k in ["Metallic", "Specular", "Roughness", "Glossiness", "Smoothness"]
-        ):
-            return False
-
-        has_ao = any(k in context.inventory for k in ["Ambient_Occlusion", "AO"])
-        has_metal = any(k in context.inventory for k in ["Metallic", "Specular"])
-        return has_ao and has_metal
-
-    def process(self, context: ProcessingContext) -> Optional[str]:
+    def process(self, context: TextureProcessor) -> Optional[str]:
         # Resolve required components with smart fallbacks
         ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
         roughness = context.resolve_map("Roughness", allow_conversion=True)
         metallic = context.resolve_map("Metallic", allow_conversion=True)
 
         if not ao:
-            context.log("No AO map, using white for ORM red channel", "warning")
+            if context.logger:
+                context.logger.warning("No AO map, using white for ORM red channel")
 
         if not roughness:
             if not context.config.get("force_packed_maps", False):
-                context.log("No roughness map for ORM green channel", "warning")
+                if context.logger:
+                    context.logger.warning("No roughness map for ORM green channel")
                 return None
-            context.log(
-                "No roughness map for ORM green channel, using black (forced)",
-                "warning",
-            )
+            if context.logger:
+                context.logger.warning("No roughness map for ORM green channel, using black (forced)")
 
         if not metallic:
             if not context.config.get("force_packed_maps", False):
-                context.log("No metallic map for ORM blue channel", "warning")
+                if context.logger:
+                    context.logger.warning("No metallic map for ORM blue channel")
                 return None
-            context.log(
-                "No metallic map for ORM blue channel, using black (forced)", "warning"
-            )
+            if context.logger:
+                context.logger.warning("No metallic map for ORM blue channel, using black (forced)")
 
         try:
             fill_values = {}
@@ -846,11 +978,13 @@ class ORMMapHandler(WorkflowHandler):
                 fill_values=fill_values if fill_values else None,
                 optimize=False,
             )
-            context.log("Created Unreal/glTF ORM map")
+            if context.logger:
+                context.logger.info("Created Unreal/glTF ORM map", extra={"preset": "highlight"})
             sources = [img for img in [ao, roughness, metallic] if img]
             return context.save_map(orm_map, "ORM", source_images=sources)
         except Exception as e:
-            context.log(f"Error creating ORM map: {str(e)}", "error")
+            if context.logger:
+                context.logger.error(f"Error creating ORM map: {str(e)}")
             return None
 
     def get_consumed_types(self) -> List[str]:
@@ -869,8 +1003,10 @@ class ORMMapHandler(WorkflowHandler):
 class MaskMapHandler(WorkflowHandler):
     """Handles Unity HDRP Mask Map (MSAO)."""
 
-    def can_handle(self, context: ProcessingContext) -> bool:
-        if not context.config.get("convert", True):
+    def can_handle(self, context: TextureProcessor) -> bool:
+        # Legacy support: 'convert' implies packing
+        # New support: 'pack' explicitly controls packing
+        if not context.config.get("pack", context.config.get("convert", True)):
             return False
 
         # Explicit Logic: Config requests Mask Map
@@ -879,21 +1015,10 @@ class MaskMapHandler(WorkflowHandler):
         ) or self.is_explicitly_requested(context, "MSAO"):
             return True
 
-        # Implicit Logic: Only generate MSAO if we started with Smoothness/Glossiness (Unity workflow)
-        if not any(k in context.inventory for k in ["Smoothness", "Glossiness"]):
-            return False
+        # Implicit Logic: Disabled to prevent greedy generation
+        return False
 
-        # Implicitly require AO. If AO is missing, prefer MetallicSmoothness (handled later).
-        if "Ambient_Occlusion" not in context.inventory:
-            return False
-
-        # Check if components are already consumed
-        if any(k in context.used_maps for k in ["Metallic", "Specular"]):
-            return False
-
-        return any(k in context.inventory for k in ["Metallic", "Specular"])
-
-    def process(self, context: ProcessingContext) -> Optional[str]:
+    def process(self, context: TextureProcessor) -> Optional[str]:
         if "MSAO" in context.inventory:
             return context.save_map(context.inventory["MSAO"], "MSAO")
 
@@ -924,23 +1049,22 @@ class MaskMapHandler(WorkflowHandler):
         if not any([metallic, ao, smoothness]):
             return None
 
-        # Special case: If only AO is present, skip Mask Map generation
-        # to avoid creating a misleading packed map with blank Metallic/Smoothness.
-        # UNLESS explicitly forced by the user.
+        # Special case: If only AO is present, we proceed but log a message.
         if ao and not metallic and not smoothness:
-            # Check if forced
             if not context.config.get("force_packed_maps", False):
-                context.log(
-                    "Only AO map present, skipping Mask Map generation (use force_packed_maps=True to override)",
-                    "warning",
-                )
                 return None
+            if context.logger:
+                context.logger.info(
+                    "Only AO map present, generating Mask Map with default Metallic/Smoothness"
+                )
 
         if not metallic:
-            context.log("No metallic map for Mask Map, using black", "warning")
+            if context.logger:
+                context.logger.info("No metallic map for Mask Map, using black")
 
         if not ao:
-            context.log("No AO map, using white for Mask Map green channel", "warning")
+            if context.logger:
+                context.logger.info("No AO map, using white for Mask Map green channel")
 
         try:
             # Use pack_channels directly to allow missing AO (defaults to white)
@@ -962,12 +1086,14 @@ class MaskMapHandler(WorkflowHandler):
                 # Invert the alpha channel after packing if needed
                 mask_map_image = ImgUtils.invert_channels(mask_map_image, "A")
 
-            context.log("Created Unity HDRP Mask Map")
+            if context.logger:
+                context.logger.info("Created Unity HDRP Mask Map", extra={"preset": "highlight"})
             # Pass the PIL Image directly to save_map, which handles optimization and saving
             sources = [img for img in [metallic, ao, smoothness] if img]
             return context.save_map(mask_map_image, "MSAO", source_images=sources)
         except Exception as e:
-            context.log(f"Error creating Mask Map: {str(e)}", "error")
+            if context.logger:
+                context.logger.error(f"Error creating Mask Map: {str(e)}")
             return None
 
     def get_consumed_types(self) -> List[str]:
@@ -986,8 +1112,14 @@ class MaskMapHandler(WorkflowHandler):
 class MetallicSmoothnessHandler(WorkflowHandler):
     """Handles packed Metallic+Smoothness."""
 
-    def can_handle(self, context: ProcessingContext) -> bool:
-        if not context.config.get("convert", True):
+    def can_handle(self, context: TextureProcessor) -> bool:
+        # Legacy support: 'convert' implies packing
+        # New support: 'pack' explicitly controls packing
+        if not context.config.get("pack", context.config.get("convert", True)):
+            return False
+
+        # Explicitly disabled?
+        if context.config.get("metallic_smoothness") is False:
             return False
 
         # Explicit Logic: Config requests Metallic Smoothness
@@ -1002,20 +1134,10 @@ class MetallicSmoothnessHandler(WorkflowHandler):
                     if "Metallic_Smoothness" in map_def.output_fallbacks:
                         return True
 
-        # Implicit Logic: Only generate Metallic_Smoothness if we started with Smoothness/Glossiness
-        if not any(k in context.inventory for k in ["Smoothness", "Glossiness"]):
-            return False
+        # Implicit Logic: Disabled to prevent greedy generation
+        return False
 
-        # Check if components are already consumed
-        if any(
-            k in context.used_maps
-            for k in ["Metallic", "Specular", "Smoothness", "Glossiness"]
-        ):
-            return False
-
-        return any(k in context.inventory for k in ["Metallic", "Specular"])
-
-    def process(self, context: ProcessingContext) -> Optional[str]:
+    def process(self, context: TextureProcessor) -> Optional[str]:
         if "Metallic_Smoothness" in context.inventory:
             return context.save_map(
                 context.inventory["Metallic_Smoothness"], "Metallic_Smoothness"
@@ -1045,16 +1167,18 @@ class MetallicSmoothnessHandler(WorkflowHandler):
             return context.save_map(metallic, "Metallic", source_images=[metallic])
 
         try:
-            combined = TextureMapFactory.pack_smoothness_into_metallic(
+            combined = MapFactory.pack_smoothness_into_metallic(
                 metallic, alpha_map, invert_alpha=invert, save=False
             )
-            context.log("Packed smoothness into metallic")
+            if context.logger:
+                context.logger.info("Packed smoothness into metallic", extra={"preset": "highlight"})
             sources = [img for img in [metallic, alpha_map] if img]
             return context.save_map(
                 combined, "Metallic_Smoothness", source_images=sources
             )
         except Exception as e:
-            context.log(f"Error packing metallic/smoothness: {str(e)}", "error")
+            if context.logger:
+                context.logger.error(f"Error packing metallic/smoothness: {str(e)}")
             return context.save_map(metallic, "Metallic")
 
     def get_consumed_types(self) -> List[str]:
@@ -1071,11 +1195,11 @@ class MetallicSmoothnessHandler(WorkflowHandler):
 class SeparateMetallicRoughnessHandler(WorkflowHandler):
     """Handles separate metallic and roughness maps."""
 
-    def can_handle(self, context: ProcessingContext) -> bool:
+    def can_handle(self, context: TextureProcessor) -> bool:
         # This is the default/fallback handler
         return True
 
-    def process(self, context: ProcessingContext) -> List[str]:
+    def process(self, context: TextureProcessor) -> List[str]:
         """Returns list since this produces multiple maps."""
         output_maps = []
 
@@ -1112,13 +1236,14 @@ class SeparateMetallicRoughnessHandler(WorkflowHandler):
 class BaseColorHandler(WorkflowHandler):
     """Handles base color / albedo with optional packing."""
 
-    def can_handle(self, context: ProcessingContext) -> bool:
+    def can_handle(self, context: TextureProcessor) -> bool:
         return True  # Always processes if base color exists
 
-    def process(self, context: ProcessingContext) -> Optional[str]:
+    def process(self, context: TextureProcessor) -> Optional[str]:
         # Check if we have a pre-existing Albedo_Transparency map
         if "Albedo_Transparency" in context.inventory:
-            context.log("Processing existing Albedo_Transparency map")
+            if context.logger:
+                context.logger.info("Processing existing Albedo_Transparency map", extra={"preset": "highlight"})
             context.mark_used("Albedo_Transparency")
             return context.save_map(
                 context.inventory["Albedo_Transparency"], "Albedo_Transparency"
@@ -1157,13 +1282,15 @@ class BaseColorHandler(WorkflowHandler):
                     pass
 
         if create_albedo_transparency:
-            context.log("Processing albedo with transparency")
+            if context.logger:
+                context.logger.info("Processing albedo with transparency", extra={"preset": "highlight"})
             if opacity:
                 try:
-                    combined = TextureMapFactory.pack_transparency_into_albedo(
+                    combined = MapFactory.pack_transparency_into_albedo(
                         base_color, opacity, save=False
                     )
-                    context.log("Packed transparency into albedo")
+                    if context.logger:
+                        context.logger.info("Packed transparency into albedo", extra={"preset": "highlight"})
                     context.mark_used(
                         "Base_Color",
                         "Diffuse",
@@ -1176,7 +1303,8 @@ class BaseColorHandler(WorkflowHandler):
                         combined, "Albedo_Transparency", source_images=sources
                     )
                 except Exception as e:
-                    context.log(f"Error packing transparency: {str(e)}", "error")
+                    if context.logger:
+                        context.logger.error(f"Error packing transparency: {str(e)}", extra={"preset": "error"})
             else:
                 # Base color already has alpha, just save it as Albedo_Transparency
                 # Practical Lens: We only rename Base_Color to Albedo_Transparency if it
@@ -1188,7 +1316,8 @@ class BaseColorHandler(WorkflowHandler):
                 )
 
         # Fallback to standard Base Color processing
-        context.log("Processing base color")
+        if context.logger:
+            context.logger.info("Processing base color", extra={"preset": "highlight"})
 
         # Clean up base color if requested
         if context.config.get("cleanup_base_color", False):
@@ -1197,17 +1326,19 @@ class BaseColorHandler(WorkflowHandler):
                 try:
                     base_img = ImgUtils.ensure_image(base_color)
                     metallic_img = ImgUtils.ensure_image(metallic)
-                    cleaned = TextureMapFactory.convert_base_color_to_albedo(
+                    cleaned = MapFactory.convert_base_color_to_albedo(
                         base_img, metallic_img
                     )
-                    context.log("Cleaned base color to true albedo")
+                    if context.logger:
+                        context.logger.info("Cleaned base color to true albedo", extra={"preset": "highlight"})
                     context.mark_used("Base_Color", "Diffuse")
                     sources = [img for img in [base_color, metallic] if img]
                     return context.save_map(
                         cleaned, "Base_Color", source_images=sources
                     )
                 except Exception as e:
-                    context.log(f"Error cleaning base color: {str(e)}", "error")
+                    if context.logger:
+                        context.logger.error(f"Error cleaning base color: {str(e)}", extra={"preset": "error"})
 
         context.mark_used("Base_Color", "Diffuse")
         return context.save_map(base_color, "Base_Color", source_images=[base_color])
@@ -1225,16 +1356,17 @@ class BaseColorHandler(WorkflowHandler):
 class NormalMapHandler(WorkflowHandler):
     """Handles normal map format conversion."""
 
-    def can_handle(self, context: ProcessingContext) -> bool:
+    def can_handle(self, context: TextureProcessor) -> bool:
         return True  # Always processes if normal exists
 
-    def process(self, context: ProcessingContext) -> Optional[str]:
+    def process(self, context: TextureProcessor) -> Optional[str]:
         target_format = context.config.get("normal_type", "OpenGL")
         target_key = f"Normal_{target_format}"
 
         # 1. Try exact match (e.g. Normal_OpenGL)
         if target_key in context.inventory:
-            context.log(f"Processing existing {target_format} normal map")
+            if context.logger:
+                context.logger.info(f"Processing existing {target_format} normal map", extra={"preset": "highlight"})
             context.mark_used(target_key)
             return context.save_map(
                 context.inventory[target_key],
@@ -1245,15 +1377,35 @@ class NormalMapHandler(WorkflowHandler):
         # 2. Try opposite match (e.g. Normal_DirectX) -> Convert
         opposite_key = f"Normal_{self._opposite(target_format)}"
         if opposite_key in context.inventory:
-            # Let resolve_map handle the conversion via registry
-            normal = context.resolve_map(target_key, allow_conversion=True)
-            if normal:
-                context.log(
-                    f"Converted {self._opposite(target_format)} to {target_format}"
-                )
+            # Check if conversion is allowed
+            # Legacy support: 'convert' implies type conversion
+            # New support: 'convert_type' explicitly controls type conversion
+            allow_conversion = context.config.get(
+                "convert_type", context.config.get("convert", True)
+            )
+
+            if allow_conversion:
+                # Let resolve_map handle the conversion via registry
+                normal = context.resolve_map(target_key, allow_conversion=True)
+                if normal:
+                    if context.logger:
+                        context.logger.info(f"Converted {self._opposite(target_format)} to {target_format}", extra={"preset": "highlight"})
+                    context.mark_used(opposite_key)
+                    return context.save_map(
+                        normal,
+                        target_key,
+                        source_images=[context.inventory[opposite_key]],
+                    )
+            else:
+                # If conversion not allowed, just save the opposite map as is (or skip?)
+                # Usually we want to save it even if wrong format if conversion is disabled
+                if context.logger:
+                    context.logger.info(f"Skipping conversion of {self._opposite(target_format)} to {target_format} (convert_type=False)", extra={"preset": "highlight"})
                 context.mark_used(opposite_key)
                 return context.save_map(
-                    normal, target_key, source_images=[context.inventory[opposite_key]]
+                    context.inventory[opposite_key],
+                    opposite_key,
+                    source_images=[context.inventory[opposite_key]],
                 )
 
         # 3. Try generic Normal
@@ -1261,12 +1413,11 @@ class NormalMapHandler(WorkflowHandler):
             normal_map = context.inventory["Normal"]
 
             # Attempt to detect format
-            detected_format = TextureMapFactory.detect_normal_map_format(normal_map)
+            detected_format = MapFactory.detect_normal_map_format(normal_map)
 
             if detected_format:
-                context.log(
-                    f"Detected {detected_format} format from generic normal map"
-                )
+                if context.logger:
+                    context.logger.info(f"Detected {detected_format} format from generic normal map", extra={"preset": "highlight"})
 
                 # If detected format matches target, save as target
                 if detected_format == target_format:
@@ -1277,28 +1428,45 @@ class NormalMapHandler(WorkflowHandler):
 
                 # If detected format is opposite, convert
                 else:
-                    context.log(
-                        f"Converting detected {detected_format} to {target_format}"
+                    # Check if conversion is allowed
+                    allow_conversion = context.config.get(
+                        "convert_type", context.config.get("convert", True)
                     )
-                    # We can use the registry converters if we temporarily treat it as the detected type
-                    # Or just call TextureMapFactory directly
-                    if detected_format == "DirectX":  # Target is OpenGL
-                        converted = TextureMapFactory.convert_normal_map_format(
-                            normal_map, target_format="opengl", save=False
-                        )
-                    else:  # Detected OpenGL, Target is DirectX
-                        converted = TextureMapFactory.convert_normal_map_format(
-                            normal_map, target_format="directx", save=False
-                        )
 
-                    context.mark_used("Normal")
-                    return context.save_map(
-                        converted, target_key, source_images=[normal_map]
-                    )
+                    if allow_conversion:
+                        if context.logger:
+                            context.logger.info(f"Converting detected {detected_format} to {target_format}", extra={"preset": "highlight"})
+                        # We can use the registry converters if we temporarily treat it as the detected type
+                        # Or just call MapFactory directly
+                        if detected_format == "DirectX":  # Target is OpenGL
+                            converted = MapFactory.convert_normal_map_format(
+                                normal_map, target_format="opengl", save=False
+                            )
+                        else:  # Detected OpenGL, Target is DirectX
+                            converted = MapFactory.convert_normal_map_format(
+                                normal_map, target_format="directx", save=False
+                            )
+
+                        context.mark_used("Normal")
+                        return context.save_map(
+                            converted, target_key, source_images=[normal_map]
+                        )
+                    else:
+                        if context.logger:
+                            context.logger.info(f"Skipping conversion of detected {detected_format} to {target_format} (convert_type=False)", extra={"preset": "highlight"})
+                        # Save as generic Normal or target key?
+                        # If we know it's wrong, maybe save as generic Normal to preserve it?
+                        # Or save as target key but warn?
+                        # Let's save as generic Normal
+                        context.mark_used("Normal")
+                        return context.save_map(
+                            normal_map, "Normal", source_images=[normal_map]
+                        )
 
             # Fallback: Format unknown
             # Practical Lens: If we can't detect the format, keep it generic "Normal"
-            context.log("Processing generic normal map (format indeterminate)")
+            if context.logger:
+                context.logger.info("Processing generic normal map (format indeterminate)", extra={"preset": "highlight"})
             context.mark_used("Normal")
             return context.save_map(normal_map, "Normal", source_images=[normal_map])
 
@@ -1307,7 +1475,8 @@ class NormalMapHandler(WorkflowHandler):
         normal = context.resolve_map(target_key, allow_conversion=True)
 
         if normal:
-            context.log(f"Generated normal map from Bump/Height")
+            if context.logger:
+                context.logger.info(f"Generated normal map from Bump/Height", extra={"preset": "highlight"})
             context.mark_used("Bump", "Height")
             source = context.inventory.get("Bump") or context.inventory.get("Height")
             sources = [source] if source else []
@@ -1323,12 +1492,72 @@ class NormalMapHandler(WorkflowHandler):
         return ["Normal", "Normal_OpenGL", "Normal_DirectX", "Bump", "Height"]
 
 
+class OutputFallbackHandler(WorkflowHandler):
+    """Handles outputting fallback maps for failed requests."""
+
+    def can_handle(self, context: TextureProcessor) -> bool:
+        return True
+
+    def process(self, context: TextureProcessor) -> List[str]:
+        if not context.config.get("use_output_fallbacks", True):
+            return []
+
+        output_maps = []
+        registry = MapRegistry()
+
+        # Identify all requested maps
+        requested_maps = []
+        for map_name in registry._maps:
+            if self.is_explicitly_requested(context, map_name):
+                requested_maps.append(map_name)
+
+        # Helper to recursively get fallbacks
+        def get_all_fallbacks(map_type):
+            fallbacks = []
+
+            def _recurse(mt):
+                m = registry.get(mt)
+                if m and m.output_fallbacks:
+                    for fb in m.output_fallbacks:
+                        if fb not in fallbacks:
+                            fallbacks.append(fb)
+                            _recurse(fb)
+
+            _recurse(map_type)
+            return fallbacks
+
+        for req in requested_maps:
+            # If the requested map was generated (or its inputs consumed), we assume success.
+            # But checking inputs is hard for packed maps.
+            # Instead, we just check if the fallbacks are present and unused.
+
+            fallbacks = get_all_fallbacks(req)
+            for fb in fallbacks:
+                if fb in context.inventory and fb not in context.used_maps:
+                    # Special check: Don't output if it's a packed map that wasn't generated
+                    # (Packed maps in inventory are usually just paths, but if they exist they should be used)
+                    # If it's a component map (Metallic, Smoothness), output it.
+
+                    path = context.save_map(
+                        context.inventory[fb], fb, source_images=[context.inventory[fb]]
+                    )
+                    output_maps.append(path)
+                    context.mark_used(fb)
+                    if context.logger:
+                        context.logger.info(f"Outputting fallback map: {fb} (fallback for {req})", extra={"preset": "highlight"})
+
+        return output_maps
+
+    def get_consumed_types(self) -> List[str]:
+        return []  # Dynamic
+
+
 # =============================================================================
 # Main Factory - Simplified and extensible
 # =============================================================================
 
 
-class TextureMapFactory(LoggingMixin):
+class MapFactory(LoggingMixin):
     """Refactored factory with pluggable workflow system."""
 
     DEFAULT_CONFIG = {
@@ -1341,6 +1570,8 @@ class TextureMapFactory(LoggingMixin):
         "rename": False,
         "mask_map_scale": 1.0,
         "output_extension": None,
+        "use_input_fallbacks": True,
+        "use_output_fallbacks": True,
         # Workflow flags
         "albedo_transparency": False,
         "metallic_smoothness": False,
@@ -1361,6 +1592,7 @@ class TextureMapFactory(LoggingMixin):
         ORMMapHandler,
         MaskMapHandler,
         MetallicSmoothnessHandler,
+        OutputFallbackHandler,
         SeparateMetallicRoughnessHandler,
     ]
 
@@ -1369,410 +1601,305 @@ class TextureMapFactory(LoggingMixin):
     map_fallbacks = _map_registry.get_fallbacks()
 
     # Conversion implementations
-    @staticmethod
-    def _convert_specular_to_metallic(
-        specular_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> "Image.Image":
-        if not specular_path:
-            raise ValueError(
-                "Cannot convert Specular to Metallic: Input map is missing"
-            )
-        metallic_img = TextureMapFactory.create_metallic_from_spec(specular_path)
-        context.log("Created metallic from specular")
-        return metallic_img
-
-    @staticmethod
-    def _convert_smoothness_to_roughness(
-        smoothness_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> "Image.Image":
-        if not smoothness_path:
-            raise ValueError(
-                "Cannot convert Smoothness to Roughness: Input map is missing"
-            )
-        roughness_img = TextureMapFactory.convert_smoothness_to_roughness(
-            smoothness_path, context.output_dir, save=False
-        )
-        context.log("Converted smoothness to roughness")
-        return roughness_img
-
-    @staticmethod
-    def _convert_roughness_to_smoothness(
-        roughness_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> "Image.Image":
-        if not roughness_path:
-            raise ValueError(
-                "Cannot convert Roughness to Smoothness: Input map is missing"
-            )
-        smooth_img = TextureMapFactory.convert_roughness_to_smoothness(
-            roughness_path, context.output_dir, save=False
-        )
-        context.log("Converted roughness to smoothness")
-        return smooth_img
-
-    @staticmethod
-    def _convert_specular_to_roughness(
-        specular_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> "Image.Image":
-        if not specular_path:
-            raise ValueError(
-                "Cannot convert Specular to Roughness: Input map is missing"
-            )
-        rough_img = TextureMapFactory.create_roughness_from_spec(specular_path)
-        context.log("Created roughness from specular")
-        return rough_img
-
-    @staticmethod
-    def _convert_dx_to_gl(
-        dx_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> "Image.Image":
-        if not dx_path:
-            raise ValueError(
-                "Cannot convert DirectX Normal to OpenGL: Input map is missing"
-            )
-        gl_img = TextureMapFactory.convert_normal_map_format(
-            dx_path, target_format="opengl", save=False
-        )
-        context.log("Converted DirectX normal to OpenGL")
-        return gl_img
-
-    @staticmethod
-    def _convert_gl_to_dx(
-        gl_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> "Image.Image":
-        if not gl_path:
-            raise ValueError(
-                "Cannot convert OpenGL Normal to DirectX: Input map is missing"
-            )
-        dx_img = TextureMapFactory.convert_normal_map_format(
-            gl_path, target_format="directx", save=False
-        )
-        context.log("Converted OpenGL normal to DirectX")
-        return dx_img
-
-    @staticmethod
-    def _convert_bump_to_normal(
-        bump_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> "Image.Image":
-        if not bump_path:
-            raise ValueError("Cannot convert Bump to Normal: Input map is missing")
-        normal_img = TextureMapFactory.convert_bump_to_normal(
-            bump_path,
-            output_format=context.config.get("normal_type", "opengl").lower(),
-            save=False,
-        )
-        context.log("Generated normal from bump/height")
-        return normal_img
-
-    @staticmethod
-    def _extract_gloss_from_spec(
-        specular_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> "Image.Image":
-        if not specular_path:
-            raise ValueError(
-                "Cannot extract Glossiness from Specular: Input map is missing"
-            )
-        gloss_img = TextureMapFactory.extract_gloss_from_spec(specular_path)
-        if not gloss_img:
-            raise ValueError("Could not extract gloss from specular map")
-
-        context.log("Extracted glossiness from specular")
-        return gloss_img
-
-    @staticmethod
-    def _copy_map(
-        source_path: Union[str, "Image.Image"],
-        target_type: str,
-        context: "ProcessingContext",
-    ) -> Union[str, "Image.Image"]:
-        """Simple copy/rename for compatible maps (e.g. Smoothness -> Glossiness)."""
-        context.log(f"Created {target_type} from source map")
-        return source_path
-
-    @staticmethod
-    def _unpack_metallic_smoothness(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> None:
-        """Helper to unpack and cache results."""
-        # Return cached if available
-        if "Metallic" in context.inventory and "Smoothness" in context.inventory:
-            return
-
-        metallic_img, smoothness_img = TextureMapFactory.unpack_metallic_smoothness(
-            source_path, context.output_dir, optimize=False, save=False
+    @classmethod
+    def register_conversions(cls, registry: ConversionRegistry):
+        """Register all standard PBR conversions."""
+        # Metallic conversions
+        registry.register(
+            "Metallic",
+            "Specular",
+            lambda inv, ctx: ctx.convert_specular_to_metallic(inv["Specular"]),
+            priority=5,
         )
 
-        context.inventory["Metallic"] = metallic_img
-        context.inventory["Smoothness"] = smoothness_img
-        context.log("Unpacked Metallic and Smoothness from packed map")
-
-    @staticmethod
-    def _get_metallic_from_packed(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_metallic_smoothness(source_path, context)
-        return context.inventory["Metallic"]
-
-    @staticmethod
-    def _get_smoothness_from_packed(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_metallic_smoothness(source_path, context)
-        return context.inventory["Smoothness"]
-
-    @staticmethod
-    def _get_roughness_from_packed(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_metallic_smoothness(source_path, context)
-
-        if not context.inventory.get("Smoothness"):
-            return None
-
-        # Convert S -> R
-        return TextureMapFactory._convert_smoothness_to_roughness(
-            context.inventory["Smoothness"], context
+        # Roughness conversions
+        registry.register(
+            "Roughness",
+            "Smoothness",
+            lambda inv, ctx: ctx.convert_smoothness_to_roughness(inv["Smoothness"]),
+            priority=10,
+        )
+        registry.register(
+            "Roughness",
+            "Glossiness",
+            lambda inv, ctx: ctx.convert_smoothness_to_roughness(inv["Glossiness"]),
+            priority=9,
+        )
+        registry.register(
+            "Roughness",
+            "Specular",
+            lambda inv, ctx: ctx.convert_specular_to_roughness(inv["Specular"]),
+            priority=5,
         )
 
-    @staticmethod
-    def _unpack_msao(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> None:
-        """Helper to unpack MSAO and cache results."""
-        if (
-            "Metallic" in context.inventory
-            and "AO" in context.inventory
-            and "Smoothness" in context.inventory
-        ):
-            return
-
-        metallic_img, ao_img, smoothness_img = TextureMapFactory.unpack_msao_texture(
-            source_path, context.output_dir, optimize=False, save=False
+        # Glossiness conversions
+        registry.register(
+            "Glossiness",
+            "Specular",
+            lambda inv, ctx: ctx.extract_gloss_from_spec(inv["Specular"]),
+            priority=5,
+        )
+        registry.register(
+            "Glossiness",
+            "Roughness",
+            lambda inv, ctx: ctx.convert_roughness_to_smoothness(
+                inv["Roughness"]
+            ),  # Inverted Roughness = Smoothness ≈ Glossiness
+            priority=9,
+        )
+        registry.register(
+            "Glossiness",
+            "Smoothness",
+            lambda inv, ctx: ctx.copy_map(inv["Smoothness"], "Glossiness"),
+            priority=10,
         )
 
-        context.inventory["Metallic"] = metallic_img
-        context.inventory["AO"] = ao_img
-        context.inventory["Ambient_Occlusion"] = context.inventory["AO"]
-        context.inventory["Smoothness"] = smoothness_img
-        context.log("Unpacked Metallic, AO, and Smoothness from MSAO map")
-
-    @staticmethod
-    def _get_metallic_from_msao(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_msao(source_path, context)
-        return context.inventory["Metallic"]
-
-    @staticmethod
-    def _get_smoothness_from_msao(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_msao(source_path, context)
-        return context.inventory["Smoothness"]
-
-    @staticmethod
-    def _get_roughness_from_msao(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_msao(source_path, context)
-
-        if not context.inventory.get("Smoothness"):
-            return None
-
-        return TextureMapFactory._convert_smoothness_to_roughness(
-            context.inventory["Smoothness"], context
+        # Smoothness conversions
+        registry.register(
+            "Smoothness",
+            "Roughness",
+            lambda inv, ctx: ctx.convert_roughness_to_smoothness(inv["Roughness"]),
+            priority=10,
         )
 
-    @staticmethod
-    def _get_ao_from_msao(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_msao(source_path, context)
-        return context.inventory["AO"]
-
-    @staticmethod
-    def _unpack_orm(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> None:
-        """Helper to unpack ORM and cache results."""
-        if (
-            "AO" in context.inventory
-            and "Roughness" in context.inventory
-            and "Metallic" in context.inventory
-        ):
-            return
-
-        ao_img, roughness_img, metallic_img = TextureMapFactory.unpack_orm_texture(
-            source_path, context.output_dir, optimize=False, save=False
+        # Normal conversions
+        registry.register(
+            "Normal_OpenGL",
+            "Normal_DirectX",
+            lambda inv, ctx: ctx.convert_dx_to_gl(inv["Normal_DirectX"]),
+            priority=10,
+        )
+        registry.register(
+            "Normal_DirectX",
+            "Normal_OpenGL",
+            lambda inv, ctx: ctx.convert_gl_to_dx(inv["Normal_OpenGL"]),
+            priority=10,
         )
 
-        context.inventory["AO"] = ao_img
-        context.inventory["Ambient_Occlusion"] = context.inventory["AO"]
-        context.inventory["Roughness"] = roughness_img
-        context.inventory["Metallic"] = metallic_img
-        context.log("Unpacked AO, Roughness, and Metallic from ORM map")
-
-    @staticmethod
-    def _get_ao_from_orm(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_orm(source_path, context)
-        return context.inventory["AO"]
-
-    @staticmethod
-    def _get_roughness_from_orm(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_orm(source_path, context)
-        return context.inventory["Roughness"]
-
-    @staticmethod
-    def _get_smoothness_from_orm(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_orm(source_path, context)
-        # Convert R -> S
-        return TextureMapFactory._convert_roughness_to_smoothness(
-            context.inventory["Roughness"], context
+        # Bump/Height to Normal conversions
+        for target in ["Normal_OpenGL", "Normal_DirectX", "Normal"]:
+            for source in ["Bump", "Height"]:
+                registry.register(
+                    target,
+                    source,
+                    lambda inv, ctx: ctx.convert_bump_to_normal(inv[source]),
+                    priority=5,
+                )
+        registry.register(
+            "Normal",
+            ["Bump", "Height"],
+            lambda inv, ctx: ctx.convert_bump_to_normal(
+                inv.get("Bump") or inv["Height"]
+            ),
+            priority=5,
         )
 
-    @staticmethod
-    def _get_metallic_from_orm(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_orm(source_path, context)
-        return context.inventory["Metallic"]
-
-    @staticmethod
-    def _unpack_albedo_transparency(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> None:
-        """Helper to unpack Albedo+Transparency and cache results."""
-        if "Base_Color" in context.inventory and "Opacity" in context.inventory:
-            return
-
-        base_color_img, opacity_img = TextureMapFactory.unpack_albedo_transparency(
-            source_path, context.output_dir, optimize=False, save=False
+        # Packing conversions (ORM)
+        # Priority 10: All components present, native Roughness
+        registry.register(
+            "ORM",
+            ["Metallic", "Roughness", "Ambient_Occlusion"],
+            lambda inv, ctx: ctx.create_orm_map(inv),
+            priority=10,
+        )
+        # Priority 9: All components present, converted Smoothness
+        registry.register(
+            "ORM",
+            ["Metallic", "Smoothness", "Ambient_Occlusion"],
+            lambda inv, ctx: ctx.create_orm_map(inv),
+            priority=9,
+        )
+        # Priority 8: Missing AO, native Roughness
+        registry.register(
+            "ORM",
+            ["Metallic", "Roughness"],
+            lambda inv, ctx: ctx.create_orm_map(inv),
+            priority=8,
+        )
+        # Priority 7: Missing AO, converted Smoothness
+        registry.register(
+            "ORM",
+            ["Metallic", "Smoothness"],
+            lambda inv, ctx: ctx.create_orm_map(inv),
+            priority=7,
         )
 
-        context.inventory["Base_Color"] = base_color_img
-        context.inventory["Opacity"] = opacity_img
-        context.log("Unpacked Base Color and Opacity from Albedo+Transparency map")
-
-    @staticmethod
-    def _get_base_color_from_albedo_transparency(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_albedo_transparency(source_path, context)
-        return context.inventory["Base_Color"]
-
-    @staticmethod
-    def _create_orm_map(
-        inventory: Dict[str, Union[str, "Image.Image"]], context: "ProcessingContext"
-    ) -> "Image.Image":
-        """Create ORM map from components."""
-        # Resolve required components
-        ao = context.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
-        roughness = context.resolve_map(
-            "Roughness", "Smoothness", "Glossiness", allow_conversion=True
+        # Packing conversions (MSAO/MaskMap)
+        # Priority 10: All components present, native Smoothness
+        registry.register(
+            "MSAO",
+            ["Metallic", "Ambient_Occlusion", "Smoothness"],
+            lambda inv, ctx: ctx.create_mask_map(inv),
+            priority=10,
         )
-        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
-
-        if not (ao or roughness or metallic):
-            raise ValueError("Missing components for ORM map")
-
-        orm_img = ImgUtils.pack_channels(
-            channel_files={"R": ao, "G": roughness, "B": metallic},
-            output_path=None,
-            fill_values={"R": 255} if not ao else None,
+        # Priority 9: All components present, converted Roughness
+        registry.register(
+            "MSAO",
+            ["Metallic", "Ambient_Occlusion", "Roughness"],
+            lambda inv, ctx: ctx.create_mask_map(inv),
+            priority=9,
         )
-        context.log("Created ORM map from components")
-        return orm_img
-
-    @staticmethod
-    def _create_mask_map(
-        inventory: Dict[str, Union[str, "Image.Image"]], context: "ProcessingContext"
-    ) -> "Image.Image":
-        """Create Mask Map (MSAO) from components."""
-        # Resolve required components
-        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
-        ao = (
-            context.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
-            or None
+        # Priority 8: Missing AO, native Smoothness
+        registry.register(
+            "MSAO",
+            ["Metallic", "Smoothness"],
+            lambda inv, ctx: ctx.create_mask_map(inv),
+            priority=8,
         )
-        detail = (
-            context.resolve_map("Detail_Mask", "Detail", allow_conversion=False) or None
+        # Priority 7: Missing AO, converted Roughness
+        registry.register(
+            "MSAO",
+            ["Metallic", "Roughness"],
+            lambda inv, ctx: ctx.create_mask_map(inv),
+            priority=7,
+        )
+        # Priority 6: Missing Smoothness (Metallic + AO)
+        registry.register(
+            "MSAO",
+            ["Metallic", "Ambient_Occlusion"],
+            lambda inv, ctx: ctx.create_mask_map(inv),
+            priority=6,
+        )
+        # Priority 5: Missing Metallic (Smoothness + AO)
+        registry.register(
+            "MSAO",
+            ["Ambient_Occlusion", "Smoothness"],
+            lambda inv, ctx: ctx.create_mask_map(inv),
+            priority=5,
         )
 
-        # Get smoothness with inversion tracking
-        smoothness = None
-        invert = False
-
-        if "Smoothness" in inventory:
-            smoothness = inventory["Smoothness"]
-        elif "Glossiness" in inventory:
-            smoothness = inventory["Glossiness"]
-        elif "Roughness" in inventory:
-            smoothness = inventory["Roughness"]
-            invert = True
-        else:
-            smoothness = None
-
-        if not metallic and not ao and not smoothness:
-            raise ValueError(
-                "Missing components for Mask Map (need at least Metallic, AO, or Smoothness)"
-            )
-
-        mask_map = TextureMapFactory.pack_msao_texture(
-            metallic_map_path=metallic,
-            ao_map_path=ao,
-            alpha_map_path=smoothness,
-            detail_map_path=detail,
-            output_dir=context.output_dir,
-            suffix="_MaskMap",
-            invert_alpha=invert,
-            save=False,
+        # Packing conversions (Metallic_Smoothness)
+        registry.register(
+            "Metallic_Smoothness",
+            ["Metallic", "Smoothness"],
+            lambda inv, ctx: ctx.create_metallic_smoothness_map(inv),
+            priority=10,
         )
-        context.log("Created Mask Map from components")
-        return mask_map
-
-    @staticmethod
-    def _create_metallic_smoothness_map(
-        inventory: Dict[str, Union[str, "Image.Image"]], context: "ProcessingContext"
-    ) -> "Image.Image":
-        """Create Metallic-Smoothness map from components."""
-        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
-
-        smoothness = None
-        invert = False
-
-        if "Smoothness" in inventory:
-            smoothness = inventory["Smoothness"]
-        elif "Glossiness" in inventory:
-            smoothness = inventory["Glossiness"]
-        elif "Roughness" in inventory:
-            smoothness = inventory["Roughness"]
-            invert = True
-
-        if not metallic or not smoothness:
-            raise ValueError("Missing components for Metallic-Smoothness map")
-
-        ms_map = TextureMapFactory.pack_smoothness_into_metallic(
-            metallic_map_path=metallic,
-            alpha_map_path=smoothness,
-            output_dir=context.output_dir,
-            suffix="_MetallicSmoothness",
-            invert_alpha=invert,
-            save=False,
+        registry.register(
+            "Metallic_Smoothness",
+            ["Metallic", "Roughness"],
+            lambda inv, ctx: ctx.create_metallic_smoothness_map(inv),
+            priority=9,
         )
-        context.log("Packed smoothness into metallic")
-        return ms_map
 
-    @staticmethod
-    def _get_opacity_from_albedo_transparency(
-        source_path: Union[str, "Image.Image"], context: "ProcessingContext"
-    ) -> Union[str, "Image.Image"]:
-        TextureMapFactory._unpack_albedo_transparency(source_path, context)
-        return context.inventory["Opacity"]
+        # Unpacking conversions (Metallic_Smoothness)
+        registry.register(
+            "Metallic",
+            "Metallic_Smoothness",
+            lambda inv, ctx: ctx.get_metallic_from_packed(inv["Metallic_Smoothness"]),
+            priority=8,
+        )
+
+        registry.register(
+            "Smoothness",
+            "Metallic_Smoothness",
+            lambda inv, ctx: ctx.get_smoothness_from_packed(inv["Metallic_Smoothness"]),
+            priority=8,
+        )
+        registry.register(
+            "Roughness",
+            "Metallic_Smoothness",
+            lambda inv, ctx: ctx.get_roughness_from_packed(inv["Metallic_Smoothness"]),
+            priority=8,
+        )
+
+        # Unpacking conversions (MSAO)
+        registry.register(
+            "Metallic",
+            "MSAO",
+            lambda inv, ctx: ctx.get_metallic_from_msao(inv["MSAO"]),
+            priority=8,
+        )
+        registry.register(
+            "Smoothness",
+            "MSAO",
+            lambda inv, ctx: ctx.get_smoothness_from_msao(inv["MSAO"]),
+            priority=8,
+        )
+        registry.register(
+            "Roughness",
+            "MSAO",
+            lambda inv, ctx: ctx.get_roughness_from_msao(inv["MSAO"]),
+            priority=8,
+        )
+        registry.register(
+            "Ambient_Occlusion",
+            "MSAO",
+            lambda inv, ctx: ctx.get_ao_from_msao(inv["MSAO"]),
+            priority=8,
+        )
+        registry.register(
+            "AO",
+            "MSAO",
+            lambda inv, ctx: ctx.get_ao_from_msao(inv["MSAO"]),
+            priority=8,
+        )
+
+        # Unpacking conversions (ORM)
+        registry.register(
+            "Ambient_Occlusion",
+            "ORM",
+            lambda inv, ctx: ctx.get_ao_from_orm(inv["ORM"]),
+            priority=8,
+        )
+        registry.register(
+            "AO",
+            "ORM",
+            lambda inv, ctx: ctx.get_ao_from_orm(inv["ORM"]),
+            priority=8,
+        )
+        registry.register(
+            "Roughness",
+            "ORM",
+            lambda inv, ctx: ctx.get_roughness_from_orm(inv["ORM"]),
+            priority=8,
+        )
+        registry.register(
+            "Smoothness",
+            "ORM",
+            lambda inv, ctx: ctx.get_smoothness_from_orm(inv["ORM"]),
+            priority=8,
+        )
+        registry.register(
+            "Metallic",
+            "ORM",
+            lambda inv, ctx: ctx.get_metallic_from_orm(inv["ORM"]),
+            priority=8,
+        )
+
+        # Unpacking conversions (Albedo_Transparency)
+        registry.register(
+            "Base_Color",
+            "Albedo_Transparency",
+            lambda inv, ctx: ctx.get_base_color_from_albedo_transparency(
+                inv["Albedo_Transparency"]
+            ),
+            priority=8,
+        )
+        registry.register(
+            "Opacity",
+            "Albedo_Transparency",
+            lambda inv, ctx: ctx.get_opacity_from_albedo_transparency(
+                inv["Albedo_Transparency"]
+            ),
+            priority=8,
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     @classmethod
     def resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str:
@@ -1803,7 +1930,10 @@ class TextureMapFactory(LoggingMixin):
                     for i in v
                     if filename.lower().endswith(i.lower())
                 ),
-                ("".join(filename.split("_")[-1]) if "_" in filename else None),
+                (
+                    StrUtils.split_delimited_string(filename, "_", occurrence=-1)[1]
+                    or None
+                ),
             )
 
         if validate:
@@ -1848,23 +1978,31 @@ class TextureMapFactory(LoggingMixin):
         map_type = map_type.lstrip("_")
 
         # Ensure suffix formatting (prevents double underscores)
-        def clean_suffix(sfx: str) -> str:
-            if sfx:
-                return sfx if sfx.startswith("_") else f"_{sfx}"
-            return ""
+        suffix = f"_{suffix.lstrip('_')}" if suffix else ""
 
         # Determine output file extension (preserve original unless explicitly changed)
-        ext = f".{ext.lower()}" if ext else f".{original_ext}"
+        ext = f".{ext.lower().lstrip('.')}" if ext else f".{original_ext}"
 
         # Construct the final filename correctly
-        new_name = f"{prefix or ''}{base_name}_{map_type}{clean_suffix(suffix)}{ext}"
+        new_name = StrUtils.replace_placeholders(
+            "{prefix}{base_name}_{map_type}{suffix}{ext}",
+            prefix=prefix or "",
+            base_name=base_name,
+            map_type=map_type,
+            suffix=suffix,
+            ext=ext,
+        )
 
         return os.path.join(directory, new_name)
 
     @classmethod
     def get_base_texture_name(cls, filepath_or_filename: str) -> str:
         """Extracts the base texture name from a filename or path,
-        removing known suffixes (e.g., _normal, _roughness) case-insensitively.
+        removing known suffixes (e.g., _normal, _roughness).
+        
+        Logic:
+        - Long suffixes (>3 chars): Case-insensitive.
+        - Short suffixes (<=3 chars): Must start with a capital letter (rest case-insensitive) to avoid false positives.
 
         Parameters:
             filepath_or_filename (str): A texture path or name.
@@ -1877,17 +2015,48 @@ class TextureMapFactory(LoggingMixin):
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
 
-        suffixes_pattern = "|".join(
-            re.escape(suffix)
-            for suffixes in cls.map_types.values()
-            for suffix in suffixes
-        )
+        short_suffixes = []
+        long_suffixes = []
 
-        pattern = re.compile(
-            f"(?:_{suffixes_pattern}|{suffixes_pattern})$", re.IGNORECASE
-        )
+        for suffixes in cls.map_types.values():
+            for suffix in suffixes:
+                if len(suffix) <= 3:
+                    short_suffixes.append(suffix)
+                else:
+                    long_suffixes.append(suffix)
 
-        base_name = pattern.sub("", base_name)
+        # Sort by length descending to ensure longest match first
+        short_suffixes.sort(key=len, reverse=True)
+        long_suffixes.sort(key=len, reverse=True)
+
+        patterns = []
+
+        # Long suffixes: Case insensitive
+        if long_suffixes:
+            p = "|".join(re.escape(s) for s in long_suffixes)
+            patterns.append(f"(?i:{p})")
+
+        # Short suffixes: Start with capital, rest case insensitive
+        if short_suffixes:
+            short_parts = []
+            for s in short_suffixes:
+                if s and s[0].isalpha():
+                    # Enforce first char case (assuming registry has it capitalized)
+                    first = s[0].upper()
+                    rest = re.escape(s[1:])
+                    short_parts.append(f"{first}(?i:{rest})")
+                else:
+                    short_parts.append(re.escape(s))
+            
+            p = "|".join(short_parts)
+            patterns.append(p)
+
+        suffixes_pattern = "|".join(patterns)
+
+        # Pattern: (underscore + suffix) OR (suffix) at end
+        pattern = f"(?:_{suffixes_pattern}|{suffixes_pattern})$"
+        base_name = StrUtils.format_suffix(base_name, strip=pattern)
+
         return base_name.rstrip("_")
 
     @classmethod
@@ -2041,7 +2210,7 @@ class TextureMapFactory(LoggingMixin):
 
     @classmethod
     def filter_redundant_maps(
-        cls, sorted_maps: Dict[str, List[str]], callback: Callable = None
+        cls, sorted_maps: Dict[str, List[str]]
     ) -> None:
         """Filters out maps that are rendered redundant by other present maps (e.g. MSAO).
 
@@ -2049,7 +2218,6 @@ class TextureMapFactory(LoggingMixin):
 
         Parameters:
             sorted_maps: Dictionary of map types to file paths.
-            callback: Optional callback for logging actions.
         """
         precedence_rules = cls.get_precedence_rules()
 
@@ -2057,10 +2225,10 @@ class TextureMapFactory(LoggingMixin):
             if dominant in sorted_maps and sorted_maps[dominant]:
                 for redundant in redundants:
                     if redundant in sorted_maps:
-                        if callback:
-                            callback(
-                                f"Skipping {redundant} map (replaced by {dominant})"
-                            )
+                        cls.logger.info(
+                            f"Skipping {redundant} map (replaced by {dominant})",
+                            extra={"preset": "highlight"},
+                        )
                         del sorted_maps[redundant]
 
     @classmethod
@@ -2068,7 +2236,6 @@ class TextureMapFactory(LoggingMixin):
         cls,
         source: Union[str, List[str]],
         output_dir: str = None,
-        callback: Callable = print,
         group_by_set: bool = True,
         max_workers: int = 1,
         **kwargs,
@@ -2079,10 +2246,16 @@ class TextureMapFactory(LoggingMixin):
         Parameters:
             source: A directory path (str), a single file path (str), or a list of file paths.
             output_dir: Optional output directory.
-            callback: Logging callback.
             group_by_set: Whether to automatically group textures into sets (default: True).
                           If False, all input files are treated as a single set.
+            max_workers: Number of threads for parallel processing.
             **kwargs: Configuration options overriding DEFAULT_CONFIG.
+                      Key options:
+                      - use_input_fallbacks (bool): Allow generating maps from alternative inputs (e.g. Diffuse -> Base Color).
+                      - use_output_fallbacks (bool): Allow substituting missing maps with alternatives (e.g. AO -> Mask).
+                      - convert (bool): Enable format conversion/renaming.
+                      - optimize (bool): Enable image optimization.
+                      - force_packed_maps (bool): Force generation of packed maps even if components are missing.
 
         Returns:
             List[str] if a single asset was processed.
@@ -2091,6 +2264,9 @@ class TextureMapFactory(LoggingMixin):
         # Normalize config
         workflow_config = cls.DEFAULT_CONFIG.copy()
         workflow_config.update(kwargs)
+        
+        # Extract logger if provided, else use class logger
+        logger = kwargs.get("logger", cls.logger)
 
         # Resolve input files
         files = []
@@ -2099,7 +2275,7 @@ class TextureMapFactory(LoggingMixin):
                 files = FileUtils.get_dir_contents(
                     source,
                     "filepath",
-                    inc_files=["*.png", "*.jpg", "*.tga", "*.tif", "*.tiff", "*.exr"],
+                    inc_files=[f"*.{ext}" for ext in ImgUtils.texture_file_types],
                 )
             elif os.path.isfile(source):
                 files = [source]
@@ -2107,7 +2283,8 @@ class TextureMapFactory(LoggingMixin):
             files = source
 
         if not files:
-            callback("No input files found.")
+            if logger:
+                logger.warning("No input files found.")
             return []
 
         # Filter ignored files
@@ -2122,7 +2299,8 @@ class TextureMapFactory(LoggingMixin):
                 )
             ]
             if not files:
-                callback("All input files were filtered out by ignored_patterns.")
+                if logger:
+                    logger.warning("All input files were filtered out by ignored_patterns.")
                 return []
 
         if group_by_set:
@@ -2138,7 +2316,8 @@ class TextureMapFactory(LoggingMixin):
         total_sets = len(texture_sets)
 
         if total_sets > 1:
-            callback(f"Found {total_sets} texture sets. Processing batch...")
+            if logger:
+                logger.info(f"Found {total_sets} texture sets. Processing batch...")
 
         if max_workers > 1 and total_sets > 1:
             import concurrent.futures
@@ -2146,18 +2325,19 @@ class TextureMapFactory(LoggingMixin):
             def process_set(args):
                 i, base_name, textures = args
                 try:
-                    if total_sets > 1:
-                        callback(f"Processing set {i}/{total_sets}: {base_name}")
+                    if total_sets > 1 and logger:
+                        logger.info(f"Processing set {i}/{total_sets}: {base_name}")
 
                     generated = cls._process_map_set(
                         textures,
                         workflow_config,
                         output_dir=output_dir,
-                        callback=callback,
+                        logger=logger,
                     )
                     return base_name, generated
                 except Exception as e:
-                    callback(f"Error processing set {base_name}: {e}", "error")
+                    if logger:
+                        logger.error(f"Error processing set {base_name}: {e}")
                     import traceback
 
                     traceback.print_exc()
@@ -2180,19 +2360,20 @@ class TextureMapFactory(LoggingMixin):
                         results[base_name] = generated
         else:
             for i, (base_name, textures) in enumerate(texture_sets.items(), 1):
-                if total_sets > 1:
-                    callback(f"Processing set {i}/{total_sets}: {base_name}")
+                if total_sets > 1 and logger:
+                    logger.info(f"Processing set {i}/{total_sets}: {base_name}")
 
                 try:
                     generated = cls._process_map_set(
                         textures,
                         workflow_config,
                         output_dir=output_dir,
-                        callback=callback,
+                        logger=logger,
                     )
                     results[base_name] = generated
                 except Exception as e:
-                    callback(f"Error processing set {base_name}: {e}", "error")
+                    if logger:
+                        logger.error(f"Error processing set {base_name}: {e}")
                     import traceback
 
                     traceback.print_exc()
@@ -2203,23 +2384,24 @@ class TextureMapFactory(LoggingMixin):
 
         return results
 
-    @staticmethod
+    @classmethod
     def _process_map_set(
+        cls,
         textures: List[str],
         workflow_config: dict,
         output_dir: str = None,
-        callback: Callable = print,
+        logger: Any = None,
     ) -> List[str]:
         """Internal method to process a single set of textures (one asset)."""
         # Build inventory
-        map_inventory = TextureMapFactory._build_map_inventory(textures)
+        map_inventory = MapFactory._build_map_inventory(textures)
 
         convert = workflow_config.get("convert", True)
 
         # Pre-process: Spec/Gloss conversion
         if convert:
-            map_inventory = TextureMapFactory._convert_specgloss_workflow(
-                map_inventory, workflow_config, callback
+            map_inventory = MapFactory._convert_specgloss_workflow(
+                map_inventory, workflow_config
             )
 
         # Create processing context
@@ -2230,21 +2412,20 @@ class TextureMapFactory(LoggingMixin):
         if not reference_path:
             return []
 
-        context = ProcessingContext(
+        context = TextureProcessor(
             inventory=map_inventory,
             config=workflow_config,
             output_dir=output_dir or os.path.dirname(reference_path),
-            base_name=TextureMapFactory.get_base_texture_name(reference_path),
+            base_name=MapFactory.get_base_texture_name(reference_path),
             ext=workflow_config.get("output_extension", "png"),
-            callback=callback,
-            conversion_registry=TextureMapFactory._conversion_registry,
-            logger=TextureMapFactory.logger,
+            conversion_registry=MapFactory._conversion_registry,
+            logger=logger or MapFactory.logger,
         )
 
         # Process through workflow handlers
         output_maps = []
         if convert:
-            for handler_class in TextureMapFactory._workflow_handlers:
+            for handler_class in MapFactory._workflow_handlers:
                 handler = handler_class()
                 if handler.can_handle(context):
                     result = handler.process(context)
@@ -2265,7 +2446,7 @@ class TextureMapFactory(LoggingMixin):
                         #     break  # Stop after first match for packed workflows
 
         # Pass through unconsumed maps
-        for map_type in TextureMapFactory.passthrough_maps:
+        for map_type in MapFactory.passthrough_maps:
             if map_type in map_inventory and map_type not in context.used_maps:
                 path = context.save_map(
                     map_inventory[map_type],
@@ -2273,7 +2454,8 @@ class TextureMapFactory(LoggingMixin):
                     source_images=[map_inventory[map_type]],
                 )
                 output_maps.append(path)
-                callback(f"Passing through {map_type} map")
+                if context.logger:
+                    context.logger.info(f"Passing through {map_type} map")
 
         # Cleanup intermediate files
         # We normalize paths to ensure reliable comparison
@@ -2286,7 +2468,8 @@ class TextureMapFactory(LoggingMixin):
                         os.remove(created_file)
                         # callback(f"Removed intermediate file: {os.path.basename(created_file)}")
                 except OSError as e:
-                    callback(f"Error removing intermediate file: {e}", "warning")
+                    if context.logger:
+                        context.logger.warning(f"Error removing intermediate file: {e}")
 
         return output_maps if output_maps else textures
 
@@ -2294,17 +2477,18 @@ class TextureMapFactory(LoggingMixin):
     def _build_map_inventory(textures: List[str]) -> Dict[str, str]:
         """Build map inventory using ImgUtils."""
         inventory = {}
-        for texture in textures:
-            map_type = TextureMapFactory.resolve_map_type(texture)
+        # Sort textures by length descending to prefer more specific names (e.g. Mixed_AO over AO)
+        for texture in sorted(textures, key=len, reverse=True):
+            map_type = MapFactory.resolve_map_type(texture)
             if map_type and map_type not in inventory:
                 inventory[map_type] = texture
         return inventory
 
-    @staticmethod
+    @classmethod
     def _convert_specgloss_workflow(
+        cls,
         inventory: Dict[str, Union[str, "Image.Image"]],
         config: dict,
-        callback: Callable,
     ) -> Dict[str, Union[str, "Image.Image"]]:
         """Convert Spec/Gloss workflow to PBR."""
         spec_map = inventory.get("Specular")
@@ -2316,14 +2500,15 @@ class TextureMapFactory(LoggingMixin):
             try:
                 img = ImgUtils.ensure_image(spec_map)
                 if "A" in img.getbands():
-                    callback(
-                        '<br><hl style="color:rgb(100, 160, 100);">Found Alpha in Specular map, using as Glossiness.</hl>'
+                    cls.logger.info(
+                        "Found Alpha in Specular map, using as Glossiness.",
+                        extra={"preset": "highlight"},
                     )
                     gloss_map = img.getchannel(
                         "A"
                     )  # Use extracted channel as Image object
             except Exception as e:
-                callback(f"Error checking Specular alpha: {e}", "warning")
+                cls.logger.warning(f"Error checking Specular alpha: {e}")
 
         # Require both Specular and Glossiness (file or extracted) to attempt conversion
         if not (spec_map and gloss_map):
@@ -2338,7 +2523,7 @@ class TextureMapFactory(LoggingMixin):
                 output_dir = None
 
             base_color_img, metallic_img, roughness_img = (
-                TextureMapFactory.convert_spec_gloss_to_pbr(
+                MapFactory.convert_spec_gloss_to_pbr(
                     specular_map=spec_map,
                     glossiness_map=gloss_map,
                     diffuse_map=diffuse_map,
@@ -2356,15 +2541,14 @@ class TextureMapFactory(LoggingMixin):
             for key in ["Specular", "Glossiness", "Smoothness", "Diffuse"]:
                 new_inventory.pop(key, None)
 
-            callback(
-                '<br><hl style="color:rgb(100, 160, 100);">Converted Spec/Gloss workflow to PBR Metal/Rough</hl>'
+            cls.logger.info(
+                "Converted Spec/Gloss workflow to PBR Metal/Rough",
+                extra={"preset": "highlight"},
             )
             return new_inventory
 
         except Exception as e:
-            callback(
-                f'<br><hl style="color:rgb(255, 100, 100);">Error converting Spec/Gloss: {str(e)}</hl>'
-            )
+            cls.logger.error(f"Error converting Spec/Gloss: {str(e)}")
             return inventory
 
     @classmethod
@@ -2412,7 +2596,9 @@ class TextureMapFactory(LoggingMixin):
                     f"The specified output directory '{output_dir}' is not valid."
                 )
 
-            output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
+            output_path = os.path.join(
+                output_dir, f"{base_name}{suffix}.{ALPHA_EXTENSION}"
+            )
         elif not save:
             output_path = None
 
@@ -2467,7 +2653,9 @@ class TextureMapFactory(LoggingMixin):
                     f"The specified output directory '{output_dir}' is not valid."
                 )
 
-            output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
+            output_path = os.path.join(
+                output_dir, f"{base_name}{suffix}.{ALPHA_EXTENSION}"
+            )
         elif not save:
             output_path = None
 
@@ -2747,7 +2935,7 @@ class TextureMapFactory(LoggingMixin):
                 base_path = bump_map
             else:
                 # If PIL Image was passed, create generic output name
-                base_path = "bump_map.png"
+                base_path = f"bump_map.{DEFAULT_EXTENSION}"
 
             format_suffix = (
                 "DirectX" if output_format.lower() == "directx" else "OpenGL"
@@ -3124,11 +3312,11 @@ class TextureMapFactory(LoggingMixin):
             return ImgUtils.ensure_image(color, "L")
         # Normal DirectX <-> OpenGL
         if map_type == "Normal_DirectX" and "Normal_OpenGL" in available:
-            return TextureMapFactory.convert_normal_map_format(
+            return MapFactory.convert_normal_map_format(
                 available["Normal_OpenGL"], target_format="directx", save=False
             )
         if map_type == "Normal_OpenGL" and "Normal_DirectX" in available:
-            return TextureMapFactory.convert_normal_map_format(
+            return MapFactory.convert_normal_map_format(
                 available["Normal_DirectX"], target_format="opengl", save=False
             )
         return None
@@ -3193,7 +3381,9 @@ class TextureMapFactory(LoggingMixin):
                     f"The specified output directory '{output_dir}' is not valid."
                 )
 
-            output_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
+            output_path = os.path.join(
+                output_dir, f"{base_name}{suffix}.{DEFAULT_EXTENSION}"
+            )
         elif not save:
             output_path = None
 
@@ -3458,3 +3648,7 @@ class TextureMapFactory(LoggingMixin):
             return results.get("RGB"), results.get("A")
         else:
             return results.get("RGB"), results.get("A")
+
+
+# Initialize the registry with the factory class
+MapFactory._conversion_registry.add_plugin(MapFactory)

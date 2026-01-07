@@ -7,15 +7,6 @@ from pythontk.file_utils._file_utils import FileUtils
 
 
 class MapPackerSlots(ImgUtils):
-    texture_file_types = [
-        "*.png",
-        "*.jpg",
-        "*.bmp",
-        "*.tga",
-        "*.tiff",
-        "*.gif",
-        "*.exr",
-    ]
     channels = ["R", "G", "B", "A"]
     grayscale_types = [
         "None",
@@ -89,7 +80,7 @@ class MapPackerSlots(ImgUtils):
     def b000(self):
         """Batch pack up to 4 channels into RGBA maps across texture sets."""
         file_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select textures for batch packing (multiple sets allowed):",
             start_dir=self.source_dir,
             allow_multiple=True,

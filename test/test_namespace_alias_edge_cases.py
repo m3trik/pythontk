@@ -6,10 +6,18 @@ and multi-inheritance combinations.
 """
 
 import sys
+import os
 import unittest
 import importlib
 from pathlib import Path
 from typing import Any
+
+# Ensure mayatk is importable for these tests
+mayatk_path = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "mayatk")
+)
+if os.path.exists(mayatk_path) and mayatk_path not in sys.path:
+    sys.path.insert(0, mayatk_path)
 
 
 class TestNamespaceAliasEdgeCases(unittest.TestCase):

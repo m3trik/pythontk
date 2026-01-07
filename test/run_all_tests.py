@@ -238,7 +238,9 @@ def update_readme_badge(passed: int, failed: int, readme_path: Path) -> bool:
     new_badge = f"[![Tests](https://img.shields.io/badge/Tests-{status.replace(' ', '%20').replace(',', '')}-{color}.svg)](test/)"
 
     # Check if a Tests badge already exists and replace it
-    tests_badge_pattern = r"\[!\[Tests\]\(https://img\.shields\.io/badge/Tests-[^\)]+\)\]\([^\)]+\)"
+    tests_badge_pattern = (
+        r"\[!\[Tests\]\(https://img\.shields\.io/badge/Tests-[^\)]+\)\]\([^\)]+\)"
+    )
 
     if re.search(tests_badge_pattern, content):
         # Replace existing badge
@@ -287,9 +289,22 @@ def main():
     test_dir = Path(__file__).parent
     root_dir = test_dir.parent
 
+    # Ensure root directory (package root) is in path for imports
+    # This ensures 'import pythontk' resolves to the package inside root_dir
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+
     # Ensure test directory is in path for imports
     if str(test_dir) not in sys.path:
         sys.path.insert(0, str(test_dir))
+
+    print(f"DEBUG: sys.path[0]: {sys.path[0]}")
+    try:
+        import pythontk
+
+        print(f"DEBUG: pythontk file: {getattr(pythontk, '__file__', 'namespace')}")
+    except ImportError:
+        print("DEBUG: Could not import pythontk")
 
     # Run tests
     runner = TestRunner(test_dir, verbosity=verbosity)

@@ -89,6 +89,27 @@ class ExecutionMonitor:
 
         return False
 
+    _interpreter_override = None
+
+    @classmethod
+    def set_interpreter(cls, path):
+        """Set a custom Python interpreter to use for subprocesses.
+
+        Args:
+            path (str): Absolute path to the python executable.
+        """
+        cls._interpreter_override = path
+
+    @staticmethod
+    def _get_python_executable():
+        """
+        Get the path to the Python interpreter.
+        Returns _interpreter_override if set, otherwise sys.executable.
+        """
+        if ExecutionMonitor._interpreter_override:
+            return ExecutionMonitor._interpreter_override
+        return sys.executable
+
     @staticmethod
     def _start_gif_process(gif_path):
         """Starts a subprocess to display a GIF using tkinter."""
@@ -100,10 +121,19 @@ class ExecutionMonitor:
             if not os.path.exists(script_path):
                 return None
 
+            executable = ExecutionMonitor._get_python_executable()
+
+            startupinfo = None
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
             process = subprocess.Popen(
-                [sys.executable, script_path, gif_path],
+                [executable, script_path, gif_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo,
             )
             return process
         except Exception:
@@ -225,38 +255,95 @@ class ExecutionMonitor:
         return decorator
 
     @staticmethod
-    def show_long_execution_dialog(title, message):
-        """Show a native blocking dialog to ask the user how to proceed with a long operation.
+    def _start_dialog_process(title, message):
+        """Starts a subprocess to display a custom dialog using tkinter.
 
         Returns:
-            bool/str: True to continue waiting, False to abort, "STOP_MONITORING" to ignore, "FORCE_KILL" to kill.
+            subprocess.Popen: The dialog process, or None on error.
+        """
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            script_path = os.path.join(current_dir, "_dialog_viewer.py")
+
+            if not os.path.exists(script_path):
+                return None
+
+            executable = ExecutionMonitor._get_python_executable()
+
+            startupinfo = None
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            process = subprocess.Popen(
+                [executable, script_path, title, message],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo,
+            )
+            return process
+        except Exception:
+            return None
+
+    @staticmethod
+    def show_long_execution_dialog(title, message):
+        """Show a dialog to ask the user how to proceed with a long operation.
+
+        Uses a subprocess-based tkinter dialog for custom button labels (VS Code style).
+
+        Returns:
+            bool/str: True to continue waiting, False to abort, "FORCE_KILL" to kill.
         """
         import sys
 
         if sys.platform == "win32":
+            # Use custom tkinter dialog for better button labels
+            try:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                script_path = os.path.join(current_dir, "_dialog_viewer.py")
+
+                if os.path.exists(script_path):
+                    executable = ExecutionMonitor._get_python_executable()
+
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                    result = subprocess.run(
+                        [executable, script_path, title, message],
+                        startupinfo=startupinfo,
+                    )
+
+                    # Exit codes: 0=Keep Waiting, 1=Cancel, 2=Force Quit, 3=Closed
+                    if result.returncode == 0 or result.returncode == 3:
+                        return True  # Keep Waiting (or window closed)
+                    elif result.returncode == 1:
+                        return False  # Cancel/Stop Operation
+                    elif result.returncode == 2:
+                        return "FORCE_KILL"
+                    return True
+            except Exception:
+                pass
+
+            # Fallback to MessageBox if custom dialog fails
             try:
                 import ctypes
 
                 # MB_YESNOCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL | MB_TOPMOST
-                # 0x03 | 0x30 | 0x1000 | 0x40000
                 flags = 0x03 | 0x30 | 0x1000 | 0x40000
+                fallback_msg = (
+                    f"{message}\n\nYes: Keep Waiting\nNo: Cancel\nCancel: Force Quit"
+                )
+                response = ctypes.windll.user32.MessageBoxW(
+                    0, fallback_msg, title, flags
+                )
 
-                # Add MB_DEFBUTTON2 (0x100) to make "No" (Stop) the default if desired,
-                # but usually "Yes" (Wait) is safer as default.
-
-                # Add MB_ABORTRETRYIGNORE style? No, YESNOCANCEL is standard.
-                # But we can interpret Cancel as "Force Quit" if we change the prompt?
-                # For now, let's stick to standard buttons but handle the result.
-
-                response = ctypes.windll.user32.MessageBoxW(0, message, title, flags)
-
-                # IDYES=6, IDNO=7, IDCANCEL=2
-                if response == 6:
+                if response == 6:  # IDYES
                     return True
-                if response == 7:
+                if response == 7:  # IDNO
                     return False
-                if response == 2:
-                    # Remap Cancel to Force Kill based on new prompt
+                if response == 2:  # IDCANCEL
                     return "FORCE_KILL"
             except ImportError:
                 return True
@@ -279,20 +366,20 @@ class ExecutionMonitor:
                     "--ok-label",
                     "Keep Waiting",
                     "--cancel-label",
-                    "Stop Operation",
+                    "Cancel",
                     "--extra-button",
-                    "Force Kill",
+                    "Force Quit",
                 ]
                 try:
                     result = subprocess.run(
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
                     )
+                    if result.stdout.strip() == "Force Quit":
+                        return "FORCE_KILL"
                     if result.returncode == 0:
-                        if result.stdout.strip() == "Force Kill":
-                            return "FORCE_KILL"
                         return True  # Keep Waiting
                     else:
-                        return False  # Stop Operation
+                        return False  # Cancel
                 except Exception:
                     pass
 
@@ -300,7 +387,6 @@ class ExecutionMonitor:
             elif shutil.which("kdialog"):
                 # kdialog --yesnocancel "text" --title "title"
                 # Returns: 0 (Yes), 1 (No), 2 (Cancel)
-                # We map: Yes->Wait, No->Stop, Cancel->Stop Monitoring
                 cmd = [
                     "kdialog",
                     "--title",
@@ -310,9 +396,9 @@ class ExecutionMonitor:
                     "--yes-label",
                     "Keep Waiting",
                     "--no-label",
-                    "Stop Operation",
+                    "Cancel",
                     "--cancel-label",
-                    "Stop Monitoring",
+                    "Force Quit",
                 ]
                 try:
                     result = subprocess.run(
@@ -323,7 +409,7 @@ class ExecutionMonitor:
                     elif result.returncode == 1:
                         return False
                     elif result.returncode == 2:
-                        return "STOP_MONITORING"
+                        return "FORCE_KILL"
                 except Exception:
                     pass
 
@@ -375,22 +461,17 @@ class ExecutionMonitor:
 
             result = ExecutionMonitor.show_long_execution_dialog(
                 "Long Execution Warning",
-                f"{full_msg}\n\n"
-                "Do you want to continue waiting?\n\n"
-                "Yes:\tKeep waiting (ask again later).\n"
-                "No:\tStop the operation.\n"
-                "Cancel:\tForce Quit Application (if stuck).",
+                f"{full_msg}\n\nThe operation is not responding.\n"
+                "You can keep waiting, cancel the operation, or force quit.",
             )
 
             if logger:
                 if result is True:
-                    logger.info("Continuing execution (monitoring active).")
+                    logger.info("Continuing execution (Keep Waiting).")
                 elif result is False:
-                    logger.warning("Aborting execution by user request.")
-                elif result == "STOP_MONITORING":
-                    logger.info("Continuing execution (monitoring disabled).")
+                    logger.warning("Operation cancelled by user.")
                 elif result == "FORCE_KILL":
-                    logger.critical("Force killing application by user request.")
+                    logger.critical("Force quitting application by user request.")
 
             return result
 

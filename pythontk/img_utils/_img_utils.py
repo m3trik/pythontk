@@ -26,6 +26,7 @@ except ImportError as e:
 from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils._file_utils import FileUtils
+from pythontk.str_utils._str_utils import StrUtils
 from pythontk.img_utils.map_registry import MapRegistry
 
 
@@ -37,6 +38,8 @@ class ImgUtils(HelpMixin):
         MapRegistry().get_map_backgrounds()
     )
     map_modes: Dict[str, str] = MapRegistry().get_map_modes()
+
+    texture_file_types = ["png", "jpg", "bmp", "tga", "tiff", "gif", "exr", "hdr"]
 
     bit_depth = {  # Get bit depth from mode.
         "1": 1,
@@ -260,6 +263,37 @@ class ImgUtils(HelpMixin):
         if name.lower().endswith((".jpg", ".jpeg")) and im.mode == "RGBA":
             im = im.convert("RGB")
 
+        # Handle EXR using OpenCV if available
+        if name.lower().endswith(".exr"):
+            try:
+                # Enable OpenEXR in OpenCV (disabled by default in newer versions)
+                os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
+                import cv2
+
+                # Convert PIL to Numpy
+                img_np = np.array(im)
+
+                # Handle Color Space (PIL is RGB/RGBA, OpenCV expects BGR/BGRA)
+                if im.mode == "RGB":
+                    img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+                elif im.mode == "RGBA":
+                    img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGRA)
+                elif im.mode == "L":
+                    pass  # Grayscale is fine
+
+                # EXR requires float32
+                img_np = img_np.astype(np.float32) / 255.0
+
+                # Save
+                cv2.imwrite(name, img_np)
+                return
+            except ImportError:
+                print(
+                    "Warning: OpenCV (cv2) not found. Cannot save EXR. Falling back to PIL (likely to fail)."
+                )
+            except Exception as e:
+                print(f"Error saving EXR with OpenCV: {e}. Falling back to PIL.")
+
         im.save(name, **kwargs)
 
     @classmethod
@@ -282,7 +316,7 @@ class ImgUtils(HelpMixin):
     def get_images(
         cls,
         directory,
-        inc=["*.png", "*.jpg", "*.bmp", "*.tga", "*.tiff", "*.gif"],
+        inc=None,
         exc="",
     ):
         """Get bitmap images from a given directory as PIL images.
@@ -296,6 +330,9 @@ class ImgUtils(HelpMixin):
         Returns:
             (dict) {<full file path>:<image object>}
         """
+        if inc is None:
+            inc = [f"*.{ext}" for ext in cls.texture_file_types]
+
         cls.assert_pathlike(directory, "directory")
 
         images = {}
@@ -657,7 +694,13 @@ class ImgUtils(HelpMixin):
             (obj) image.
         """
         im = cls.ensure_image(image)
-        mode = mode if mode else im.mode
+        if mode is None:
+            if len(to_color) == 4:
+                mode = "RGBA"
+            elif len(to_color) == 3:
+                mode = "RGB"
+            else:
+                mode = im.mode
         im = im.convert("RGBA")
         data = np.array(im)
 
@@ -1326,7 +1369,11 @@ class ImgUtils(HelpMixin):
     @classmethod
     def get_base_texture_name(cls, filepath_or_filename: str) -> str:
         """Extracts the base texture name from a filename or path,
-        removing known suffixes (e.g., _normal, _roughness) case-insensitively.
+        removing known suffixes (e.g., _normal, _roughness).
+
+        Logic:
+        - Long suffixes (>3 chars): Case-insensitive.
+        - Short suffixes (<=3 chars): Must start with a capital letter (rest case-insensitive) to avoid false positives.
 
         Parameters:
             filepath_or_filename (str): A texture path or name.
@@ -1339,17 +1386,48 @@ class ImgUtils(HelpMixin):
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
 
-        suffixes_pattern = "|".join(
-            re.escape(suffix)
-            for suffixes in cls.map_types.values()
-            for suffix in suffixes
-        )
+        short_suffixes = []
+        long_suffixes = []
 
-        pattern = re.compile(
-            f"(?:_{suffixes_pattern}|{suffixes_pattern})$", re.IGNORECASE
-        )
+        for suffixes in cls.map_types.values():
+            for suffix in suffixes:
+                if len(suffix) <= 3:
+                    short_suffixes.append(suffix)
+                else:
+                    long_suffixes.append(suffix)
 
-        base_name = pattern.sub("", base_name)
+        # Sort by length descending to ensure longest match first
+        short_suffixes.sort(key=len, reverse=True)
+        long_suffixes.sort(key=len, reverse=True)
+
+        patterns = []
+
+        # Long suffixes: Case insensitive
+        if long_suffixes:
+            p = "|".join(re.escape(s) for s in long_suffixes)
+            patterns.append(f"(?i:{p})")
+
+        # Short suffixes: Start with capital, rest case insensitive
+        if short_suffixes:
+            short_parts = []
+            for s in short_suffixes:
+                if s and s[0].isalpha():
+                    # Enforce first char case (assuming registry has it capitalized)
+                    first = s[0].upper()
+                    rest = re.escape(s[1:])
+                    short_parts.append(f"{first}(?i:{rest})")
+                else:
+                    short_parts.append(re.escape(s))
+
+            p = "|".join(short_parts)
+            patterns.append(p)
+
+        suffixes_pattern = "|".join(patterns)
+
+        # Pattern: (underscore + suffix) OR (suffix) at end
+        pattern = f"(?:_{suffixes_pattern}|{suffixes_pattern})$"
+        base_name = StrUtils.format_suffix(base_name, strip=pattern)
+
         return base_name.rstrip("_")
 
     @classmethod
@@ -1358,6 +1436,7 @@ class ImgUtils(HelpMixin):
         image_path: Union[str, "Image.Image"],
         channel_config: Dict[str, Dict[str, Any]],
         output_dir: str = None,
+        base_name: str = None,
         save: bool = True,
         **kwargs,
     ) -> Dict[str, Union[str, "Image.Image"]]:
@@ -1375,8 +1454,11 @@ class ImgUtils(HelpMixin):
                     - 'invert' (bool, optional): Whether to invert the result.
                     - 'default' (int, optional): Default value (0-255) if channel missing.
             output_dir (str, optional): Output directory. If None, uses source directory.
+            base_name (str, optional): Base name for output files. If None, derived from image path.
             save (bool): Whether to save to disk. Defaults to True.
             **kwargs: Additional arguments for Image.save().
+                - output_format (str): Format to save as (default: "PNG").
+                - ext (str): Extension to use (default: "png").
 
         Returns:
             Dict[str, str | Image.Image]: Dictionary mapping source channel keys to
@@ -1386,14 +1468,26 @@ class ImgUtils(HelpMixin):
         img = cls.ensure_image(image_path)
 
         # Determine output directory and base name
-        base_name = "texture"
-        if isinstance(image_path, str):
-            base_name = cls.get_base_texture_name(image_path)
-            if output_dir is None:
-                output_dir = os.path.dirname(image_path)
+        if base_name is None:
+            if isinstance(image_path, str):
+                base_name = cls.get_base_texture_name(image_path)
+            else:
+                base_name = "texture"
 
-        if save and output_dir and not os.path.isdir(output_dir):
-            raise ValueError(f"Invalid output directory: {output_dir}")
+        if output_dir is None:
+            if isinstance(image_path, str):
+                output_dir = os.path.dirname(image_path)
+            else:
+                output_dir = os.getcwd()
+
+        if save and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        # Extract format/extension from kwargs
+        output_format = kwargs.pop("output_format", "PNG")
+        ext = kwargs.pop("ext", "png")
+        if not ext.startswith("."):
+            ext = f".{ext}"
 
         results = {}
 
@@ -1401,9 +1495,7 @@ class ImgUtils(HelpMixin):
         def get_channel_data(source_mode, channel_name, default_val=None):
             # Handle RGB extraction
             if channel_name == "RGB":
-                if source_mode in ("RGBA", "RGB"):
-                    return img.convert("RGB")
-                return img.convert("RGB")  # Fallback conversion
+                return img.convert("RGB")
 
             # Handle single channel extraction
             # Check if channel exists in image
@@ -1415,8 +1507,7 @@ class ImgUtils(HelpMixin):
                 # Create constant image
                 return Image.new("L", img.size, default_val)
 
-            # Try to infer from grayscale if L requested?
-            # Or if requesting R/G/B from L image?
+            # If requesting R/G/B from L image, return the L image
             if source_mode == "L" and channel_name in "RGB":
                 return img.copy()
 
@@ -1446,8 +1537,8 @@ class ImgUtils(HelpMixin):
                 continue
 
             # Save
-            out_path = os.path.join(output_dir, f"{base_name}{suffix}.png")
-            extracted.save(out_path, format="PNG", **kwargs)
+            out_path = os.path.join(output_dir, f"{base_name}{suffix}{ext}")
+            extracted.save(out_path, format=output_format, **kwargs)
             results[src_chan] = out_path
 
         return results

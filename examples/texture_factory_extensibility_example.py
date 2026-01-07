@@ -1,17 +1,17 @@
 """
-Example: Adding a Custom Workflow to TextureMapFactory
+Example: Adding a Custom Workflow to MapFactory
 
 This demonstrates the dramatic improvement in extensibility.
 """
 
 # =============================================================================
-# BEFORE: Must modify core TextureMapFactory code
+# BEFORE: Must modify core MapFactory code
 # =============================================================================
 
 """
 To add a custom workflow (e.g., Substance Painter export), you would need to:
 
-1. Edit texture_map_factory.py
+1. Edit map_factory.py
 2. Add a new method like _prepare_substance_map()
 3. Edit _apply_workflow() to call it
 4. Handle all edge cases manually
@@ -22,15 +22,15 @@ Example of what you'd have to add:
 """
 
 
-# In texture_map_factory.py (OLD VERSION):
-class TextureMapFactory:
+# In map_factory.py (OLD VERSION):
+class MapFactory:
     @staticmethod
     def _apply_workflow(inventory, config, callback):
         # ... existing code ...
 
         # NEW CODE - inserted into existing method (risky!)
         if config.get("substance_painter", False):
-            substance_map = TextureMapFactory._prepare_substance_map(
+            substance_map = MapFactory._prepare_substance_map(
                 inventory, output_dir, base_name, ext, callback
             )
             if substance_map:
@@ -87,10 +87,10 @@ class TextureMapFactory:
 # AFTER: Simple plugin class
 # =============================================================================
 
-from pythontk.img_utils.texture_map_factory_refactored import (
-    TextureMapFactory,
+from pythontk.img_utils.map_factory_refactored import (
+    MapFactory,
     WorkflowHandler,
-    ProcessingContext,
+    TextureProcessor,
     ImgUtils,
 )
 import os
@@ -103,7 +103,7 @@ class SubstancePainterHandler(WorkflowHandler):
         """Check if this workflow should be used."""
         return config.get("substance_painter", False)
 
-    def process(self, context: ProcessingContext):
+    def process(self, context: TextureProcessor):
         """Process the workflow - clean and simple!"""
         # Smart resolution with automatic conversion - NO DUPLICATION!
         metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
@@ -155,7 +155,7 @@ class SubstancePainterHandler(WorkflowHandler):
 
 
 # Register the handler (that's it - no core code modification!)
-TextureMapFactory.register_handler(SubstancePainterHandler)
+MapFactory.register_handler(SubstancePainterHandler)
 
 
 # =============================================================================
@@ -163,7 +163,7 @@ TextureMapFactory.register_handler(SubstancePainterHandler)
 # =============================================================================
 
 # Now users can use the new workflow:
-result = TextureMapFactory.prepare_maps(
+result = MapFactory.prepare_maps(
     textures=[
         "mat_BaseColor.png",
         "mat_Metallic.png",
@@ -210,7 +210,7 @@ IMPROVEMENT: 50% less code, zero duplication, zero risk!
 # Before: Would need to add conversion logic in multiple places
 # After: One simple registration
 
-from pythontk.img_utils.texture_map_factory_refactored import MapConversion
+from pythontk.img_utils.map_factory_refactored import MapConversion
 
 
 def convert_curvature_to_ao(curvature_path, context):
@@ -227,7 +227,7 @@ def convert_curvature_to_ao(curvature_path, context):
 
 
 # Register it
-TextureMapFactory.register_conversion(
+MapFactory.register_conversion(
     MapConversion(
         target_type="Ambient_Occlusion",
         source_types=["Curvature"],
@@ -250,7 +250,7 @@ class GameEngineXHandler(WorkflowHandler):
     def can_handle(self, config):
         return config.get("game_engine_x", False)
 
-    def process(self, context: ProcessingContext):
+    def process(self, context: TextureProcessor):
         """
         Game Engine X requires:
         - BaseColor in sRGB with alpha for emissive mask
@@ -363,10 +363,10 @@ class GameEngineXHandler(WorkflowHandler):
 
 
 # Register it
-TextureMapFactory.register_handler(GameEngineXHandler)
+MapFactory.register_handler(GameEngineXHandler)
 
 # Use it
-result = TextureMapFactory.prepare_maps(
+result = MapFactory.prepare_maps(
     textures=[...], workflow_config={"game_engine_x": True, "output_extension": "tga"}
 )
 
