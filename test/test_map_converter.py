@@ -13,7 +13,6 @@ import os
 import tempfile
 import shutil
 import unittest
-import importlib.util
 from unittest.mock import Mock, MagicMock, patch
 from pathlib import Path
 from PIL import Image
@@ -22,10 +21,16 @@ from pythontk import ImgUtils
 from pythontk.img_utils.map_converter import MapConverterSlots
 from pythontk.img_utils.map_factory import MapFactory as TextureMapFactory
 
-# Check if PySide2 is available (for b012 tests)
-PYSIDE2_AVAILABLE = importlib.util.find_spec("PySide2") is not None
-skip_if_no_pyside2 = unittest.skipUnless(
-    PYSIDE2_AVAILABLE, "PySide2 not available - b012 tests require Qt for QInputDialog"
+# Check if Qt (PySide6/PyQt) is available via qtpy (for b012 tests)
+try:
+    from qtpy import QtWidgets  # noqa: F401
+
+    QT_AVAILABLE = True
+except Exception:
+    QT_AVAILABLE = False
+
+skip_if_no_qt = unittest.skipUnless(
+    QT_AVAILABLE, "Qt not available - b012 tests require QInputDialog"
 )
 
 
@@ -176,9 +181,9 @@ class TestMapConverterTextureFactory(unittest.TestCase):
         ]
         self.mock_sb.file_dialog.return_value = spec_textures
 
-        # Mock TextureMapFactory to raise exception
+        # Mock MapFactory to raise exception
         with patch(
-            "pythontk.img_utils.map_converter.TextureMapFactory.prepare_maps",
+            "pythontk.img_utils.map_converter.MapFactory.prepare_maps",
             side_effect=Exception("Factory error"),
         ):
             # Should fall back to legacy method without crashing
@@ -188,8 +193,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
     # Test b012 - Batch PBR Workflow Preparation
     # -------------------------------------------------------------------------
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_standard_pbr_workflow(self, mock_dialog):
         """Test b012 with standard PBR workflow."""
         self.mock_sb.file_dialog.return_value = self.texture_paths[
@@ -204,8 +209,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
         mock_dialog.assert_called_once()
         self.mock_sb.file_dialog.assert_called_once()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_unity_urp_workflow(self, mock_dialog):
         """Test b012 with Unity URP workflow."""
         self.mock_sb.file_dialog.return_value = self.texture_paths
@@ -218,8 +223,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
 
         mock_dialog.assert_called_once()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_unity_hdrp_workflow(self, mock_dialog):
         """Test b012 with Unity HDRP workflow (MSAO)."""
         self.mock_sb.file_dialog.return_value = self.texture_paths
@@ -229,8 +234,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
 
         mock_dialog.assert_called_once()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_unreal_workflow(self, mock_dialog):
         """Test b012 with Unreal Engine workflow."""
         self.mock_sb.file_dialog.return_value = self.texture_paths
@@ -240,8 +245,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
 
         mock_dialog.assert_called_once()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_gltf_workflow(self, mock_dialog):
         """Test b012 with glTF 2.0 workflow."""
         self.mock_sb.file_dialog.return_value = self.texture_paths
@@ -251,8 +256,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
 
         mock_dialog.assert_called_once()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_godot_workflow(self, mock_dialog):
         """Test b012 with Godot workflow."""
         self.mock_sb.file_dialog.return_value = self.texture_paths
@@ -262,8 +267,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
 
         mock_dialog.assert_called_once()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_specular_glossiness_workflow(self, mock_dialog):
         """Test b012 with Specular/Glossiness workflow."""
         spec_gloss_textures = [
@@ -278,8 +283,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
 
         mock_dialog.assert_called_once()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_user_cancels_workflow_selection(self, mock_dialog):
         """Test b012 handles user canceling workflow selection."""
         self.mock_sb.file_dialog.return_value = self.texture_paths
@@ -290,8 +295,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
 
         self.assertIsNone(result)
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_empty_texture_selection(self, mock_dialog):
         """Test b012 handles empty texture selection."""
         self.mock_sb.file_dialog.return_value = None
@@ -302,8 +307,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
         self.assertIsNone(result)
         mock_dialog.assert_not_called()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_unknown_workflow(self, mock_dialog):
         """Test b012 handles unknown workflow gracefully."""
         self.mock_sb.file_dialog.return_value = self.texture_paths
@@ -312,8 +317,8 @@ class TestMapConverterTextureFactory(unittest.TestCase):
         # Should handle gracefully
         self.converter.b012()
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_multiple_texture_sets(self, mock_dialog):
         """Test b012 processes multiple texture sets correctly."""
         # Create second texture set
@@ -340,9 +345,9 @@ class TestMapConverterTextureFactory(unittest.TestCase):
         # Should process both sets
         self.converter.b012()
 
-    @skip_if_no_pyside2
+    @skip_if_no_qt
     @patch("pythontk.img_utils.map_factory.MapFactory.prepare_maps")
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_handles_factory_errors(self, mock_dialog, mock_prepare):
         """Test b012 handles TextureMapFactory errors gracefully."""
         self.mock_sb.file_dialog.return_value = self.texture_paths
@@ -357,11 +362,11 @@ class TestMapConverterTextureFactory(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_texture_map_factory_import(self):
-        """Test that TextureMapFactory is properly imported."""
-        from pythontk.img_utils.map_converter import TextureMapFactory
+        """Test that MapFactory is properly imported."""
+        from pythontk.img_utils.map_converter import MapFactory
 
-        self.assertIsNotNone(TextureMapFactory)
-        self.assertTrue(hasattr(TextureMapFactory, "prepare_maps"))
+        self.assertIsNotNone(MapFactory)
+        self.assertTrue(hasattr(MapFactory, "prepare_maps"))
 
     def test_converter_has_all_methods(self):
         """Test that MapConverterSlots has all expected methods."""
@@ -408,8 +413,8 @@ class TestMapConverterEdgeCases(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
-    @skip_if_no_pyside2
-    @patch("PySide2.QtWidgets.QInputDialog.getItem")
+    @skip_if_no_qt
+    @patch("qtpy.QtWidgets.QInputDialog.getItem")
     def test_b012_with_missing_texture_files(self, mock_dialog):
         """Test b012 handles missing texture files."""
         fake_paths = [

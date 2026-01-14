@@ -355,7 +355,7 @@ class ModuleResolverBootstrapTests(BaseTestCase):
         self.assertEqual(pkg.sub.SubModule.__module__, "resolver_pkg_j.sub")
 
     def test_lazy_submodule_access(self) -> None:
-        # This mirrors the mayatk.ui_utils case where we want to access a submodule
+        # This mirrors a case where we want to access a submodule
         # that hasn't been imported yet.
         pkg = self._make_package(
             "resolver_pkg_k",
@@ -501,7 +501,7 @@ class ModuleResolverValidator:
         Initialize validator for a package.
 
         Args:
-            package_name: Name of the package to validate (e.g., 'mayatk')
+            package_name: Name of the package to validate (e.g., 'pkg_name')
             package_path: Optional path to package root. If None, will try to discover.
         """
         self.package_name = package_name

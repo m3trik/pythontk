@@ -845,11 +845,11 @@ def create_namespace_aliases(
         bootstrap_package(globals(), include=DEFAULT_INCLUDE)
 
         create_namespace_aliases(globals(), {
-            "Instancing": "core_utils.auto_instancer",  # Creates mayatk.Instancing
+            "Instancing": "core_utils.auto_instancer",  # Creates pkg.Instancing
         }, include_spec=DEFAULT_INCLUDE)
 
         # Now you can use:
-        inst = mayatk.Instancing()  # Has all methods from all classes
+        inst = pkg.Instancing()  # Has all methods from all classes
 
     Raises:
         ValueError: If module key not found in include_spec

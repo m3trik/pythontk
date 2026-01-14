@@ -126,8 +126,8 @@ class ExecutionMonitor:
         # Otherwise, look for a companion interpreter in the same directory.
         dir_path = os.path.dirname(executable)
 
-        # 1. Try generic naming convention: {app}py.exe (e.g. maya -> mayapy, 3dsmax -> 3dsmaxpy)
-        # Handle 'batch' variations (e.g. mayabatch -> mayapy)
+        # 1. Try generic naming convention: {app}py.exe (e.g. app -> apppy)
+        # Handle 'batch' variations (e.g. appbatch -> apppy)
         base_name = name_no_ext.replace("batch", "")
         candidates = [base_name + "py"]
 

@@ -107,9 +107,7 @@ class MapPackerSlots(ImgUtils):
         for base_name, files in texture_sets.items():
             sorted_maps = MapFactory.sort_images_by_type(files)
             assigned = {c: None for c in self.channels}
-            available_map_types = {
-                MapFactory.resolve_map_type(f): f for f in files
-            }
+            available_map_types = {MapFactory.resolve_map_type(f): f for f in files}
             used_files = set()
 
             for idx, channel in enumerate(self.channels):

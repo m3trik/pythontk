@@ -169,14 +169,11 @@ class NamespaceAliasEdgeCaseTests:
 class TestAllPackagesNamespaceAliases(unittest.TestCase):
     """Test namespace aliases across all packages."""
 
-    PACKAGES_TO_TEST = ["pythontk", "mayatk", "uitk", "tentacle"]
+    PACKAGES_TO_TEST = ["pythontk"]
 
     # Known namespace aliases per package
     KNOWN_ALIASES = {
-        "mayatk": ["Diagnostics", "Preview", "Mash"],
         "pythontk": [],
-        "uitk": [],
-        "tentacle": [],
     }
 
     def setUp(self):
@@ -192,27 +189,6 @@ class TestAllPackagesNamespaceAliases(unittest.TestCase):
         sys.modules.clear()
         sys.modules.update(self._modules_snapshot)
 
-    def test_mayatk_namespace_aliases(self):
-        """Test mayatk namespace aliases."""
-        if not NamespaceAliasEdgeCaseTests.has_namespace_aliases("mayatk"):
-            self.skipTest("mayatk has no namespace aliases")
-
-        for alias in self.KNOWN_ALIASES["mayatk"]:
-            with self.subTest(alias=alias):
-                success, msg = NamespaceAliasEdgeCaseTests.test_wildcard_expansion(
-                    "mayatk", alias
-                )
-                self.assertTrue(success, msg)
-
-    def test_mayatk_private_filtering(self):
-        """Test mayatk excludes private classes from wildcards."""
-        for alias in self.KNOWN_ALIASES["mayatk"]:
-            with self.subTest(alias=alias):
-                success, msg = NamespaceAliasEdgeCaseTests.test_private_filtering(
-                    "mayatk", alias
-                )
-                self.assertTrue(success, msg)
-
     def test_pythontk_namespace_aliases(self):
         """Test pythontk namespace aliases."""
         if not NamespaceAliasEdgeCaseTests.has_namespace_aliases("pythontk"):
@@ -223,32 +199,6 @@ class TestAllPackagesNamespaceAliases(unittest.TestCase):
             with self.subTest(alias=alias):
                 success, msg = NamespaceAliasEdgeCaseTests.test_wildcard_expansion(
                     "pythontk", alias
-                )
-                self.assertTrue(success, msg)
-
-    def test_uitk_namespace_aliases(self):
-        """Test uitk namespace aliases."""
-        if not NamespaceAliasEdgeCaseTests.has_namespace_aliases("uitk"):
-            self.skipTest("uitk has no namespace aliases configured")
-
-        aliases = NamespaceAliasEdgeCaseTests.get_namespace_aliases("uitk")
-        for alias in aliases.keys():
-            with self.subTest(alias=alias):
-                success, msg = NamespaceAliasEdgeCaseTests.test_wildcard_expansion(
-                    "uitk", alias
-                )
-                self.assertTrue(success, msg)
-
-    def test_tentacle_namespace_aliases(self):
-        """Test tentacle namespace aliases."""
-        if not NamespaceAliasEdgeCaseTests.has_namespace_aliases("tentacle"):
-            self.skipTest("tentacle has no namespace aliases configured")
-
-        aliases = NamespaceAliasEdgeCaseTests.get_namespace_aliases("tentacle")
-        for alias in aliases.keys():
-            with self.subTest(alias=alias):
-                success, msg = NamespaceAliasEdgeCaseTests.test_wildcard_expansion(
-                    "tentacle", alias
                 )
                 self.assertTrue(success, msg)
 

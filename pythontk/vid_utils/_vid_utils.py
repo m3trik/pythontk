@@ -13,7 +13,7 @@ from pythontk.core_utils.help_mixin import HelpMixin
 class VidUtils(HelpMixin):
     """ """
 
-    # Standard frame rate mappings (Maya compatible)
+    # Standard frame rate mappings
     FRAME_RATES = {
         "game": 15.0,
         "film": 24.0,
@@ -66,33 +66,20 @@ class VidUtils(HelpMixin):
 
     @staticmethod
     def resolve_ffmpeg() -> str:
-        """Finds FFmpeg executable path in system path or Maya scripts.
+        """Finds FFmpeg executable path in system path.
 
         Returns:
             str: Path to the FFmpeg executable.
 
         Raises:
-            FileNotFoundError: If FFmpeg is not located in either system path or Maya scripts path.
+            FileNotFoundError: If FFmpeg is not located in the system path.
         """
         ffmpeg_path = shutil.which("ffmpeg")
         if ffmpeg_path:
             return ffmpeg_path
 
-        maya_script_paths = os.getenv("MAYA_SCRIPT_PATH", "").split(";")
-        for path in maya_script_paths:
-            ffmpeg_in_bin = os.path.join(
-                path, "ffmpeg", "bin", "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-            )
-            if os.path.isfile(ffmpeg_in_bin):
-                return ffmpeg_in_bin
-            ffmpeg_direct_bin = os.path.join(
-                path, "bin", "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-            )
-            if os.path.isfile(ffmpeg_direct_bin):
-                return ffmpeg_direct_bin
-
         raise FileNotFoundError(
-            "FFmpeg is required but not found in the system path or Maya scripts path."
+            "FFmpeg is required but not found in the system path."
         )
 
     @classmethod

@@ -23,6 +23,10 @@ import sys
 import unittest
 from pathlib import Path
 
+# Ensure Qt binding selection is explicit for qtpy-based modules
+if "QT_API" not in os.environ:
+    os.environ["QT_API"] = "pyside6"
+
 
 class TestResult:
     """Container for test result statistics."""

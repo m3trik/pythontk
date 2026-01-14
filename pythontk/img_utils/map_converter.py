@@ -573,7 +573,7 @@ class MapConverterSlots(ImgUtils):
             "Specular/Glossiness Workflow",
         ]
 
-        from PySide2.QtWidgets import QInputDialog
+        from qtpy.QtWidgets import QInputDialog
 
         workflow, ok = QInputDialog.getItem(
             None,

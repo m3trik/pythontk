@@ -363,7 +363,7 @@ class MathUtils(HelpMixin):
         if best_diff > tolerance:
             return None
 
-        # Construct 4x4 Matrix (Row-Major for Maya)
+        # Construct 4x4 Matrix (Row-Major)
         R = best_matrix
         T = c_a - R @ c_b
 
@@ -1836,7 +1836,7 @@ class MathUtils(HelpMixin):
             r2_vals: End rotation in degrees (x, y, z).
             bbox_points: List of object-space bounding box points (MVector or similar).
                          Required for accurate surface speed calculation.
-            om_module: The maya.api.OpenMaya module (passed to avoid dependency).
+            om_module: The OpenMaya module or equivalent (passed to avoid dependency).
                        Required for accurate quaternion math.
 
         Returns:
