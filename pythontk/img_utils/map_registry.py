@@ -27,6 +27,9 @@ class _WorkflowPreset:
     metallic_smoothness: bool = False
     mask_map: bool = False
     orm_map: bool = False
+    opacity: bool = False
+    emissive: bool = False
+    ambient_occlusion: bool = False
     convert_specgloss_to_pbr: bool = False
     normal_type: str = "OpenGL"
     cleanup_base_color: bool = False
@@ -65,7 +68,7 @@ class MapRegistry(SingletonMixin):
     _precedence_rules = None
     _workflow_settings = {
         WF.STD: {
-            "description": "Standard PBR workflow (Metallic/Roughness). Best for general use."
+            "description": "Standard PBR workflow (Metallic/Roughness) with separate Opacity. Best for general use."
         },
         WF.URP: {
             "description": "Unity Universal Render Pipeline. Packs Metallic (R) and Smoothness (A)."
@@ -311,6 +314,7 @@ class MapRegistry(SingletonMixin):
             mode="L",
             default_background=(255, 255, 255, 255),
             input_fallbacks=["AO", "Occlusion"],
+            workflows=[WF.STD],
         ),
         "Height": MapType(
             name="Height",
@@ -362,6 +366,7 @@ class MapRegistry(SingletonMixin):
             mode="RGB",
             default_background=(0, 0, 0, 255),
             input_fallbacks=["Emission"],
+            workflows=[WF.STD],
         ),
         "Detail_Mask": MapType(
             name="Detail_Mask",
@@ -422,6 +427,7 @@ class MapRegistry(SingletonMixin):
             mode="L",
             default_background=(255, 255, 255, 255),
             input_fallbacks=["Transparency", "Alpha"],
+            workflows=[WF.STD],
         ),
         "Displacement": MapType(
             name="Displacement",

@@ -20,7 +20,7 @@ from PIL import Image
 
 from pythontk import ImgUtils
 from pythontk.img_utils.map_converter import MapConverterSlots
-from pythontk.img_utils.texture_map_factory import TextureMapFactory
+from pythontk.img_utils.map_factory import MapFactory as TextureMapFactory
 
 # Check if PySide2 is available (for b012 tests)
 PYSIDE2_AVAILABLE = importlib.util.find_spec("PySide2") is not None
@@ -341,7 +341,7 @@ class TestMapConverterTextureFactory(unittest.TestCase):
         self.converter.b012()
 
     @skip_if_no_pyside2
-    @patch("pythontk.img_utils.texture_map_factory.TextureMapFactory.prepare_maps")
+    @patch("pythontk.img_utils.map_factory.MapFactory.prepare_maps")
     @patch("PySide2.QtWidgets.QInputDialog.getItem")
     def test_b012_handles_factory_errors(self, mock_dialog, mock_prepare):
         """Test b012 handles TextureMapFactory errors gracefully."""
@@ -469,7 +469,7 @@ class TestMapConverterEdgeCases(unittest.TestCase):
             self.mock_widget.menu.chk000.isChecked.return_value = False
 
             with patch(
-                "pythontk.img_utils.texture_map_factory.TextureMapFactory.prepare_maps"
+                "pythontk.img_utils.map_factory.MapFactory.prepare_maps"
             ) as mock_prepare:
                 mock_prepare.return_value = [spec_file]
 

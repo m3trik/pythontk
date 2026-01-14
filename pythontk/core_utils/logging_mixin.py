@@ -426,9 +426,18 @@ class LoggerExt:
                     print(f"Logging error (raw emit): {e}")
 
     @staticmethod
-    def _log_box(self, title: str, items: List[str] = None, align: str = "left") -> int:
+    def _log_box(
+        self,
+        title: str,
+        items: List[str] = None,
+        align: str = "left",
+        level: str = None,
+    ) -> int:
         """Print an ASCII box with title and optional list of lines. Returns box width."""
-        padding = 2
+        padding = 1
+        # Use non-breaking space to prevent HTML space collapsing in handlers
+        space = "\u00a0"
+
         content = [title] + (items or [])
         longest = max(len(line) for line in content)
         inner_width = longest + padding * 2
@@ -437,26 +446,35 @@ class LoggerExt:
         top = "╔" + "═" * inner_width + "╗"
 
         if align == "left":
-            title_text = " " * padding + title.ljust(longest) + " " * padding
+            title_text = space * padding + title.ljust(longest, space) + space * padding
         elif align == "right":
-            title_text = " " * padding + title.rjust(longest) + " " * padding
+            title_text = space * padding + title.rjust(longest, space) + space * padding
         else:  # center
-            title_text = " " * padding + title.center(longest) + " " * padding
+            title_text = (
+                space * padding + title.center(longest, space) + space * padding
+            )
 
         mid = "║" + title_text + "║"
         sep = "╟" + "─" * inner_width + "╢"
         bottom = "╚" + "═" * inner_width + "╝"
 
-        LoggerExt._log_raw(self, top)
-        LoggerExt._log_raw(self, mid)
+        color = LoggerExt.get_color(level) if level else None
+
+        def log_line(line):
+            if color:
+                line = f'<span style="color:{color}">{line}</span>'
+            LoggerExt._log_raw(self, line)
+
+        log_line(top)
+        log_line(mid)
 
         if items:
-            LoggerExt._log_raw(self, sep)
+            log_line(sep)
             for item in items:
-                item_line = " " + item.ljust(inner_width - 1)
-                LoggerExt._log_raw(self, f"║{item_line}║")
+                item_line = space + item.ljust(inner_width - 1, space)
+                log_line(f"║{item_line}║")
 
-        LoggerExt._log_raw(self, bottom)
+        log_line(bottom)
 
         return width
 
@@ -676,6 +694,8 @@ class DefaultTextLogHandler(internal_logging.Handler):
         try:
             if getattr(record, "raw", False):
                 msg = record.getMessage()
+                if self.monospace:
+                    msg = f'<pre style="margin:0; font-family:monospace">{msg}</pre>'
                 threading.Timer(0, self._safe_append, args=(msg,)).start()
             else:
                 msg = self.format(record)

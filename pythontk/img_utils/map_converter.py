@@ -4,7 +4,7 @@ from typing import List, Union, Tuple, Dict, Any
 
 # From this package:
 from pythontk.img_utils._img_utils import ImgUtils
-from pythontk.img_utils.texture_map_factory import TextureMapFactory
+from pythontk.img_utils.map_factory import MapFactory
 from pythontk.file_utils._file_utils import FileUtils
 
 
@@ -79,10 +79,10 @@ class MapConverterSlots(ImgUtils):
         )
 
     def tb001(self, widget):
-        """Batch converts Spec/Gloss maps to PBR Metal/Rough using TextureMapFactory.
+        """Batch converts Spec/Gloss maps to PBR Metal/Rough using MapFactory.
 
         User selects multiple texture sets. The function groups them per base name
-        and converts them accordingly using the DRY TextureMapFactory.
+        and converts them accordingly using the DRY MapFactory.
 
         Maps are saved as Metallic/Roughness maps in the same directory.
         """
@@ -97,7 +97,7 @@ class MapConverterSlots(ImgUtils):
 
         create_metallic_smoothness = widget.menu.chk000.isChecked()
 
-        # Use TextureMapFactory for DRY conversion
+        # Use MapFactory for DRY conversion
         workflow_config = {
             "albedo_transparency": False,
             "metallic_smoothness": create_metallic_smoothness,
@@ -110,7 +110,7 @@ class MapConverterSlots(ImgUtils):
         print(f"Processing {len(spec_map_paths)} files...")
 
         try:
-            results = TextureMapFactory.prepare_maps(
+            results = MapFactory.prepare_maps(
                 spec_map_paths,
                 callback=print,
                 **workflow_config,
@@ -186,7 +186,7 @@ class MapConverterSlots(ImgUtils):
             print(f"Converting bump to normal ({output_format.upper()}): {bump_path}")
 
             try:
-                normal_path = TextureMapFactory.convert_bump_to_normal(
+                normal_path = MapFactory.convert_bump_to_normal(
                     bump_path,
                     output_format=output_format,
                     intensity=intensity,
@@ -215,7 +215,7 @@ class MapConverterSlots(ImgUtils):
             return
 
         print(f"Converting: {dx_map_path} ..")
-        gl_map_path = TextureMapFactory.convert_normal_map_format(
+        gl_map_path = MapFactory.convert_normal_map_format(
             dx_map_path, target_format="opengl"
         )
         print(f"// Result: {gl_map_path}")
@@ -233,7 +233,7 @@ class MapConverterSlots(ImgUtils):
             return
 
         print(f"Converting: {gl_map_path} ..")
-        dx_map_path = TextureMapFactory.convert_normal_map_format(
+        dx_map_path = MapFactory.convert_normal_map_format(
             gl_map_path, target_format="directx"
         )
         print(f"// Result: {dx_map_path}")
@@ -250,10 +250,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = TextureMapFactory.group_textures_by_set(paths)
+        texture_sets = MapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = TextureMapFactory.sort_images_by_type(files)
+            sorted_maps = MapFactory.sort_images_by_type(files)
 
             albedo_map_path = sorted_maps.get("Albedo_Transparency", [None])[0]
             base_color_path = sorted_maps.get("Base_Color", [None])[0]
@@ -273,7 +273,7 @@ class MapConverterSlots(ImgUtils):
                 f"Packing Transparency from: {opacity_map_path}\n\tinto: {rgb_map_path} .."
             )
 
-            packed_path = TextureMapFactory.pack_transparency_into_albedo(
+            packed_path = MapFactory.pack_transparency_into_albedo(
                 rgb_map_path,
                 opacity_map_path,
                 invert_alpha=False,
@@ -296,10 +296,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = TextureMapFactory.group_textures_by_set(paths)
+        texture_sets = MapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = TextureMapFactory.sort_images_by_type(files)
+            sorted_maps = MapFactory.sort_images_by_type(files)
 
             metallic_map_path = sorted_maps.get("Metallic", [None])[0]
             smooth_map_path = sorted_maps.get("Smoothness", [None])[0]
@@ -320,7 +320,7 @@ class MapConverterSlots(ImgUtils):
                 f"Packing {'Roughness' if invert_alpha else 'Smoothness'} from: {alpha_map_path}\n\tinto: {metallic_map_path} .."
             )
 
-            packed_path = TextureMapFactory.pack_smoothness_into_metallic(
+            packed_path = MapFactory.pack_smoothness_into_metallic(
                 metallic_map_path,
                 alpha_map_path,
                 invert_alpha=invert_alpha,
@@ -349,7 +349,7 @@ class MapConverterSlots(ImgUtils):
 
             try:
                 metallic_path, smoothness_path = (
-                    TextureMapFactory.unpack_metallic_smoothness(
+                    MapFactory.unpack_metallic_smoothness(
                         metallic_smoothness_path
                     )
                 )
@@ -381,7 +381,7 @@ class MapConverterSlots(ImgUtils):
             print(f"Unpacking: {specular_gloss_path} ..")
 
             try:
-                specular_path, gloss_path = TextureMapFactory.unpack_specular_gloss(
+                specular_path, gloss_path = MapFactory.unpack_specular_gloss(
                     specular_gloss_path
                 )
                 print(f"// Specular map: {specular_path}")
@@ -406,10 +406,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = TextureMapFactory.group_textures_by_set(paths)
+        texture_sets = MapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = TextureMapFactory.sort_images_by_type(files)
+            sorted_maps = MapFactory.sort_images_by_type(files)
 
             metallic_map_path = sorted_maps.get("Metallic", [None])[0]
             ao_map_path = sorted_maps.get("Ambient_Occlusion", [None])[0]
@@ -439,7 +439,7 @@ class MapConverterSlots(ImgUtils):
                 f"  {'Roughness' if invert_alpha else 'Smoothness'} (A): {alpha_map_path}"
             )
 
-            packed_path = TextureMapFactory.pack_msao_texture(
+            packed_path = MapFactory.pack_msao_texture(
                 metallic_map_path,
                 ao_map_path,
                 alpha_map_path,
@@ -468,7 +468,7 @@ class MapConverterSlots(ImgUtils):
 
             try:
                 metallic_path, ao_path, smoothness_path = (
-                    TextureMapFactory.unpack_msao_texture(msao_path)
+                    MapFactory.unpack_msao_texture(msao_path)
                 )
                 print(f"// Metallic map: {metallic_path}")
                 print(f"// AO map: {ao_path}")
@@ -497,7 +497,7 @@ class MapConverterSlots(ImgUtils):
             print(f"Converting Smoothness to Roughness: {smoothness_path} ..")
 
             try:
-                roughness_path = TextureMapFactory.convert_smoothness_to_roughness(
+                roughness_path = MapFactory.convert_smoothness_to_roughness(
                     smoothness_path
                 )
                 print(f"// Result: {roughness_path}")
@@ -525,7 +525,7 @@ class MapConverterSlots(ImgUtils):
             print(f"Converting Roughness to Smoothness: {roughness_path} ..")
 
             try:
-                smoothness_path = TextureMapFactory.convert_roughness_to_smoothness(
+                smoothness_path = MapFactory.convert_roughness_to_smoothness(
                     roughness_path
                 )
                 print(f"// Result: {smoothness_path}")
@@ -539,7 +539,7 @@ class MapConverterSlots(ImgUtils):
             pass
 
     def b012(self):
-        """Batch prepare textures for PBR workflow using TextureMapFactory.
+        """Batch prepare textures for PBR workflow using MapFactory.
 
         Supports multiple workflows:
         - Standard PBR (separate maps)
@@ -649,7 +649,7 @@ class MapConverterSlots(ImgUtils):
         print(f"{'='*60}\n")
 
         try:
-            results = TextureMapFactory.prepare_maps(
+            results = MapFactory.prepare_maps(
                 texture_paths,
                 callback=print,
                 **config,

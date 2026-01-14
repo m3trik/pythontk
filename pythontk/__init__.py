@@ -31,6 +31,10 @@ DEFAULT_INCLUDE = {
     "core_utils.singleton_mixin": "SingletonMixin",
     "core_utils.module_reloader": ["ModuleReloader", "reload_package"],
     "core_utils.execution_monitor": "ExecutionMonitor",
+    "core_utils.cli": "CLI",
+    "net_utils.ssh_client": "SSHClient",
+    "net_utils.credentials": "Credentials",
+    "net_utils._net_utils": "NetUtils",
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
 }
 
@@ -52,6 +56,10 @@ __all__ = [
     "ModuleReloader",
     "reload_package",
     "ExecutionMonitor",
+    "CLI",
+    "SSHClient",
+    "Credentials",
+    "NetUtils",
     "FileUtils",
     "Metadata",
     "ImgUtils",

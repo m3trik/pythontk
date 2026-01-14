@@ -1,4 +1,5 @@
 numpy>=1.24.0
 scipy>=1.14.0
 Pillow
+paramiko
 pywin32

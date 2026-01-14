@@ -2,7 +2,7 @@
 # coding=utf-8
 from typing import List, Dict, Optional, Any
 from pythontk.img_utils._img_utils import ImgUtils
-from pythontk.img_utils.texture_map_factory import TextureMapFactory
+from pythontk.img_utils.map_factory import MapFactory
 from pythontk.file_utils._file_utils import FileUtils
 
 
@@ -90,7 +90,7 @@ class MapPackerSlots(ImgUtils):
             self.ui.b001.setEnabled(False)
             return
 
-        texture_sets = TextureMapFactory.group_textures_by_set(file_paths)
+        texture_sets = MapFactory.group_textures_by_set(file_paths)
         combos = [
             self.ui.cmbR.currentText(),
             self.ui.cmbG.currentText(),
@@ -105,10 +105,10 @@ class MapPackerSlots(ImgUtils):
 
         success = False
         for base_name, files in texture_sets.items():
-            sorted_maps = TextureMapFactory.sort_images_by_type(files)
+            sorted_maps = MapFactory.sort_images_by_type(files)
             assigned = {c: None for c in self.channels}
             available_map_types = {
-                TextureMapFactory.resolve_map_type(f): f for f in files
+                MapFactory.resolve_map_type(f): f for f in files
             }
             used_files = set()
 
@@ -120,7 +120,7 @@ class MapPackerSlots(ImgUtils):
                     (
                         f
                         for f in files
-                        if TextureMapFactory.resolve_map_type(f) == map_type
+                        if MapFactory.resolve_map_type(f) == map_type
                         and f not in used_files
                     ),
                     None,

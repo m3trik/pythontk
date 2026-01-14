@@ -104,11 +104,45 @@ class ExecutionMonitor:
     def _get_python_executable():
         """
         Get the path to the Python interpreter.
-        Returns _interpreter_override if set, otherwise sys.executable.
+        Returns _interpreter_override if set, otherwise attempts to resolve the interpreter from sys.executable.
         """
         if ExecutionMonitor._interpreter_override:
             return ExecutionMonitor._interpreter_override
-        return sys.executable
+
+        executable = sys.executable
+        if not executable:
+            return sys.executable
+
+        # If the executable looks like a python interpreter, return it.
+        name = os.path.basename(executable).lower()
+        name_no_ext = os.path.splitext(name)[0]
+        if (
+            "python" in name_no_ext
+            or name_no_ext.endswith("py")
+            or name_no_ext == "hython"
+        ):
+            return executable
+
+        # Otherwise, look for a companion interpreter in the same directory.
+        dir_path = os.path.dirname(executable)
+
+        # 1. Try generic naming convention: {app}py.exe (e.g. maya -> mayapy, 3dsmax -> 3dsmaxpy)
+        # Handle 'batch' variations (e.g. mayabatch -> mayapy)
+        base_name = name_no_ext.replace("batch", "")
+        candidates = [base_name + "py"]
+
+        # 2. Try standard python executable names
+        candidates.extend(["python", "python3", "hython"])
+
+        extensions = [".exe"] if sys.platform == "win32" else [""]
+
+        for cand in candidates:
+            for ext in extensions:
+                path = os.path.join(dir_path, cand + ext)
+                if os.path.exists(path):
+                    return path
+
+        return executable
 
     @staticmethod
     def _start_gif_process(gif_path):

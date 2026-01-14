@@ -135,6 +135,11 @@ class ImgUtils(HelpMixin):
         Returns:
             PIL.Image.Image: Valid image object, optionally converted to `mode`.
         """
+        if Image is None:
+            raise ImportError(
+                "Pillow (PIL) is not installed. Image operations are unavailable."
+            )
+
         if isinstance(input_image, (str, os.PathLike)):
             input_image = str(input_image)
             try:
@@ -1180,7 +1185,7 @@ class ImgUtils(HelpMixin):
             output_dir = os.path.dirname(texture_path)
         os.makedirs(output_dir, exist_ok=True)
 
-        from pythontk.img_utils.texture_map_factory import TextureMapFactory
+        from pythontk.img_utils.map_factory import MapFactory as TextureMapFactory
 
         # Determine correct map suffix format
         map_type_suffix = TextureMapFactory.resolve_map_type(texture_path, key=False)

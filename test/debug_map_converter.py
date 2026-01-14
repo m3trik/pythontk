@@ -35,7 +35,7 @@ class TestMapConverterDebug(unittest.TestCase):
         print(f"Mock file_dialog return: {self.mock_sb.file_dialog.return_value}")
 
         with patch(
-            "pythontk.img_utils.texture_map_factory.TextureMapFactory.prepare_maps"
+            "pythontk.img_utils.map_factory.MapFactory.prepare_maps"
         ) as mock_prepare:
             print(f"Patch active: {mock_prepare}")
 

@@ -291,7 +291,10 @@ class TextureProcessor:
                 if details
                 else ""
             )
-            self.logger.info(f"[Dry Run] Would save {map_type} to {output_path}{info}", extra={"preset": "highlight"})
+            self.logger.info(
+                f"[Dry Run] Would save {map_type} to {output_path}{info}",
+                extra={"preset": "highlight"},
+            )
             return output_path
 
         # Check if we can skip (only for file-based inputs)
@@ -466,7 +469,9 @@ class TextureProcessor:
                             return result
                         except Exception as e:
                             if self.logger:
-                                self.logger.error(f"Error converting to {target_type}: {str(e)}")
+                                self.logger.error(
+                                    f"Error converting to {target_type}: {str(e)}"
+                                )
 
         # 3. Try registry fallbacks (Safe Substitutes)
         # Only use fallbacks that DON'T have a registered conversion (otherwise step 2 would have caught them)
@@ -503,7 +508,9 @@ class TextureProcessor:
             )
         metallic_img = MapFactory.create_metallic_from_spec(specular_path)
         if self.logger:
-            self.logger.info("Created metallic from specular", extra={"preset": "highlight"})
+            self.logger.info(
+                "Created metallic from specular", extra={"preset": "highlight"}
+            )
         return metallic_img
 
     def convert_smoothness_to_roughness(
@@ -517,7 +524,9 @@ class TextureProcessor:
             smoothness_path, self.output_dir, save=False
         )
         if self.logger:
-            self.logger.info("Converted smoothness to roughness", extra={"preset": "highlight"})
+            self.logger.info(
+                "Converted smoothness to roughness", extra={"preset": "highlight"}
+            )
         return roughness_img
 
     def convert_roughness_to_smoothness(
@@ -531,7 +540,9 @@ class TextureProcessor:
             roughness_path, self.output_dir, save=False
         )
         if self.logger:
-            self.logger.info("Converted roughness to smoothness", extra={"preset": "highlight"})
+            self.logger.info(
+                "Converted roughness to smoothness", extra={"preset": "highlight"}
+            )
         return smooth_img
 
     def convert_specular_to_roughness(
@@ -543,12 +554,12 @@ class TextureProcessor:
             )
         rough_img = MapFactory.create_roughness_from_spec(specular_path)
         if self.logger:
-            self.logger.info("Created roughness from specular", extra={"preset": "highlight"})
+            self.logger.info(
+                "Created roughness from specular", extra={"preset": "highlight"}
+            )
         return rough_img
 
-    def convert_dx_to_gl(
-        self, dx_path: Union[str, "Image.Image"]
-    ) -> "Image.Image":
+    def convert_dx_to_gl(self, dx_path: Union[str, "Image.Image"]) -> "Image.Image":
         if not dx_path:
             raise ValueError(
                 "Cannot convert DirectX Normal to OpenGL: Input map is missing"
@@ -557,12 +568,12 @@ class TextureProcessor:
             dx_path, target_format="opengl", save=False
         )
         if self.logger:
-            self.logger.info("Converted DirectX normal to OpenGL", extra={"preset": "highlight"})
+            self.logger.info(
+                "Converted DirectX normal to OpenGL", extra={"preset": "highlight"}
+            )
         return gl_img
 
-    def convert_gl_to_dx(
-        self, gl_path: Union[str, "Image.Image"]
-    ) -> "Image.Image":
+    def convert_gl_to_dx(self, gl_path: Union[str, "Image.Image"]) -> "Image.Image":
         if not gl_path:
             raise ValueError(
                 "Cannot convert OpenGL Normal to DirectX: Input map is missing"
@@ -571,7 +582,9 @@ class TextureProcessor:
             gl_path, target_format="directx", save=False
         )
         if self.logger:
-            self.logger.info("Converted OpenGL normal to DirectX", extra={"preset": "highlight"})
+            self.logger.info(
+                "Converted OpenGL normal to DirectX", extra={"preset": "highlight"}
+            )
         return dx_img
 
     def convert_bump_to_normal(
@@ -585,7 +598,9 @@ class TextureProcessor:
             save=False,
         )
         if self.logger:
-            self.logger.info("Generated normal from bump/height", extra={"preset": "highlight"})
+            self.logger.info(
+                "Generated normal from bump/height", extra={"preset": "highlight"}
+            )
         return normal_img
 
     def extract_gloss_from_spec(
@@ -600,7 +615,9 @@ class TextureProcessor:
             raise ValueError("Could not extract gloss from specular map")
 
         if self.logger:
-            self.logger.info("Extracted glossiness from specular", extra={"preset": "highlight"})
+            self.logger.info(
+                "Extracted glossiness from specular", extra={"preset": "highlight"}
+            )
         return gloss_img
 
     def copy_map(
@@ -608,7 +625,9 @@ class TextureProcessor:
     ) -> Union[str, "Image.Image"]:
         """Simple copy/rename for compatible maps (e.g. Smoothness -> Glossiness)."""
         if self.logger:
-            self.logger.info(f"Created {target_type} from source map", extra={"preset": "highlight"})
+            self.logger.info(
+                f"Created {target_type} from source map", extra={"preset": "highlight"}
+            )
         return source_path
 
     def unpack_metallic_smoothness(
@@ -626,7 +645,10 @@ class TextureProcessor:
         self.inventory["Metallic"] = metallic_img
         self.inventory["Smoothness"] = smoothness_img
         if self.logger:
-            self.logger.info("Unpacked Metallic and Smoothness from packed map", extra={"preset": "highlight"})
+            self.logger.info(
+                "Unpacked Metallic and Smoothness from packed map",
+                extra={"preset": "highlight"},
+            )
 
     def get_metallic_from_packed(
         self, source_path: Union[str, "Image.Image"]
@@ -651,9 +673,7 @@ class TextureProcessor:
         # Convert S -> R
         return self.convert_smoothness_to_roughness(self.inventory["Smoothness"])
 
-    def unpack_msao(
-        self, source_path: Union[str, "Image.Image"]
-    ) -> None:
+    def unpack_msao(self, source_path: Union[str, "Image.Image"]) -> None:
         """Helper to unpack MSAO and cache results."""
         if (
             "Metallic" in self.inventory
@@ -671,7 +691,10 @@ class TextureProcessor:
         self.inventory["Ambient_Occlusion"] = self.inventory["AO"]
         self.inventory["Smoothness"] = smoothness_img
         if self.logger:
-            self.logger.info("Unpacked Metallic, AO, and Smoothness from MSAO map", extra={"preset": "highlight"})
+            self.logger.info(
+                "Unpacked Metallic, AO, and Smoothness from MSAO map",
+                extra={"preset": "highlight"},
+            )
 
     def get_metallic_from_msao(
         self, source_path: Union[str, "Image.Image"]
@@ -701,9 +724,7 @@ class TextureProcessor:
         self.unpack_msao(source_path)
         return self.inventory["AO"]
 
-    def unpack_orm(
-        self, source_path: Union[str, "Image.Image"]
-    ) -> None:
+    def unpack_orm(self, source_path: Union[str, "Image.Image"]) -> None:
         """Helper to unpack ORM and cache results."""
         if (
             "AO" in self.inventory
@@ -721,7 +742,10 @@ class TextureProcessor:
         self.inventory["Roughness"] = roughness_img
         self.inventory["Metallic"] = metallic_img
         if self.logger:
-            self.logger.info("Unpacked AO, Roughness, and Metallic from ORM map", extra={"preset": "highlight"})
+            self.logger.info(
+                "Unpacked AO, Roughness, and Metallic from ORM map",
+                extra={"preset": "highlight"},
+            )
 
     def get_ao_from_orm(
         self, source_path: Union[str, "Image.Image"]
@@ -762,7 +786,10 @@ class TextureProcessor:
         self.inventory["Base_Color"] = base_color_img
         self.inventory["Opacity"] = opacity_img
         if self.logger:
-            self.logger.info("Unpacked Base Color and Opacity from Albedo+Transparency map", extra={"preset": "highlight"})
+            self.logger.info(
+                "Unpacked Base Color and Opacity from Albedo+Transparency map",
+                extra={"preset": "highlight"},
+            )
 
     def get_base_color_from_albedo_transparency(
         self, source_path: Union[str, "Image.Image"]
@@ -796,7 +823,9 @@ class TextureProcessor:
             fill_values={"R": 255} if not ao else None,
         )
         if self.logger:
-            self.logger.info("Created ORM map from components", extra={"preset": "highlight"})
+            self.logger.info(
+                "Created ORM map from components", extra={"preset": "highlight"}
+            )
         return orm_img
 
     def create_mask_map(
@@ -805,10 +834,7 @@ class TextureProcessor:
         """Create Mask Map (MSAO) from components."""
         # Resolve required components
         metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
-        ao = (
-            self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
-            or None
-        )
+        ao = self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False) or None
         detail = (
             self.resolve_map("Detail_Mask", "Detail", allow_conversion=False) or None
         )
@@ -843,7 +869,9 @@ class TextureProcessor:
             save=False,
         )
         if self.logger:
-            self.logger.info("Created Mask Map from components", extra={"preset": "highlight"})
+            self.logger.info(
+                "Created Mask Map from components", extra={"preset": "highlight"}
+            )
         return mask_map
 
     def create_metallic_smoothness_map(
@@ -875,7 +903,9 @@ class TextureProcessor:
             save=False,
         )
         if self.logger:
-            self.logger.info("Packed smoothness into metallic", extra={"preset": "highlight"})
+            self.logger.info(
+                "Packed smoothness into metallic", extra={"preset": "highlight"}
+            )
         return ms_map
 
 
@@ -902,9 +932,7 @@ class WorkflowHandler(ABC):
         """Return list of map types this handler consumes."""
         pass
 
-    def is_explicitly_requested(
-        self, context: TextureProcessor, map_type: str
-    ) -> bool:
+    def is_explicitly_requested(self, context: TextureProcessor, map_type: str) -> bool:
         """Check if a map type is explicitly requested in the config.
 
         Checks for:
@@ -953,7 +981,9 @@ class ORMMapHandler(WorkflowHandler):
                     context.logger.warning("No roughness map for ORM green channel")
                 return None
             if context.logger:
-                context.logger.warning("No roughness map for ORM green channel, using black (forced)")
+                context.logger.warning(
+                    "No roughness map for ORM green channel, using black (forced)"
+                )
 
         if not metallic:
             if not context.config.get("force_packed_maps", False):
@@ -961,7 +991,9 @@ class ORMMapHandler(WorkflowHandler):
                     context.logger.warning("No metallic map for ORM blue channel")
                 return None
             if context.logger:
-                context.logger.warning("No metallic map for ORM blue channel, using black (forced)")
+                context.logger.warning(
+                    "No metallic map for ORM blue channel, using black (forced)"
+                )
 
         try:
             fill_values = {}
@@ -979,7 +1011,9 @@ class ORMMapHandler(WorkflowHandler):
                 optimize=False,
             )
             if context.logger:
-                context.logger.info("Created Unreal/glTF ORM map", extra={"preset": "highlight"})
+                context.logger.info(
+                    "Created Unreal/glTF ORM map", extra={"preset": "highlight"}
+                )
             sources = [img for img in [ao, roughness, metallic] if img]
             return context.save_map(orm_map, "ORM", source_images=sources)
         except Exception as e:
@@ -1087,7 +1121,9 @@ class MaskMapHandler(WorkflowHandler):
                 mask_map_image = ImgUtils.invert_channels(mask_map_image, "A")
 
             if context.logger:
-                context.logger.info("Created Unity HDRP Mask Map", extra={"preset": "highlight"})
+                context.logger.info(
+                    "Created Unity HDRP Mask Map", extra={"preset": "highlight"}
+                )
             # Pass the PIL Image directly to save_map, which handles optimization and saving
             sources = [img for img in [metallic, ao, smoothness] if img]
             return context.save_map(mask_map_image, "MSAO", source_images=sources)
@@ -1171,7 +1207,9 @@ class MetallicSmoothnessHandler(WorkflowHandler):
                 metallic, alpha_map, invert_alpha=invert, save=False
             )
             if context.logger:
-                context.logger.info("Packed smoothness into metallic", extra={"preset": "highlight"})
+                context.logger.info(
+                    "Packed smoothness into metallic", extra={"preset": "highlight"}
+                )
             sources = [img for img in [metallic, alpha_map] if img]
             return context.save_map(
                 combined, "Metallic_Smoothness", source_images=sources
@@ -1243,7 +1281,10 @@ class BaseColorHandler(WorkflowHandler):
         # Check if we have a pre-existing Albedo_Transparency map
         if "Albedo_Transparency" in context.inventory:
             if context.logger:
-                context.logger.info("Processing existing Albedo_Transparency map", extra={"preset": "highlight"})
+                context.logger.info(
+                    "Processing existing Albedo_Transparency map",
+                    extra={"preset": "highlight"},
+                )
             context.mark_used("Albedo_Transparency")
             return context.save_map(
                 context.inventory["Albedo_Transparency"], "Albedo_Transparency"
@@ -1283,14 +1324,19 @@ class BaseColorHandler(WorkflowHandler):
 
         if create_albedo_transparency:
             if context.logger:
-                context.logger.info("Processing albedo with transparency", extra={"preset": "highlight"})
+                context.logger.info(
+                    "Processing albedo with transparency", extra={"preset": "highlight"}
+                )
             if opacity:
                 try:
                     combined = MapFactory.pack_transparency_into_albedo(
                         base_color, opacity, save=False
                     )
                     if context.logger:
-                        context.logger.info("Packed transparency into albedo", extra={"preset": "highlight"})
+                        context.logger.info(
+                            "Packed transparency into albedo",
+                            extra={"preset": "highlight"},
+                        )
                     context.mark_used(
                         "Base_Color",
                         "Diffuse",
@@ -1304,7 +1350,10 @@ class BaseColorHandler(WorkflowHandler):
                     )
                 except Exception as e:
                     if context.logger:
-                        context.logger.error(f"Error packing transparency: {str(e)}", extra={"preset": "error"})
+                        context.logger.error(
+                            f"Error packing transparency: {str(e)}",
+                            extra={"preset": "error"},
+                        )
             else:
                 # Base color already has alpha, just save it as Albedo_Transparency
                 # Practical Lens: We only rename Base_Color to Albedo_Transparency if it
@@ -1330,7 +1379,10 @@ class BaseColorHandler(WorkflowHandler):
                         base_img, metallic_img
                     )
                     if context.logger:
-                        context.logger.info("Cleaned base color to true albedo", extra={"preset": "highlight"})
+                        context.logger.info(
+                            "Cleaned base color to true albedo",
+                            extra={"preset": "highlight"},
+                        )
                     context.mark_used("Base_Color", "Diffuse")
                     sources = [img for img in [base_color, metallic] if img]
                     return context.save_map(
@@ -1338,7 +1390,10 @@ class BaseColorHandler(WorkflowHandler):
                     )
                 except Exception as e:
                     if context.logger:
-                        context.logger.error(f"Error cleaning base color: {str(e)}", extra={"preset": "error"})
+                        context.logger.error(
+                            f"Error cleaning base color: {str(e)}",
+                            extra={"preset": "error"},
+                        )
 
         context.mark_used("Base_Color", "Diffuse")
         return context.save_map(base_color, "Base_Color", source_images=[base_color])
@@ -1366,7 +1421,10 @@ class NormalMapHandler(WorkflowHandler):
         # 1. Try exact match (e.g. Normal_OpenGL)
         if target_key in context.inventory:
             if context.logger:
-                context.logger.info(f"Processing existing {target_format} normal map", extra={"preset": "highlight"})
+                context.logger.info(
+                    f"Processing existing {target_format} normal map",
+                    extra={"preset": "highlight"},
+                )
             context.mark_used(target_key)
             return context.save_map(
                 context.inventory[target_key],
@@ -1389,7 +1447,10 @@ class NormalMapHandler(WorkflowHandler):
                 normal = context.resolve_map(target_key, allow_conversion=True)
                 if normal:
                     if context.logger:
-                        context.logger.info(f"Converted {self._opposite(target_format)} to {target_format}", extra={"preset": "highlight"})
+                        context.logger.info(
+                            f"Converted {self._opposite(target_format)} to {target_format}",
+                            extra={"preset": "highlight"},
+                        )
                     context.mark_used(opposite_key)
                     return context.save_map(
                         normal,
@@ -1400,7 +1461,10 @@ class NormalMapHandler(WorkflowHandler):
                 # If conversion not allowed, just save the opposite map as is (or skip?)
                 # Usually we want to save it even if wrong format if conversion is disabled
                 if context.logger:
-                    context.logger.info(f"Skipping conversion of {self._opposite(target_format)} to {target_format} (convert_type=False)", extra={"preset": "highlight"})
+                    context.logger.info(
+                        f"Skipping conversion of {self._opposite(target_format)} to {target_format} (convert_type=False)",
+                        extra={"preset": "highlight"},
+                    )
                 context.mark_used(opposite_key)
                 return context.save_map(
                     context.inventory[opposite_key],
@@ -1417,7 +1481,10 @@ class NormalMapHandler(WorkflowHandler):
 
             if detected_format:
                 if context.logger:
-                    context.logger.info(f"Detected {detected_format} format from generic normal map", extra={"preset": "highlight"})
+                    context.logger.info(
+                        f"Detected {detected_format} format from generic normal map",
+                        extra={"preset": "highlight"},
+                    )
 
                 # If detected format matches target, save as target
                 if detected_format == target_format:
@@ -1435,7 +1502,10 @@ class NormalMapHandler(WorkflowHandler):
 
                     if allow_conversion:
                         if context.logger:
-                            context.logger.info(f"Converting detected {detected_format} to {target_format}", extra={"preset": "highlight"})
+                            context.logger.info(
+                                f"Converting detected {detected_format} to {target_format}",
+                                extra={"preset": "highlight"},
+                            )
                         # We can use the registry converters if we temporarily treat it as the detected type
                         # Or just call MapFactory directly
                         if detected_format == "DirectX":  # Target is OpenGL
@@ -1453,7 +1523,10 @@ class NormalMapHandler(WorkflowHandler):
                         )
                     else:
                         if context.logger:
-                            context.logger.info(f"Skipping conversion of detected {detected_format} to {target_format} (convert_type=False)", extra={"preset": "highlight"})
+                            context.logger.info(
+                                f"Skipping conversion of detected {detected_format} to {target_format} (convert_type=False)",
+                                extra={"preset": "highlight"},
+                            )
                         # Save as generic Normal or target key?
                         # If we know it's wrong, maybe save as generic Normal to preserve it?
                         # Or save as target key but warn?
@@ -1466,7 +1539,10 @@ class NormalMapHandler(WorkflowHandler):
             # Fallback: Format unknown
             # Practical Lens: If we can't detect the format, keep it generic "Normal"
             if context.logger:
-                context.logger.info("Processing generic normal map (format indeterminate)", extra={"preset": "highlight"})
+                context.logger.info(
+                    "Processing generic normal map (format indeterminate)",
+                    extra={"preset": "highlight"},
+                )
             context.mark_used("Normal")
             return context.save_map(normal_map, "Normal", source_images=[normal_map])
 
@@ -1476,7 +1552,10 @@ class NormalMapHandler(WorkflowHandler):
 
         if normal:
             if context.logger:
-                context.logger.info(f"Generated normal map from Bump/Height", extra={"preset": "highlight"})
+                context.logger.info(
+                    f"Generated normal map from Bump/Height",
+                    extra={"preset": "highlight"},
+                )
             context.mark_used("Bump", "Height")
             source = context.inventory.get("Bump") or context.inventory.get("Height")
             sources = [source] if source else []
@@ -1544,7 +1623,10 @@ class OutputFallbackHandler(WorkflowHandler):
                     output_maps.append(path)
                     context.mark_used(fb)
                     if context.logger:
-                        context.logger.info(f"Outputting fallback map: {fb} (fallback for {req})", extra={"preset": "highlight"})
+                        context.logger.info(
+                            f"Outputting fallback map: {fb} (fallback for {req})",
+                            extra={"preset": "highlight"},
+                        )
 
         return output_maps
 
@@ -1885,22 +1967,6 @@ class MapFactory(LoggingMixin):
             priority=8,
         )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @classmethod
     def resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str:
         """Resolves the map type from a filename or alias using `map_types`.
@@ -1999,7 +2065,7 @@ class MapFactory(LoggingMixin):
     def get_base_texture_name(cls, filepath_or_filename: str) -> str:
         """Extracts the base texture name from a filename or path,
         removing known suffixes (e.g., _normal, _roughness).
-        
+
         Logic:
         - Long suffixes (>3 chars): Case-insensitive.
         - Short suffixes (<=3 chars): Must start with a capital letter (rest case-insensitive) to avoid false positives.
@@ -2015,47 +2081,50 @@ class MapFactory(LoggingMixin):
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
 
-        short_suffixes = []
-        long_suffixes = []
-
+        all_suffixes = set()
         for suffixes in cls.map_types.values():
-            for suffix in suffixes:
-                if len(suffix) <= 3:
-                    short_suffixes.append(suffix)
-                else:
-                    long_suffixes.append(suffix)
+            all_suffixes.update(suffixes)
 
-        # Sort by length descending to ensure longest match first
-        short_suffixes.sort(key=len, reverse=True)
-        long_suffixes.sort(key=len, reverse=True)
+        if not all_suffixes:
+            return base_name
 
-        patterns = []
+        sorted_suffixes = sorted(list(all_suffixes), key=len, reverse=True)
 
-        # Long suffixes: Case insensitive
+        # 1. Build Pattern for Underscore-Delimited Suffixes (Loose/Case-Insensitive)
+        # Matches: _AO, _ao, _Normal, _normal at end of string
+        # (?i:...) makes the group case-insensitive
+        p_underscore_inner = "|".join(re.escape(s) for s in sorted_suffixes)
+        pattern_underscore = f"_(?i:{p_underscore_inner})$"
+
+        # 2. Build Pattern for Attached Suffixes (Strict for Short)
+        # Long (>3): Case Insensitive
+        # Short (<=3): Capitalized First Letter
+        short_suffixes = [s for s in sorted_suffixes if len(s) <= 3]
+        long_suffixes = [s for s in sorted_suffixes if len(s) > 3]
+
+        attached_parts = []
+
         if long_suffixes:
-            p = "|".join(re.escape(s) for s in long_suffixes)
-            patterns.append(f"(?i:{p})")
+            p_long = "|".join(re.escape(s) for s in long_suffixes)
+            attached_parts.append(f"(?i:{p_long})")
 
-        # Short suffixes: Start with capital, rest case insensitive
         if short_suffixes:
-            short_parts = []
+            p_short_parts = []
             for s in short_suffixes:
                 if s and s[0].isalpha():
-                    # Enforce first char case (assuming registry has it capitalized)
                     first = s[0].upper()
                     rest = re.escape(s[1:])
-                    short_parts.append(f"{first}(?i:{rest})")
+                    p_short_parts.append(f"{first}(?i:{rest})")
                 else:
-                    short_parts.append(re.escape(s))
-            
-            p = "|".join(short_parts)
-            patterns.append(p)
+                    p_short_parts.append(re.escape(s))
+            attached_parts.append("|".join(p_short_parts))
 
-        suffixes_pattern = "|".join(patterns)
+        pattern_attached = f"(?:{'|'.join(attached_parts)})$"
 
-        # Pattern: (underscore + suffix) OR (suffix) at end
-        pattern = f"(?:_{suffixes_pattern}|{suffixes_pattern})$"
-        base_name = StrUtils.format_suffix(base_name, strip=pattern)
+        # Combine: Try Underscore first (greedy), then Attached
+        full_pattern = f"(?:{pattern_underscore}|{pattern_attached})"
+
+        base_name = StrUtils.format_suffix(base_name, strip=full_pattern)
 
         return base_name.rstrip("_")
 
@@ -2209,9 +2278,7 @@ class MapFactory(LoggingMixin):
         return cls._map_registry.get_precedence_rules()
 
     @classmethod
-    def filter_redundant_maps(
-        cls, sorted_maps: Dict[str, List[str]]
-    ) -> None:
+    def filter_redundant_maps(cls, sorted_maps: Dict[str, List[str]]) -> None:
         """Filters out maps that are rendered redundant by other present maps (e.g. MSAO).
 
         Modifies the sorted_maps dictionary in-place.
@@ -2264,9 +2331,14 @@ class MapFactory(LoggingMixin):
         # Normalize config
         workflow_config = cls.DEFAULT_CONFIG.copy()
         workflow_config.update(kwargs)
-        
+
         # Extract logger if provided, else use class logger
         logger = kwargs.get("logger", cls.logger)
+
+        if Image is None:
+            logger.warning(
+                "Pillow (PIL) is not installed. Image processing operations will be limited."
+            )
 
         # Resolve input files
         files = []
@@ -2300,7 +2372,9 @@ class MapFactory(LoggingMixin):
             ]
             if not files:
                 if logger:
-                    logger.warning("All input files were filtered out by ignored_patterns.")
+                    logger.warning(
+                        "All input files were filtered out by ignored_patterns."
+                    )
                 return []
 
         if group_by_set:

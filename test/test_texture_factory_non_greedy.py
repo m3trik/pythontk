@@ -8,7 +8,7 @@ import tempfile
 import shutil
 import unittest
 from pythontk import ImgUtils
-from pythontk.img_utils.texture_map_factory import TextureMapFactory
+from pythontk.img_utils.map_factory import MapFactory as TextureMapFactory
 
 
 class TestTextureFactoryNonGreedy(unittest.TestCase):

@@ -23,7 +23,7 @@ import tempfile
 import numpy as np
 from PIL import Image
 
-from pythontk import FileUtils, ImgUtils, TextureMapFactory
+from pythontk import FileUtils, ImgUtils, MapFactory as TextureMapFactory
 
 from conftest import BaseTestCase
 

@@ -166,7 +166,7 @@ class TestExecutionMonitor(BaseTestCase):
         self.assertEqual(result, "done")
         mock_dialog.assert_called()
         logger.warning.assert_called()
-        logger.info.assert_called_with("Continuing execution (monitoring active).")
+        logger.info.assert_called_with("Continuing execution (Keep Waiting).")
 
     @patch(
         "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
@@ -188,7 +188,7 @@ class TestExecutionMonitor(BaseTestCase):
 
         result = monitored_func()
         self.assertEqual(result, "interrupted")
-        logger.warning.assert_any_call("Aborting execution by user request.")
+        logger.warning.assert_any_call("Operation cancelled by user.")
 
     def test_is_escape_pressed_windows(self):
         """Test is_escape_pressed on Windows (mocked)."""
@@ -287,9 +287,11 @@ class TestExecutionMonitor(BaseTestCase):
                     )
 
                     # Zenity returns 0 with "Force Kill" stdout -> "FORCE_KILL"
-                    mock_run.return_value = MagicMock(
-                        returncode=0, stdout="Force Kill\n"
-                    )
+                    mock_process = MagicMock()
+                    mock_process.returncode = 0
+                    mock_process.stdout = "Force Quit\n"
+                    mock_run.return_value = mock_process
+
                     self.assertEqual(
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
                         "FORCE_KILL",
@@ -317,11 +319,11 @@ class TestExecutionMonitor(BaseTestCase):
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                     )
 
-                    # KDialog returns 2 (Cancel) -> "STOP_MONITORING"
+                    # KDialog returns 2 (Cancel) -> "FORCE_KILL"
                     mock_run.return_value = MagicMock(returncode=2)
                     self.assertEqual(
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
-                        "STOP_MONITORING",
+                        "FORCE_KILL",
                     )
 
     def test_on_long_execution_exception_propagation(self):
