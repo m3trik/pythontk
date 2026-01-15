@@ -78,18 +78,6 @@ jobs:
       - name: Install dependencies
         run: pip install build twine pythontk
       
-      - name: Check requirements alignment
-        run: |
-          echo "Checking if requirements.txt would need update..."
-          UPSTREAM_VERSION="${{ needs.validate-pythontk.outputs.version }}"
-          CURRENT_REQ=$(grep -oP 'pythontk==\K[0-9.]+' requirements.txt || echo "not pinned")
-          
-          if [ "$CURRENT_REQ" != "$UPSTREAM_VERSION" ]; then
-            echo "⚠️ requirements.txt has pythontk==$CURRENT_REQ, would update to ==$UPSTREAM_VERSION"
-          else
-            echo "✅ requirements.txt already aligned with upstream"
-          fi
-      
       - name: Get version
         id: version
         run: |
@@ -138,22 +126,6 @@ jobs:
       - name: Install dependencies
         run: pip install build twine pythontk uitk qtpy
       
-      - name: Check requirements alignment
-        run: |
-          echo "Checking requirements.txt alignment..."
-          
-          PTK_UPSTREAM="${{ needs.validate-pythontk.outputs.version }}"
-          PTK_REQ=$(grep -oP 'pythontk==\K[0-9.]+' requirements.txt || echo "not pinned")
-          
-          UITK_UPSTREAM="${{ needs.validate-uitk.outputs.version }}"
-          UITK_REQ=$(grep -oP 'uitk==\K[0-9.]+' requirements.txt || echo "not pinned")
-          
-          if [ "$PTK_REQ" != "$PTK_UPSTREAM" ]; then
-            echo "⚠️ pythontk: $PTK_REQ → $PTK_UPSTREAM"
-          fi
-          if [ "$UITK_REQ" != "$UITK_UPSTREAM" ]; then
-            echo "⚠️ uitk: $UITK_REQ → $UITK_UPSTREAM"
-          fi
       
       - name: Get version
         id: version
@@ -200,28 +172,6 @@ jobs:
       - name: Install dependencies
         run: pip install build twine pythontk uitk mayatk qtpy
       
-      - name: Check requirements alignment
-        run: |
-          echo "Checking requirements.txt alignment..."
-          
-          PTK_UPSTREAM="${{ needs.validate-pythontk.outputs.version }}"
-          PTK_REQ=$(grep -oP 'pythontk==\K[0-9.]+' requirements.txt || echo "not pinned")
-          
-          UITK_UPSTREAM="${{ needs.validate-uitk.outputs.version }}"
-          UITK_REQ=$(grep -oP 'uitk==\K[0-9.]+' requirements.txt || echo "not pinned")
-          
-          MAYATK_UPSTREAM="${{ needs.validate-mayatk.outputs.version }}"
-          MAYATK_REQ=$(grep -oP 'mayatk==\K[0-9.]+' requirements.txt || echo "not pinned")
-          
-          if [ "$PTK_REQ" != "$PTK_UPSTREAM" ]; then
-            echo "⚠️ pythontk: $PTK_REQ → $PTK_UPSTREAM"
-          fi
-          if [ "$UITK_REQ" != "$UITK_UPSTREAM" ]; then
-            echo "⚠️ uitk: $UITK_REQ → $UITK_UPSTREAM"
-          fi
-          if [ "$MAYATK_REQ" != "$MAYATK_UPSTREAM" ]; then
-            echo "⚠️ mayatk: $MAYATK_REQ → $MAYATK_UPSTREAM"
-          fi
       
       - name: Get version
         id: version
