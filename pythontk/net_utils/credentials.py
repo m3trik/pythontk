@@ -19,7 +19,7 @@ except ImportError:
 class Credentials:
     """
     Abstractions for OS-level secure credential storage.
-    
+
     Priority Order:
     1. 'keyring' library (if installed) - Supports Windows/Mac/Linux(Gnome/KDE)
     2. Native Windows Credential Manager (via pywin32)
@@ -50,7 +50,7 @@ class Credentials:
             try:
                 pwd = keyring.get_password("pythontk", target_name)
                 if pwd:
-                    # Keyring doesn't always store usernames tightly coupled, 
+                    # Keyring doesn't always store usernames tightly coupled,
                     # but we can try to fetch a separate entry or default it.
                     # For simple usage, we might just return the password.
                     # To keep API consistent, we try to finding a stored user or return 'unknown'.
@@ -93,7 +93,7 @@ class Credentials:
             return Credentials._set_windows_creds(
                 target_name, username, password, persist
             )
-        
+
         print(f"Warning: No secure storage backend available for {system}.")
         print("To support Linux secret storage, install the 'keyring' package:")
         print("  pip install keyring")
@@ -105,21 +105,23 @@ class Credentials:
         Fallback: Check environment variables.
         Name Mapping: "server_guac" -> "SERVER_GUAC_PASSWORD"
         """
-        safe_target = target.upper().replace(" ", "_").replace("-", "_").replace(".", "_")
-        
+        safe_target = (
+            target.upper().replace(" ", "_").replace("-", "_").replace(".", "_")
+        )
+
         # Try generic patterns
         keys_to_try = [
             f"{safe_target}_PASSWORD",
             f"{safe_target}_SECRET",
-            f"{safe_target}_KEY"
+            f"{safe_target}_KEY",
         ]
-        
+
         for key in keys_to_try:
             val = os.environ.get(key)
             if val:
                 user = os.environ.get(f"{safe_target}_USER", "env_user")
                 return {"username": user, "password": val}
-        
+
         return None
 
     @staticmethod
