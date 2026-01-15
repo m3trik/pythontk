@@ -4,6 +4,9 @@ import sys
 import re
 import json
 import subprocess
+import tomllib
+from pathlib import Path
+from typing import List, Union
 from pythontk.core_utils import help_mixin
 
 
@@ -536,6 +539,81 @@ class PackageManager(
                 key, value = line.split(":", 1)
                 output_dict[key.strip().lower()] = value.strip()
         return output_dict
+
+    @staticmethod
+    def get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]:
+        """
+        Sort a list of local repository paths based on their pyproject.toml dependencies.
+
+        Args:
+            paths: List of directory paths containing pyproject.toml files.
+
+        Returns:
+            List of Path objects sorted topologically (dependents last).
+        """
+        paths = [Path(p).resolve() for p in paths]
+
+        # Map package name to path
+        pkg_map = {}
+        for p in paths:
+            pyproject = p / "pyproject.toml"
+            if pyproject.exists():
+                try:
+                    with open(pyproject, "rb") as f:
+                        data = tomllib.load(f)
+                    name = data.get("project", {}).get("name")
+                    if name:
+                        pkg_map[name] = p
+                except Exception as e:
+                    print(f"Warning: Failed to parse {pyproject}: {e}")
+
+        # Build graph
+        graph = {name: set() for name in pkg_map}
+        for name, path in pkg_map.items():
+            pyproject = path / "pyproject.toml"
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+
+            deps = data.get("project", {}).get("dependencies", [])
+            for dep in deps:
+                # Handle version specifiers (e.g., "pythontk>=0.7.60")
+                dep_name = re.split(r"[<>=!~;]", dep)[0].strip()
+                if dep_name in pkg_map:
+                    graph[name].add(dep_name)
+
+        # Topological Sort
+        result = []
+        visited = set()
+        temp_visited = set()
+
+        def visit(node):
+            if node in temp_visited:
+                raise ValueError(f"Circular dependency detected: {node}")
+            if node in visited:
+                return
+
+            temp_visited.add(node)
+            for neighbor in graph.get(node, []):
+                visit(neighbor)
+
+            # Topological sort: add current node after visiting children
+            # But wait, dependants should be updated AFTER dependencies.
+            # If A depends on B (A->B), we need to update B before A.
+            # So B should appear before A in the list.
+            # My logic is: visit(node) visits dependencies.
+            # If I append node to result AFTER visiting dependencies,
+            # then dependencies (B) are in result before dependent (A).
+            # [B, A].
+            # This is correct for build order: Build B, then A.
+
+            temp_visited.remove(node)
+            visited.add(node)
+            result.append(node)
+
+        for node in graph:
+            visit(node)
+
+        return [pkg_map[name] for name in result]
 
 
 # --------------------------------------------------------------------------------------------

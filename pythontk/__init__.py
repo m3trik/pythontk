@@ -22,6 +22,7 @@ DEFAULT_INCLUDE = {
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
     "core_utils.package_manager": "PackageManager",
+    "core_utils.git": "Git",
     "core_utils.class_property": "ClassProperty",
     "core_utils.logging_mixin": "LoggingMixin",
     "core_utils.table_mixin": "TableMixin",
