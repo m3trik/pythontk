@@ -78,9 +78,7 @@ class VidUtils(HelpMixin):
         if ffmpeg_path:
             return ffmpeg_path
 
-        raise FileNotFoundError(
-            "FFmpeg is required but not found in the system path."
-        )
+        raise FileNotFoundError("FFmpeg is required but not found in the system path.")
 
     @classmethod
     def get_video_frame_rate(cls, filepath: str) -> float:

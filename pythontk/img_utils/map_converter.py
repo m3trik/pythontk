@@ -348,10 +348,8 @@ class MapConverterSlots(ImgUtils):
             print(f"Unpacking: {metallic_smoothness_path} ..")
 
             try:
-                metallic_path, smoothness_path = (
-                    MapFactory.unpack_metallic_smoothness(
-                        metallic_smoothness_path
-                    )
+                metallic_path, smoothness_path = MapFactory.unpack_metallic_smoothness(
+                    metallic_smoothness_path
                 )
                 print(f"// Metallic map: {metallic_path}")
                 print(f"// Smoothness map: {smoothness_path}")
