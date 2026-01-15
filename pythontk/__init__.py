@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.7.60"
+__version__ = "0.7.61"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -22,6 +22,7 @@ DEFAULT_INCLUDE = {
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
     "core_utils.package_manager": "PackageManager",
+    "core_utils.git": "Git",
     "core_utils.class_property": "ClassProperty",
     "core_utils.logging_mixin": "LoggingMixin",
     "core_utils.table_mixin": "TableMixin",
