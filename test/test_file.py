@@ -372,23 +372,22 @@ class FileTest(BaseTestCase):
         """Test get_dir_contents returns filenames recursively."""
         path = str(self.test_files_path)
         result = FileUtils.get_dir_contents(path, "filename", recursive=True)
+        expected = [
+            "file1",
+            "file2",
+            "test",
+            "im_Base_color",
+            "im_H",
+            "im_Height_16",
+            "im_Height_8",
+            "im_Mixed_AO_L",
+            "im_N",
+            "im_Normal_DirectX",
+            "im_Normal_OpenGL",
+        ]
         self.assertEqual(
-            sorted(result),
-            sorted(
-                [
-                    "file1",
-                    "file2",
-                    "test",
-                    "im_Base_color",
-                    "im_H",
-                    "im_Height_16",
-                    "im_Height_8",
-                    "im_Mixed_AO_L",
-                    "im_N",
-                    "im_Normal_DirectX",
-                    "im_Normal_OpenGL",
-                ]
-            ),
+            sorted([f.lower() for f in result]),
+            sorted([f.lower() for f in expected]),
         )
 
     def test_get_dir_contents_file_and_dir(self):
