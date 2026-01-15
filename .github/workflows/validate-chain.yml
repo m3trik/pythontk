@@ -78,6 +78,19 @@ jobs:
       - name: Install dependencies
         run: pip install build twine pythontk
       
+      - name: Check dependency alignment
+        run: |
+          echo "Checking dependency alignment..."
+          
+          PTK_UPSTREAM="${{ needs.validate-pythontk.outputs.version }}"
+          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
+          
+          if [ "$PTK_REQ" != "$PTK_UPSTREAM" ]; then
+            echo "::warning::pythontk requirement ($PTK_REQ) does not match upstream build ($PTK_UPSTREAM)"
+          else
+            echo "✅ pythontk requirement aligned: $PTK_REQ"
+          fi
+      
       - name: Get version
         id: version
         run: |
@@ -126,6 +139,22 @@ jobs:
       - name: Install dependencies
         run: pip install build twine pythontk uitk qtpy
       
+      - name: Check dependency alignment
+        run: |
+          echo "Checking dependency alignment..."
+          
+          PTK_UPSTREAM="${{ needs.validate-pythontk.outputs.version }}"
+          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
+          
+          UITK_UPSTREAM="${{ needs.validate-uitk.outputs.version }}"
+          UITK_REQ=$(grep -oP 'uitk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
+          
+          if [ "$PTK_REQ" != "$PTK_UPSTREAM" ]; then
+            echo "::warning::pythontk requirement ($PTK_REQ) does not match upstream build ($PTK_UPSTREAM)"
+          fi
+          if [ "$UITK_REQ" != "$UITK_UPSTREAM" ]; then
+            echo "::warning::uitk requirement ($UITK_REQ) does not match upstream build ($UITK_UPSTREAM)"
+          fi
       
       - name: Get version
         id: version
@@ -172,6 +201,28 @@ jobs:
       - name: Install dependencies
         run: pip install build twine pythontk uitk mayatk qtpy
       
+      - name: Check dependency alignment
+        run: |
+          echo "Checking dependency alignment..."
+          
+          PTK_UPSTREAM="${{ needs.validate-pythontk.outputs.version }}"
+          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
+          
+          UITK_UPSTREAM="${{ needs.validate-uitk.outputs.version }}"
+          UITK_REQ=$(grep -oP 'uitk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
+          
+          MAYATK_UPSTREAM="${{ needs.validate-mayatk.outputs.version }}"
+          MAYATK_REQ=$(grep -oP 'mayatk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
+          
+          if [ "$PTK_REQ" != "$PTK_UPSTREAM" ]; then
+            echo "::warning::pythontk requirement ($PTK_REQ) does not match upstream build ($PTK_UPSTREAM)"
+          fi
+          if [ "$UITK_REQ" != "$UITK_UPSTREAM" ]; then
+            echo "::warning::uitk requirement ($UITK_REQ) does not match upstream build ($UITK_UPSTREAM)"
+          fi
+          if [ "$MAYATK_REQ" != "$MAYATK_UPSTREAM" ]; then
+            echo "::warning::mayatk requirement ($MAYATK_REQ) does not match upstream build ($MAYATK_UPSTREAM)"
+          fi
       
       - name: Get version
         id: version
