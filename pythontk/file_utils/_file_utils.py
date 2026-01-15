@@ -868,7 +868,7 @@ class FileUtils(HelpMixin):
         for filename in filenames:
             filepath = os.path.join(path, filename)
 
-            with open(filepath, "r") as file:
+            with open(filepath, "r", encoding="utf-8") as file:
                 module_ast = ast.parse(file.read())
                 if top_level_only:
                     classes = [

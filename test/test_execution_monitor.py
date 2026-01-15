@@ -2,11 +2,24 @@ import unittest
 import time
 import threading
 import sys
+import os
+import tempfile
 from unittest.mock import MagicMock, patch
 from pythontk.core_utils.execution_monitor import ExecutionMonitor
 
 
 from conftest import BaseTestCase
+import inspect
+import sys
+
+print(f"DEBUG: ExecutionMonitor file: {inspect.getfile(ExecutionMonitor)}")
+print(
+    f"DEBUG: pythontk.core_utils.execution_monitor in sys.modules: {'pythontk.core_utils.execution_monitor' in sys.modules}"
+)
+if "pythontk.core_utils.execution_monitor" in sys.modules:
+    print(
+        f"DEBUG: pythontk.core_utils.execution_monitor file: {getattr(sys.modules['pythontk.core_utils.execution_monitor'], '__file__', 'unknown')}"
+    )
 
 
 class TestExecutionMonitor(BaseTestCase):
@@ -80,7 +93,7 @@ class TestExecutionMonitor(BaseTestCase):
         def abortable_func():
             try:
                 # Sleep long enough to trigger callback
-                time.sleep(1.0)
+                time.sleep(3.0)
             except KeyboardInterrupt:
                 return "interrupted"
             return "finished"
@@ -113,17 +126,17 @@ class TestExecutionMonitor(BaseTestCase):
         """Test that holding Escape interrupts execution if allowed."""
         # Mock escape being pressed after a short delay
         # We need is_escape_pressed to return False initially, then True
-        mock_is_escape.side_effect = [False, False, True, True, True]
+        mock_is_escape.side_effect = [False] * 5 + [True] * 100
 
         callback = MagicMock()
 
         @ExecutionMonitor.on_long_execution(
-            threshold=1.0, callback=callback, allow_escape_cancel=True
+            threshold=0.5, callback=callback, allow_escape_cancel=True
         )
         def escape_func():
             try:
                 # Sleep in small chunks to allow interrupt to happen
-                for _ in range(10):
+                for _ in range(50):
                     time.sleep(0.1)
             except KeyboardInterrupt:
                 return "interrupted"
@@ -146,14 +159,14 @@ class TestExecutionMonitor(BaseTestCase):
             threshold=0.1, message="Testing", logger=logger
         )
         def monitored_func():
-            time.sleep(0.2)
+            time.sleep(2.0)
             return "done"
 
         result = monitored_func()
         self.assertEqual(result, "done")
         mock_dialog.assert_called()
         logger.warning.assert_called()
-        logger.info.assert_called_with("Continuing execution (monitoring active).")
+        logger.info.assert_called_with("Continuing execution (Keep Waiting).")
 
     @patch(
         "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
@@ -168,14 +181,14 @@ class TestExecutionMonitor(BaseTestCase):
         )
         def monitored_func():
             try:
-                time.sleep(0.5)
+                time.sleep(3.0)
             except KeyboardInterrupt:
                 return "interrupted"
             return "finished"
 
         result = monitored_func()
         self.assertEqual(result, "interrupted")
-        logger.warning.assert_any_call("Aborting execution by user request.")
+        logger.warning.assert_any_call("Operation cancelled by user.")
 
     def test_is_escape_pressed_windows(self):
         """Test is_escape_pressed on Windows (mocked)."""
@@ -205,11 +218,11 @@ class TestExecutionMonitor(BaseTestCase):
                     ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                 )
 
-                # IDCANCEL=2 -> "STOP_MONITORING"
+                # IDCANCEL=2 -> "FORCE_KILL"
                 mock_msg_box.return_value = 2
                 self.assertEqual(
                     ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
-                    "STOP_MONITORING",
+                    "FORCE_KILL",
                 )
 
     def test_is_escape_pressed_linux(self):
@@ -273,13 +286,15 @@ class TestExecutionMonitor(BaseTestCase):
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                     )
 
-                    # Zenity returns 0 with "Stop Monitoring" stdout -> "STOP_MONITORING"
-                    mock_run.return_value = MagicMock(
-                        returncode=0, stdout="Stop Monitoring\n"
-                    )
+                    # Zenity returns 0 with "Force Kill" stdout -> "FORCE_KILL"
+                    mock_process = MagicMock()
+                    mock_process.returncode = 0
+                    mock_process.stdout = "Force Quit\n"
+                    mock_run.return_value = mock_process
+
                     self.assertEqual(
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
-                        "STOP_MONITORING",
+                        "FORCE_KILL",
                     )
 
     def test_show_long_execution_dialog_linux_kdialog(self):
@@ -304,11 +319,11 @@ class TestExecutionMonitor(BaseTestCase):
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                     )
 
-                    # KDialog returns 2 (Cancel) -> "STOP_MONITORING"
+                    # KDialog returns 2 (Cancel) -> "FORCE_KILL"
                     mock_run.return_value = MagicMock(returncode=2)
                     self.assertEqual(
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
-                        "STOP_MONITORING",
+                        "FORCE_KILL",
                     )
 
     def test_on_long_execution_exception_propagation(self):
@@ -412,6 +427,171 @@ class TestExecutionMonitor(BaseTestCase):
             interrupt_caught.is_set(), "Main thread should have been interrupted"
         )
         callback.assert_called()
+
+    def test_default_heartbeat_path_sanitizes_tag(self):
+        with patch("tempfile.gettempdir", return_value="C:/temp"):
+            p = ExecutionMonitor._default_heartbeat_path("a/b:{c}\\d")
+            self.assertTrue(p.startswith("C:/temp"))
+            self.assertIn(f"hb_{os.getpid()}.txt", p)
+
+    def test_start_heartbeat_writer_writes_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as td:
+            hb = os.path.join(td, "hb.txt")
+            stop = ExecutionMonitor._start_heartbeat_writer(hb, interval=0.05)
+
+            try:
+                time.sleep(0.2)
+                self.assertTrue(os.path.exists(hb))
+                first_mtime = os.path.getmtime(hb)
+                time.sleep(0.2)
+                second_mtime = os.path.getmtime(hb)
+                self.assertGreaterEqual(second_mtime, first_mtime)
+            finally:
+                stop()
+
+            self.assertFalse(os.path.exists(hb))
+
+    def test_spawn_watchdog_subprocess_builds_args_and_stop(self):
+        with tempfile.TemporaryDirectory() as td:
+            hb = os.path.join(td, "hb.txt")
+            # Create heartbeat so watchdog doesn't immediately consider it missing.
+            with open(hb, "w", encoding="utf-8") as f:
+                f.write("0")
+
+            fake_proc = MagicMock()
+            fake_proc.poll.return_value = None
+
+            with patch("subprocess.Popen", return_value=fake_proc) as popen:
+                proc, stop = ExecutionMonitor._spawn_watchdog_subprocess(
+                    pid=1234,
+                    heartbeat_path=hb,
+                    timeout=5.0,
+                    check_interval=0.5,
+                    kill_tree=True,
+                )
+
+                self.assertIs(proc, fake_proc)
+                self.assertIsNotNone(stop)
+
+                # Verify Popen called with python -c <code> and our args
+                popen.assert_called()
+                called_args, called_kwargs = popen.call_args
+                argv = called_args[0]
+                self.assertEqual(argv[0], sys.executable)
+                self.assertEqual(argv[1], "-c")
+                self.assertEqual(argv[3], "1234")
+                self.assertEqual(argv[4], hb)
+                self.assertEqual(argv[5], "5.0")
+                self.assertEqual(argv[6], "0.5")
+                self.assertEqual(argv[7], "1")
+                self.assertTrue(argv[8].endswith(".stop"))
+
+                # stop() should write stop file, terminate process, and cleanup stop file
+                stop_file = argv[8]
+                self.assertFalse(os.path.exists(stop_file))
+                stop()
+                fake_proc.terminate.assert_called()
+                self.assertFalse(os.path.exists(stop_file))
+
+    def test_spawn_watchdog_subprocess_windows_sets_no_window(self):
+        with tempfile.TemporaryDirectory() as td:
+            hb = os.path.join(td, "hb.txt")
+            with open(hb, "w", encoding="utf-8") as f:
+                f.write("0")
+
+            fake_proc = MagicMock()
+            fake_proc.poll.return_value = None
+
+            with patch("sys.platform", "win32"):
+                with patch("subprocess.CREATE_NO_WINDOW", 123, create=True):
+                    with patch("subprocess.Popen", return_value=fake_proc) as popen:
+                        ExecutionMonitor._spawn_watchdog_subprocess(
+                            pid=1234,
+                            heartbeat_path=hb,
+                            timeout=5.0,
+                            check_interval=0.5,
+                            kill_tree=False,
+                        )
+                        _, kwargs = popen.call_args
+                        self.assertEqual(kwargs.get("creationflags"), 123)
+
+    def test_external_watchdog_decorator_starts_and_stops(self):
+        stop_hb = MagicMock()
+        stop_wd = MagicMock()
+        proc = MagicMock()
+
+        with patch(
+            "pythontk.core_utils.execution_monitor.ExecutionMonitor._start_heartbeat_writer",
+            return_value=stop_hb,
+        ) as start_hb:
+            with patch(
+                "pythontk.core_utils.execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
+                return_value=(proc, stop_wd),
+            ) as spawn_wd:
+
+                @ExecutionMonitor.external_watchdog(timeout=1.0, heartbeat_interval=0.1)
+                def fn():
+                    return 123
+
+                self.assertEqual(fn(), 123)
+                start_hb.assert_called()
+                spawn_wd.assert_called()
+                stop_hb.assert_called()
+                stop_wd.assert_called()
+
+    @patch(
+        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+    )
+    def test_execution_monitor_no_dialog_logs_only(self, mock_dialog):
+        """When show_dialog=False, no UI is shown but warnings still log."""
+        logger = MagicMock()
+
+        @ExecutionMonitor.execution_monitor(
+            threshold=0.1,
+            message="Testing",
+            logger=logger,
+            show_dialog=False,
+        )
+        def monitored_func():
+            time.sleep(0.25)
+            return "done"
+
+        self.assertEqual(monitored_func(), "done")
+        mock_dialog.assert_not_called()
+        self.assertTrue(logger.warning.called)
+
+    def test_execution_monitor_watchdog_timeout_wraps(self):
+        """When watchdog_timeout is set, the external watchdog is enabled."""
+        stop_hb = MagicMock()
+        stop_wd = MagicMock()
+        proc = MagicMock()
+
+        with patch(
+            "pythontk.core_utils.execution_monitor.ExecutionMonitor._start_heartbeat_writer",
+            return_value=stop_hb,
+        ) as start_hb:
+            with patch(
+                "pythontk.core_utils.execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
+                return_value=(proc, stop_wd),
+            ) as spawn_wd:
+
+                @ExecutionMonitor.execution_monitor(
+                    threshold=0.1,
+                    message="Testing",
+                    logger=None,
+                    show_dialog=False,
+                    watchdog_timeout=2.0,
+                    watchdog_heartbeat_interval=0.1,
+                    watchdog_check_interval=0.2,
+                )
+                def monitored_func():
+                    return "ok"
+
+                self.assertEqual(monitored_func(), "ok")
+                start_hb.assert_called()
+                spawn_wd.assert_called()
+                stop_hb.assert_called()
+                stop_wd.assert_called()
 
 
 if __name__ == "__main__":

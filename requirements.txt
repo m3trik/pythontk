@@ -1,3 +1,0 @@
-numpy
-Pillow
-pywin32

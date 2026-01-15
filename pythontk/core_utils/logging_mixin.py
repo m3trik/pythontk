@@ -2,8 +2,31 @@
 # coding=utf-8
 import threading
 import logging as internal_logging
-from typing import Union, List, Optional, Any
+import re
+from typing import Union, List, Optional, Any, Callable
 from pythontk.core_utils.class_property import ClassProperty
+
+
+class StripHtmlFormatter(internal_logging.Formatter):
+    """Formatter that strips HTML tags from the message."""
+
+    def format(self, record):
+        # Save original message
+        original_msg = record.msg
+        if (
+            isinstance(original_msg, str)
+            and "<" in original_msg
+            and ">" in original_msg
+        ):
+            # Strip tags for this formatting operation
+            record.msg = re.sub(r"<[^>]+>", "", original_msg)
+
+        # Format with stripped message
+        formatted = super().format(record)
+
+        # Restore original message (in case other handlers need the HTML)
+        record.msg = original_msg
+        return formatted
 
 
 class LoggerExt:
@@ -13,6 +36,33 @@ class LoggerExt:
     SUCCESS = 25
     RESULT = 35
     NOTICE = 45
+
+    # Default log colors (Hex)
+    LOG_COLORS = {
+        "DEBUG": "#AAAAAA",  # Neutral gray
+        "INFO": "#FFFFFF",  # Pure white
+        "WARNING": "#FFF5B7",  # Pastel yellow
+        "ERROR": "#FFCCCC",  # Pastel pink
+        "CRITICAL": "#CC3333",  # Strong red
+        "SUCCESS": "#CCFFCC",  # Pastel green
+        "RESULT": "#CCFFFF",  # Pastel teal
+        "NOTICE": "#E5CCFF",  # Pastel lavender
+    }
+
+    # HTML Presets for formatting log messages
+    HTML_PRESETS = {
+        "default": '<span style="color:{color}">{message}</span>',
+        "bold": '<span style="color:{color}; font-weight:bold">{message}</span>',
+        "italic": '<span style="color:{color}; font-style:italic">{message}</span>',
+        "header": '<br><h3 style="color:{color}">{message}</h3>',
+        "highlight": '<br><hl style="color:{color}">{message}</hl>',
+    }
+
+    # Default presets for log levels
+    LEVEL_PRESETS = {
+        "DEBUG": "italic",
+        "CRITICAL": "bold",
+    }
 
     # Base log formats
     BASE_FORMATS = {
@@ -113,13 +163,73 @@ class LoggerExt:
             "warning_once": LoggerExt._warning_once,
             "set_spam_prevention": LoggerExt._set_spam_prevention,
             "clear_error_cache": LoggerExt._clear_error_cache,
+            "info": LoggerExt._info,
+            "debug": LoggerExt._debug,
+            "warning": LoggerExt._warning,
+            "error": LoggerExt._error,
+            "critical": LoggerExt._critical,
         }
 
         for name, method in wrapped_methods.items():
             setattr(logger, name, make_method_wrapper(method))
 
     @staticmethod
-    def _select_formatter(self, level: int) -> internal_logging.Formatter:
+    def _log_custom(logger, level_int, msg, *args, **kwargs):
+        """Log with optional custom formatting (preset/color)."""
+        preset = kwargs.pop("preset", None)
+        color_level = kwargs.pop("color", None)
+
+        # Heuristic for positional args: (color, preset) or (preset)
+        if isinstance(msg, str) and not preset and not color_level:
+            if len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], str):
+                # Check if args[1] is a known preset
+                if args[1] in LoggerExt.HTML_PRESETS:
+                    color_level = args[0]
+                    preset = args[1]
+                    args = ()
+            elif len(args) == 1 and isinstance(args[0], str):
+                if args[0] in LoggerExt.HTML_PRESETS:
+                    preset = args[0]
+                    args = ()
+                elif args[0].upper() in LoggerExt.LOG_COLORS:
+                    color_level = args[0]
+                    args = ()
+
+        if preset or color_level:
+            if not color_level:
+                color_level = internal_logging.getLevelName(level_int)
+
+            formatted_msg = LoggerExt.format_message_as_html(msg, color_level, preset)
+            internal_logging.Logger.log(
+                logger, level_int, formatted_msg, *args, **kwargs
+            )
+        else:
+            internal_logging.Logger.log(logger, level_int, msg, *args, **kwargs)
+
+    @staticmethod
+    def _info(logger, msg, *args, **kwargs):
+        LoggerExt._log_custom(logger, internal_logging.INFO, msg, *args, **kwargs)
+
+    @staticmethod
+    def _debug(logger, msg, *args, **kwargs):
+        LoggerExt._log_custom(logger, internal_logging.DEBUG, msg, *args, **kwargs)
+
+    @staticmethod
+    def _warning(logger, msg, *args, **kwargs):
+        LoggerExt._log_custom(logger, internal_logging.WARNING, msg, *args, **kwargs)
+
+    @staticmethod
+    def _error(logger, msg, *args, **kwargs):
+        LoggerExt._log_custom(logger, internal_logging.ERROR, msg, *args, **kwargs)
+
+    @staticmethod
+    def _critical(logger, msg, *args, **kwargs):
+        LoggerExt._log_custom(logger, internal_logging.CRITICAL, msg, *args, **kwargs)
+
+    @staticmethod
+    def _select_formatter(
+        self, level: int, strip_html: bool = False
+    ) -> internal_logging.Formatter:
         """Select formatter based on the log level."""
         prefix = getattr(self, "_log_prefix", "")
         suffix = getattr(self, "_log_suffix", "")
@@ -129,12 +239,15 @@ class LoggerExt:
         format_string = base_format.replace(
             "%(message)s", f"{prefix}%(message)s{suffix}"
         )
+
+        formatter_cls = StripHtmlFormatter if strip_html else internal_logging.Formatter
+
         log_timestamp = getattr(self, "_log_timestamp", None)
         if log_timestamp:
             format_string = "[%(asctime)s] " + format_string
-            formatter = internal_logging.Formatter(format_string, datefmt=log_timestamp)
+            formatter = formatter_cls(format_string, datefmt=log_timestamp)
         else:
-            formatter = internal_logging.Formatter(format_string)
+            formatter = formatter_cls(format_string)
         return formatter
 
     @staticmethod
@@ -173,12 +286,28 @@ class LoggerExt:
             )
         elif handler_type == "text_widget":
             handler_cls = LoggerExt._get_text_handler()
-            handler = handler_cls(kwargs.get("widget"))
+            # Check if the handler accepts monospace argument
+            import inspect
+
+            sig = inspect.signature(handler_cls)
+            handler_kwargs = {"widget": kwargs.get("widget")}
+            if "monospace" in sig.parameters:
+                handler_kwargs["monospace"] = kwargs.get("monospace", True)
+            if "use_html" in sig.parameters:
+                handler_kwargs["use_html"] = kwargs.get("use_html", True)
+
+            handler = handler_cls(**handler_kwargs)
 
         if handler:
             level = kwargs.get("level", internal_logging.WARNING)
             handler.setLevel(level)
-            handler.setFormatter(logger._formatter_selector(level))
+
+            # Use StripHtmlFormatter for file and stream handlers by default
+            strip_html = handler_type in ["file", "stream"]
+            handler.setFormatter(
+                logger._formatter_selector(level, strip_html=strip_html)
+            )
+
             logger.addHandler(handler)
             logger.debug(f"{handler_type.capitalize()} handler added")
 
@@ -198,11 +327,18 @@ class LoggerExt:
 
     @staticmethod
     def _add_text_widget_handler(
-        self, text_widget: object, level: int = internal_logging.WARNING
+        self,
+        text_widget: object,
+        level: int = internal_logging.WARNING,
+        monospace: bool = True,
     ) -> None:
         """Add a text widget handler to the logger."""
         LoggerExt._add_handler(
-            self, handler_type="text_widget", widget=text_widget, level=level
+            self,
+            handler_type="text_widget",
+            widget=text_widget,
+            level=level,
+            monospace=monospace,
         )
 
     @staticmethod
@@ -221,7 +357,15 @@ class LoggerExt:
     def _update_handler_formatters(logger: internal_logging.Logger) -> None:
         """Update all handler formatters with the current prefix/suffix."""
         for handler in logger.handlers:
-            handler.setFormatter(logger._formatter_selector(handler.level))
+            # Determine if this handler should strip HTML
+            is_file_or_stream = isinstance(
+                handler,
+                (internal_logging.FileHandler, internal_logging.StreamHandler),
+            ) and not isinstance(handler, DefaultTextLogHandler)
+
+            handler.setFormatter(
+                logger._formatter_selector(handler.level, strip_html=is_file_or_stream)
+            )
 
     @staticmethod
     def _set_level(self, level: Union[int, str]) -> None:
@@ -253,7 +397,14 @@ class LoggerExt:
             stream = getattr(handler, "stream", None)
             if stream:
                 try:
-                    stream.write(message + "\n")
+                    # Check if we should strip HTML
+                    msg_to_write = message
+                    if handler.formatter and isinstance(
+                        handler.formatter, StripHtmlFormatter
+                    ):
+                        msg_to_write = re.sub(r"<[^>]+>", "", message)
+
+                    stream.write(msg_to_write + "\n")
                     stream.flush()
                 except Exception as e:
                     print(f"Logging error (raw write): {e}")
@@ -275,9 +426,18 @@ class LoggerExt:
                     print(f"Logging error (raw emit): {e}")
 
     @staticmethod
-    def _log_box(self, title: str, items: List[str] = None, align: str = "left") -> int:
+    def _log_box(
+        self,
+        title: str,
+        items: List[str] = None,
+        align: str = "left",
+        level: str = None,
+    ) -> int:
         """Print an ASCII box with title and optional list of lines. Returns box width."""
-        padding = 2
+        padding = 1
+        # Use non-breaking space to prevent HTML space collapsing in handlers
+        space = "\u00a0"
+
         content = [title] + (items or [])
         longest = max(len(line) for line in content)
         inner_width = longest + padding * 2
@@ -286,26 +446,35 @@ class LoggerExt:
         top = "╔" + "═" * inner_width + "╗"
 
         if align == "left":
-            title_text = " " * padding + title.ljust(longest) + " " * padding
+            title_text = space * padding + title.ljust(longest, space) + space * padding
         elif align == "right":
-            title_text = " " * padding + title.rjust(longest) + " " * padding
+            title_text = space * padding + title.rjust(longest, space) + space * padding
         else:  # center
-            title_text = " " * padding + title.center(longest) + " " * padding
+            title_text = (
+                space * padding + title.center(longest, space) + space * padding
+            )
 
         mid = "║" + title_text + "║"
         sep = "╟" + "─" * inner_width + "╢"
         bottom = "╚" + "═" * inner_width + "╝"
 
-        LoggerExt._log_raw(self, top)
-        LoggerExt._log_raw(self, mid)
+        color = LoggerExt.get_color(level) if level else None
+
+        def log_line(line):
+            if color:
+                line = f'<span style="color:{color}">{line}</span>'
+            LoggerExt._log_raw(self, line)
+
+        log_line(top)
+        log_line(mid)
 
         if items:
-            LoggerExt._log_raw(self, sep)
+            log_line(sep)
             for item in items:
-                item_line = " " + item.ljust(inner_width - 1)
-                LoggerExt._log_raw(self, f"║{item_line}║")
+                item_line = space + item.ljust(inner_width - 1, space)
+                log_line(f"║{item_line}║")
 
-        LoggerExt._log_raw(self, bottom)
+        log_line(bottom)
 
         return width
 
@@ -354,11 +523,15 @@ class LoggerExt:
 
     @staticmethod
     def _setup_logging_redirect(
-        self, target: Union[str, object], level: int = internal_logging.INFO
+        self,
+        target: Union[str, object],
+        level: int = internal_logging.INFO,
+        monospace: bool = True,
     ) -> None:
         """Redirect logging output to a specified target.
         :param target: Can be a filename (str), a stream (e.g., sys.stdout), or a widget (object).
         :param level: The log level for the redirection.
+        :param monospace: Whether to use monospace font for text widgets.
         """
         self.setLevel(level)  # <-- Always set logger level!
         if isinstance(target, str):
@@ -369,7 +542,9 @@ class LoggerExt:
             stream_handler.setFormatter(self._formatter_selector(level))
             self.addHandler(stream_handler)
         elif hasattr(target, "append"):
-            self.add_text_widget_handler(text_widget=target, level=level)
+            self.add_text_widget_handler(
+                text_widget=target, level=level, monospace=monospace
+            )
         else:
             raise ValueError("Unsupported target type for logging redirection.")
 
@@ -471,6 +646,36 @@ class LoggerExt:
         """Clear the error cache."""
         logger._error_cache.clear()
 
+    @classmethod
+    def get_color(cls, level: str) -> str:
+        """Get the color code for a given log level."""
+        return cls.LOG_COLORS.get(level.upper(), "#FFFFFF")
+
+    @classmethod
+    def register_html_preset(cls, name: str, format_str: str) -> None:
+        """Register a new HTML preset."""
+        cls.HTML_PRESETS[name] = format_str
+
+    @classmethod
+    def get_html_preset(cls, name: str) -> str:
+        """Get an HTML preset by name."""
+        return cls.HTML_PRESETS.get(name, cls.HTML_PRESETS["default"])
+
+    @classmethod
+    def format_message_as_html(
+        cls, message: str, level: str, preset: str = None
+    ) -> str:
+        """Format a message using HTML presets."""
+        color = cls.get_color(level)
+
+        # Determine preset
+        if not preset:
+            # Use level-based default if available, otherwise default
+            preset = cls.LEVEL_PRESETS.get(level.upper(), "default")
+
+        fmt = cls.get_html_preset(preset)
+        return fmt.format(color=color, message=message)
+
 
 class DefaultTextLogHandler(internal_logging.Handler):
     """A generic thread-safe logging handler that writes logs to any widget
@@ -489,14 +694,20 @@ class DefaultTextLogHandler(internal_logging.Handler):
         try:
             if getattr(record, "raw", False):
                 msg = record.getMessage()
+                if self.monospace:
+                    msg = f'<pre style="margin:0; font-family:monospace">{msg}</pre>'
                 threading.Timer(0, self._safe_append, args=(msg,)).start()
             else:
                 msg = self.format(record)
                 if self.use_html:
-                    color = self.get_color(record.levelname)
-                    formatted = f'<span style="color:{color}">{msg}</span>'
+                    # Check for preset in extra args
+                    preset = getattr(record, "preset", None)
+                    formatted = LoggerExt.format_message_as_html(
+                        msg, record.levelname, preset
+                    )
+
                     if self.monospace:
-                        formatted = f'<pre style="margin:0">{formatted}</pre>'
+                        formatted = f'<pre style="margin:0; font-family:monospace">{formatted}</pre>'
                     threading.Timer(0, self._safe_append, args=(formatted,)).start()
                 else:
                     threading.Timer(0, self._safe_append, args=(msg,)).start()
@@ -515,18 +726,7 @@ class DefaultTextLogHandler(internal_logging.Handler):
             print(f"DefaultTextLogHandler append error: {e}")
 
     def get_color(self, level: str) -> str:
-        return {
-            "DEBUG": "#AAAAAA",  # Neutral gray
-            "INFO": "#FFFFFF",  # Pure white
-            "WARNING": "#FFF5B7",  # Pastel yellow
-            "ERROR": "#FFCCCC",  # Pastel pink
-            "CRITICAL": "#CC3333",  # Strong red
-            "SUCCESS": "#CCFFCC",  # Pastel green
-            "RESULT": "#CCFFFF",  # Pastel teal
-            "NOTICE": "#E5CCFF",  # Pastel lavender
-        }.get(
-            level, "#FFFFFF"
-        )  # fallback: pure white
+        return LoggerExt.get_color(level)
 
 
 class TableMixin:
@@ -665,6 +865,10 @@ class LoggingMixin(TableMixin):
 
     _logger: internal_logging.Logger = None
     _class_logger = None
+
+    # Expose formatting constants
+    LOG_COLORS = LoggerExt.LOG_COLORS
+    HTML_PRESETS = LoggerExt.HTML_PRESETS
 
     @ClassProperty
     def logger(cls) -> internal_logging.Logger:

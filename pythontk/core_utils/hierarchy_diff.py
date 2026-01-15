@@ -8,7 +8,7 @@ class HierarchyDiff:
     """Generic data class to hold hierarchical difference results.
 
     This class can be used for any hierarchical structure comparison,
-    not just Maya scenes. Examples include file systems, XML/JSON structures,
+    not just scene hierarchies. Examples include file systems, XML/JSON structures,
     organizational charts, etc.
     """
 
@@ -222,7 +222,7 @@ if __name__ == "__main__":
 # - File system comparison
 # - Database schema comparison
 # - XML/JSON structure comparison
-# - Maya scene hierarchy comparison
+# - Scene hierarchy comparison
 # - Any hierarchical data structure analysis
 #
 # The class includes utilities for JSON serialization, filtering, and metadata management.

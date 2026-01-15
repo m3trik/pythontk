@@ -2,23 +2,13 @@
 # coding=utf-8
 from typing import List, Union, Tuple, Dict, Any
 
-# from this package:
+# From this package:
 from pythontk.img_utils._img_utils import ImgUtils
-from pythontk.img_utils.texture_map_factory import TextureMapFactory
+from pythontk.img_utils.map_factory import MapFactory
 from pythontk.file_utils._file_utils import FileUtils
 
 
 class MapConverterSlots(ImgUtils):
-    texture_file_types = [
-        "*.png",
-        "*.jpg",
-        "*.bmp",
-        "*.tga",
-        "*.tiff",
-        "*.gif",
-        "*.exr",
-    ]
-
     def __init__(self, switchboard, **kwargs):
         super().__init__()
 
@@ -45,7 +35,7 @@ class MapConverterSlots(ImgUtils):
             setToolTip="Set the output file type.",
         )
 
-        widget.menu.cmb001.addItems(["PNG", "TGA", "BMP", "JPG", "TIF", "EXR", "HDR"])
+        widget.menu.cmb001.addItems([ext.upper() for ext in self.texture_file_types])
         widget.menu.add(
             "QComboBox",
             setObjectName="cmb000",
@@ -56,7 +46,7 @@ class MapConverterSlots(ImgUtils):
     def tb000(self, widget):
         """Optimize a texture map(s)"""
         texture_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select texture map(s) to optimize:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -89,15 +79,15 @@ class MapConverterSlots(ImgUtils):
         )
 
     def tb001(self, widget):
-        """Batch converts Spec/Gloss maps to PBR Metal/Rough using TextureMapFactory.
+        """Batch converts Spec/Gloss maps to PBR Metal/Rough using MapFactory.
 
         User selects multiple texture sets. The function groups them per base name
-        and converts them accordingly using the DRY TextureMapFactory.
+        and converts them accordingly using the DRY MapFactory.
 
         Maps are saved as Metallic/Roughness maps in the same directory.
         """
         spec_map_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select Specular, Gloss (optional), and Diffuse maps to convert:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -107,7 +97,7 @@ class MapConverterSlots(ImgUtils):
 
         create_metallic_smoothness = widget.menu.chk000.isChecked()
 
-        # Use TextureMapFactory for DRY conversion
+        # Use MapFactory for DRY conversion
         workflow_config = {
             "albedo_transparency": False,
             "metallic_smoothness": create_metallic_smoothness,
@@ -120,10 +110,10 @@ class MapConverterSlots(ImgUtils):
         print(f"Processing {len(spec_map_paths)} files...")
 
         try:
-            results = TextureMapFactory.prepare_maps(
+            results = MapFactory.prepare_maps(
                 spec_map_paths,
-                workflow_config,
                 callback=print,
+                **workflow_config,
             )
 
             if isinstance(results, dict):
@@ -176,7 +166,7 @@ class MapConverterSlots(ImgUtils):
     def tb003(self, widget):
         """Bump/Height to Normal converter (single entry point with options)."""
         bump_map_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select bump/height maps to convert:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -196,7 +186,7 @@ class MapConverterSlots(ImgUtils):
             print(f"Converting bump to normal ({output_format.upper()}): {bump_path}")
 
             try:
-                normal_path = self.convert_bump_to_normal(
+                normal_path = MapFactory.convert_bump_to_normal(
                     bump_path,
                     output_format=output_format,
                     intensity=intensity,
@@ -216,7 +206,7 @@ class MapConverterSlots(ImgUtils):
     def b000(self):
         """Convert DirectX to OpenGL"""
         dx_map_path = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select a DirectX normal map to convert:",
             start_dir=self.source_dir,
             allow_multiple=False,
@@ -225,14 +215,16 @@ class MapConverterSlots(ImgUtils):
             return
 
         print(f"Converting: {dx_map_path} ..")
-        gl_map_path = self.create_gl_from_dx(dx_map_path)
+        gl_map_path = MapFactory.convert_normal_map_format(
+            dx_map_path, target_format="opengl"
+        )
         print(f"// Result: {gl_map_path}")
         self.source_dir = FileUtils.format_path(gl_map_path, "path")
 
     def b001(self):
         """Convert OpenGL to DirectX"""
         gl_map_path = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select an OpenGL normal map to convert:",
             start_dir=self.source_dir,
             allow_multiple=False,
@@ -241,14 +233,16 @@ class MapConverterSlots(ImgUtils):
             return
 
         print(f"Converting: {gl_map_path} ..")
-        dx_map_path = self.create_dx_from_gl(gl_map_path)
+        dx_map_path = MapFactory.convert_normal_map_format(
+            gl_map_path, target_format="directx"
+        )
         print(f"// Result: {dx_map_path}")
         self.source_dir = FileUtils.format_path(dx_map_path, "path")
 
     def b004(self):
         """Batch pack Transparency into Albedo across texture sets."""
         paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select one or more sets of Albedo/Base Color and Transparency maps:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -256,10 +250,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = self.group_textures_by_set(paths)
+        texture_sets = MapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
+            sorted_maps = MapFactory.sort_images_by_type(files)
 
             albedo_map_path = sorted_maps.get("Albedo_Transparency", [None])[0]
             base_color_path = sorted_maps.get("Base_Color", [None])[0]
@@ -279,7 +273,7 @@ class MapConverterSlots(ImgUtils):
                 f"Packing Transparency from: {opacity_map_path}\n\tinto: {rgb_map_path} .."
             )
 
-            packed_path = self.pack_transparency_into_albedo(
+            packed_path = MapFactory.pack_transparency_into_albedo(
                 rgb_map_path,
                 opacity_map_path,
                 invert_alpha=False,
@@ -294,7 +288,7 @@ class MapConverterSlots(ImgUtils):
     def b005(self):
         """Batch pack Smoothness or Roughness into Metallic across texture sets."""
         paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select one or more sets of metallic and smoothness/roughness maps:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -302,10 +296,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = self.group_textures_by_set(paths)
+        texture_sets = MapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
+            sorted_maps = MapFactory.sort_images_by_type(files)
 
             metallic_map_path = sorted_maps.get("Metallic", [None])[0]
             smooth_map_path = sorted_maps.get("Smoothness", [None])[0]
@@ -326,7 +320,7 @@ class MapConverterSlots(ImgUtils):
                 f"Packing {'Roughness' if invert_alpha else 'Smoothness'} from: {alpha_map_path}\n\tinto: {metallic_map_path} .."
             )
 
-            packed_path = self.pack_smoothness_into_metallic(
+            packed_path = MapFactory.pack_smoothness_into_metallic(
                 metallic_map_path,
                 alpha_map_path,
                 invert_alpha=invert_alpha,
@@ -342,7 +336,7 @@ class MapConverterSlots(ImgUtils):
         """Unpack Metallic and Smoothness maps from MetallicSmoothness textures."""
         print("Unpacking Metallic and Smoothness maps ..")
         metallic_smoothness_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select MetallicSmoothness maps to unpack:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -354,7 +348,7 @@ class MapConverterSlots(ImgUtils):
             print(f"Unpacking: {metallic_smoothness_path} ..")
 
             try:
-                metallic_path, smoothness_path = self.unpack_metallic_smoothness(
+                metallic_path, smoothness_path = MapFactory.unpack_metallic_smoothness(
                     metallic_smoothness_path
                 )
                 print(f"// Metallic map: {metallic_path}")
@@ -373,7 +367,7 @@ class MapConverterSlots(ImgUtils):
     def b007(self):
         """Unpack Specular and Gloss maps from SpecularGloss textures."""
         specular_gloss_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select SpecularGloss maps to unpack:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -385,7 +379,7 @@ class MapConverterSlots(ImgUtils):
             print(f"Unpacking: {specular_gloss_path} ..")
 
             try:
-                specular_path, gloss_path = self.unpack_specular_gloss(
+                specular_path, gloss_path = MapFactory.unpack_specular_gloss(
                     specular_gloss_path
                 )
                 print(f"// Specular map: {specular_path}")
@@ -402,7 +396,7 @@ class MapConverterSlots(ImgUtils):
     def b008(self):
         """Batch pack Metallic (R), AO (G), and Smoothness (A) across texture sets."""
         paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select one or more sets of Metallic, Ambient Occlusion, and Smoothness maps:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -410,10 +404,10 @@ class MapConverterSlots(ImgUtils):
         if not paths:
             return
 
-        texture_sets = self.group_textures_by_set(paths)
+        texture_sets = MapFactory.group_textures_by_set(paths)
 
         for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
+            sorted_maps = MapFactory.sort_images_by_type(files)
 
             metallic_map_path = sorted_maps.get("Metallic", [None])[0]
             ao_map_path = sorted_maps.get("Ambient_Occlusion", [None])[0]
@@ -443,7 +437,7 @@ class MapConverterSlots(ImgUtils):
                 f"  {'Roughness' if invert_alpha else 'Smoothness'} (A): {alpha_map_path}"
             )
 
-            packed_path = self.pack_msao_texture(
+            packed_path = MapFactory.pack_msao_texture(
                 metallic_map_path,
                 ao_map_path,
                 alpha_map_path,
@@ -459,7 +453,7 @@ class MapConverterSlots(ImgUtils):
     def b009(self):
         """Unpack Metallic, AO, and Smoothness maps from MSAO textures."""
         msao_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select MSAO (MetallicSmoothnessAO) maps to unpack:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -471,8 +465,8 @@ class MapConverterSlots(ImgUtils):
             print(f"Unpacking MSAO: {msao_path} ..")
 
             try:
-                metallic_path, ao_path, smoothness_path = self.unpack_msao_texture(
-                    msao_path
+                metallic_path, ao_path, smoothness_path = (
+                    MapFactory.unpack_msao_texture(msao_path)
                 )
                 print(f"// Metallic map: {metallic_path}")
                 print(f"// AO map: {ao_path}")
@@ -489,7 +483,7 @@ class MapConverterSlots(ImgUtils):
     def b010(self):
         """Convert Smoothness maps to Roughness maps."""
         smoothness_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select Smoothness maps to convert to Roughness:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -501,7 +495,9 @@ class MapConverterSlots(ImgUtils):
             print(f"Converting Smoothness to Roughness: {smoothness_path} ..")
 
             try:
-                roughness_path = self.convert_smoothness_to_roughness(smoothness_path)
+                roughness_path = MapFactory.convert_smoothness_to_roughness(
+                    smoothness_path
+                )
                 print(f"// Result: {roughness_path}")
 
             except Exception as e:
@@ -515,7 +511,7 @@ class MapConverterSlots(ImgUtils):
     def b011(self):
         """Convert Roughness maps to Smoothness maps."""
         roughness_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select Roughness maps to convert to Smoothness:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -527,7 +523,9 @@ class MapConverterSlots(ImgUtils):
             print(f"Converting Roughness to Smoothness: {roughness_path} ..")
 
             try:
-                smoothness_path = self.convert_roughness_to_smoothness(roughness_path)
+                smoothness_path = MapFactory.convert_roughness_to_smoothness(
+                    roughness_path
+                )
                 print(f"// Result: {smoothness_path}")
 
             except Exception as e:
@@ -539,7 +537,7 @@ class MapConverterSlots(ImgUtils):
             pass
 
     def b012(self):
-        """Batch prepare textures for PBR workflow using TextureMapFactory.
+        """Batch prepare textures for PBR workflow using MapFactory.
 
         Supports multiple workflows:
         - Standard PBR (separate maps)
@@ -554,7 +552,7 @@ class MapConverterSlots(ImgUtils):
 
         # Get texture paths
         texture_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select texture maps for PBR workflow preparation:",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -573,7 +571,7 @@ class MapConverterSlots(ImgUtils):
             "Specular/Glossiness Workflow",
         ]
 
-        from PySide2.QtWidgets import QInputDialog
+        from qtpy.QtWidgets import QInputDialog
 
         workflow, ok = QInputDialog.getItem(
             None,
@@ -649,10 +647,10 @@ class MapConverterSlots(ImgUtils):
         print(f"{'='*60}\n")
 
         try:
-            results = TextureMapFactory.prepare_maps(
+            results = MapFactory.prepare_maps(
                 texture_paths,
-                config,
                 callback=print,
+                **config,
             )
 
             if isinstance(results, dict):

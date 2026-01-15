@@ -10,6 +10,7 @@ class MetadataInternal:
     """Internal utilities for handling file metadata on Windows and Linux."""
 
     enable_sidecar = False
+    sidecar_only = False
 
     @staticmethod
     def _get_sidecar_path(file_path: str) -> str:
@@ -84,6 +85,12 @@ class MetadataInternal:
             raise FileNotFoundError(f"The file {file_path} does not exist.")
 
         metadata = {}
+
+        if cls.sidecar_only:
+            sidecar_data = cls._load_sidecar(file_path)
+            for key in keys:
+                metadata[key] = sidecar_data.get(key)
+            return metadata
 
         if os.name == "nt":
             try:
@@ -165,6 +172,10 @@ class MetadataInternal:
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"The file {file_path} does not exist.")
+
+        if cls.sidecar_only:
+            cls._save_sidecar(file_path, metadata)
+            return
 
         if os.name == "nt":
             try:

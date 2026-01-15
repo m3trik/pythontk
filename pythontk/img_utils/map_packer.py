@@ -2,19 +2,11 @@
 # coding=utf-8
 from typing import List, Dict, Optional, Any
 from pythontk.img_utils._img_utils import ImgUtils
+from pythontk.img_utils.map_factory import MapFactory
 from pythontk.file_utils._file_utils import FileUtils
 
 
 class MapPackerSlots(ImgUtils):
-    texture_file_types = [
-        "*.png",
-        "*.jpg",
-        "*.bmp",
-        "*.tga",
-        "*.tiff",
-        "*.gif",
-        "*.exr",
-    ]
     channels = ["R", "G", "B", "A"]
     grayscale_types = [
         "None",
@@ -88,7 +80,7 @@ class MapPackerSlots(ImgUtils):
     def b000(self):
         """Batch pack up to 4 channels into RGBA maps across texture sets."""
         file_paths = self.sb.file_dialog(
-            file_types=self.texture_file_types,
+            file_types=[f"*.{ext}" for ext in self.texture_file_types],
             title="Select textures for batch packing (multiple sets allowed):",
             start_dir=self.source_dir,
             allow_multiple=True,
@@ -98,7 +90,7 @@ class MapPackerSlots(ImgUtils):
             self.ui.b001.setEnabled(False)
             return
 
-        texture_sets = self.group_textures_by_set(file_paths)
+        texture_sets = MapFactory.group_textures_by_set(file_paths)
         combos = [
             self.ui.cmbR.currentText(),
             self.ui.cmbG.currentText(),
@@ -113,9 +105,9 @@ class MapPackerSlots(ImgUtils):
 
         success = False
         for base_name, files in texture_sets.items():
-            sorted_maps = self.sort_images_by_type(files)
+            sorted_maps = MapFactory.sort_images_by_type(files)
             assigned = {c: None for c in self.channels}
-            available_map_types = {self.resolve_map_type(f): f for f in files}
+            available_map_types = {MapFactory.resolve_map_type(f): f for f in files}
             used_files = set()
 
             for idx, channel in enumerate(self.channels):
@@ -126,7 +118,8 @@ class MapPackerSlots(ImgUtils):
                     (
                         f
                         for f in files
-                        if self.resolve_map_type(f) == map_type and f not in used_files
+                        if MapFactory.resolve_map_type(f) == map_type
+                        and f not in used_files
                     ),
                     None,
                 )

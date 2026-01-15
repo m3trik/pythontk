@@ -9,7 +9,7 @@ This subpackage contains framework-agnostic utilities for:
 - Widget-agnostic tree matching strategies
 
 These utilities can be used across different GUI frameworks (Qt, Tkinter, etc.)
-and different applications (Maya, Blender, etc.) without dependencies on specific frameworks.
+and different applications (e.g. 3D applications) without dependencies on specific frameworks.
 """
 
 from .hierarchy_indexer import HierarchyIndexer

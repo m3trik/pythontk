@@ -829,8 +829,7 @@ class StrUtils(CoreUtils):
             except re.error:
                 return False
 
-        # Always operate on the last pipe segment (Maya naming)
-        s = string.split("|")[-1]
+        s = string
 
         if strip:
             strip_items = IterUtils.make_iterable(strip)

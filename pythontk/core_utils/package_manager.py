@@ -541,7 +541,7 @@ class PackageManager(
 # --------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pkg_mgr = PackageManager("C:/Program Files/Autodesk/Maya2025/bin/mayapy.exe")
+    pkg_mgr = PackageManager(sys.executable)
     # output = pkg_mgr.get_installed_packages("")
 
     # Test various pip commands

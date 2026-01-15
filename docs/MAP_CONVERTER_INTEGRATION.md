@@ -76,7 +76,7 @@ def b012(self):
     workflow_config = PBRWorkflowTemplate.get_template_config(workflow_key)
     
     # Group textures by set
-    texture_sets = FileUtils.group_textures_by_set(files)
+    texture_sets = TextureMapFactory.group_textures_by_set(files)
     
     # Process each set
     for set_name, textures in texture_sets.items():
