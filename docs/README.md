@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/Version-0.7.34-blue.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-895%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/Tests-897%20passed-brightgreen.svg)](test/)
 
 # pythontk
 

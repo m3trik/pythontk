@@ -1,4 +1,5 @@
 import platform
+import os
 
 try:
     import win32cred
@@ -9,17 +10,26 @@ except ImportError:
     win32api = None
     pywintypes = None
 
+try:
+    import keyring
+except ImportError:
+    keyring = None
+
 
 class Credentials:
     """
     Abstractions for OS-level secure credential storage.
-    Currently supports Windows Credential Manager via pywin32.
+    
+    Priority Order:
+    1. 'keyring' library (if installed) - Supports Windows/Mac/Linux(Gnome/KDE)
+    2. Native Windows Credential Manager (via pywin32)
+    3. Environment Variables (Fallback for CI/Headless)
     """
 
     @staticmethod
     def get_password(target_name: str) -> str:
         """
-        Retrieve a password from the OS secure store.
+        Retrieve a password from the OS secure store or environment.
 
         Args:
             target_name (str): The name/address of the target (e.g., "192.168.1.5" or "dev-server").
@@ -33,20 +43,31 @@ class Credentials:
     @staticmethod
     def get_credential(target_name: str) -> dict | None:
         """
-        Retrieve full credentials (username and password) from the OS secure store.
-
-        Args:
-            target_name (str): The name/address of the target.
-
-        Returns:
-            dict: Dictionary with 'username' and 'password' keys, or None if not found.
+        Retrieve full credentials (username and password).
         """
+        # 1. Try 'keyring' library if available
+        if keyring:
+            try:
+                pwd = keyring.get_password("pythontk", target_name)
+                if pwd:
+                    # Keyring doesn't always store usernames tightly coupled, 
+                    # but we can try to fetch a separate entry or default it.
+                    # For simple usage, we might just return the password.
+                    # To keep API consistent, we try to finding a stored user or return 'unknown'.
+                    return {"username": "keyring_user", "password": pwd}
+            except Exception:
+                pass
+
         system = platform.system()
 
+        # 2. Native Windows
         if system == "Windows":
-            return Credentials._get_windows_creds(target_name)
+            result = Credentials._get_windows_creds(target_name)
+            if result:
+                return result
 
-        return None
+        # 3. Environment Variable Fallback (Linux Servers / CI)
+        return Credentials._get_env_credential(target_name)
 
     @staticmethod
     def set_credential(
@@ -54,25 +75,52 @@ class Credentials:
     ) -> bool:
         """
         Save credentials to the OS secure store.
-
-        Args:
-            target_name (str): The name/address of the target.
-            username (str): The username.
-            password (str): The password.
-            persist (str): Persistence level ('session', 'local_machine', 'enterprise').
-                           Defaults to 'local_machine'.
-
-        Returns:
-            bool: True if successful, False otherwise.
+        Note: Environment variables cannot be set persistently this way.
         """
+        # 1. Try 'keyring' library
+        if keyring:
+            try:
+                keyring.set_password("pythontk", target_name, password)
+                return True
+            except Exception as e:
+                print(f"Keyring failed: {e}")
+                # Fall through to native methods
+
         system = platform.system()
 
+        # 2. Native Windows
         if system == "Windows":
             return Credentials._set_windows_creds(
                 target_name, username, password, persist
             )
-
+        
+        print(f"Warning: No secure storage backend available for {system}.")
+        print("To support Linux secret storage, install the 'keyring' package:")
+        print("  pip install keyring")
         return False
+
+    @staticmethod
+    def _get_env_credential(target: str) -> dict | None:
+        """
+        Fallback: Check environment variables.
+        Name Mapping: "server_guac" -> "SERVER_GUAC_PASSWORD"
+        """
+        safe_target = target.upper().replace(" ", "_").replace("-", "_").replace(".", "_")
+        
+        # Try generic patterns
+        keys_to_try = [
+            f"{safe_target}_PASSWORD",
+            f"{safe_target}_SECRET",
+            f"{safe_target}_KEY"
+        ]
+        
+        for key in keys_to_try:
+            val = os.environ.get(key)
+            if val:
+                user = os.environ.get(f"{safe_target}_USER", "env_user")
+                return {"username": user, "password": val}
+        
+        return None
 
     @staticmethod
     def _get_windows_creds(target: str) -> dict | None:
