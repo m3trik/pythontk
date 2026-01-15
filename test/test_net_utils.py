@@ -1,5 +1,6 @@
 import unittest
 import sys
+import os
 import socket
 from unittest.mock import MagicMock, patch
 
@@ -14,38 +15,90 @@ from pythontk.net_utils.credentials import Credentials
 
 
 class TestCredentials(unittest.TestCase):
+    
+    def setUp(self):
+        # Reset the import state for clean testing if needed
+        pass
 
-    def test_get_windows_creds_mock(self):
-        """Test retrieving credentials from a mocked Windows store."""
-        with patch("pythontk.net_utils.credentials.win32cred") as mock_win32:
-            # Setup mock return
-            mock_creds = {
-                "CredentialBlob": b"secret_pass".decode("utf-8").encode("utf-16-le")
-            }
-            mock_win32.CredRead.return_value = mock_creds
-            mock_win32.CRED_TYPE_GENERIC = 1
+    @patch("pythontk.net_utils.credentials.keyring")
+    def test_keyring_priority(self, mock_keyring):
+        """Test that keyring is tried first if available."""
+        mock_keyring.get_password.return_value = "keyring_pass"
+        
+        # Act
+        result = Credentials.get_credential("some_target")
+        
+        # Assert
+        self.assertEqual(result["password"], "keyring_pass")
+        self.assertEqual(result["username"], "keyring_user") # Default for now
+        mock_keyring.get_password.assert_called_with("pythontk", "some_target")
 
-            # Run
-            password = Credentials.get_password("some_target")
+    @patch("pythontk.net_utils.credentials.keyring", None) # Simulate keyring missing
+    @patch("platform.system")
+    @patch("pythontk.net_utils.credentials.win32cred")
+    def test_windows_native_fallback(self, mock_win32, mock_platform):
+        """Test fallback to Windows Credential Manager if keyring is missing."""
+        mock_platform.return_value = "Windows"
+        
+        # Setup mock return for win32cred
+        mock_creds = MagicMock()
+        # Mocking the PyWin32 CredentialBlob return logic
+        mock_creds.get.side_effect = lambda k, d=None: b"win_pass".decode("utf-8").encode("utf-16-le") if k == "CredentialBlob" else "win_user"
+        
+        mock_win32.CredRead.return_value = mock_creds
+        mock_win32.CRED_TYPE_GENERIC = 1
 
-            # Assert
-            self.assertEqual(password, "secret_pass")
-            mock_win32.CredRead.assert_called_with("some_target", 1)
+        # We also need to patch the internal _get_windows_creds decoding logic if we want to be precise,
+        # but the logic in the code reads 'CredentialBlob' from dict/object returned by CredRead.
+        # The previous test mocked CredentialBlob as a key in a dict, but CredRead returns a dictionary-like object in PyWin32?
+        # Let's inspect the code: `blob = creds.get("CredentialBlob", b"")`. So creds is a dict.
+        
+        # Remock for exact dict match
+        mock_creds_dict = {
+            "CredentialBlob": b"win_pass".decode("utf-8").encode("utf-16-le"),
+            "UserName": "win_user"
+        }
+        mock_win32.CredRead.return_value = mock_creds_dict
 
-    def test_get_windows_creds_none(self):
-        """Test handling of missing credentials."""
-        with patch("pythontk.net_utils.credentials.win32cred") as mock_win32:
-            # Simulate pywintypes.error
-            error_class = type("error", (Exception,), {})
+        # Act
+        result = Credentials.get_credential("win_target")
 
-            # We need to mock pywintypes.error within the module context or catch Exception
-            # Since we import it inside the module, patch the module's view of it
-            with patch("pythontk.net_utils.credentials.pywintypes") as mock_types:
-                mock_types.error = error_class
-                mock_win32.CredRead.side_effect = error_class("Element not found")
+        # Assert
+        self.assertEqual(result["password"], "win_pass")
+        self.assertEqual(result["username"], "win_user")
 
-                password = Credentials.get_password("missing_target")
-                self.assertIsNone(password)
+    @patch("pythontk.net_utils.credentials.keyring", None)
+    @patch("platform.system")
+    @patch.dict(os.environ, {"MY_TARGET_PASSWORD": "env_pass", "MY_TARGET_USER": "env_user"})
+    def test_env_var_fallback(self, mock_platform):
+        """Test fallback to Environment Variables on Linux (or when Windows fails/not present)."""
+        mock_platform.return_value = "Linux"
+        
+        # Act
+        # Target name "my-target" should map to MY_TARGET_PASSWORD
+        result = Credentials.get_credential("my-target")
+        
+        # Assert
+        self.assertIsNotNone(result)
+        self.assertEqual(result["password"], "env_pass")
+        self.assertEqual(result["username"], "env_user")
+
+    @patch("pythontk.net_utils.credentials.keyring", None)
+    @patch("platform.system")
+    def test_env_var_patterns(self, mock_platform):
+        """Test various environment variable naming patterns."""
+        mock_platform.return_value = "Linux"
+
+        cases = [
+            ("dev.db", "DEV_DB_PASSWORD"),
+            ("prod-server", "PROD_SERVER_SECRET"),
+            ("api_key_v1", "API_KEY_V1_KEY"),
+        ]
+
+        for target, env_key in cases:
+            with patch.dict(os.environ, {env_key: "secret_val"}, clear=True):
+                cred = Credentials.get_credential(target)
+                self.assertEqual(cred["password"], "secret_val", f"Failed to match {target} to {env_key}")
 
 
 class TestSSHClient(unittest.TestCase):
