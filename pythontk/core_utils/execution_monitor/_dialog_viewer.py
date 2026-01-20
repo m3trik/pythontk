@@ -14,7 +14,7 @@ def run(title: str, message: str):
 
     Returns via exit code:
         0: Keep Waiting
-        1: Cancel (Stop Operation)
+        10: Cancel (Stop Operation)
         2: Force Quit
         3: Window closed (treated as Keep Waiting)
     """
@@ -41,7 +41,7 @@ def run(title: str, message: str):
         root.destroy()
 
     def on_cancel():
-        result[0] = 1
+        result[0] = 10  # Use 10 for Cancel to distinguish from standard exit code 1 (error)
         root.destroy()
 
     def on_force_quit():

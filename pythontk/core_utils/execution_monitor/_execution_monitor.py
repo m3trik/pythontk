@@ -349,10 +349,11 @@ class ExecutionMonitor:
                         startupinfo=startupinfo,
                     )
 
-                    # Exit codes: 0=Keep Waiting, 1=Cancel, 2=Force Quit, 3=Closed
+                    # Exit codes: 0=Keep Waiting, 10=Cancel, 2=Force Quit, 3=Closed
+                    # Note: Exit code 1 (error) falls through to default True (Keep Waiting)
                     if result.returncode == 0 or result.returncode == 3:
                         return True  # Keep Waiting (or window closed)
-                    elif result.returncode == 1:
+                    elif result.returncode == 10:
                         return False  # Cancel/Stop Operation
                     elif result.returncode == 2:
                         return "FORCE_KILL"
