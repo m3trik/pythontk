@@ -65,6 +65,15 @@ class NamespaceHandler(LoggingMixin):
         use_weakref: bool = False,
         log_level: str = "WARNING",
     ):
+        """Initialize the NamespaceHandler.
+
+        Args:
+            owner: The owner object.
+            identifier: Identifier for logging.
+            resolver: Optional callable to resolve unknown keys.
+            use_weakref: Use weak references for stored values.
+            log_level: Logging level.
+        """
         self.logger.setLevel(log_level)
 
         self.__dict__["Placeholder"] = Placeholder
