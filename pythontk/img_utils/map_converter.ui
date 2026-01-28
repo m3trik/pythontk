@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <ui version="4.0">
  <class>QtUi</class>
  <widget class="QMainWindow" name="QtUi">
@@ -43,13 +43,13 @@
         <property name="minimumSize">
          <size>
           <width>0</width>
-          <height>22</height>
+          <height>20</height>
          </size>
         </property>
         <property name="maximumSize">
          <size>
           <width>999</width>
-          <height>22</height>
+          <height>20</height>
          </size>
         </property>
         <property name="font">
@@ -61,12 +61,18 @@
         <property name="text">
          <string>MAP CONVERTER</string>
         </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
        </widget>
       </item>
       <item>
        <widget class="QGroupBox" name="Formatting">
         <property name="title">
-         <string/>
+         <string />
         </property>
         <layout class="QVBoxLayout" name="verticalLayout_4">
          <property name="spacing">
@@ -131,6 +137,12 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;DirectX&lt;/b&gt; format 
               <property name="text">
                <string>DirectX to GL</string>
               </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
              </widget>
             </item>
             <item>
@@ -161,6 +173,12 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
               <property name="text">
                <string>OpenGL to DX</string>
               </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
              </widget>
             </item>
             <item>
@@ -185,6 +203,12 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
               </property>
               <property name="text">
                <string>Smoothness to Roughness</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -211,6 +235,12 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
               <property name="text">
                <string>Roughness to Smoothness</string>
               </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
              </widget>
             </item>
             <item>
@@ -231,10 +261,16 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Convert Specular Glossiness to PBR&lt;/span&gt;&lt;br/&gt;Converts Specular Glossiness map(s) to &lt;span style=&quot; font-weight:600;&quot;&gt;PBR&lt;/span&gt; format.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select &lt;span style=&quot; font-weight:600;&quot;&gt;Diffuse, Specular,&lt;/span&gt; and &lt;span style=&quot; font-weight:600;&quot;&gt;Glossiness&lt;/span&gt; maps.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If no &lt;span style=&quot; font-weight:600;&quot;&gt;Glossiness&lt;/span&gt; map is provided, it will attempt to extract it from the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If extraction fails, the &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map will be approximated using the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If existing &lt;span style=&quot; font-weight:600;&quot;&gt;BaseColor, Metallic,&lt;/span&gt; and &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; maps of the same name exist, they will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=" font-weight:600;"&gt;Convert Specular Glossiness to PBR&lt;/span&gt;&lt;br/&gt;Converts Specular Glossiness map(s) to &lt;span style=" font-weight:600;"&gt;PBR&lt;/span&gt; format.&lt;br/&gt;&lt;br/&gt;&lt;span style=" font-weight:600;"&gt;Usage:&lt;/span&gt; Select &lt;span style=" font-weight:600;"&gt;Diffuse, Specular,&lt;/span&gt; and &lt;span style=" font-weight:600;"&gt;Glossiness&lt;/span&gt; maps.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If no &lt;span style=" font-weight:600;"&gt;Glossiness&lt;/span&gt; map is provided, it will attempt to extract it from the &lt;span style=" font-weight:600;"&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If extraction fails, the &lt;span style=" font-weight:600;"&gt;Roughness&lt;/span&gt; map will be approximated using the &lt;span style=" font-weight:600;"&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If existing &lt;span style=" font-weight:600;"&gt;BaseColor, Metallic,&lt;/span&gt; and &lt;span style=" font-weight:600;"&gt;Roughness&lt;/span&gt; maps of the same name exist, they will be &lt;span style=" font-weight:600;"&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>Spec Gloss to PBR</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -256,10 +292,16 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Optimize Texture&lt;/span&gt;&lt;br/&gt;Optimizes a texture by clamping the maximum size and adjusting the image (such as setting bit depth) according to the map type.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select the texture map(s) to optimize.&lt;br/&gt;&lt;br/&gt;The optimized texture will be created in the same directory, with the original file moved to an &lt;span style=&quot; font-style:italic;&quot;&gt;old&lt;/span&gt; folder. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=" font-weight:600;"&gt;Optimize Texture&lt;/span&gt;&lt;br/&gt;Optimizes a texture by clamping the maximum size and adjusting the image (such as setting bit depth) according to the map type.&lt;br/&gt;&lt;br/&gt;&lt;span style=" font-weight:600;"&gt;Usage:&lt;/span&gt; Select the texture map(s) to optimize.&lt;br/&gt;&lt;br/&gt;The optimized texture will be created in the same directory, with the original file moved to an &lt;span style=" font-style:italic;"&gt;old&lt;/span&gt; folder. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>Optimize</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -281,10 +323,16 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Bump to Normal&lt;/span&gt;&lt;br/&gt;Converts Bump/Height to Normal with options available in the tool menu.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Options:&lt;/span&gt; Choose OpenGL or DirectX format and set intensity.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=" font-weight:600;"&gt;Bump to Normal&lt;/span&gt;&lt;br/&gt;Converts Bump/Height to Normal with options available in the tool menu.&lt;br/&gt;&lt;br/&gt;&lt;span style=" font-weight:600;"&gt;Options:&lt;/span&gt; Choose OpenGL or DirectX format and set intensity.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>Bump to Normal</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -330,10 +378,16 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Pack Transparency into Albedo&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=&quot; font-weight:600;&quot;&gt;Transparency (Opacity)&lt;/span&gt; map into the &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select an &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt; and an &lt;span style=&quot; font-weight:600;&quot;&gt;Opacity&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo Transparency&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;br/&gt;- If a &lt;span style=&quot; font-weight:600;&quot;&gt;BaseColor&lt;/span&gt; map is provided, it will be converted to &lt;span style=&quot; font-weight:600;&quot;&gt;Albedo&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=" font-weight:600;"&gt;Pack Transparency into Albedo&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=" font-weight:600;"&gt;Transparency (Opacity)&lt;/span&gt; map into the &lt;span style=" font-weight:600;"&gt;Albedo&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=" font-weight:600;"&gt;Usage:&lt;/span&gt; Select an &lt;span style=" font-weight:600;"&gt;Albedo&lt;/span&gt; and an &lt;span style=" font-weight:600;"&gt;Opacity&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=" font-weight:600;"&gt;Albedo Transparency&lt;/span&gt; map of the same name exists, it will be &lt;span style=" font-weight:600;"&gt;overwritten&lt;/span&gt;.&lt;br/&gt;- If a &lt;span style=" font-weight:600;"&gt;BaseColor&lt;/span&gt; map is provided, it will be converted to &lt;span style=" font-weight:600;"&gt;Albedo&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>Albedo Transparency</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -355,10 +409,16 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Pack Smoothness or Roughness into Metallic&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=&quot; font-weight:600;&quot;&gt;Smoothness&lt;/span&gt; or &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; map into the &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;Roughness&lt;/span&gt; and a &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=" font-weight:600;"&gt;Pack Smoothness or Roughness into Metallic&lt;/span&gt;&lt;br/&gt;Combines a &lt;span style=" font-weight:600;"&gt;Smoothness&lt;/span&gt; or &lt;span style=" font-weight:600;"&gt;Roughness&lt;/span&gt; map into the &lt;span style=" font-weight:600;"&gt;Metallic&lt;/span&gt; map.&lt;br/&gt;&lt;br/&gt;&lt;span style=" font-weight:600;"&gt;Usage:&lt;/span&gt; Select a &lt;span style=" font-weight:600;"&gt;Roughness&lt;/span&gt; and a &lt;span style=" font-weight:600;"&gt;Metallic&lt;/span&gt; map.  Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=" font-weight:600;"&gt;Metallic Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=" font-weight:600;"&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>Metallic Smoothness</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -384,6 +444,12 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
               </property>
               <property name="text">
                <string>MSAO</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -429,10 +495,16 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Unpack Specular and Glossiness to separate maps.&lt;/span&gt;&lt;br/&gt;Extracts the Glossiness map from the Specular map's alpha channel.&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;Specular &lt;/span&gt;map.&lt;br/&gt;&lt;br/&gt;- If extraction fails, the Glossiness map will be approximated using the &lt;span style=&quot; font-weight:600;&quot;&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If an existing Specular or Glossiness map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=" font-weight:600;"&gt;Unpack Specular and Glossiness to separate maps.&lt;/span&gt;&lt;br/&gt;Extracts the Glossiness map from the Specular map's alpha channel.&lt;br/&gt;&lt;br/&gt;&lt;span style=" font-weight:600;"&gt;Usage:&lt;/span&gt; Select a &lt;span style=" font-weight:600;"&gt;Specular &lt;/span&gt;map.&lt;br/&gt;&lt;br/&gt;- If extraction fails, the Glossiness map will be approximated using the &lt;span style=" font-weight:600;"&gt;Specular&lt;/span&gt; map.&lt;br/&gt;- If an existing Specular or Glossiness map of the same name exists, it will be &lt;span style=" font-weight:600;"&gt;overwritten&lt;/span&gt;. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>Spec Gloss</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -454,10 +526,16 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;UnPack MetallicSmoothness into separate Metallic and Smoothness maps.&lt;/span&gt;&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Usage:&lt;/span&gt; Select a &lt;span style=&quot; font-weight:600;&quot;&gt;MetallicSmoothness&lt;/span&gt; map. Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=&quot; font-weight:600;&quot;&gt;Metallic or Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=&quot; font-weight:600;&quot;&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=" font-weight:600;"&gt;UnPack MetallicSmoothness into separate Metallic and Smoothness maps.&lt;/span&gt;&lt;br/&gt;&lt;br/&gt;&lt;span style=" font-weight:600;"&gt;Usage:&lt;/span&gt; Select a &lt;span style=" font-weight:600;"&gt;MetallicSmoothness&lt;/span&gt; map. Select multiple maps from different sets to batch process.&lt;br/&gt;&lt;br/&gt;- If an existing &lt;span style=" font-weight:600;"&gt;Metallic or Smoothness&lt;/span&gt; map of the same name exists, it will be &lt;span style=" font-weight:600;"&gt;overwritten&lt;/span&gt;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>Metallic Smoothness</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -483,6 +561,12 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
               </property>
               <property name="text">
                <string>MSAO</string>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
              </widget>
             </item>
@@ -514,16 +598,16 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
   <customwidget>
    <class>Header</class>
    <extends>QLabel</extends>
-   <header>uitk.widgets.header.Header.h</header>
+   <header>uitk.widgets.header</header>
   </customwidget>
   <customwidget>
    <class>PushButton</class>
    <extends>QPushButton</extends>
-   <header>widgets.pushbutton.h</header>
+   <header>uitk.widgets.pushButton</header>
   </customwidget>
  </customwidgets>
- <resources/>
- <connections/>
+ <resources />
+ <connections />
  <designerdata>
   <property name="gridDeltaX">
    <number>5</number>
