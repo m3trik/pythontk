@@ -176,6 +176,148 @@ class AppLauncher:
         return titles
 
     @staticmethod
+    def append_to_path(path, user_scope=True):
+        """
+        Appends a directory to the system PATH.
+
+        :param path: The directory path to append.
+        :param user_scope: If True, updates User environment variables (persistent).
+                           If False, only updates current process environment (temporary).
+        :return: True if successful.
+        """
+        if not path or not os.path.isdir(path):
+            return False
+
+        # Always update current process
+        current_path = os.environ.get("PATH", "")
+        if path.lower() not in current_path.lower().split(os.pathsep):
+            os.environ["PATH"] = f"{current_path}{os.pathsep}{path}"
+
+        if not user_scope:
+            return True
+
+        if platform.system().lower() == "windows":
+            import winreg
+
+            try:
+                key_path = r"Environment"
+                root_key = winreg.HKEY_CURRENT_USER
+
+                with winreg.OpenKey(
+                    root_key, key_path, 0, winreg.KEY_ALL_ACCESS
+                ) as key:
+                    try:
+                        old_path, _ = winreg.QueryValueEx(key, "Path")
+                    except OSError:
+                        old_path = ""
+
+                    if path.lower() in old_path.lower().split(os.pathsep):
+                        return True  # Already there
+
+                    new_path = f"{old_path}{os.pathsep}{path}" if old_path else path
+                    winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
+
+                    return True
+            except Exception as e:
+                logger.error(f"Failed to update registry PATH: {e}")
+                return False
+
+        # TODO: Linux implementation (e.g. .bashrc)
+        return False
+
+    @staticmethod
+    def scan_for_executables(root_paths, executable_name, depth=3):
+        """
+        Scans directories for a specific executable.
+
+        :param root_paths: List of root directories to search.
+        :param executable_name: Name of the executable (e.g. 'maya.exe').
+        :param depth: Max folder depth to search.
+        :return: List of absolute paths found.
+        """
+        found = []
+        if isinstance(root_paths, str):
+            root_paths = [root_paths]
+
+        for root in root_paths:
+            if not os.path.exists(root):
+                continue
+
+            for dirpath, dirnames, filenames in os.walk(root):
+                # Calculate current depth relative to root
+                try:
+                    rel_path = os.path.relpath(dirpath, root)
+                    current_depth = (
+                        0 if rel_path == "." else len(rel_path.split(os.sep))
+                    )
+
+                    if current_depth >= depth:
+                        # Don't descend further, clear dirs to stop walk
+                        dirnames[:] = []
+                        continue
+                except ValueError:
+                    continue
+
+                for f in filenames:
+                    if f.lower() == executable_name.lower():
+                        found.append(os.path.join(dirpath, f))
+
+        return sorted(found, reverse=True)  # Sort typically gives newer versions
+
+    @staticmethod
+    def is_path_persisted(path):
+        """
+        Checks if the path is permanently stored in the system configuration (e.g. Windows Registry).
+        useful to avoid prompting the user repeatedly if they haven't restarted their shell.
+        """
+        if not path:
+            return False
+
+        path_norm = os.path.normpath(path).lower()
+
+        if platform.system().lower() == "windows":
+            import winreg
+
+            try:
+                # Check User Environment
+                key_path = r"Environment"
+                try:
+                    with winreg.OpenKey(
+                        winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ
+                    ) as key:
+                        val, _ = winreg.QueryValueEx(key, "Path")
+                        if path_norm in [
+                            os.path.normpath(p).lower()
+                            for p in val.split(os.pathsep)
+                            if p
+                        ]:
+                            return True
+                except OSError:
+                    pass
+
+                # Check System Environment (ReadOnly usually)
+                key_path_lm = (
+                    r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                )
+                try:
+                    with winreg.OpenKey(
+                        winreg.HKEY_LOCAL_MACHINE, key_path_lm, 0, winreg.KEY_READ
+                    ) as key:
+                        val, _ = winreg.QueryValueEx(key, "Path")
+                        if path_norm in [
+                            os.path.normpath(p).lower()
+                            for p in val.split(os.pathsep)
+                            if p
+                        ]:
+                            return True
+                except OSError:
+                    pass
+            except Exception:
+                pass
+
+        return False
+
+    @staticmethod
     def find_app(app_identifier):
         """
         Attempts to locate the executable for the given application identifier.
