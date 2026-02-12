@@ -33,6 +33,7 @@ class LoggerExt:
     _text_handler = None  # Can be instance or class
 
     # Define custom log levels
+    PROGRESS = 15
     SUCCESS = 25
     RESULT = 35
     NOTICE = 45
@@ -41,6 +42,7 @@ class LoggerExt:
     LOG_COLORS = {
         "DEBUG": "#AAAAAA",  # Neutral gray
         "INFO": "#FFFFFF",  # Pure white
+        "PROGRESS": "#00CCFF",  # Cyan
         "WARNING": "#FFF5B7",  # Pastel yellow
         "ERROR": "#FFCCCC",  # Pastel pink
         "CRITICAL": "#CC3333",  # Strong red
@@ -121,6 +123,7 @@ class LoggerExt:
     def _register_custom_levels() -> None:
         """Register custom log levels."""
         levels = {
+            LoggerExt.PROGRESS: "PROGRESS",
             LoggerExt.SUCCESS: "SUCCESS",
             LoggerExt.RESULT: "RESULT",
             LoggerExt.NOTICE: "NOTICE",

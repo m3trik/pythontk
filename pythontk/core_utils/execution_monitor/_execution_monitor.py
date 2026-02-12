@@ -18,8 +18,42 @@ class ExecutionMonitor:
     _x11_display = None
 
     @staticmethod
+    def _force_interrupt_main_thread():
+        """Raise SystemExit in the main thread to force-stop the current operation.
+
+        Unlike the previous implementation this does NOT kill the host process.
+        It injects a SystemExit (a BaseException, rarely caught by user code) into
+        the main thread via ``PyThreadState_SetAsyncExc``.  If the first attempt
+        does not take effect (e.g. main thread is stuck in a C extension) we retry
+        up to 3 times before falling back to ``_thread.interrupt_main()``.
+        """
+        main_tid = threading.main_thread().ident
+        exc_type = ctypes.py_object(SystemExit)
+        tid = ctypes.c_ulong(main_tid)
+
+        for _ in range(3):
+            ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, exc_type)
+            if ret == 1:
+                return  # Successfully scheduled
+            elif ret > 1:
+                # Oops – clear the exception to avoid corruption
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, None)
+                break
+            # ret == 0 means thread id not found; retry after a short pause
+            time.sleep(0.05)
+
+        # Fallback: cooperative interrupt (same as Cancel but still better than
+        # killing the host application).
+        _thread.interrupt_main()
+
+    @staticmethod
     def _force_kill_process():
-        """Force kill the current process."""
+        """Force kill the current process (including the host application).
+
+        WARNING: This terminates the entire process (e.g. Maya, the Python host).
+        Use only as an absolute last resort when the operation cannot be stopped
+        any other way.
+        """
         try:
             import signal
 
@@ -256,6 +290,9 @@ class ExecutionMonitor:
                         elif result == "FORCE_KILL":
                             ExecutionMonitor._force_kill_process()
                             return
+                        elif result == "FORCE_INTERRUPT":
+                            ExecutionMonitor._force_interrupt_main_thread()
+                            return
                         elif result == "STOP_MONITORING":
                             return
 
@@ -268,6 +305,9 @@ class ExecutionMonitor:
                                     return
                                 elif result == "FORCE_KILL":
                                     ExecutionMonitor._force_kill_process()
+                                    return
+                                elif result == "FORCE_INTERRUPT":
+                                    ExecutionMonitor._force_interrupt_main_thread()
                                     return
                                 elif result == "STOP_MONITORING":
                                     return
@@ -321,15 +361,35 @@ class ExecutionMonitor:
             return None
 
     @staticmethod
-    def show_long_execution_dialog(title, message):
+    def show_long_execution_dialog(title, message, force_action=None):
         """Show a dialog to ask the user how to proceed with a long operation.
 
         Uses a subprocess-based tkinter dialog for custom button labels (VS Code style).
 
+        Args:
+            title (str): Dialog window title.
+            message (str): Body text.
+            force_action (str|None): Controls the force button.
+                ``None``  – no force button (default, 2-button dialog).
+                ``"interrupt"`` – show *Force Stop* (raises SystemExit in main thread).
+                ``"kill"``      – show *Force Quit* (terminates the host process).
+
         Returns:
-            bool/str: True to continue waiting, False to abort, "FORCE_KILL" to kill.
+            bool/str: True to continue waiting, False to abort,
+                      ``"FORCE_INTERRUPT"`` or ``"FORCE_KILL"`` for the force action.
         """
         import sys
+
+        # Map force_action to button label and return sentinel
+        if force_action == "interrupt":
+            force_label = "Force Stop"
+            force_sentinel = "FORCE_INTERRUPT"
+        elif force_action == "kill":
+            force_label = "Force Quit"
+            force_sentinel = "FORCE_KILL"
+        else:
+            force_label = None
+            force_sentinel = None
 
         if sys.platform == "win32":
             # Use custom tkinter dialog for better button labels
@@ -344,19 +404,19 @@ class ExecutionMonitor:
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = subprocess.SW_HIDE
 
-                    result = subprocess.run(
-                        [executable, script_path, title, message],
-                        startupinfo=startupinfo,
-                    )
+                    cmd = [executable, script_path, title, message]
+                    if force_label:
+                        cmd.append(force_label)
 
-                    # Exit codes: 0=Keep Waiting, 10=Cancel, 2=Force Quit, 3=Closed
-                    # Note: Exit code 1 (error) falls through to default True (Keep Waiting)
+                    result = subprocess.run(cmd, startupinfo=startupinfo)
+
+                    # Exit codes: 0=Keep Waiting, 10=Cancel, 2=Force, 3=Closed
                     if result.returncode == 0 or result.returncode == 3:
                         return True  # Keep Waiting (or window closed)
                     elif result.returncode == 10:
                         return False  # Cancel/Stop Operation
                     elif result.returncode == 2:
-                        return "FORCE_KILL"
+                        return force_sentinel
                     return True
             except Exception:
                 pass
@@ -365,11 +425,15 @@ class ExecutionMonitor:
             try:
                 import ctypes
 
-                # MB_YESNOCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL | MB_TOPMOST
-                flags = 0x03 | 0x30 | 0x1000 | 0x40000
-                fallback_msg = (
-                    f"{message}\n\nYes: Keep Waiting\nNo: Cancel\nCancel: Force Quit"
-                )
+                if force_label:
+                    # MB_YESNOCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL | MB_TOPMOST
+                    flags = 0x03 | 0x30 | 0x1000 | 0x40000
+                    fallback_msg = f"{message}\n\nYes: Keep Waiting\nNo: Cancel\nCancel: {force_label}"
+                else:
+                    # MB_YESNO | MB_ICONWARNING | MB_SYSTEMMODAL | MB_TOPMOST
+                    flags = 0x04 | 0x30 | 0x1000 | 0x40000
+                    fallback_msg = f"{message}\n\nYes: Keep Waiting\nNo: Cancel"
+
                 response = ctypes.windll.user32.MessageBoxW(
                     0, fallback_msg, title, flags
                 )
@@ -378,8 +442,8 @@ class ExecutionMonitor:
                     return True
                 if response == 7:  # IDNO
                     return False
-                if response == 2:  # IDCANCEL
-                    return "FORCE_KILL"
+                if response == 2 and force_sentinel:  # IDCANCEL
+                    return force_sentinel
             except ImportError:
                 return True
 
@@ -389,8 +453,6 @@ class ExecutionMonitor:
 
             # Try Zenity (GNOME/Standard)
             if shutil.which("zenity"):
-                # Zenity returns 0 for OK, 1 for Cancel/Close.
-                # Extra buttons print their label to stdout.
                 cmd = [
                     "zenity",
                     "--question",
@@ -402,15 +464,15 @@ class ExecutionMonitor:
                     "Keep Waiting",
                     "--cancel-label",
                     "Cancel",
-                    "--extra-button",
-                    "Force Quit",
                 ]
+                if force_label:
+                    cmd.extend(["--extra-button", force_label])
                 try:
                     result = subprocess.run(
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
                     )
-                    if result.stdout.strip() == "Force Quit":
-                        return "FORCE_KILL"
+                    if force_label and result.stdout.strip() == force_label:
+                        return force_sentinel
                     if result.returncode == 0:
                         return True  # Keep Waiting
                     else:
@@ -420,21 +482,32 @@ class ExecutionMonitor:
 
             # Try KDialog (KDE)
             elif shutil.which("kdialog"):
-                # kdialog --yesnocancel "text" --title "title"
-                # Returns: 0 (Yes), 1 (No), 2 (Cancel)
-                cmd = [
-                    "kdialog",
-                    "--title",
-                    title,
-                    "--yesnocancel",
-                    message,
-                    "--yes-label",
-                    "Keep Waiting",
-                    "--no-label",
-                    "Cancel",
-                    "--cancel-label",
-                    "Force Quit",
-                ]
+                if force_label:
+                    cmd = [
+                        "kdialog",
+                        "--title",
+                        title,
+                        "--yesnocancel",
+                        message,
+                        "--yes-label",
+                        "Keep Waiting",
+                        "--no-label",
+                        "Cancel",
+                        "--cancel-label",
+                        force_label,
+                    ]
+                else:
+                    cmd = [
+                        "kdialog",
+                        "--title",
+                        title,
+                        "--yesno",
+                        message,
+                        "--yes-label",
+                        "Keep Waiting",
+                        "--no-label",
+                        "Cancel",
+                    ]
                 try:
                     result = subprocess.run(
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -443,8 +516,8 @@ class ExecutionMonitor:
                         return True
                     elif result.returncode == 1:
                         return False
-                    elif result.returncode == 2:
-                        return "FORCE_KILL"
+                    elif result.returncode == 2 and force_sentinel:
+                        return force_sentinel
                 except Exception:
                     pass
 
@@ -457,6 +530,7 @@ class ExecutionMonitor:
         logger=None,
         allow_escape_cancel=False,
         show_dialog: bool = True,
+        force_action: str | None = None,
         watchdog_timeout: float | None = None,
         watchdog_heartbeat_interval: float = 1.0,
         watchdog_check_interval: float = 1.0,
@@ -475,6 +549,12 @@ class ExecutionMonitor:
             logger (logging.Logger, optional): Logger to use for status updates.
             allow_escape_cancel (bool): If True, holding Escape will interrupt the main thread immediately.
             show_dialog (bool): If False, do not show a blocking dialog; only log warnings.
+            force_action (str|None): Controls the force button in the dialog.
+                ``None`` (default) – no force button; dialog shows only Keep Waiting / Cancel.
+                ``"interrupt"``    – adds a *Force Stop* button that raises ``SystemExit`` in
+                                     the main thread without killing the host process.
+                ``"kill"``         – adds a *Force Quit* button that terminates the entire
+                                     host process (use as a last resort).
             watchdog_timeout (float|None): If set, starts an external watchdog that kills this process
                 if the heartbeat stalls for longer than this many seconds.
             watchdog_heartbeat_interval (float): Heartbeat write interval in seconds.
@@ -497,7 +577,8 @@ class ExecutionMonitor:
             result = ExecutionMonitor.show_long_execution_dialog(
                 "Long Execution Warning",
                 f"{full_msg}\n\nThe operation is not responding.\n"
-                "You can keep waiting, cancel the operation, or force quit.",
+                "You can keep waiting or cancel the operation.",
+                force_action=force_action,
             )
 
             if logger:
@@ -505,6 +586,8 @@ class ExecutionMonitor:
                     logger.info("Continuing execution (Keep Waiting).")
                 elif result is False:
                     logger.warning("Operation cancelled by user.")
+                elif result == "FORCE_INTERRUPT":
+                    logger.critical("Force stopping operation by user request.")
                 elif result == "FORCE_KILL":
                     logger.critical("Force quitting application by user request.")
 

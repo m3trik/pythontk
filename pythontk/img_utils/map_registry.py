@@ -491,9 +491,27 @@ class MapRegistry(SingletonMixin):
         ),
     }
 
+    # Pre-computed sorted candidate list for resolve_type_from_path.
+    # Built lazily on first call and cached for the singleton's lifetime.
+    _sorted_candidates: Optional[list] = None
+    _resolve_cache: Optional[dict] = None
+
     def get(self, name: str) -> Optional[MapType]:
         """Get a map type by name."""
         return self._maps.get(name)
+
+    def _get_sorted_candidates(self):
+        """Return the pre-computed sorted alias→map_name list."""
+        if self._sorted_candidates is None:
+            candidates = []
+            for name, m in self._maps.items():
+                candidates.append((name, name))
+                for alias in m.aliases:
+                    candidates.append((alias, name))
+            candidates.sort(key=lambda x: len(x[0]), reverse=True)
+            self.__class__._sorted_candidates = candidates
+            self.__class__._resolve_cache = {}
+        return self._sorted_candidates
 
     def resolve_type_from_path(self, path: str) -> Optional[str]:
         """Resolve the map type key from a file path.
@@ -504,17 +522,12 @@ class MapRegistry(SingletonMixin):
         filename = os.path.basename(path)
         name_only, _ = os.path.splitext(filename)
 
-        # Collect all candidates: (alias, map_name)
-        all_candidates = []
-        for name, m in self._maps.items():
-            # Add main name
-            all_candidates.append((name, name))
-            # Add aliases
-            for alias in m.aliases:
-                all_candidates.append((alias, name))
+        # Check cache first
+        if self._resolve_cache is not None and name_only in self._resolve_cache:
+            return self._resolve_cache[name_only]
 
-        # Sort by length descending to ensure longest match first
-        all_candidates.sort(key=lambda x: len(x[0]), reverse=True)
+        all_candidates = self._get_sorted_candidates()
+        result = None
 
         for alias, map_name in all_candidates:
             # Logic for short aliases (<= 3 chars)
@@ -529,15 +542,21 @@ class MapRegistry(SingletonMixin):
                     # If alias starts with uppercase, require uppercase in filename
                     if alias[0].isupper():
                         if suffix_in_name[0] == alias[0]:
-                            return map_name
+                            result = map_name
+                            break
                     else:
-                        return map_name
+                        result = map_name
+                        break
             else:
                 # Long aliases: Case-insensitive
                 if name_only.lower().endswith(alias.lower()):
-                    return map_name
+                    result = map_name
+                    break
 
-        return None
+        # Cache the result (including None for misses)
+        if self._resolve_cache is not None:
+            self._resolve_cache[name_only] = result
+        return result
 
     def get_workflow_presets(self) -> Dict[str, Dict[str, Any]]:
         """Generate the workflow presets dictionary."""

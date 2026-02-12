@@ -181,6 +181,25 @@ class TextureProcessor:
     logger: Any = None
     used_maps: set = field(default_factory=set)
     created_files: set = field(default_factory=set)
+    _image_cache: dict = field(default_factory=dict)
+
+    def get_cached_image(self, path: str) -> "Image.Image":
+        """Load an image with caching to avoid redundant disk I/O.
+
+        The cache is keyed by absolute path. Images loaded once are reused
+        for subsequent calls (e.g. alpha checks then save_map pipeline).
+
+        Parameters:
+            path: File path to the image.
+
+        Returns:
+            PIL.Image.Image: The loaded image.
+        """
+        abs_path = os.path.abspath(path)
+        if abs_path not in self._image_cache:
+            self._image_cache[abs_path] = ImgUtils.ensure_image(path)
+        # Return a copy to avoid mutation issues between consumers
+        return self._image_cache[abs_path].copy()
 
     def save_map(
         self,
@@ -342,9 +361,11 @@ class TextureProcessor:
                 dst_ext = src_ext
                 format_changed = False
 
-            if should_optimize or format_changed:
+            if should_optimize and not format_changed:
+                # Only worth checking if we might skip optimization.
+                # When format_changed is True, re-encoding is mandatory
+                # so opening the file just to check is wasted I/O.
                 try:
-                    # Check if optimization is actually needed
                     from PIL import Image
 
                     with Image.open(image) as img:
@@ -365,12 +386,8 @@ class TextureProcessor:
                             elif map_def.mode == "L" and img.mode == "P":
                                 needs_mode_change = True
 
-                        # If we don't need resize or mode change, we can likely skip re-encoding
-                        if (
-                            not needs_resize
-                            and not needs_mode_change
-                            and not format_changed
-                        ):
+                        # If we don't need resize or mode change, skip re-encoding
+                        if not needs_resize and not needs_mode_change:
                             should_optimize = False
                 except Exception:
                     pass  # Fallback to full processing if check fails
@@ -400,10 +417,13 @@ class TextureProcessor:
                     should_optimize = True
 
         # IN-MEMORY OPTIMIZATION PIPELINE
-        # Load image
-        img_obj = ImgUtils.ensure_image(image)
-
+        # Use image cache to avoid redundant disk I/O
         if should_optimize:
+            if isinstance(image, str):
+                img_obj = self.get_cached_image(image)
+            else:
+                img_obj = ImgUtils.ensure_image(image)
+
             # Determine if resizing is needed
             will_resize = False
             if allow_resize and max_size:
@@ -430,7 +450,11 @@ class TextureProcessor:
             ImgUtils.save_image(img_obj, output_path, optimize=True)
 
         else:
-            # Just save (re-encode) without resizing/mode change
+            # Re-encode needed (e.g. PIL Image input or extension mismatch)
+            if isinstance(image, str):
+                img_obj = self.get_cached_image(image)
+            else:
+                img_obj = ImgUtils.ensure_image(image)
             ImgUtils.save_image(img_obj, output_path, optimize=True)
 
         self.created_files.add(output_path)
@@ -1308,7 +1332,10 @@ class BaseColorHandler(WorkflowHandler):
             else:
                 # Check if base color has alpha channel
                 try:
-                    img = ImgUtils.ensure_image(base_color)
+                    if isinstance(base_color, str):
+                        img = context.get_cached_image(base_color)
+                    else:
+                        img = base_color
                     if "A" in img.getbands():
                         # Check if alpha is not fully opaque
                         # This might be expensive for large images, but necessary
@@ -2305,6 +2332,7 @@ class MapFactory(LoggingMixin):
         output_dir: str = None,
         group_by_set: bool = True,
         max_workers: int = 1,
+        progress_callback: Callable = None,
         **kwargs,
     ) -> Union[List[str], Dict[str, List[str]]]:
         """
@@ -2316,6 +2344,7 @@ class MapFactory(LoggingMixin):
             group_by_set: Whether to automatically group textures into sets (default: True).
                           If False, all input files are treated as a single set.
             max_workers: Number of threads for parallel processing.
+            progress_callback: Optional callback(current, total, message) for reporting progress.
             **kwargs: Configuration options overriding DEFAULT_CONFIG.
                       Key options:
                       - use_input_fallbacks (bool): Allow generating maps from alternative inputs (e.g. Diffuse -> Base Color).
@@ -2428,12 +2457,25 @@ class MapFactory(LoggingMixin):
                     executor.submit(process_set, task): task for task in tasks
                 }
 
+                completed_count = 0
                 for future in concurrent.futures.as_completed(future_to_set):
+                    completed_count += 1
+                    # Retrieve the original task arguments
+                    _, base_name_task, _ = future_to_set[future]
+                    
+                    if progress_callback:
+                        progress_callback(
+                            completed_count, total_sets, f"Processed {base_name_task}"
+                        )
+
                     base_name, generated = future.result()
                     if generated:
                         results[base_name] = generated
         else:
             for i, (base_name, textures) in enumerate(texture_sets.items(), 1):
+                if progress_callback:
+                    progress_callback(i, total_sets, f"Processing {base_name}")
+
                 if total_sets > 1 and logger:
                     logger.info(f"Processing set {i}/{total_sets}: {base_name}")
 
@@ -2472,8 +2514,8 @@ class MapFactory(LoggingMixin):
 
         convert = workflow_config.get("convert", True)
 
-        # Pre-process: Spec/Gloss conversion
-        if convert:
+        # Pre-process: Spec/Gloss conversion (only if explicitly requested)
+        if convert and workflow_config.get("convert_specgloss_to_pbr", False):
             map_inventory = MapFactory._convert_specgloss_workflow(
                 map_inventory, workflow_config
             )
