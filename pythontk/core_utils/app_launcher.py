@@ -63,6 +63,44 @@ class AppLauncher:
             return None
 
     @staticmethod
+    def run(app_identifier, args=None, cwd=None, timeout=None):
+        """Execute an application synchronously and return its result.
+
+        Unlike :meth:`launch` (fire-and-forget), this method blocks until the
+        process finishes, captures stdout/stderr, and honours a *timeout*.
+
+        :param app_identifier: Name or path of the application.
+        :param args: Arguments to pass (str, list, or tuple).
+        :param cwd: Working directory for the process.
+        :param timeout: Maximum seconds to wait before raising
+                        ``subprocess.TimeoutExpired``.  *None* = no limit.
+        :return: A ``subprocess.CompletedProcess`` with *returncode*,
+                 *stdout*, and *stderr* (decoded text).
+        :raises FileNotFoundError: If the application cannot be found.
+        :raises subprocess.TimeoutExpired: If *timeout* is exceeded.
+        """
+        executable_path = AppLauncher.find_app(app_identifier)
+        if not executable_path:
+            raise FileNotFoundError(f"Application '{app_identifier}' not found.")
+
+        cmd = [executable_path]
+        if args:
+            if isinstance(args, str):
+                cmd.append(args)
+            elif isinstance(args, (list, tuple)):
+                cmd.extend(args)
+
+        logger.debug(f"Running (blocking): {cmd}")
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            shell=False,
+        )
+
+    @staticmethod
     def wait_for_ready(process, timeout=15, check_fn=None):
         """
         Waits until the application is ready.

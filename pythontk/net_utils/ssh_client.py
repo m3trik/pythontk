@@ -2,10 +2,14 @@ import os
 import sys
 import time
 import socket
-import paramiko
 from typing import Optional, Tuple, Union
 
 from .credentials import Credentials
+
+try:
+    import paramiko
+except ImportError:
+    paramiko = None  # type: ignore[assignment]
 
 
 class SSHClient:
@@ -42,6 +46,11 @@ class SSHClient:
         self.use_secure_store = use_secure_store
         self.credential_target = credential_target
 
+        if paramiko is None:
+            raise ImportError(
+                "paramiko is required for SSH functionality. "
+                "Install it with: pip install paramiko"
+            )
         self.client = paramiko.SSHClient()
         # Automatically add host keys (useful for dev/internal networks)
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())

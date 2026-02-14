@@ -1,0 +1,105 @@
+..s..F.F................................................................ [  7%]
+........................................................................ [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 31%]
+........................................................................ [ 39%]
+........................................................................ [ 47%]
+........................................................................ [ 54%]
+................................................................ [ 61%]
+.....................................................s.................. [ 69%]
+........................................................................ [ 77%]
+..............................................FFF....................... [ 85%]
+........................................................................ [ 93%]
+................................................sssssssss.s...           [100%]
+================================== FAILURES ===================================
+___________________ TestAppLauncher.test_get_window_titles ____________________
+test\test_app_launcher.py:136: in test_get_window_titles
+    self.assertTrue(
+E   AssertionError: False is not true : Expected window title not found. Titles: []
+_____________________ TestAppLauncher.test_wait_for_ready _____________________
+test\test_app_launcher.py:108: in test_wait_for_ready
+    self.assertTrue(
+E   AssertionError: False is not true : Test app did not report ready (visible window) within timeout
+---------------------------- Captured stdout call -----------------------------
+Launching test python UI app and waiting for readiness...
+WARNING: Test app did not report ready. This might be due to test environment restriction (hidden windows).
+---------------------------- Captured stderr call -----------------------------
+ERROR: The process "34048" not found.
+________________ TestSSHClient.test_connect_with_password_arg _________________
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1356: in patched
+    with self.decoration_helper(patched,
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1338: in decoration_helper
+    arg = exit_stack.enter_context(patching)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\contextlib.py:502: in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1411: in __enter__
+    self.target = self.getter()
+                  ^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\pkgutil.py:715: in resolve_name
+    result = getattr(result, p)
+             ^^^^^^^^^^^^^^^^^^
+E   AttributeError: module 'pythontk.net_utils.ssh_client' has no attribute 'paramiko'
+________________ TestSSHClient.test_connect_with_secure_store _________________
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1356: in patched
+    with self.decoration_helper(patched,
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1338: in decoration_helper
+    arg = exit_stack.enter_context(patching)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\contextlib.py:502: in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1411: in __enter__
+    self.target = self.getter()
+                  ^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\pkgutil.py:715: in resolve_name
+    result = getattr(result, p)
+             ^^^^^^^^^^^^^^^^^^
+E   AttributeError: module 'pythontk.net_utils.ssh_client' has no attribute 'paramiko'
+______________________ TestSSHClient.test_execute_simple ______________________
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1356: in patched
+    with self.decoration_helper(patched,
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1338: in decoration_helper
+    arg = exit_stack.enter_context(patching)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\contextlib.py:502: in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py:1411: in __enter__
+    self.target = self.getter()
+                  ^^^^^^^^^^^^^
+C:\Users\m3tri\AppData\Local\Programs\Python\Python311\Lib\pkgutil.py:715: in resolve_name
+    result = getattr(result, p)
+             ^^^^^^^^^^^^^^^^^^
+E   AttributeError: module 'pythontk.net_utils.ssh_client' has no attribute 'paramiko'
+============================== warnings summary ===============================
+test/test_img.py::ImgTest::test_are_identical_different
+  O:\Cloud\Code\_scripts\pythontk\test\test_img.py:56: DeprecationWarning: Saving I mode images as PNG is deprecated and will be removed in Pillow 13 (2026-10-15)
+    ImgUtils.create_image("I", (1024, 1024), 32767).save(
+
+test/test_img.py::ImgTest::test_are_identical_different
+test/test_img.py::ImgTest::test_are_identical_different_sizes
+test/test_img.py::ImgTest::test_are_identical_different_sizes_different_colors
+test/test_img.py::ImgTest::test_are_identical_same
+test/test_img.py::ImgTest::test_are_identical_same_content
+  O:\Cloud\Code\_scripts\pythontk\pythontk\img_utils\_img_utils.py:412: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+    if np.sum(np.array(ImageChops.difference(imA, imB).getdata())) == 0:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED test/test_app_launcher.py::TestAppLauncher::test_get_window_titles - A...
+FAILED test/test_app_launcher.py::TestAppLauncher::test_wait_for_ready - Asse...
+FAILED test/test_net_utils.py::TestSSHClient::test_connect_with_password_arg
+FAILED test/test_net_utils.py::TestSSHClient::test_connect_with_secure_store
+FAILED test/test_net_utils.py::TestSSHClient::test_execute_simple - Attribute...
+5 failed, 901 passed, 12 skipped, 6 warnings, 8 subtests passed in 55.98s

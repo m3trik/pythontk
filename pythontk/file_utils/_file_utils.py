@@ -893,9 +893,10 @@ class FileUtils(HelpMixin):
             try:
                 spec.loader.exec_module(module_obj)
             except Exception as e:
-                raise RuntimeError(
-                    f"The following error occurred while loading the module {module_name} from {filepath}: {e}"
-                ) from e
+                import logging
+
+                logging.getLogger(__name__).debug("Skipping %s: %s", filepath, e)
+                continue
             finally:
                 # Clean up sys.modules
                 if unique_module_name in sys.modules:

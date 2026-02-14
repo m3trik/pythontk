@@ -698,7 +698,7 @@ class DefaultTextLogHandler(internal_logging.Handler):
             if getattr(record, "raw", False):
                 msg = record.getMessage()
                 if self.monospace:
-                    msg = f'<pre style="margin:0; font-family:monospace">{msg}</pre>'
+                    msg = f'<span style="font-family:monospace; white-space:pre-wrap;">{msg}</span>'
                 threading.Timer(0, self._safe_append, args=(msg,)).start()
             else:
                 msg = self.format(record)
@@ -710,7 +710,7 @@ class DefaultTextLogHandler(internal_logging.Handler):
                     )
 
                     if self.monospace:
-                        formatted = f'<pre style="margin:0; font-family:monospace">{formatted}</pre>'
+                        formatted = f'<span style="font-family:monospace; white-space:pre-wrap;">{formatted}</span>'
                     threading.Timer(0, self._safe_append, args=(formatted,)).start()
                 else:
                     threading.Timer(0, self._safe_append, args=(msg,)).start()

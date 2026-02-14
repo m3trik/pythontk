@@ -106,6 +106,47 @@ class StrUtils(CoreUtils):
         return SafeFormatter().format(text, **kwargs)
 
     @staticmethod
+    def replace_delimited(
+        text: str,
+        context: dict,
+        prefix: str = "__",
+        suffix: str = "__",
+    ) -> str:
+        """Replace delimited placeholders in *text* using *context*.
+
+        Unlike ``replace_placeholders`` (which uses ``{key}`` syntax), this
+        method supports **arbitrary** delimiters and is therefore safe inside
+        code templates, QSS files, or any format where curly braces carry
+        their own meaning.
+
+        Args:
+            text: Source string containing placeholders.
+            context: Mapping of placeholder names to replacement values.
+                     Values are converted to ``str`` automatically.
+            prefix: Opening delimiter before each key (default ``"__"``).
+            suffix: Closing delimiter after each key  (default ``"__"``).
+
+        Returns:
+            The text with all matching placeholders substituted.
+
+        Example:
+            >>> StrUtils.replace_delimited(
+            ...     'FBX = r"__FBX_PATH__"',
+            ...     {"FBX_PATH": "C:/scene.fbx"},
+            ... )
+            'FBX = r"C:/scene.fbx"'
+            >>> StrUtils.replace_delimited(
+            ...     "color: {TEXT_COLOR};",
+            ...     {"TEXT_COLOR": "rgb(255,255,255)"},
+            ...     prefix="{", suffix="}",
+            ... )
+            'color: rgb(255,255,255);'
+        """
+        for key, value in context.items():
+            text = text.replace(f"{prefix}{key}{suffix}", str(value))
+        return text
+
+    @staticmethod
     @CoreUtils.listify(threading=True)
     def set_case(string, case="title"):
         """Format the given string(s) in the given case.
@@ -282,39 +323,39 @@ class StrUtils(CoreUtils):
 
         Example:
             # Multi-way splitting (list output)
-            >>> split_delimited_string('a|b|c|d')
+            >>> StrUtils.split_delimited_string('a|b|c|d')
             ['a', 'b', 'c', 'd']
 
-            >>> split_delimited_string('  a  | b |  c  ', strip_whitespace=True)
+            >>> StrUtils.split_delimited_string('  a  | b |  c  ', strip_whitespace=True)
             ['a', 'b', 'c']
 
-            >>> split_delimited_string('a||b||c', remove_empty=True)
+            >>> StrUtils.split_delimited_string('a||b||c', remove_empty=True)
             ['a', 'b', 'c']
 
-            >>> split_delimited_string('c|a|b', func=sorted)
+            >>> StrUtils.split_delimited_string('c|a|b', func=sorted)
             ['a', 'b', 'c']
 
-            >>> split_delimited_string('a|b|c', func=reversed)
+            >>> StrUtils.split_delimited_string('a|b|c', func=reversed)
             ['c', 'b', 'a']
 
-            >>> split_delimited_string('apple|banana|cherry', func=lambda x: [s.upper() for s in x])
+            >>> StrUtils.split_delimited_string('apple|banana|cherry', func=lambda x: [s.upper() for s in x])
             ['APPLE', 'BANANA', 'CHERRY']
 
             # Binary splitting at specific occurrence (tuple output)
-            >>> split_delimited_string('a|b|c|d', occurrence=-1)
+            >>> StrUtils.split_delimited_string('a|b|c|d', occurrence=-1)
             ('a|b|c', 'd')
 
-            >>> split_delimited_string('a|b|c|d', occurrence=0)
+            >>> StrUtils.split_delimited_string('a|b|c|d', occurrence=0)
             ('', 'a')
 
-            >>> split_delimited_string('a|b|c|d', occurrence=1)
+            >>> StrUtils.split_delimited_string('a|b|c|d', occurrence=1)
             ('a', 'b')
 
-            >>> split_delimited_string('string', occurrence=-1)  # No delimiter found
+            >>> StrUtils.split_delimited_string('string', occurrence=-1)  # No delimiter found
             ('string', '')
 
             # Max split limiting
-            >>> split_delimited_string('a|b|c|d', max_split=2)
+            >>> StrUtils.split_delimited_string('a|b|c|d', max_split=2)
             ['a', 'b', 'c|d']
         """
         if not string:
@@ -352,7 +393,7 @@ class StrUtils(CoreUtils):
 
         # Apply function if specified
         if func and callable(func):
-            parts = func(parts)
+            parts = list(func(parts))
 
         return parts
 
