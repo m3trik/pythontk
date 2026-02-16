@@ -32,3 +32,7 @@ include = ["pythontk*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.ui", "*.json", "*.txt", "*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+pythonpath = [".", "test"]

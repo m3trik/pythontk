@@ -121,7 +121,7 @@ class TestExecutionMonitor(BaseTestCase):
         # Should be called exactly once
         self.assertEqual(callback.call_count, 1)
 
-    @patch("pythontk.core_utils.execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
     def test_on_long_execution_escape_cancel(self, mock_is_escape):
         """Test that holding Escape interrupts execution if allowed."""
         # Mock escape being pressed after a short delay
@@ -148,7 +148,7 @@ class TestExecutionMonitor(BaseTestCase):
         callback.assert_not_called()
 
     @patch(
-        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
     )
     def test_execution_monitor_decorator(self, mock_dialog):
         """Test the high-level execution_monitor decorator."""
@@ -169,7 +169,7 @@ class TestExecutionMonitor(BaseTestCase):
         logger.info.assert_called_with("Continuing execution (Keep Waiting).")
 
     @patch(
-        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
     )
     def test_execution_monitor_abort(self, mock_dialog):
         """Test execution_monitor abort behavior."""
@@ -375,7 +375,7 @@ class TestExecutionMonitor(BaseTestCase):
         # Callback shouldn't be called as execution was fast (immediate error)
         callback.assert_not_called()
 
-    @patch("pythontk.core_utils.execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
     def test_on_long_execution_escape_ignored(self, mock_is_escape):
         """Test that holding Escape is ignored if allow_escape_cancel is False."""
         # Mock escape being pressed
@@ -556,11 +556,11 @@ class TestExecutionMonitor(BaseTestCase):
         proc = MagicMock()
 
         with patch(
-            "pythontk.core_utils.execution_monitor.ExecutionMonitor._start_heartbeat_writer",
+            "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor._start_heartbeat_writer",
             return_value=stop_hb,
         ) as start_hb:
             with patch(
-                "pythontk.core_utils.execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
+                "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
                 return_value=(proc, stop_wd),
             ) as spawn_wd:
 
@@ -575,7 +575,7 @@ class TestExecutionMonitor(BaseTestCase):
                 stop_wd.assert_called()
 
     @patch(
-        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
     )
     def test_execution_monitor_no_dialog_logs_only(self, mock_dialog):
         """When show_dialog=False, no UI is shown but warnings still log."""
@@ -602,11 +602,11 @@ class TestExecutionMonitor(BaseTestCase):
         proc = MagicMock()
 
         with patch(
-            "pythontk.core_utils.execution_monitor.ExecutionMonitor._start_heartbeat_writer",
+            "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor._start_heartbeat_writer",
             return_value=stop_hb,
         ) as start_hb:
             with patch(
-                "pythontk.core_utils.execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
+                "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
                 return_value=(proc, stop_wd),
             ) as spawn_wd:
 

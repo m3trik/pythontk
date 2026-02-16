@@ -7,7 +7,7 @@ from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMo
 
 class TestExecutionMonitorRepro(unittest.TestCase):
     @patch(
-        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
     )
     def test_execution_monitor_decorator(self, mock_dialog):
         """Test execution_monitor decorator logic."""
