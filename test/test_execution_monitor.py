@@ -5,7 +5,7 @@ import sys
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
-from pythontk.core_utils.execution_monitor import ExecutionMonitor
+from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
 
 
 from conftest import BaseTestCase

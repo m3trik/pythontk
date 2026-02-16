@@ -14,7 +14,7 @@ sys.path.append(r"o:\Cloud\Code\_scripts\mayatk")
 sys.path.append(r"o:\Cloud\Code\_scripts\pythontk")
 
 from mayatk.env_utils.maya_connection import MayaConnection
-from pythontk.core_utils.execution_monitor import ExecutionMonitor
+from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
 
 # Configure logging
 logging.basicConfig(

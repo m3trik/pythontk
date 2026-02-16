@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import time
 import logging
-from pythontk.core_utils.execution_monitor import ExecutionMonitor
+from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
 
 
 class TestExecutionMonitorRepro(unittest.TestCase):
