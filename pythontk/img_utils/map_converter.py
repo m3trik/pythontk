@@ -548,8 +548,6 @@ class MapConverterSlots(ImgUtils):
         - Godot
         - Specular/Glossiness
         """
-        from uitk import Switchboard
-
         # Get texture paths
         texture_paths = self.sb.file_dialog(
             file_types=[f"*.{ext}" for ext in self.texture_file_types],
@@ -692,14 +690,6 @@ class MapConverterUi:
         return ui
 
 
-# -----------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    MapConverterUi().show(pos="screen", app_exec=True)
-
-# -----------------------------------------------------------------------------
-# Notes
-# -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":

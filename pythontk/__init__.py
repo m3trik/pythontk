@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.7.72"
+__version__ = "0.7.74"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -31,9 +31,16 @@ DEFAULT_INCLUDE = {
     "core_utils.hierarchy_diff": "HierarchyDiff",
     "core_utils.singleton_mixin": "SingletonMixin",
     "core_utils.module_reloader": ["ModuleReloader", "reload_package"],
-    "core_utils.execution_monitor": "ExecutionMonitor",
+    "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
     "core_utils.app_launcher": "AppLauncher",
     "core_utils.cli": "CLI",
+    # Hierarchy utils
+    "core_utils.hierarchy_utils.hierarchy_indexer": "HierarchyIndexer",
+    "core_utils.hierarchy_utils.hierarchy_matching": "HierarchyMatching",
+    "core_utils.hierarchy_utils.hierarchy_analyzer": [
+        "HierarchyDifference",
+        "HierarchyAnalyzer",
+    ],
     "net_utils.ssh_client": "SSHClient",
     "net_utils.credentials": "Credentials",
     "net_utils._net_utils": "NetUtils",

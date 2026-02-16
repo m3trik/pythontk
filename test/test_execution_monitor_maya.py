@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import os
 import sys
-from pythontk.core_utils.execution_monitor import ExecutionMonitor
+from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
 
 
 class TestExecutionMonitorMaya(unittest.TestCase):

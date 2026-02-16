@@ -5,7 +5,7 @@ import sys
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
-from pythontk.core_utils.execution_monitor import ExecutionMonitor
+from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
 
 
 from conftest import BaseTestCase
@@ -121,7 +121,7 @@ class TestExecutionMonitor(BaseTestCase):
         # Should be called exactly once
         self.assertEqual(callback.call_count, 1)
 
-    @patch("pythontk.core_utils.execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
     def test_on_long_execution_escape_cancel(self, mock_is_escape):
         """Test that holding Escape interrupts execution if allowed."""
         # Mock escape being pressed after a short delay
@@ -148,7 +148,7 @@ class TestExecutionMonitor(BaseTestCase):
         callback.assert_not_called()
 
     @patch(
-        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
     )
     def test_execution_monitor_decorator(self, mock_dialog):
         """Test the high-level execution_monitor decorator."""
@@ -169,7 +169,7 @@ class TestExecutionMonitor(BaseTestCase):
         logger.info.assert_called_with("Continuing execution (Keep Waiting).")
 
     @patch(
-        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
     )
     def test_execution_monitor_abort(self, mock_dialog):
         """Test execution_monitor abort behavior."""
@@ -203,9 +203,10 @@ class TestExecutionMonitor(BaseTestCase):
                 self.assertFalse(ExecutionMonitor.is_escape_pressed())
 
     def test_show_long_execution_dialog_windows(self):
-        """Test show_long_execution_dialog on Windows (mocked)."""
+        """Test show_long_execution_dialog on Windows (mocked) — no force button by default."""
         with patch("sys.platform", "win32"):
             with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
+                # Default (force_action=None) uses MB_YESNO (no Cancel button)
                 # IDYES=6 -> True
                 mock_msg_box.return_value = 6
                 self.assertTrue(
@@ -218,11 +219,30 @@ class TestExecutionMonitor(BaseTestCase):
                     ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                 )
 
+    def test_show_long_execution_dialog_windows_force_kill(self):
+        """Test show_long_execution_dialog with force_action='kill' returns FORCE_KILL."""
+        with patch("sys.platform", "win32"):
+            with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
                 # IDCANCEL=2 -> "FORCE_KILL"
                 mock_msg_box.return_value = 2
                 self.assertEqual(
-                    ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
+                    ExecutionMonitor.show_long_execution_dialog(
+                        "Title", "Msg", force_action="kill"
+                    ),
                     "FORCE_KILL",
+                )
+
+    def test_show_long_execution_dialog_windows_force_interrupt(self):
+        """Test show_long_execution_dialog with force_action='interrupt' returns FORCE_INTERRUPT."""
+        with patch("sys.platform", "win32"):
+            with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
+                # IDCANCEL=2 -> "FORCE_INTERRUPT"
+                mock_msg_box.return_value = 2
+                self.assertEqual(
+                    ExecutionMonitor.show_long_execution_dialog(
+                        "Title", "Msg", force_action="interrupt"
+                    ),
+                    "FORCE_INTERRUPT",
                 )
 
     def test_is_escape_pressed_linux(self):
@@ -286,14 +306,27 @@ class TestExecutionMonitor(BaseTestCase):
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                     )
 
-                    # Zenity returns 0 with "Force Kill" stdout -> "FORCE_KILL"
+                    # With force_action='interrupt', extra button returns "FORCE_INTERRUPT"
                     mock_process = MagicMock()
                     mock_process.returncode = 0
+                    mock_process.stdout = "Force Stop\n"
+                    mock_run.return_value = mock_process
+
+                    self.assertEqual(
+                        ExecutionMonitor.show_long_execution_dialog(
+                            "Title", "Msg", force_action="interrupt"
+                        ),
+                        "FORCE_INTERRUPT",
+                    )
+
+                    # With force_action='kill', extra button returns "FORCE_KILL"
                     mock_process.stdout = "Force Quit\n"
                     mock_run.return_value = mock_process
 
                     self.assertEqual(
-                        ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
+                        ExecutionMonitor.show_long_execution_dialog(
+                            "Title", "Msg", force_action="kill"
+                        ),
                         "FORCE_KILL",
                     )
 
@@ -319,10 +352,12 @@ class TestExecutionMonitor(BaseTestCase):
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                     )
 
-                    # KDialog returns 2 (Cancel) -> "FORCE_KILL"
+                    # With force_action='kill': KDialog returns 2 (Cancel) -> "FORCE_KILL"
                     mock_run.return_value = MagicMock(returncode=2)
                     self.assertEqual(
-                        ExecutionMonitor.show_long_execution_dialog("Title", "Msg"),
+                        ExecutionMonitor.show_long_execution_dialog(
+                            "Title", "Msg", force_action="kill"
+                        ),
                         "FORCE_KILL",
                     )
 
@@ -340,7 +375,7 @@ class TestExecutionMonitor(BaseTestCase):
         # Callback shouldn't be called as execution was fast (immediate error)
         callback.assert_not_called()
 
-    @patch("pythontk.core_utils.execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
     def test_on_long_execution_escape_ignored(self, mock_is_escape):
         """Test that holding Escape is ignored if allow_escape_cancel is False."""
         # Mock escape being pressed
@@ -521,11 +556,11 @@ class TestExecutionMonitor(BaseTestCase):
         proc = MagicMock()
 
         with patch(
-            "pythontk.core_utils.execution_monitor.ExecutionMonitor._start_heartbeat_writer",
+            "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor._start_heartbeat_writer",
             return_value=stop_hb,
         ) as start_hb:
             with patch(
-                "pythontk.core_utils.execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
+                "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
                 return_value=(proc, stop_wd),
             ) as spawn_wd:
 
@@ -540,7 +575,7 @@ class TestExecutionMonitor(BaseTestCase):
                 stop_wd.assert_called()
 
     @patch(
-        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
     )
     def test_execution_monitor_no_dialog_logs_only(self, mock_dialog):
         """When show_dialog=False, no UI is shown but warnings still log."""
@@ -567,11 +602,11 @@ class TestExecutionMonitor(BaseTestCase):
         proc = MagicMock()
 
         with patch(
-            "pythontk.core_utils.execution_monitor.ExecutionMonitor._start_heartbeat_writer",
+            "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor._start_heartbeat_writer",
             return_value=stop_hb,
         ) as start_hb:
             with patch(
-                "pythontk.core_utils.execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
+                "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor._spawn_watchdog_subprocess",
                 return_value=(proc, stop_wd),
             ) as spawn_wd:
 
@@ -592,6 +627,52 @@ class TestExecutionMonitor(BaseTestCase):
                 spawn_wd.assert_called()
                 stop_hb.assert_called()
                 stop_wd.assert_called()
+
+    def test_force_stop_does_not_terminate_process(self):
+        """Verify Force Stop raises SystemExit in main thread instead of killing the process.
+
+        Bug: _force_kill_process() called os.kill(os.getpid(), SIGTERM) which
+        terminated the entire host application (e.g. Maya) rather than just
+        stopping the monitored operation.
+        Fixed: 2026-02-11
+        """
+        with patch("ctypes.pythonapi") as mock_api:
+            mock_api.PyThreadState_SetAsyncExc.return_value = 1  # success
+
+            ExecutionMonitor._force_interrupt_main_thread()
+
+            mock_api.PyThreadState_SetAsyncExc.assert_called_once()
+            call_args = mock_api.PyThreadState_SetAsyncExc.call_args
+            # Second argument should be SystemExit
+            self.assertIs(call_args[0][1].value, SystemExit)
+
+    @patch("os.kill")
+    @patch("os._exit")
+    def test_force_stop_never_calls_os_kill(self, mock_exit, mock_kill):
+        """Verify that Force Stop never invokes os.kill or os._exit.
+
+        Bug: Force Quit killed the parent application via os.kill(os.getpid()).
+        Fixed: 2026-02-11
+        """
+        with patch("ctypes.pythonapi") as mock_api:
+            mock_api.PyThreadState_SetAsyncExc.return_value = 1
+
+            ExecutionMonitor._force_interrupt_main_thread()
+
+            mock_kill.assert_not_called()
+            mock_exit.assert_not_called()
+
+    def test_force_stop_retries_and_falls_back(self):
+        """If PyThreadState_SetAsyncExc fails, fall back to _thread.interrupt_main."""
+        with patch("ctypes.pythonapi") as mock_api:
+            # Return 0 (thread not found) for all 3 attempts
+            mock_api.PyThreadState_SetAsyncExc.return_value = 0
+
+            with patch("_thread.interrupt_main") as mock_interrupt:
+                ExecutionMonitor._force_interrupt_main_thread()
+                # Should have retried 3 times then fallen back
+                self.assertEqual(mock_api.PyThreadState_SetAsyncExc.call_count, 3)
+                mock_interrupt.assert_called_once()
 
 
 if __name__ == "__main__":

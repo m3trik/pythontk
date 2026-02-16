@@ -2,12 +2,12 @@ import unittest
 from unittest.mock import patch, MagicMock
 import time
 import logging
-from pythontk.core_utils.execution_monitor import ExecutionMonitor
+from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
 
 
 class TestExecutionMonitorRepro(unittest.TestCase):
     @patch(
-        "pythontk.core_utils.execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
     )
     def test_execution_monitor_decorator(self, mock_dialog):
         """Test execution_monitor decorator logic."""

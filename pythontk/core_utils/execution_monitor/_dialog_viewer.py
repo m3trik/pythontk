@@ -9,13 +9,20 @@ import tkinter as tk
 from tkinter import ttk
 
 
-def run(title: str, message: str):
+def run(title: str, message: str, force_label: str | None = None):
     """Display a dialog with custom buttons matching VS Code style.
+
+    Args:
+        title: Window title.
+        message: Body text.
+        force_label: Optional label for a third "force" button (e.g. "Force Stop"
+                     or "Force Quit").  When *None* the button is omitted and
+                     only **Keep Waiting** / **Cancel** are shown.
 
     Returns via exit code:
         0: Keep Waiting
         10: Cancel (Stop Operation)
-        2: Force Quit
+        2: Force action (only possible when *force_label* is provided)
         3: Window closed (treated as Keep Waiting)
     """
     root = tk.Tk()
@@ -41,10 +48,12 @@ def run(title: str, message: str):
         root.destroy()
 
     def on_cancel():
-        result[0] = 10  # Use 10 for Cancel to distinguish from standard exit code 1 (error)
+        result[0] = (
+            10  # Use 10 for Cancel to distinguish from standard exit code 1 (error)
+        )
         root.destroy()
 
-    def on_force_quit():
+    def on_force():
         result[0] = 2
         root.destroy()
 
@@ -85,15 +94,13 @@ def run(title: str, message: str):
     # Spacer to push buttons right
     ttk.Label(btn_frame).pack(side=tk.LEFT, expand=True)
 
-    # Buttons (in order: Force Quit, Cancel, Keep Waiting)
-    # "Keep Waiting" is the default/primary action
+    # Buttons: optionally Force, then Cancel, then Keep Waiting (default)
     style = ttk.Style()
     style.configure("Accent.TButton", font=("Segoe UI", 9))
 
-    force_quit_btn = ttk.Button(
-        btn_frame, text="Force Quit", command=on_force_quit, width=12
-    )
-    force_quit_btn.pack(side=tk.LEFT, padx=(0, 8))
+    if force_label:
+        force_btn = ttk.Button(btn_frame, text=force_label, command=on_force, width=12)
+        force_btn.pack(side=tk.LEFT, padx=(0, 8))
 
     cancel_btn = ttk.Button(btn_frame, text="Cancel", command=on_cancel, width=12)
     cancel_btn.pack(side=tk.LEFT, padx=(0, 8))
@@ -114,9 +121,10 @@ def run(title: str, message: str):
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3:
-        run(sys.argv[1], sys.argv[2])
+        force = sys.argv[3] if len(sys.argv) >= 4 else None
+        run(sys.argv[1], sys.argv[2], force_label=force)
     else:
         run(
             "Test Dialog",
-            "The operation is taking longer than expected.\n\nYou can keep waiting, cancel the operation, or force quit the application.",
+            "The operation is taking longer than expected.\n\nYou can keep waiting or cancel the operation.",
         )
