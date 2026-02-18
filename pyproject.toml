@@ -36,3 +36,4 @@ include = ["pythontk*"]
 [tool.pytest.ini_options]
 testpaths = ["test"]
 pythonpath = [".", "test"]
+addopts = "--ignore=test/temp_tests"
