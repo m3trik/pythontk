@@ -3,6 +3,7 @@
 import threading
 import logging as internal_logging
 import re
+import unicodedata
 from typing import Union, List, Optional, Any, Callable
 from pythontk.core_utils.class_property import ClassProperty
 
@@ -472,6 +473,59 @@ class LoggerExt:
                     print(f"Logging error (raw emit): {e}")
 
     @staticmethod
+    def _char_width(ch: str) -> int:
+        """Return the display/column width of a single character.
+
+        Uses ``wcwidth`` if available, otherwise falls back to a heuristic
+        based on ``unicodedata.east_asian_width`` plus known wide symbol
+        ranges (Dingbats, Miscellaneous Symbols, emoji, etc.) whose glyphs
+        typically occupy two columns in modern monospace fonts even though
+        Unicode classifies them as narrow or ambiguous.
+        """
+        try:
+            import wcwidth as _wcwidth
+
+            w = _wcwidth.wcwidth(ch)
+            return max(w, 0)
+        except (ImportError, Exception):
+            pass
+
+        cp = ord(ch)
+        # East Asian Fullwidth / Wide → always 2
+        eaw = unicodedata.east_asian_width(ch)
+        if eaw in ("W", "F"):
+            return 2
+        # Common symbol blocks that render as 2 columns in many terminals
+        # (Dingbats, Misc Symbols, Misc Symbols & Arrows, Supplemental Arrows-B)
+        if (
+            0x2600 <= cp <= 0x27BF  # Misc Symbols + Dingbats
+            or 0x2B50 <= cp <= 0x2B55  # stars, circles
+            or 0x1F300 <= cp <= 0x1FAFF  # Misc Symbols & Pictographs … Symbols Extended-A
+            or 0xFE00 <= cp <= 0xFE0F  # Variation Selectors
+            or 0x200D == cp  # ZWJ
+        ):
+            return 2
+        return 1
+
+    @staticmethod
+    def _display_width(text: str) -> int:
+        """Return the display/column width of *text*."""
+        return sum(LoggerExt._char_width(ch) for ch in text)
+
+    @staticmethod
+    def _pad(text: str, target_width: int, fill: str = " ", align: str = "left") -> str:
+        """Pad *text* to *target_width* display columns using *fill* char."""
+        current = LoggerExt._display_width(text)
+        deficit = max(target_width - current, 0)
+        if align == "right":
+            return fill * deficit + text
+        elif align == "center":
+            left = deficit // 2
+            right = deficit - left
+            return fill * left + text + fill * right
+        else:  # left
+            return text + fill * deficit
+
     def _log_box(
         self,
         title: str,
@@ -484,21 +538,16 @@ class LoggerExt:
         # Use non-breaking space to prevent HTML space collapsing in handlers
         space = "\u00a0"
 
+        dw = LoggerExt._display_width
         content = [title] + (items or [])
-        longest = max(len(line) for line in content)
+        longest = max(dw(line) for line in content)
         inner_width = longest + padding * 2
         width = inner_width + 2  # full box width including sides
 
         top = "╔" + "═" * inner_width + "╗"
 
-        if align == "left":
-            title_text = space * padding + title.ljust(longest, space) + space * padding
-        elif align == "right":
-            title_text = space * padding + title.rjust(longest, space) + space * padding
-        else:  # center
-            title_text = (
-                space * padding + title.center(longest, space) + space * padding
-            )
+        title_padded = LoggerExt._pad(title, longest, fill=space, align=align)
+        title_text = space * padding + title_padded + space * padding
 
         mid = "║" + title_text + "║"
         sep = "╟" + "─" * inner_width + "╢"
@@ -517,7 +566,8 @@ class LoggerExt:
         if items:
             log_line(sep)
             for item in items:
-                item_line = space + item.ljust(inner_width - 1, space)
+                item_padded = LoggerExt._pad(item, inner_width - 1, fill=space)
+                item_line = space + item_padded
                 log_line(f"║{item_line}║")
 
         log_line(bottom)
