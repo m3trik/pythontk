@@ -545,7 +545,7 @@ class FileUtils(HelpMixin):
         p = re.sub(
             r"(?<!\\)\\(?!\\)", "/", p
         )  # Replace single backslashes, not followed by another backslash, with forward slashes.
-        p = p.strip("/")  # strip trailing forward slashes.
+        p = p.rstrip("/")  # strip trailing forward slashes.
 
         fullpath = p if "/" in p else ""
         fn = p.split("/")[-1]

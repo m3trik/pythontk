@@ -463,7 +463,7 @@ class ImgTest(BaseTestCase):
     def test_get_background_rgb_mode(self):
         """Test get_background with RGB mode."""
         self.assertEqual(
-            ImgUtils.get_background(os.path.join(self.test_dir, "im_n.png"), "RGB"),
+            ImgUtils.get_background(os.path.join(self.test_dir, "im_N.png"), "RGB"),
             (127, 127, 255),
         )
 

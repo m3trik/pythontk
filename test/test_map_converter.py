@@ -829,6 +829,7 @@ class TestMapConverterIntegration(unittest.TestCase):
         self.mock_sb.file_dialog.return_value = [bump_path]
 
         # Mock UI options
+        self.mock_widget.menu.tb003_cmb_format.currentData.return_value = "opengl"
         self.mock_widget.menu.tb003_cmb_format.currentText.return_value = "OpenGL"
         self.mock_widget.menu.tb003_dsb_intensity.value.return_value = 1.0
 

@@ -10,6 +10,10 @@ class TestExecutionMonitorRefactor(unittest.TestCase):
         """Test that ExecutionMonitor can be imported from core_utils."""
         self.assertTrue(hasattr(ExecutionMonitor, "on_long_execution"))
 
+    @unittest.skipUnless(
+        sys.platform == "win32" or os.environ.get("DISPLAY"),
+        "Requires a display (headless CI has no GUI)",
+    )
     def test_gif_process_start_stop(self):
         """Test starting and stopping the GIF process directly."""
         # Get the path to the bundled GIF

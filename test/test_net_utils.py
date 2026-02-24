@@ -10,7 +10,7 @@ try:
 except ImportError:
     pass
 
-from pythontk.net_utils.ssh_client import SSHClient
+from pythontk.net_utils.ssh_client import SSHClient, paramiko
 from pythontk.net_utils.credentials import Credentials
 
 
@@ -101,6 +101,7 @@ class TestCredentials(unittest.TestCase):
                 self.assertEqual(cred["password"], "secret_val", f"Failed to match {target} to {env_key}")
 
 
+@unittest.skipIf(paramiko is None, "paramiko not installed")
 class TestSSHClient(unittest.TestCase):
 
     @patch("pythontk.net_utils.ssh_client.paramiko.SSHClient")

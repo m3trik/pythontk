@@ -6,6 +6,7 @@ from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMo
 
 
 class TestExecutionMonitorMaya(unittest.TestCase):
+    @patch("sys.platform", "win32")
     def test_get_python_executable_maya(self):
         """Test detection of mayapy.exe when running in maya.exe."""
 
@@ -27,6 +28,7 @@ class TestExecutionMonitorMaya(unittest.TestCase):
 
                 self.assertEqual(result.lower(), expected_mayapy.lower())
 
+    @patch("sys.platform", "win32")
     def test_get_python_executable_mayabatch(self):
         """Test detection of mayapy.exe when running in mayabatch.exe."""
 

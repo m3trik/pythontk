@@ -19,6 +19,7 @@ Run with:
     python test_file.py
 """
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,6 +88,7 @@ class FileTest(BaseTestCase):
             r"\\192.168.1.240/nas/lost+found",
         )
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows-only env var")
     def test_format_path_environment_variable(self):
         """Test format_path expands environment variables."""
         self.assertEqual(
@@ -107,9 +109,10 @@ class FileTest(BaseTestCase):
             FileUtils.format_path(r"\\192.168.1.240\nas/lost+found/file.ext", "dir"),
             "lost+found",
         )
-        self.assertEqual(
-            FileUtils.format_path(r"%programfiles%", "dir"), "Program Files"
-        )
+        if sys.platform == "win32":
+            self.assertEqual(
+                FileUtils.format_path(r"%programfiles%", "dir"), "Program Files"
+            )
 
     def test_format_path_file_extraction(self):
         """Test format_path extracts file names."""
@@ -136,7 +139,8 @@ class FileTest(BaseTestCase):
             FileUtils.format_path(r"\\192.168.1.240\nas/lost+found/file.ext", "name"),
             "file",
         )
-        self.assertEqual(FileUtils.format_path(r"%programfiles%", "name"), "")
+        if sys.platform == "win32":
+            self.assertEqual(FileUtils.format_path(r"%programfiles%", "name"), "")
 
     def test_format_path_ext_extraction(self):
         """Test format_path extracts extensions."""
@@ -361,8 +365,8 @@ class FileTest(BaseTestCase):
         """Test get_dir_contents returns directory paths."""
         path = str(self.test_files_path)
         base_path = str(self.test_base_path)
-        imgtk_test_dirpath = os.path.join(base_path, "test_files\\imgtk_test")
-        sub_directory_dirpath = os.path.join(base_path, "test_files\\sub-directory")
+        imgtk_test_dirpath = os.path.join(base_path, "test_files", "imgtk_test")
+        sub_directory_dirpath = os.path.join(base_path, "test_files", "sub-directory")
         self.assertEqual(
             FileUtils.get_dir_contents(path, "dirpath"),
             [imgtk_test_dirpath, sub_directory_dirpath],
@@ -432,8 +436,8 @@ class FileTest(BaseTestCase):
         """Test get_dir_contents with both dirpath and dir types."""
         path = str(self.test_files_path)
         base_path = str(self.test_base_path)
-        imgtk_test_dirpath = os.path.join(base_path, "test_files\\imgtk_test")
-        sub_directory_dirpath = os.path.join(base_path, "test_files\\sub-directory")
+        imgtk_test_dirpath = os.path.join(base_path, "test_files", "imgtk_test")
+        sub_directory_dirpath = os.path.join(base_path, "test_files", "sub-directory")
         self.assertEqual(
             sorted(FileUtils.get_dir_contents(path, ["dirpath", "dir"])),
             sorted(
@@ -450,8 +454,8 @@ class FileTest(BaseTestCase):
         """Test get_dir_contents with group_by_type functionality."""
         path = str(self.test_files_path)
         base_path = str(self.test_base_path)
-        imgtk_test_dirpath = os.path.join(base_path, "test_files\\imgtk_test")
-        sub_directory_dirpath = os.path.join(base_path, "test_files\\sub-directory")
+        imgtk_test_dirpath = os.path.join(base_path, "test_files", "imgtk_test")
+        sub_directory_dirpath = os.path.join(base_path, "test_files", "sub-directory")
         result = FileUtils.get_dir_contents(
             path, ["dirpath", "file"], group_by_type=True
         )
