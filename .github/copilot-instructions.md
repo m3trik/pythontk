@@ -31,3 +31,5 @@
 
 ## 3. Work Logs & History
 - [x] **Initial Setup** — Repository established.
+- [x] **AudioUtils Module (2026)** — Added reusable ffmpeg-backed audio conversion helpers (`ensure_playable_path`, extension checks, ffmpeg resolution) for downstream DCC tools.
+- [x] **Audio Composite Builder (2026)** — Added DCC-agnostic WAV compositing helper (`build_composite_wav`) to centralize timeline-audio mixing logic.

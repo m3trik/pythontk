@@ -3,6 +3,7 @@
 import threading
 import logging as internal_logging
 import re
+import unicodedata
 from typing import Union, List, Optional, Any, Callable
 from pythontk.core_utils.class_property import ClassProperty
 
@@ -27,6 +28,46 @@ class StripHtmlFormatter(internal_logging.Formatter):
         # Restore original message (in case other handlers need the HTML)
         record.msg = original_msg
         return formatted
+
+
+class LevelAwareFormatter(internal_logging.Formatter):
+    """Formatter that dynamically selects format per-record based on log level.
+
+    Unlike a static Formatter, this ensures RESULT/SUCCESS/NOTICE messages
+    use their designated formats (without logger name) even when the handler
+    accepts multiple levels.
+    """
+
+    def __init__(self, logger=None, strip_html=False):
+        super().__init__()
+        self._logger_ref = logger
+        self._strip_html = strip_html
+
+    def format(self, record):
+        logger = self._logger_ref
+        base_fmt = LoggerExt._get_base_format(record.levelno, logger=logger)
+        prefix = getattr(logger, "_log_prefix", "") if logger else ""
+        suffix = getattr(logger, "_log_suffix", "") if logger else ""
+        fmt = base_fmt.replace("%(message)s", f"{prefix}%(message)s{suffix}")
+
+        ts = getattr(logger, "_log_timestamp", None) if logger else None
+        if ts:
+            fmt = f"[%(asctime)s] {fmt}"
+            self.datefmt = ts
+        else:
+            self.datefmt = None
+
+        self._style._fmt = fmt
+
+        if self._strip_html:
+            original = record.msg
+            if isinstance(original, str) and "<" in original and ">" in original:
+                record.msg = re.sub(r"<[^>]+>", "", original)
+            result = super().format(record)
+            record.msg = original
+            return result
+
+        return super().format(record)
 
 
 class LoggerExt:
@@ -158,6 +199,7 @@ class LoggerExt:
             "success": LoggerExt._success,
             "result": LoggerExt._result,
             "notice": LoggerExt._notice,
+            "progress": LoggerExt._progress,
             "log_box": LoggerExt._log_box,
             "log_divider": LoggerExt._log_divider,
             "log_raw": LoggerExt._log_raw,
@@ -279,7 +321,23 @@ class LoggerExt:
     def _add_handler(
         logger: internal_logging.Logger, handler_type: str, **kwargs
     ) -> None:
-        """Add a handler to the logger."""
+        """Add a handler to the logger, skipping if an equivalent one exists."""
+        # Deduplicate: check for existing handler of same type targeting the same widget
+        target_widget = kwargs.get("widget")
+        for existing in logger.handlers:
+            if handler_type == "text_widget" and target_widget is not None:
+                if getattr(existing, "widget", None) is target_widget:
+                    return  # already attached
+            elif handler_type == "file":
+                import os
+
+                target_file = os.path.abspath(kwargs.get("filename", "logfile.log"))
+                if (
+                    isinstance(existing, internal_logging.FileHandler)
+                    and getattr(existing, "baseFilename", None) == target_file
+                ):
+                    return
+
         handler = None
         if handler_type == "stream":
             handler = internal_logging.StreamHandler()
@@ -305,14 +363,13 @@ class LoggerExt:
             level = kwargs.get("level", internal_logging.WARNING)
             handler.setLevel(level)
 
-            # Use StripHtmlFormatter for file and stream handlers by default
+            # Use level-aware formatter with HTML stripping for file/stream
             strip_html = handler_type in ["file", "stream"]
             handler.setFormatter(
-                logger._formatter_selector(level, strip_html=strip_html)
+                LevelAwareFormatter(logger=logger, strip_html=strip_html)
             )
 
             logger.addHandler(handler)
-            logger.debug(f"{handler_type.capitalize()} handler added")
 
     @staticmethod
     def _add_file_handler(
@@ -345,29 +402,16 @@ class LoggerExt:
         )
 
     @staticmethod
-    def _set_log_prefix(self, prefix: str) -> None:
-        """Set a prefix that will appear before all log messages."""
-        self._log_prefix = prefix
-        LoggerExt._update_handler_formatters(self)
-
-    @staticmethod
-    def _set_log_suffix(self, suffix: str) -> None:
-        """Set a suffix that will appear after all log messages."""
-        self._log_suffix = suffix
-        LoggerExt._update_handler_formatters(self)
-
-    @staticmethod
     def _update_handler_formatters(logger: internal_logging.Logger) -> None:
-        """Update all handler formatters with the current prefix/suffix."""
+        """Update all handler formatters with level-aware formatting."""
         for handler in logger.handlers:
-            # Determine if this handler should strip HTML
             is_file_or_stream = isinstance(
                 handler,
                 (internal_logging.FileHandler, internal_logging.StreamHandler),
             ) and not isinstance(handler, DefaultTextLogHandler)
 
             handler.setFormatter(
-                logger._formatter_selector(handler.level, strip_html=is_file_or_stream)
+                LevelAwareFormatter(logger=logger, strip_html=is_file_or_stream)
             )
 
     @staticmethod
@@ -429,6 +473,59 @@ class LoggerExt:
                     print(f"Logging error (raw emit): {e}")
 
     @staticmethod
+    def _char_width(ch: str) -> int:
+        """Return the display/column width of a single character.
+
+        Uses ``wcwidth`` if available, otherwise falls back to a heuristic
+        based on ``unicodedata.east_asian_width`` plus known wide symbol
+        ranges (Dingbats, Miscellaneous Symbols, emoji, etc.) whose glyphs
+        typically occupy two columns in modern monospace fonts even though
+        Unicode classifies them as narrow or ambiguous.
+        """
+        try:
+            import wcwidth as _wcwidth
+
+            w = _wcwidth.wcwidth(ch)
+            return max(w, 0)
+        except (ImportError, Exception):
+            pass
+
+        cp = ord(ch)
+        # East Asian Fullwidth / Wide → always 2
+        eaw = unicodedata.east_asian_width(ch)
+        if eaw in ("W", "F"):
+            return 2
+        # Common symbol blocks that render as 2 columns in many terminals
+        # (Dingbats, Misc Symbols, Misc Symbols & Arrows, Supplemental Arrows-B)
+        if (
+            0x2600 <= cp <= 0x27BF  # Misc Symbols + Dingbats
+            or 0x2B50 <= cp <= 0x2B55  # stars, circles
+            or 0x1F300 <= cp <= 0x1FAFF  # Misc Symbols & Pictographs … Symbols Extended-A
+            or 0xFE00 <= cp <= 0xFE0F  # Variation Selectors
+            or 0x200D == cp  # ZWJ
+        ):
+            return 2
+        return 1
+
+    @staticmethod
+    def _display_width(text: str) -> int:
+        """Return the display/column width of *text*."""
+        return sum(LoggerExt._char_width(ch) for ch in text)
+
+    @staticmethod
+    def _pad(text: str, target_width: int, fill: str = " ", align: str = "left") -> str:
+        """Pad *text* to *target_width* display columns using *fill* char."""
+        current = LoggerExt._display_width(text)
+        deficit = max(target_width - current, 0)
+        if align == "right":
+            return fill * deficit + text
+        elif align == "center":
+            left = deficit // 2
+            right = deficit - left
+            return fill * left + text + fill * right
+        else:  # left
+            return text + fill * deficit
+
     def _log_box(
         self,
         title: str,
@@ -441,21 +538,16 @@ class LoggerExt:
         # Use non-breaking space to prevent HTML space collapsing in handlers
         space = "\u00a0"
 
+        dw = LoggerExt._display_width
         content = [title] + (items or [])
-        longest = max(len(line) for line in content)
+        longest = max(dw(line) for line in content)
         inner_width = longest + padding * 2
         width = inner_width + 2  # full box width including sides
 
         top = "╔" + "═" * inner_width + "╗"
 
-        if align == "left":
-            title_text = space * padding + title.ljust(longest, space) + space * padding
-        elif align == "right":
-            title_text = space * padding + title.rjust(longest, space) + space * padding
-        else:  # center
-            title_text = (
-                space * padding + title.center(longest, space) + space * padding
-            )
+        title_padded = LoggerExt._pad(title, longest, fill=space, align=align)
+        title_text = space * padding + title_padded + space * padding
 
         mid = "║" + title_text + "║"
         sep = "╟" + "─" * inner_width + "╢"
@@ -474,7 +566,8 @@ class LoggerExt:
         if items:
             log_line(sep)
             for item in items:
-                item_line = space + item.ljust(inner_width - 1, space)
+                item_padded = LoggerExt._pad(item, inner_width - 1, fill=space)
+                item_line = space + item_padded
                 log_line(f"║{item_line}║")
 
         log_line(bottom)
@@ -509,20 +602,22 @@ class LoggerExt:
         )
 
     @staticmethod
+    def _progress(self, msg: str, *args, **kwargs) -> None:
+        internal_logging.Logger.__dict__["log"](
+            self, LoggerExt.PROGRESS, f"{msg}", *args, **kwargs
+        )
+
+    @staticmethod
     def _set_log_prefix(self, prefix: str) -> None:
         """Set a prefix that will appear before all log messages."""
         self._log_prefix = prefix
-        # Update all existing handlers with the new prefix
-        for handler in self.handlers:
-            handler.setFormatter(self._formatter_selector(handler.level))
+        LoggerExt._update_handler_formatters(self)
 
     @staticmethod
     def _set_log_suffix(self, suffix: str) -> None:
         """Set a suffix that will appear after all log messages."""
         self._log_suffix = suffix
-        # Update all existing handlers with the new suffix
-        for handler in self.handlers:
-            handler.setFormatter(self._formatter_selector(handler.level))
+        LoggerExt._update_handler_formatters(self)
 
     @staticmethod
     def _setup_logging_redirect(
@@ -542,7 +637,9 @@ class LoggerExt:
         elif hasattr(target, "write"):
             stream_handler = internal_logging.StreamHandler(stream=target)
             stream_handler.setLevel(level)
-            stream_handler.setFormatter(self._formatter_selector(level))
+            stream_handler.setFormatter(
+                LevelAwareFormatter(logger=self, strip_html=True)
+            )
             self.addHandler(stream_handler)
         elif hasattr(target, "append"):
             self.add_text_widget_handler(
@@ -552,14 +649,14 @@ class LoggerExt:
             raise ValueError("Unsupported target type for logging redirection.")
 
     @staticmethod
-    def _hide_logger_name(self, show: bool = False) -> None:
+    def _hide_logger_name(self, hide: bool = True) -> None:
         """Control whether the logger name is displayed in log messages.
 
         Args:
-            show: If True (default), include the logger name in messages.
-                  If False, omit the name portion for cleaner output.
+            hide: If True (default), omit the logger name for cleaner output.
+                  If False, include the logger name in messages.
         """
-        self._hide_logger_name = show
+        self._hide_logger_name = hide
         LoggerExt._update_handler_formatters(self)
 
     @staticmethod

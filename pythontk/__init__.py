@@ -3,12 +3,13 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.7.78"
+__version__ = "0.7.80"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
 
 DEFAULT_INCLUDE = {
+    "audio_utils._audio_utils": "AudioUtils",
     "img_utils._img_utils": "*",
     "img_utils.map_factory": ["MapFactory"],
     "img_utils.map_registry": "MapRegistry",
@@ -78,6 +79,7 @@ __all__ = [
     "ProgressionCurves",
     "StrUtils",
     "FuzzyMatcher",
+    "AudioUtils",
     "VidUtils",
 ]
 # Test: 222117
