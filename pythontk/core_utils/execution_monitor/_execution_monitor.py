@@ -565,19 +565,28 @@ class ExecutionMonitor:
                                             If a string, displays the GIF at the specified path.
         """
 
+        _dialog_shown = [False]
+
         def callback():
             full_msg = f"{message} (taking longer than {threshold}s...)"
             if logger:
                 logger.warning(full_msg)
 
-            if not show_dialog:
-                # Non-interactive mode: keep waiting, continue monitoring.
+            if not show_dialog or _dialog_shown[0]:
+                # Non-interactive mode or dialog already shown: keep waiting silently.
                 return True
 
+            _dialog_shown[0] = True
+            esc_hint = (
+                "\n\nPress and hold Esc at any time to cancel the operation."
+                if allow_escape_cancel
+                else ""
+            )
             result = ExecutionMonitor.show_long_execution_dialog(
                 "Long Execution Warning",
                 f"{full_msg}\n\nThe operation is not responding.\n"
-                "You can keep waiting or cancel the operation.",
+                "You can keep waiting or cancel the operation."
+                f"{esc_hint}",
                 force_action=force_action,
             )
 
