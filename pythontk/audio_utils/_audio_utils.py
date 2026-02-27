@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import wave as _wave
-from typing import Optional
+from typing import Dict, List, Optional, Set
 
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -164,27 +164,33 @@ class AudioUtils(HelpMixin):
 
             try:
                 with _wave.open(path, "rb") as wf:
+                    sr = wf.getframerate()
+                    ch = wf.getnchannels()
+                    sw = wf.getsampwidth()
+
+                    if sw != 2:
+                        if logger:
+                            logger.warning(
+                                f"Skipping '{path}': only 16-bit PCM WAV "
+                                f"is supported (got {sw * 8}-bit)"
+                            )
+                        continue
+
                     if sample_rate is None:
-                        sample_rate = wf.getframerate()
-                        channels = wf.getnchannels()
-                        sampwidth = wf.getsampwidth()
-                        if sampwidth != 2:
-                            if logger:
-                                logger.warning(
-                                    f"Skipping '{path}': only 16-bit PCM WAV is supported"
-                                )
-                            continue
-                    elif wf.getframerate() != sample_rate:
+                        sample_rate = sr
+                        channels = ch
+                        sampwidth = sw
+                    elif sr != sample_rate:
                         if logger:
                             logger.warning(
                                 f"Skipping '{path}': sample rate "
-                                f"{wf.getframerate()} != {sample_rate}"
+                                f"{sr} != {sample_rate}"
                             )
                         continue
-                    elif wf.getnchannels() != channels:
+                    elif ch != channels:
                         if logger:
                             logger.warning(
-                                f"Skipping '{path}': channels {wf.getnchannels()} != {channels}"
+                                f"Skipping '{path}': channels {ch} != {channels}"
                             )
                         continue
 
@@ -226,7 +232,245 @@ class AudioUtils(HelpMixin):
         if logger:
             logger.info(
                 f"Built composite: {total_samples // channels} samples, "
-                f"{total_samples // (channels * sample_rate):.1f}s"
+                f"{total_samples / (channels * sample_rate):.1f}s"
             )
 
         return output
+
+    # ------------------------------------------------------------------
+    # Audio-map helpers
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def resolve_playable_path(
+        cls,
+        audio_path: str,
+        cache_dir: Optional[str] = None,
+        logger=None,
+    ) -> Optional[str]:
+        """Return a playable path, converting to WAV when required.
+
+        Thin convenience wrapper around ``ensure_playable_path`` that
+        returns ``None`` instead of raising on failure.
+
+        Parameters:
+            audio_path: Source audio file path.
+            cache_dir: Cache directory for converted files.  Defaults to
+                ``_audio_cache`` next to the source file.
+            logger: Optional logger with ``warning``/``debug`` methods.
+
+        Returns:
+            Resolved playable path, or ``None`` on error.
+        """
+        source = audio_path.replace("\\", "/")
+        if cache_dir is None:
+            cache_dir = os.path.join(os.path.dirname(source), "_audio_cache").replace(
+                "\\", "/"
+            )
+
+        try:
+            resolved = cls.ensure_playable_path(source, cache_dir=cache_dir)
+            if resolved != source and logger:
+                logger.debug(f"Converted '{source}' -> '{resolved}'")
+            return resolved
+        except Exception as exc:
+            if logger:
+                logger.warning(f"Cannot import '{source}': {exc}")
+            return None
+
+    @classmethod
+    def build_audio_map(
+        cls,
+        search_dir: str,
+        extensions: Optional[Set[str]] = None,
+        cache_dir: Optional[str] = None,
+        logger=None,
+    ) -> Dict[str, str]:
+        """Recursively scan a directory for audio files.
+
+        Parameters:
+            search_dir: Root directory to scan.
+            extensions: Accepted source extensions.  Defaults to
+                ``SOURCE_EXTENSIONS``.
+            cache_dir: Cache directory for converted files.  When
+                ``None`` a ``_audio_cache`` folder is created next to
+                each source file.
+            logger: Optional logger with ``warning``/``debug`` methods.
+
+        Returns:
+            Dict mapping lowercase filename stem to playable path.
+            First file found wins; collisions emit a warning.
+        """
+        exts = extensions or cls.SOURCE_EXTENSIONS
+        audio_map: Dict[str, str] = {}
+
+        for root, _, files in os.walk(search_dir):
+            for file in files:
+                name, ext = os.path.splitext(file)
+                if ext.lower() not in exts:
+                    continue
+                key = name.lower()
+                full_path = os.path.join(root, file).replace("\\", "/")
+                playable = cls.resolve_playable_path(
+                    full_path, cache_dir=cache_dir, logger=logger
+                )
+                if not playable:
+                    continue
+                if key in audio_map:
+                    if logger:
+                        logger.warning(
+                            f"Duplicate audio stem '{name}': keeping "
+                            f"'{audio_map[key]}', ignoring '{playable}'"
+                        )
+                else:
+                    audio_map[key] = playable
+
+        return audio_map
+
+    @classmethod
+    def build_audio_map_from_file_map(
+        cls,
+        file_map: Dict[str, str],
+        cache_dir: Optional[str] = None,
+        logger=None,
+    ) -> Dict[str, str]:
+        """Build an audio map from a ``{stem: path}`` dict.
+
+        The provided *stems* are used as dictionary keys (lowered)
+        instead of re-extracting them from file paths, guaranteeing
+        that keys match event labels derived from the same stems.
+
+        Parameters:
+            file_map: ``{stem: original_path}`` mapping.
+            cache_dir: Cache directory for converted files.
+            logger: Optional logger.
+
+        Returns:
+            Dict mapping lowercase stem -> resolved playable path.
+        """
+        audio_map: Dict[str, str] = {}
+        for stem, path in file_map.items():
+            full = path.replace("\\", "/")
+            playable = cls.resolve_playable_path(
+                full, cache_dir=cache_dir, logger=logger
+            )
+            if not playable:
+                continue
+            key = stem.lower()
+            if key not in audio_map:
+                audio_map[key] = playable
+        return audio_map
+
+    @classmethod
+    def build_audio_map_from_files(
+        cls,
+        audio_files: List[str],
+        cache_dir: Optional[str] = None,
+        logger=None,
+    ) -> Dict[str, str]:
+        """Build an audio map from an explicit list of file paths.
+
+        Parameters:
+            audio_files: Absolute paths to audio files.
+            cache_dir: Cache directory for converted files.
+            logger: Optional logger.
+
+        Returns:
+            Dict mapping lowercase filename stem to playable path.
+        """
+        audio_map: Dict[str, str] = {}
+        for path in audio_files:
+            full = path.replace("\\", "/")
+            playable = cls.resolve_playable_path(
+                full, cache_dir=cache_dir, logger=logger
+            )
+            if not playable:
+                continue
+            stem = os.path.splitext(os.path.basename(full))[0].lower()
+            if stem in audio_map:
+                if logger:
+                    logger.warning(
+                        f"Duplicate audio stem '{stem}': keeping "
+                        f"'{audio_map[stem]}', ignoring '{playable}'"
+                    )
+            else:
+                audio_map[stem] = playable
+        return audio_map
+
+    # ------------------------------------------------------------------
+    # WAV trimming
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def trim_silence(
+        cls,
+        wav_path: str,
+        output_path: Optional[str] = None,
+        threshold: int = 8,
+    ) -> str:
+        """Trim leading and trailing silence from a 16-bit PCM WAV file.
+
+        Silence is defined as any sample whose absolute value is at or
+        below *threshold* (default ``8``, on a 16-bit scale of 0–32767).
+
+        Parameters:
+            wav_path: Input WAV file path.
+            output_path: Destination path.  Defaults to overwriting
+                the input file in-place.
+            threshold: Absolute sample value at or below which audio is
+                considered silent.
+
+        Returns:
+            The output path.
+
+        Raises:
+            ValueError: If the file is not 16-bit PCM WAV.
+        """
+        wav_path = os.path.normpath(wav_path).replace("\\", "/")
+        if output_path is None:
+            output_path = wav_path
+        else:
+            output_path = os.path.normpath(output_path).replace("\\", "/")
+
+        with _wave.open(wav_path, "rb") as wf:
+            params = wf.getparams()
+            if params.sampwidth != 2:
+                raise ValueError(
+                    f"Only 16-bit PCM WAV is supported (got {params.sampwidth * 8}-bit)"
+                )
+            raw = wf.readframes(params.nframes)
+
+        samples = _array.array("h")
+        samples.frombytes(raw)
+
+        channels = params.nchannels
+
+        # Find first and last non-silent *frame* (group of `channels` samples)
+        num_frames = len(samples) // channels
+        first_frame = 0
+        for f in range(num_frames):
+            offset = f * channels
+            if any(abs(samples[offset + c]) > threshold for c in range(channels)):
+                first_frame = f
+                break
+        else:
+            # Entire file is silent — write an empty WAV
+            first_frame = 0
+            num_frames = 0
+
+        last_frame = num_frames
+        if num_frames > 0:
+            for f in range(num_frames - 1, first_frame - 1, -1):
+                offset = f * channels
+                if any(abs(samples[offset + c]) > threshold for c in range(channels)):
+                    last_frame = f + 1
+                    break
+
+        trimmed = samples[first_frame * channels : last_frame * channels]
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with _wave.open(output_path, "wb") as wf:
+            wf.setparams(params)
+            wf.writeframes(trimmed.tobytes())
+
+        return output_path
