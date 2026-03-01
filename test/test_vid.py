@@ -98,9 +98,8 @@ class VidTest(BaseTestCase):
     )
     def test_get_video_frame_rate_nonexistent_file(self):
         """Test get_video_frame_rate with nonexistent file."""
-        result = VidUtils.get_video_frame_rate("/nonexistent/video.mp4")
-        # Should return None or 0 for invalid file
-        self.assertTrue(result is None or result == 0 or result == 0.0)
+        with self.assertRaises(RuntimeError):
+            VidUtils.get_video_frame_rate("/nonexistent/video.mp4")
 
     @unittest.skipUnless(
         shutil.which("ffmpeg") is not None,
@@ -108,8 +107,8 @@ class VidTest(BaseTestCase):
     )
     def test_get_video_frame_rate_empty_path(self):
         """Test get_video_frame_rate with empty path."""
-        result = VidUtils.get_video_frame_rate("")
-        self.assertTrue(result is None or result == 0 or result == 0.0)
+        with self.assertRaises(RuntimeError):
+            VidUtils.get_video_frame_rate("")
 
     @unittest.skipUnless(
         shutil.which("ffmpeg") is not None,
@@ -121,10 +120,9 @@ class VidTest(BaseTestCase):
         temp_file = os.path.join(self.temp_dir, "test.txt")
         with open(temp_file, "w") as f:
             f.write("This is not a video")
-        
-        result = VidUtils.get_video_frame_rate(temp_file)
-        # Should handle gracefully
-        self.assertTrue(result is None or isinstance(result, (int, float)))
+
+        with self.assertRaises(RuntimeError):
+            VidUtils.get_video_frame_rate(temp_file)
 
     # -------------------------------------------------------------------------
     # compress_video Tests
