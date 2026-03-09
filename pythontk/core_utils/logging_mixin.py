@@ -416,12 +416,15 @@ class LoggerExt:
 
     @staticmethod
     def _set_level(self, level: Union[int, str]) -> None:
-        """Set the log level."""
+        """Set the log level and sync all handler levels."""
         if isinstance(level, str):
             level = internal_logging._nameToLevel.get(
                 level.upper(), internal_logging.INFO
             )
         self.internal_setLevel(level)  # Call the preserved original method
+        # Sync handler levels whenever level changes (not on every logger access)
+        for handler in self.handlers:
+            handler.setLevel(level)
 
     @staticmethod
     def _set_text_handler(handler: Union[type, object]) -> None:
@@ -500,7 +503,9 @@ class LoggerExt:
         if (
             0x2600 <= cp <= 0x27BF  # Misc Symbols + Dingbats
             or 0x2B50 <= cp <= 0x2B55  # stars, circles
-            or 0x1F300 <= cp <= 0x1FAFF  # Misc Symbols & Pictographs … Symbols Extended-A
+            or 0x1F300
+            <= cp
+            <= 0x1FAFF  # Misc Symbols & Pictographs … Symbols Extended-A
             or 0xFE00 <= cp <= 0xFE0F  # Variation Selectors
             or 0x200D == cp  # ZWJ
         ):
@@ -526,51 +531,83 @@ class LoggerExt:
         else:  # left
             return text + fill * deficit
 
+    @staticmethod
+    def _truncate(text: str, max_display_width: int, ellipsis: str = "…") -> str:
+        """Truncate *text* to *max_display_width* display columns with ellipsis."""
+        dw = LoggerExt._display_width
+        if dw(text) <= max_display_width:
+            return text
+        ellipsis_w = dw(ellipsis)
+        result = []
+        current_width = 0
+        for ch in text:
+            ch_w = LoggerExt._char_width(ch)
+            if current_width + ch_w + ellipsis_w > max_display_width:
+                break
+            result.append(ch)
+            current_width += ch_w
+        return "".join(result) + ellipsis
+
     def _log_box(
         self,
         title: str,
         items: List[str] = None,
         align: str = "left",
         level: str = None,
+        max_width: Optional[int] = None,
     ) -> int:
-        """Print an ASCII box with title and optional list of lines. Returns box width."""
+        """Print an ASCII box with title and optional list of lines. Returns box width.
+
+        Parameters:
+            max_width: Maximum box width in display columns.  Falls back to
+                ``self.box_width`` if set, otherwise unlimited.
+        """
         padding = 1
         # Use non-breaking space to prevent HTML space collapsing in handlers
         space = "\u00a0"
 
+        if max_width is None:
+            max_width = getattr(self, "box_width", None)
+
         dw = LoggerExt._display_width
+        trunc = LoggerExt._truncate
         content = [title] + (items or [])
         longest = max(dw(line) for line in content)
+
+        # Clamp to max_width (subtract 2 for borders, 2 for padding)
+        if max_width is not None:
+            max_content = max_width - 2 - padding * 2
+            if max_content < 4:
+                max_content = 4  # minimum usable width
+            if longest > max_content:
+                longest = max_content
+
         inner_width = longest + padding * 2
         width = inner_width + 2  # full box width including sides
 
         top = "╔" + "═" * inner_width + "╗"
 
-        title_padded = LoggerExt._pad(title, longest, fill=space, align=align)
+        title_padded = LoggerExt._pad(trunc(title, longest), longest, fill=space, align=align)
         title_text = space * padding + title_padded + space * padding
 
         mid = "║" + title_text + "║"
         sep = "╟" + "─" * inner_width + "╢"
         bottom = "╚" + "═" * inner_width + "╝"
 
-        color = LoggerExt.get_color(level) if level else None
-
-        def log_line(line):
-            if color:
-                line = f'<span style="color:{color}">{line}</span>'
-            LoggerExt._log_raw(self, line)
-
-        log_line(top)
-        log_line(mid)
-
+        lines = [top, mid]
         if items:
-            log_line(sep)
+            lines.append(sep)
             for item in items:
-                item_padded = LoggerExt._pad(item, inner_width - 1, fill=space)
+                item_padded = LoggerExt._pad(trunc(item, inner_width - 1), inner_width - 1, fill=space)
                 item_line = space + item_padded
-                log_line(f"║{item_line}║")
+                lines.append(f"║{item_line}║")
+        lines.append(bottom)
 
-        log_line(bottom)
+        box_text = "\n".join(lines)
+        color = LoggerExt.get_color(level) if level else None
+        if color:
+            box_text = f'<span style="color:{color}">{box_text}</span>'
+        LoggerExt._log_raw(self, box_text)
 
         return width
 
@@ -795,7 +832,7 @@ class DefaultTextLogHandler(internal_logging.Handler):
             if getattr(record, "raw", False):
                 msg = record.getMessage()
                 if self.monospace:
-                    msg = f'<span style="font-family:monospace; white-space:pre-wrap;">{msg}</span>'
+                    msg = f'<span style="font-family:monospace; white-space:pre;">{msg}</span>'
                 threading.Timer(0, self._safe_append, args=(msg,)).start()
             else:
                 msg = self.format(record)
@@ -983,10 +1020,6 @@ class LoggingMixin(TableMixin):
                 logger.add_stream_handler()
 
             cls._logger = logger
-
-        # sync all handler levels to match logger level
-        for handler in cls._logger.handlers:
-            handler.setLevel(cls._logger.level)
 
         return cls._logger
 

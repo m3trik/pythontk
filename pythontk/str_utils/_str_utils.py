@@ -887,8 +887,11 @@ class StrUtils(CoreUtils):
         while True:
             stripped = False
             if strip_trailing_ints and s and s[-1].isdigit():
-                s = re.sub(r"\d+$", "", s)
-                stripped = True
+                # Only strip digits not preceded by underscore (e.g. CUBE01 -> CUBE,
+                # but CUBE_01 stays as-is since _01 is intentional numbering)
+                if not re.search(r"_\d+$", s):
+                    s = re.sub(r"\d+$", "", s)
+                    stripped = True
             if strip_trailing_alpha and s and s[-1].isupper():
                 s = re.sub(r"(?:[^0-9A-Za-z]+)?[A-Z]+$", "", s)
                 stripped = True

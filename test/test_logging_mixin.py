@@ -276,6 +276,115 @@ class DefaultTextLogHandlerTest(BaseTestCase):
         self.assertEqual(handler.get_color("UNKNOWN"), "#FFFFFF")
 
 
+class LogBoxTest(BaseTestCase):
+    """Tests for _log_box and _truncate."""
+
+    def setUp(self):
+        super().setUp()
+        self.logger = logging.Logger("test_box", logging.DEBUG)
+        self.logger.handlers = []
+        LoggerExt.patch(self.logger)
+        # Capture raw output via a stream handler
+        self.stream = io.StringIO()
+        handler = logging.StreamHandler(self.stream)
+        handler.setLevel(logging.DEBUG)
+        self.logger.addHandler(handler)
+
+    def tearDown(self):
+        for handler in self.logger.handlers[:]:
+            handler.close()
+            self.logger.removeHandler(handler)
+        super().tearDown()
+
+    def test_truncate_short_text_unchanged(self):
+        """Text shorter than limit is returned unchanged."""
+        self.assertEqual(LoggerExt._truncate("hello", 10), "hello")
+
+    def test_truncate_long_text(self):
+        """Text exceeding limit is truncated with ellipsis."""
+        result = LoggerExt._truncate("abcdefghij", 6)
+        self.assertTrue(result.endswith("…"))
+        self.assertLessEqual(LoggerExt._display_width(result), 6)
+
+    def test_truncate_exact_fit(self):
+        """Text exactly at the limit is returned unchanged."""
+        self.assertEqual(LoggerExt._truncate("abcde", 5), "abcde")
+
+    def test_log_box_single_emit(self):
+        """log_box emits exactly one write to the stream (single string).
+
+        Bug: Previously each box line was a separate _log_raw call, causing
+        paragraph-level spacing in QTextEdit widgets.
+        Fixed: 2026-03-08
+        """
+        self.logger.log_box("TITLE", ["item1", "item2"])
+        output = self.stream.getvalue()
+        # Should contain box-drawing chars with newlines between them
+        # but only ONE trailing newline from _log_raw (not N separate writes)
+        lines = output.strip().split("\n")
+        self.assertEqual(lines[0][0], "╔")
+        self.assertEqual(lines[-1][0], "╚")
+        # 5 lines: top, title, separator, item1, item2... wait, that's 6:
+        # top, title, sep, item1, item2, bottom
+        self.assertEqual(len(lines), 6)
+
+    def test_log_box_no_items(self):
+        """Box with title only has 3 lines: top, title, bottom."""
+        self.logger.log_box("TITLE")
+        output = self.stream.getvalue().strip()
+        lines = output.split("\n")
+        self.assertEqual(len(lines), 3)
+
+    def test_log_box_max_width_truncates(self):
+        """Items wider than max_width are truncated with ellipsis."""
+        long_item = "a" * 80
+        self.logger.log_box("T", [long_item], max_width=30)
+        output = self.stream.getvalue().strip()
+        for line in output.split("\n"):
+            self.assertLessEqual(
+                LoggerExt._display_width(line), 30, f"Line exceeds max_width: {line!r}"
+            )
+
+    def test_log_box_max_width_from_attribute(self):
+        """log_box reads self.box_width when max_width is not passed."""
+        self.logger.box_width = 30
+        long_item = "a" * 80
+        self.logger.log_box("T", [long_item])
+        output = self.stream.getvalue().strip()
+        for line in output.split("\n"):
+            self.assertLessEqual(LoggerExt._display_width(line), 30)
+
+    def test_log_box_returns_width(self):
+        """log_box returns the computed box width."""
+        width = self.logger.log_box("HELLO")
+        # "HELLO" = 5 chars + 2 padding + 2 borders = 9
+        self.assertEqual(width, 9)
+
+    def test_log_box_widget_handler_single_append(self):
+        """Widget handler receives exactly one append call for the whole box.
+
+        Bug: Multiple append() calls caused paragraph spacing in QTextEdit.
+        Fixed: 2026-03-08
+        """
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget, use_html=False)
+        handler.setLevel(logging.DEBUG)
+        # Replace stream handler with widget handler
+        self.logger.handlers = [handler]
+
+        self.logger.log_box("TITLE", ["item1"])
+        # Give the threading.Timer a moment to fire
+        import time
+
+        time.sleep(0.1)
+
+        self.assertEqual(
+            len(widget.messages),
+            1,
+            f"Expected 1 append call, got {len(widget.messages)}",
+        )
+
+
 class MockTextWidget:
     """Mock text widget for testing."""
 
