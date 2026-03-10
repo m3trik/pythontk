@@ -8,6 +8,8 @@ import subprocess
 import wave as _wave
 from typing import Dict, List, Optional, Set
 
+import numpy as np
+
 from pythontk.core_utils.help_mixin import HelpMixin
 
 
@@ -211,14 +213,14 @@ class AudioUtils(HelpMixin):
             return None
 
         total_samples = max(pos + len(s) for pos, s in clips)
-        composite = _array.array("h", bytes(total_samples * 2))
 
+        composite = np.zeros(total_samples, dtype=np.int32)
         for pos, samples in clips:
-            for i, val in enumerate(samples):
-                idx = pos + i
-                if idx < len(composite):
-                    mixed = composite[idx] + val
-                    composite[idx] = max(-32768, min(32767, mixed))
+            arr = np.frombuffer(samples, dtype=np.int16).astype(np.int32)
+            end = min(pos + len(arr), total_samples)
+            composite[pos:end] += arr[: end - pos]
+        np.clip(composite, -32768, 32767, out=composite)
+        raw_out = composite.astype(np.int16).tobytes()
 
         output = os.path.normpath(output_path).replace("\\", "/")
         os.makedirs(os.path.dirname(output), exist_ok=True)
@@ -227,7 +229,7 @@ class AudioUtils(HelpMixin):
             wf.setnchannels(channels)
             wf.setsampwidth(sampwidth)
             wf.setframerate(sample_rate)
-            wf.writeframes(composite.tobytes())
+            wf.writeframes(raw_out)
 
         if logger:
             logger.info(

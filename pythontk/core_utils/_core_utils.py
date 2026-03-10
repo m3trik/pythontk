@@ -182,6 +182,9 @@ class CoreUtils(HelpMixin):
         except AttributeError:
             return False
 
+    # Cache for get_derived_type: (obj_type, return_name, module, inc_tuple, exc_tuple, filter_by_base) -> result
+    _derived_type_cache: dict = {}
+
     @staticmethod
     def get_derived_type(
         obj,
@@ -205,6 +208,19 @@ class CoreUtils(HelpMixin):
         Returns:
             (obj)(string)(None) class or class name if `return_name`. ie. 'DerivedClass' from a custom object with class name: 'CustomClass'
         """
+        cache = CoreUtils._derived_type_cache
+        cache_key = (
+            type(obj),
+            return_name,
+            module,
+            tuple(include) if include else (),
+            tuple(exclude) if exclude else (),
+            filter_by_base_type,
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         for cls in obj.__class__.__mro__:
             if (
                 not module
@@ -220,7 +236,9 @@ class CoreUtils(HelpMixin):
                         else derived_type not in include
                     )
                 ):
-                    return derived_type.__name__ if return_name else derived_type
+                    result = derived_type.__name__ if return_name else derived_type
+                    cache[cache_key] = result
+                    return result
 
     CYCLEDICT = {}
 

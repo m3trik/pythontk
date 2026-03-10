@@ -15,8 +15,8 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-# Dependencies - exclude optional system deps (Pillow, numpy)
-dependencies = []
+# Dependencies
+dependencies = ["numpy"]
 
 [project.urls]
 Homepage = "https://github.com/m3trik/pythontk"

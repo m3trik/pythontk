@@ -20,6 +20,38 @@ class MapPackerSlots(ImgUtils):
         "Glossiness",
         "Displacement",
     ]
+    output_formats = ["PNG", "TGA", "JPG", "BMP", "TIFF", "EXR"]
+
+    PRESET_DIR = "~/.pythontk/presets/map_packer"
+
+    # Built-in presets defined using human-readable names.
+    # Resolved to combo indices at seed time via grayscale_types/output_formats.
+    BUILTIN_PRESETS = {
+        "ORM (Unreal, glTF)": {
+            "R": "Ambient_Occlusion",
+            "G": "Roughness",
+            "B": "Metallic",
+            "A": "None",
+            "format": "PNG",
+            "suffix": "_ORM",
+        },
+        "MSAO (HDRP Mask Map)": {
+            "R": "Metallic",
+            "G": "Ambient_Occlusion",
+            "B": "None",
+            "A": "Smoothness",
+            "format": "PNG",
+            "suffix": "_MSAO",
+        },
+        "Metallic Smoothness (URP)": {
+            "R": "Metallic",
+            "G": "None",
+            "B": "None",
+            "A": "Smoothness",
+            "format": "PNG",
+            "suffix": "_MetallicSmoothness",
+        },
+    }
 
     def __init__(self, switchboard, **kwargs):
         super().__init__()
@@ -57,7 +89,7 @@ class MapPackerSlots(ImgUtils):
             cmb.restore_state = True  # <-- Enable state restore
 
         self.ui.cmbFormat.clear()
-        self.ui.cmbFormat.addItems(["PNG", "TGA", "JPG", "BMP", "TIFF", "EXR"])
+        self.ui.cmbFormat.addItems(self.output_formats)
         self.ui.cmbFormat.restore_state = True  # <-- Enable state restore
         self.ui.cmbFormat.currentTextChanged.connect(self._on_format_changed)
         self._on_format_changed(self.ui.cmbFormat.currentText())
@@ -68,6 +100,48 @@ class MapPackerSlots(ImgUtils):
         self.ui.cmbA.setEnabled(supports_alpha)
         if not supports_alpha:
             self.ui.cmbA.setCurrentIndex(self.ui.cmbA.findText("None"))
+
+    def header_init(self, widget):
+        """Configure the header menu with presets for common packed map types."""
+        presets = widget.menu.presets
+        presets.preset_dir = self.PRESET_DIR
+        # Seed built-in presets BEFORE setup so the combo is populated on first launch.
+        self._seed_builtin_presets(presets)
+        presets.setup(
+            preset_dir=self.PRESET_DIR,
+            widgets=[
+                self.ui.cmbR,
+                self.ui.cmbG,
+                self.ui.cmbB,
+                self.ui.cmbA,
+                self.ui.cmbFormat,
+                self.ui.txtSuffix,
+            ],
+        )
+
+    def _seed_builtin_presets(self, preset_mgr):
+        """Write built-in preset JSON files if they don't already exist.
+
+        Converts human-readable BUILTIN_PRESETS (map-type/format names)
+        into the index-based JSON format that PresetManager expects.
+        """
+        import json
+
+        preset_dir = preset_mgr.preset_dir
+        for name, preset in self.BUILTIN_PRESETS.items():
+            filepath = preset_mgr._preset_path(name)
+            if not filepath.exists():
+                data = {
+                    "_meta": {"version": 1},
+                    "cmbR": self.grayscale_types.index(preset["R"]),
+                    "cmbG": self.grayscale_types.index(preset["G"]),
+                    "cmbB": self.grayscale_types.index(preset["B"]),
+                    "cmbA": self.grayscale_types.index(preset["A"]),
+                    "cmbFormat": self.output_formats.index(preset["format"]),
+                    "txtSuffix": preset["suffix"],
+                }
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4)
 
     @property
     def source_dir(self):

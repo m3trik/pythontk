@@ -55,6 +55,8 @@ class MetadataInternal:
                     )
                 except ImportError:
                     pass
+        except PermissionError:
+            raise  # Let callers handle permission issues
         except OSError as e:
             print(f"Error saving sidecar metadata: {e}")
 

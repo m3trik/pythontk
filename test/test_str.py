@@ -636,6 +636,35 @@ class StrTest(BaseTestCase):
             "hello_end",
         )
 
+    def test_format_suffix_strip_trailing_ints_preserves_underscore_separated(self):
+        """Verify strip_trailing_ints only strips digits directly appended to the
+        name (e.g. CHECKLIST01 -> CHECKLIST) and preserves intentional underscore-
+        separated numbering (e.g. CHECKLIST_01 stays CHECKLIST_01).
+
+        Bug: regex r'\\d+$' stripped digits regardless of preceding underscore.
+        Fixed: 2026-03-02
+        """
+        # Digits directly appended — should be stripped
+        self.assertEqual(
+            StrUtils.format_suffix("CHECKLIST01", "", "", strip_trailing_ints=True),
+            "CHECKLIST",
+        )
+        # Underscore-separated digits — should be preserved
+        self.assertEqual(
+            StrUtils.format_suffix("CHECKLIST_01", "", "", strip_trailing_ints=True),
+            "CHECKLIST_01",
+        )
+        # Single digit directly appended
+        self.assertEqual(
+            StrUtils.format_suffix("pCube1", "", "", strip_trailing_ints=True),
+            "pCube",
+        )
+        # Single digit after underscore — preserved
+        self.assertEqual(
+            StrUtils.format_suffix("pCube_1", "", "", strip_trailing_ints=True),
+            "pCube_1",
+        )
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)
