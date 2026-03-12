@@ -293,6 +293,34 @@ class TestBuildCompositeWav(BaseTestCase):
         self.assertTrue(any("0.5s" in m for m in cap.msgs), cap.msgs)
 
 
+    def test_negative_frame_no_broadcast_error(self):
+        """Negative frame values must not cause a numpy broadcast error.
+
+        Bug: A negative ``sample_pos`` caused numpy negative-indexing,
+        resulting in ``composite[pos:end]`` being an empty slice while
+        ``arr[:end-pos]`` was non-empty → ValueError on ``+=``.
+        Fixed: 2026-03-11
+        """
+        sr = 44100
+        tone = [500] * sr  # 1 second
+        path = self._wav("neg.wav", tone, sample_rate=sr)
+
+        events = [(-24, "neg"), (24, "neg")]  # -1s and +1s at 24 fps
+        audio_map = {"neg": path}
+        out = os.path.join(self.tmpdir, "comp.wav")
+
+        # Before the fix this raised ValueError
+        result = AudioUtils.build_composite_wav(
+            events=events,
+            audio_map=audio_map,
+            fps=24.0,
+            output_path=out,
+            logger=self.logger,
+        )
+        self.assertIsNotNone(result)
+        self.assertTrue(os.path.isfile(result))
+
+
 class TestTrimSilence(BaseTestCase):
     """Tests for AudioUtils.trim_silence."""
 
