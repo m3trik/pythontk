@@ -213,11 +213,20 @@ class AudioUtils(HelpMixin):
             return None
 
         total_samples = max(pos + len(s) for pos, s in clips)
+        if total_samples <= 0:
+            return None
 
         composite = np.zeros(total_samples, dtype=np.int32)
         for pos, samples in clips:
             arr = np.frombuffer(samples, dtype=np.int16).astype(np.int32)
+            if pos < 0:
+                arr = arr[-pos:]
+                pos = 0
+            if not len(arr):
+                continue
             end = min(pos + len(arr), total_samples)
+            if pos >= end:
+                continue
             composite[pos:end] += arr[: end - pos]
         np.clip(composite, -32768, 32767, out=composite)
         raw_out = composite.astype(np.int16).tobytes()
