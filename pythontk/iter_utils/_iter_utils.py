@@ -628,6 +628,63 @@ class IterUtils(HelpMixin):
                 return [[i[0], i[-1]] if len(i) > 1 else (i) for i in contiguous]
             return contiguous
 
+    @staticmethod
+    def find_flat_interior_indices(values, value_tolerance=1e-5):
+        """Return indices of redundant interior keys in flat segments.
+
+        A flat segment is a run of 3+ consecutive keys whose values all
+        fall within *value_tolerance*.  Interior keys of such segments
+        are redundant because the boundary pair alone reproduces the
+        constant value.
+
+        Parameters:
+            values: Array-like of numeric values (converted to numpy array).
+            value_tolerance: Max value difference to consider elements equal.
+
+        Returns:
+            Tuple of ``(remove_indices, seg_starts, seg_lasts)`` where
+            *remove_indices* is a numpy int array of interior positions,
+            *seg_starts*/*seg_lasts* are the boundary arrays.  All three
+            are empty arrays when no flat segments are found.
+        """
+        import numpy as np
+
+        values = np.asarray(values, dtype=float)
+        empty = (
+            np.array([], dtype=int),
+            np.array([], dtype=int),
+            np.array([], dtype=int),
+        )
+        if len(values) < 3:
+            return empty
+
+        diffs = np.abs(np.diff(values))
+        is_flat = diffs < value_tolerance
+
+        padded = np.concatenate(([False], is_flat, [False]))
+        transitions = np.diff(padded.astype(np.int8))
+        run_starts = np.where(transitions == 1)[0]
+        run_ends = np.where(transitions == -1)[0]
+
+        lengths = run_ends - run_starts
+        mask = lengths >= 2
+        span = np.abs(values[run_ends] - values[run_starts])
+        mask &= span < value_tolerance
+
+        seg_starts = run_starts[mask]
+        seg_lasts = run_ends[mask]
+
+        if len(seg_starts) == 0:
+            return empty
+
+        remove_indices = np.concatenate(
+            [np.arange(s + 1, last) for s, last in zip(seg_starts, seg_lasts)]
+        )
+        if len(remove_indices) == 0:
+            return empty
+
+        return remove_indices, seg_starts, seg_lasts
+
 
 # --------------------------------------------------------------------------------------------
 
