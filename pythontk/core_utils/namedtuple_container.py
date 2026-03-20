@@ -86,7 +86,7 @@ class NamedTupleContainer(LoggingMixin):
             tuple_class_name: Name for the dynamically created tuple class.
             log_level: Logging level. Defaults to "WARNING".
         """
-        self.logger.setLevel(log_level)
+        self.set_log_level(log_level)
 
         self.named_tuples = named_tuples or []
         self.metadata = metadata or {}

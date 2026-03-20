@@ -4,6 +4,7 @@ import hashlib
 import array as _array
 import os
 import shutil
+import struct
 import subprocess
 import wave as _wave
 from typing import Dict, List, Optional, Set
@@ -231,7 +232,7 @@ class AudioUtils(HelpMixin):
         np.clip(composite, -32768, 32767, out=composite)
         raw_out = composite.astype(np.int16).tobytes()
 
-        output = os.path.normpath(output_path).replace("\\", "/")
+        output = os.path.normpath(output_path)
         os.makedirs(os.path.dirname(output), exist_ok=True)
 
         with _wave.open(output, "wb") as wf:
@@ -246,7 +247,7 @@ class AudioUtils(HelpMixin):
                 f"{total_samples / (channels * sample_rate):.1f}s"
             )
 
-        return output
+        return output.replace("\\", "/")
 
     # ------------------------------------------------------------------
     # Audio-map helpers
@@ -485,3 +486,79 @@ class AudioUtils(HelpMixin):
             wf.writeframes(trimmed.tobytes())
 
         return output_path
+
+    # ------------------------------------------------------------------
+    # Waveform envelope
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_waveform_envelope(
+        wav_path: str,
+        num_bins: int = 512,
+    ) -> List[tuple]:
+        """Read a WAV file and return a downsampled min/max envelope.
+
+        Parameters:
+            wav_path: Path to a PCM WAV file (8, 16, or 24-bit).
+            num_bins: Number of (min, max) pairs to return.
+
+        Returns:
+            List of ``(min_sample, max_sample)`` tuples normalised to
+            [-1.0, 1.0].  Empty list if the file cannot be read.
+        """
+        try:
+            with _wave.open(wav_path, "rb") as wf:
+                n_channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
+                n_frames = wf.getnframes()
+
+                if sampwidth not in (1, 2, 3) or n_frames == 0:
+                    return []
+
+                raw = wf.readframes(n_frames)
+        except Exception:
+            return []
+
+        # Decode samples (mono-mix if stereo)
+        if sampwidth == 2:
+            fmt = f"<{n_frames * n_channels}h"
+            samples = struct.unpack(fmt, raw)
+            scale = 1.0 / 32768.0
+        elif sampwidth == 3:
+            total = n_frames * n_channels
+            samples = []
+            for i in range(total):
+                off = i * 3
+                lo = raw[off]
+                mid = raw[off + 1]
+                hi = raw[off + 2]
+                val = lo | (mid << 8) | (hi << 16)
+                if val >= 0x800000:
+                    val -= 0x1000000
+                samples.append(val)
+            scale = 1.0 / 8388608.0
+        else:
+            samples = [b - 128 for b in raw]
+            scale = 1.0 / 128.0
+
+        # Mono-mix
+        if n_channels > 1:
+            mono = []
+            for i in range(0, len(samples), n_channels):
+                mono.append(sum(samples[i : i + n_channels]) / n_channels)
+            samples = mono
+            n_frames = len(samples)
+
+        if n_frames == 0:
+            return []
+
+        # Down-sample into bins
+        bin_size = max(1, n_frames // num_bins)
+        envelope = []
+        for i in range(0, n_frames, bin_size):
+            chunk = samples[i : i + bin_size]
+            lo = min(chunk) * scale
+            hi = max(chunk) * scale
+            envelope.append((lo, hi))
+
+        return envelope[:num_bins]

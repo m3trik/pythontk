@@ -587,7 +587,9 @@ class LoggerExt:
 
         top = "╔" + "═" * inner_width + "╗"
 
-        title_padded = LoggerExt._pad(trunc(title, longest), longest, fill=space, align=align)
+        title_padded = LoggerExt._pad(
+            trunc(title, longest), longest, fill=space, align=align
+        )
         title_text = space * padding + title_padded + space * padding
 
         mid = "║" + title_text + "║"
@@ -598,7 +600,9 @@ class LoggerExt:
         if items:
             lines.append(sep)
             for item in items:
-                item_padded = LoggerExt._pad(trunc(item, inner_width - 1), inner_width - 1, fill=space)
+                item_padded = LoggerExt._pad(
+                    trunc(item, inner_width - 1), inner_width - 1, fill=space
+                )
                 item_line = space + item_padded
                 lines.append(f"║{item_line}║")
         lines.append(bottom)
@@ -1006,6 +1010,11 @@ class LoggingMixin(TableMixin):
     # Expose formatting constants
     LOG_COLORS = LoggerExt.LOG_COLORS
     HTML_PRESETS = LoggerExt.HTML_PRESETS
+
+    def __init__(self, *args, log_level: Optional[Union[int, str]] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if log_level is not None:
+            self.set_log_level(log_level)
 
     @ClassProperty
     def logger(cls) -> internal_logging.Logger:
