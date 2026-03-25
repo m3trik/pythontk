@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.7.90"
+__version__ = "0.7.92"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -46,6 +46,7 @@ DEFAULT_INCLUDE = {
     "net_utils.credentials": "Credentials",
     "net_utils._net_utils": "NetUtils",
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
+    "color_utils._color_utils": ["Color", "ColorPair", "Palette"],
 }
 
 
@@ -81,5 +82,8 @@ __all__ = [
     "FuzzyMatcher",
     "AudioUtils",
     "VidUtils",
+    "Color",
+    "ColorPair",
+    "Palette",
 ]
 # Test: 222117
