@@ -46,6 +46,7 @@ DEFAULT_INCLUDE = {
     "net_utils.credentials": "Credentials",
     "net_utils._net_utils": "NetUtils",
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
+    "color_utils._color_utils": ["Color", "ColorPair", "Palette"],
 }
 
 
@@ -81,5 +82,8 @@ __all__ = [
     "FuzzyMatcher",
     "AudioUtils",
     "VidUtils",
+    "Color",
+    "ColorPair",
+    "Palette",
 ]
 # Test: 222117

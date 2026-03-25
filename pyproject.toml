@@ -31,7 +31,7 @@ where = ["."]
 include = ["pythontk*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.ui", "*.json", "*.txt", "*.md"]
+"*" = ["*.ui", "*.json", "*.txt", "*.md", "*.gif"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

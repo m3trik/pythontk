@@ -179,12 +179,28 @@ class ExecutionMonitor:
         return executable
 
     @staticmethod
-    def _start_gif_process(gif_path):
-        """Starts a subprocess to display a GIF using tkinter."""
+    def _get_cursor_pos():
+        """Get the current cursor position, or None if unavailable."""
         try:
-            # Locate the _gif_viewer.py script in the same directory
+            if sys.platform == "win32":
+                import ctypes
+
+                class POINT(ctypes.Structure):
+                    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+                pt = POINT()
+                if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+                    return (pt.x, pt.y)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _start_spinner_process():
+        """Starts a subprocess to display a canvas-drawn spinner."""
+        try:
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            script_path = os.path.join(current_dir, "_gif_viewer.py")
+            script_path = os.path.join(current_dir, "_spinner.py")
 
             if not os.path.exists(script_path):
                 return None
@@ -197,8 +213,13 @@ class ExecutionMonitor:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
 
+            cmd = [executable, script_path]
+            pos = ExecutionMonitor._get_cursor_pos()
+            if pos:
+                cmd.extend(["--pos", f"{pos[0]},{pos[1]}"])
+
             process = subprocess.Popen(
-                [executable, script_path, gif_path],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 startupinfo=startupinfo,
@@ -208,8 +229,8 @@ class ExecutionMonitor:
             return None
 
     @staticmethod
-    def _stop_gif_process(process):
-        """Stops the GIF subprocess."""
+    def _stop_spinner_process(process):
+        """Stops the spinner subprocess."""
         if process:
             process.terminate()
             try:
@@ -233,9 +254,8 @@ class ExecutionMonitor:
             interval (float|bool, optional): If True, repeats every `threshold` seconds.
                                              If float, repeats every `interval` seconds.
             allow_escape_cancel (bool): If True, holding Escape will interrupt the main thread immediately.
-            indicator (bool|str, optional): If True, displays the default 'task_indicator.gif'.
-                                            If a string, displays the GIF at the specified path.
-                                            Runs in a separate process to ensure animation during blocking tasks.
+            indicator (bool, optional): If True, displays a spinner overlay near the cursor.
+                                        Runs in a separate process to ensure animation during blocking tasks.
         """
         # If interval is True, use threshold as the interval
         repeat_interval = threshold if interval is True else interval
@@ -245,20 +265,9 @@ class ExecutionMonitor:
             def wrapper(*args, **kwargs):
                 stop_event = threading.Event()
 
-                gif_process = None
-                resolved_gif_path = indicator
-                if resolved_gif_path:
-                    if resolved_gif_path is True:
-                        # Use default bundled GIF
-                        current_dir = os.path.dirname(os.path.abspath(__file__))
-                        resolved_gif_path = os.path.join(
-                            current_dir, "task_indicator.gif"
-                        )
-
-                    if os.path.exists(resolved_gif_path):
-                        gif_process = ExecutionMonitor._start_gif_process(
-                            resolved_gif_path
-                        )
+                spinner_process = None
+                if indicator:
+                    spinner_process = ExecutionMonitor._start_spinner_process()
 
                 def wait_for_stop_or_timeout(duration):
                     """Returns True if stopped (event set or aborted), False if timeout."""
@@ -320,8 +329,8 @@ class ExecutionMonitor:
                     result = func(*args, **kwargs)
                 finally:
                     stop_event.set()
-                    if gif_process:
-                        ExecutionMonitor._stop_gif_process(gif_process)
+                    if spinner_process:
+                        ExecutionMonitor._stop_spinner_process(spinner_process)
                 return result
 
             return wrapper
@@ -561,8 +570,7 @@ class ExecutionMonitor:
             watchdog_check_interval (float): Watchdog polling interval in seconds.
             watchdog_kill_tree (bool): If True, attempt to kill child processes too.
             watchdog_heartbeat_path (str|None): Optional heartbeat file path override.
-            indicator (bool|str, optional): If True, displays the default 'task_indicator.gif'.
-                                            If a string, displays the GIF at the specified path.
+            indicator (bool, optional): If True, displays a spinner overlay near the cursor.
         """
 
         _dialog_shown = [False]
