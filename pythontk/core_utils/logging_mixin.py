@@ -548,6 +548,72 @@ class LoggerExt:
             current_width += ch_w
         return "".join(result) + ellipsis
 
+    @staticmethod
+    def _hard_wrap_word(word: str, max_display_width: int) -> tuple:
+        """Hard-wrap a single word that exceeds *max_display_width*.
+
+        Returns ``(complete_lines, remaining_fragment, remaining_width)``.
+        """
+        lines = []
+        chars = []
+        w = 0
+        for ch in word:
+            ch_w = LoggerExt._char_width(ch)
+            if w + ch_w > max_display_width:
+                lines.append("".join(chars))
+                chars = [ch]
+                w = ch_w
+            else:
+                chars.append(ch)
+                w += ch_w
+        return lines, "".join(chars), w
+
+    @staticmethod
+    def _wrap_text(text: str, max_display_width: int) -> List[str]:
+        """Wrap *text* to fit within *max_display_width* display columns.
+
+        Breaks at word boundaries when possible, otherwise hard-wraps.
+        Returns a list of wrapped lines.
+        """
+        dw = LoggerExt._display_width
+        if dw(text) <= max_display_width:
+            return [text]
+
+        words = text.split(" ")
+        lines = []
+        current_line = ""
+        current_width = 0
+
+        for word in words:
+            word_width = dw(word)
+            if current_width == 0:
+                if word_width <= max_display_width:
+                    current_line = word
+                    current_width = word_width
+                else:
+                    extra, current_line, current_width = LoggerExt._hard_wrap_word(
+                        word, max_display_width
+                    )
+                    lines.extend(extra)
+            elif current_width + 1 + word_width <= max_display_width:
+                current_line += " " + word
+                current_width += 1 + word_width
+            else:
+                lines.append(current_line)
+                if word_width <= max_display_width:
+                    current_line = word
+                    current_width = word_width
+                else:
+                    extra, current_line, current_width = LoggerExt._hard_wrap_word(
+                        word, max_display_width
+                    )
+                    lines.extend(extra)
+
+        if current_line:
+            lines.append(current_line)
+
+        return lines
+
     def _log_box(
         self,
         title: str,
@@ -560,51 +626,51 @@ class LoggerExt:
 
         Parameters:
             max_width: Maximum box width in display columns.  Falls back to
-                ``self.box_width`` if set, otherwise unlimited.
+                ``self.box_width`` if set, otherwise 160.
         """
         padding = 1
         # Use non-breaking space to prevent HTML space collapsing in handlers
         space = "\u00a0"
 
         if max_width is None:
-            max_width = getattr(self, "box_width", None)
+            max_width = getattr(self, "box_width", 160)
 
         dw = LoggerExt._display_width
-        trunc = LoggerExt._truncate
+        wrap = LoggerExt._wrap_text
         content = [title] + (items or [])
         longest = max(dw(line) for line in content)
 
         # Clamp to max_width (subtract 2 for borders, 2 for padding)
-        if max_width is not None:
-            max_content = max_width - 2 - padding * 2
-            if max_content < 4:
-                max_content = 4  # minimum usable width
-            if longest > max_content:
-                longest = max_content
+        max_content = max_width - 2 - padding * 2
+        if max_content < 4:
+            max_content = 4  # minimum usable width
+        if longest > max_content:
+            longest = max_content
 
         inner_width = longest + padding * 2
         width = inner_width + 2  # full box width including sides
 
         top = "╔" + "═" * inner_width + "╗"
 
-        title_padded = LoggerExt._pad(
-            trunc(title, longest), longest, fill=space, align=align
-        )
-        title_text = space * padding + title_padded + space * padding
+        # Wrap title lines to fit
+        title_lines = wrap(title, longest)
+        title_rows = []
+        for tl in title_lines:
+            tl_padded = LoggerExt._pad(tl, longest, fill=space, align=align)
+            title_rows.append("║" + space * padding + tl_padded + space * padding + "║")
 
-        mid = "║" + title_text + "║"
         sep = "╟" + "─" * inner_width + "╢"
         bottom = "╚" + "═" * inner_width + "╝"
 
-        lines = [top, mid]
+        lines = [top] + title_rows
         if items:
             lines.append(sep)
             for item in items:
-                item_padded = LoggerExt._pad(
-                    trunc(item, inner_width - 1), inner_width - 1, fill=space
-                )
-                item_line = space + item_padded
-                lines.append(f"║{item_line}║")
+                wrapped = wrap(item, inner_width - 1)
+                for wl in wrapped:
+                    item_padded = LoggerExt._pad(wl, inner_width - 1, fill=space)
+                    item_line = space + item_padded
+                    lines.append(f"║{item_line}║")
         lines.append(bottom)
 
         box_text = "\n".join(lines)
@@ -879,6 +945,7 @@ class TableMixin:
         headers: List[str],
         title: Optional[str] = None,
         col_max_width: int = 60,
+        max_width: int = 160,
     ) -> str:
         """Formats a list of lists as an ASCII table.
 
@@ -886,7 +953,8 @@ class TableMixin:
             data: List of rows, where each row is a list of values.
             headers: List of column headers.
             title: Optional title for the table.
-            col_max_width: Maximum width for any column.
+            col_max_width: Maximum width for any single column.
+            max_width: Maximum total table width in characters.
 
         Returns:
             Formatted table string.
@@ -912,8 +980,26 @@ class TableMixin:
             for i, val in enumerate(row):
                 col_widths[i] = max(col_widths[i], len(val))
 
-        # Clamp widths
+        # Clamp per-column widths
         col_widths = [min(w, col_max_width) for w in col_widths]
+
+        # Clamp total table width: separators add 3 chars (" | ") between columns
+        separator_width = 3 * (num_cols - 1) if num_cols > 1 else 0
+        total = sum(col_widths) + separator_width
+        if total > max_width:
+            available = max_width - separator_width
+            if available < num_cols:
+                available = num_cols  # at least 1 char per column
+            # Shrink columns proportionally
+            ratio = available / sum(col_widths)
+            col_widths = [max(1, int(w * ratio)) for w in col_widths]
+            # Distribute any remaining space due to rounding
+            diff = available - sum(col_widths)
+            for i in range(abs(diff)):
+                if diff > 0:
+                    col_widths[i % num_cols] += 1
+                elif col_widths[i % num_cols] > 1:
+                    col_widths[i % num_cols] -= 1
 
         # Create format string
         # e.g. "{:<20} | {:<10} | {:<10}"
@@ -923,11 +1009,18 @@ class TableMixin:
 
         # Title
         if title:
-            lines.append(title)
-            lines.append("-" * len(title))
+            table_total = sum(col_widths) + separator_width
+            lines.append(title[:max_width] if len(title) > max_width else title)
+            lines.append("-" * min(len(title), table_total, max_width))
 
-        # Header
-        lines.append(fmt.format(*headers))
+        # Header (truncate headers to fit potentially shrunk columns)
+        trunc_headers = []
+        for i, h in enumerate(headers):
+            w = col_widths[i]
+            if len(h) > w:
+                h = h[: w - 3] + "..." if w > 3 else h[:w]
+            trunc_headers.append(h)
+        lines.append(fmt.format(*trunc_headers))
         lines.append("-+-".join(["-" * w for w in col_widths]))
 
         # Rows
