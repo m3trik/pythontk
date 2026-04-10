@@ -79,6 +79,8 @@ class LoggerExt:
     RESULT = 35
     NOTICE = 45
 
+    DEFAULT_BOX_WIDTH = 120
+
     # Default log colors (Hex)
     LOG_COLORS = {
         "DEBUG": "#AAAAAA",  # Neutral gray
@@ -626,14 +628,14 @@ class LoggerExt:
 
         Parameters:
             max_width: Maximum box width in display columns.  Falls back to
-                ``self.box_width`` if set, otherwise 160.
+                ``self.box_width`` if set, otherwise ``DEFAULT_BOX_WIDTH``.
         """
         padding = 1
         # Use non-breaking space to prevent HTML space collapsing in handlers
         space = "\u00a0"
 
         if max_width is None:
-            max_width = getattr(self, "box_width", 160)
+            max_width = getattr(self, "box_width", LoggerExt.DEFAULT_BOX_WIDTH)
 
         dw = LoggerExt._display_width
         wrap = LoggerExt._wrap_text
