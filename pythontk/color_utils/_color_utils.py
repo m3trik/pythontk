@@ -415,3 +415,33 @@ class Palette(dict):
                 "highlight": "#E8A84A",
             }
         )
+
+    @classmethod
+    def diff(cls) -> "Palette":
+        """Comparison / diff palette for dark-theme tree views.
+
+        Four universal categories with auto-derived backgrounds::
+
+            p = Palette.diff()
+            fg, bg = p["removed"]   # muted red
+            fg, bg = p["added"]     # muted gold
+            fg, bg = p["changed"]   # muted teal
+            fg, bg = p["moved"]     # muted purple
+
+        Alias domain-specific terms onto the base categories::
+
+            hierarchy = Palette.diff().alias({
+                "missing": "removed",
+                "extra": "added",
+                "fuzzy": "changed",
+                "reparented": "moved",
+            })
+        """
+        return cls(
+            {
+                "removed": ColorPair.auto("#9E6B6B"),
+                "added": ColorPair.auto("#8E8555"),
+                "changed": ColorPair.auto("#6B8C9E"),
+                "moved": ColorPair.auto("#A87EC8"),
+            }
+        )
