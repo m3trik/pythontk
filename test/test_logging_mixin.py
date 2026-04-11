@@ -360,6 +360,20 @@ class LogBoxTest(BaseTestCase):
         # "HELLO" = 5 chars + 2 padding + 2 borders = 9
         self.assertEqual(width, 9)
 
+    def test_log_box_shrinks_after_wrap(self):
+        """Box shrinks to the longest wrapped line, not max_width.
+
+        Bug: A single long line forced the box to max_width even though
+        wrapped fragments were much shorter.
+        Fixed: 2026-04-10
+        """
+        # Three 15-char words (total 47). max_content at max_width=50 is 46.
+        # Wrapping produces: "aaa..a bbb..b" (31) and "ccc..c" (15).
+        # Longest = 31, so box = 31 + 4 = 35, well under 50.
+        long_item = "a" * 15 + " " + "b" * 15 + " " + "c" * 15
+        width = self.logger.log_box("OK", [long_item], max_width=50)
+        self.assertLess(width, 50)
+
     def test_log_box_widget_handler_single_append(self):
         """Widget handler receives exactly one append call for the whole box.
 

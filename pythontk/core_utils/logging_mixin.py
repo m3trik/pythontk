@@ -181,6 +181,7 @@ class LoggerExt:
         direct_methods = {
             "set_text_handler": LoggerExt._set_text_handler,
             "get_text_handler": LoggerExt._get_text_handler,
+            "log_link": LoggerExt._log_link,
         }
         for name, method in direct_methods.items():
             setattr(logger, name, method)
@@ -514,10 +515,18 @@ class LoggerExt:
             return 2
         return 1
 
+    # Regex for stripping HTML tags when measuring visible text width.
+    _HTML_TAG_RE = re.compile(r"<[^>]+>")
+
     @staticmethod
     def _display_width(text: str) -> int:
-        """Return the display/column width of *text*."""
-        return sum(LoggerExt._char_width(ch) for ch in text)
+        """Return the display/column width of *text*.
+
+        HTML tags (``<span ...>``, ``<a ...>``, etc.) are stripped before
+        measuring so that embedded markup does not inflate the count.
+        """
+        visible = LoggerExt._HTML_TAG_RE.sub("", text)
+        return sum(LoggerExt._char_width(ch) for ch in visible)
 
     @staticmethod
     def _pad(text: str, target_width: int, fill: str = " ", align: str = "left") -> str:
@@ -570,16 +579,32 @@ class LoggerExt:
                 w += ch_w
         return lines, "".join(chars), w
 
+    # Sentinel that never appears in real text, used to protect spaces
+    # inside HTML tags from being split by _wrap_text.
+    _TAG_SPACE = "\x00"
+
     @staticmethod
     def _wrap_text(text: str, max_display_width: int) -> List[str]:
         """Wrap *text* to fit within *max_display_width* display columns.
 
         Breaks at word boundaries when possible, otherwise hard-wraps.
+        HTML tags are protected so that spaces inside attributes are never
+        used as break points.
         Returns a list of wrapped lines.
         """
         dw = LoggerExt._display_width
         if dw(text) <= max_display_width:
             return [text]
+
+        # Protect spaces inside HTML tags by replacing them with a sentinel
+        sentinel = LoggerExt._TAG_SPACE
+        has_tags = "<" in text and ">" in text
+        if has_tags:
+
+            def _protect_tag_spaces(m: "re.Match") -> str:
+                return m.group(0).replace(" ", sentinel)
+
+            text = LoggerExt._HTML_TAG_RE.sub(_protect_tag_spaces, text)
 
         words = text.split(" ")
         lines = []
@@ -588,8 +613,11 @@ class LoggerExt:
 
         for word in words:
             word_width = dw(word)
+            # Words containing HTML tags must never be hard-wrapped
+            # (splitting characters inside tags produces broken markup).
+            word_has_tag = has_tags and "<" in word
             if current_width == 0:
-                if word_width <= max_display_width:
+                if word_width <= max_display_width or word_has_tag:
                     current_line = word
                     current_width = word_width
                 else:
@@ -602,7 +630,7 @@ class LoggerExt:
                 current_width += 1 + word_width
             else:
                 lines.append(current_line)
-                if word_width <= max_display_width:
+                if word_width <= max_display_width or word_has_tag:
                     current_line = word
                     current_width = word_width
                 else:
@@ -613,6 +641,10 @@ class LoggerExt:
 
         if current_line:
             lines.append(current_line)
+
+        # Restore protected spaces inside HTML tags
+        if has_tags:
+            lines = [line.replace(sentinel, " ") for line in lines]
 
         return lines
 
@@ -646,8 +678,31 @@ class LoggerExt:
         max_content = max_width - 2 - padding * 2
         if max_content < 4:
             max_content = 4  # minimum usable width
-        if longest > max_content:
-            longest = max_content
+
+        needs_wrap = longest > max_content
+        all_wrapped_title = None
+        all_wrapped_items = None
+
+        # Pre-wrap all content to the clamped width so we can measure the
+        # actual longest wrapped line and shrink the box to fit.
+        if needs_wrap:
+            wrap_width = max_content
+            all_wrapped_title = wrap(title, wrap_width)
+            all_wrapped_items = []
+            for item in (items or []):
+                all_wrapped_items.append(wrap(item, wrap_width))
+
+            # Recalculate longest from the wrapped output
+            longest = 0
+            for wl in all_wrapped_title:
+                w = dw(wl)
+                if w > longest:
+                    longest = w
+            for wrapped_group in all_wrapped_items:
+                for wl in wrapped_group:
+                    w = dw(wl)
+                    if w > longest:
+                        longest = w
 
         inner_width = longest + padding * 2
         width = inner_width + 2  # full box width including sides
@@ -655,7 +710,7 @@ class LoggerExt:
         top = "╔" + "═" * inner_width + "╗"
 
         # Wrap title lines to fit
-        title_lines = wrap(title, longest)
+        title_lines = all_wrapped_title if needs_wrap else wrap(title, longest)
         title_rows = []
         for tl in title_lines:
             tl_padded = LoggerExt._pad(tl, longest, fill=space, align=align)
@@ -667,8 +722,8 @@ class LoggerExt:
         lines = [top] + title_rows
         if items:
             lines.append(sep)
-            for item in items:
-                wrapped = wrap(item, inner_width - 1)
+            for idx, item in enumerate(items):
+                wrapped = all_wrapped_items[idx] if needs_wrap else wrap(item, inner_width - 1)
                 for wl in wrapped:
                     item_padded = LoggerExt._pad(wl, inner_width - 1, fill=space)
                     item_line = space + item_padded
@@ -682,6 +737,36 @@ class LoggerExt:
         LoggerExt._log_raw(self, box_text)
 
         return width
+
+    @staticmethod
+    def _log_link(text: str, action: str, **params: str) -> str:
+        """Return an HTML ``<a>`` tag for embedding clickable links in log messages.
+
+        The link uses a custom ``action://`` URI scheme that is never opened
+        by a browser — handlers (e.g. ``QTextBrowser.anchorClicked``) parse
+        the URL and dispatch the action.
+
+        Parameters:
+            text:   Visible link label (HTML-escaped automatically).
+            action: Action verb (e.g. ``"select"``, ``"reveal"``).
+            **params: Arbitrary key-value pairs appended as query string.
+
+        Returns:
+            An ``<a href="action://ACTION?k=v&…">text</a>`` string that can
+            be embedded in any log message via f-string::
+
+                link = logger.log_link("pCube1", "select", node="|group1|pCube1")
+                logger.info(f"Missing object: {link}")
+        """
+        import html
+        from urllib.parse import urlencode
+
+        safe_text = html.escape(text, quote=False)
+        query = urlencode(params) if params else ""
+        href = f"action://{action}?{query}" if query else f"action://{action}"
+        # No spaces in the tag — _wrap_text splits on spaces and would
+        # break the tag if any are present inside attributes.
+        return f'<a href="{href}" style="text-decoration:underline">' f"{safe_text}</a>"
 
     @staticmethod
     def _log_divider(self, width: Optional[int] = None, char: str = "─") -> None:
@@ -1105,6 +1190,7 @@ class LoggingMixin(TableMixin):
     # Expose formatting constants
     LOG_COLORS = LoggerExt.LOG_COLORS
     HTML_PRESETS = LoggerExt.HTML_PRESETS
+    log_link = staticmethod(LoggerExt._log_link)
 
     def __init__(self, *args, log_level: Optional[Union[int, str]] = None, **kwargs):
         super().__init__(*args, **kwargs)
