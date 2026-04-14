@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.7.98"
+__version__ = "0.7.99"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -34,6 +34,7 @@ DEFAULT_INCLUDE = {
     "core_utils.module_reloader": ["ModuleReloader", "reload_package"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
     "core_utils.app_launcher": "AppLauncher",
+    "core_utils.app_installer": "AppInstaller",
     "core_utils.cli": "CLI",
     # Hierarchy utils
     "core_utils.hierarchy_utils.hierarchy_indexer": "HierarchyIndexer",
@@ -56,6 +57,7 @@ bootstrap_package(globals(), include=DEFAULT_INCLUDE)
 __all__ = [
     "CoreUtils",
     "AppLauncher",
+    "AppInstaller",
     "HelpMixin",
     "LoggingMixin",
     "TableMixin",

@@ -4,7 +4,7 @@ import os
 import subprocess
 import shutil
 import re
-from typing import Union
+from typing import Optional, Union
 
 # from this package:
 from pythontk.core_utils.help_mixin import HelpMixin
@@ -64,21 +64,55 @@ class VidUtils(HelpMixin):
 
         return 24.0
 
-    @staticmethod
-    def resolve_ffmpeg() -> str:
-        """Finds FFmpeg executable path in system path.
+    @classmethod
+    def resolve_ffmpeg(
+        cls, required: bool = True, auto_install: bool = False
+    ) -> Optional[str]:
+        """Finds FFmpeg executable path in system path or managed installs.
+
+        Parameters:
+            required:      If True (default), raises when ffmpeg is
+                           unavailable.
+            auto_install:  If True, downloads and installs ffmpeg when
+                           it cannot be found on the system PATH.
 
         Returns:
-            str: Path to the FFmpeg executable.
+            str: Path to the FFmpeg executable, or None if not found
+            and *required* is False.
 
         Raises:
-            FileNotFoundError: If FFmpeg is not located in the system path.
+            FileNotFoundError: If FFmpeg is not located and *required*
+                is True.
         """
         ffmpeg_path = shutil.which("ffmpeg")
         if ffmpeg_path:
             return ffmpeg_path
 
-        raise FileNotFoundError("FFmpeg is required but not found in the system path.")
+        # Check managed installs from a previous session.
+        from pythontk.core_utils.app_installer import (
+            AppInstaller,
+            FFMPEG_PLATFORMS,
+        )
+
+        managed = AppInstaller.get_path("ffmpeg", executable="ffmpeg", add_to_path=True)
+        if managed:
+            return managed
+
+        if auto_install:
+            try:
+                return AppInstaller.ensure(
+                    "ffmpeg",
+                    platforms=FFMPEG_PLATFORMS,
+                    executable="ffmpeg",
+                )
+            except Exception:
+                pass  # Fall through to required/None logic below
+
+        if required:
+            raise FileNotFoundError(
+                "FFmpeg is required but not found in the system path."
+            )
+        return None
 
     @classmethod
     def get_video_frame_rate(cls, filepath: str) -> float:
