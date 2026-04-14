@@ -97,16 +97,19 @@ class ModuleAttributeResolver:
             if classes is None:
                 continue
 
+            # Explicit class lists can always be lazily registered — names
+            # are known statically and the module will be imported on first
+            # attribute access, executing any side-effects at that point.
+            if classes and "*" not in classes:
+                for class_name in classes:
+                    self.class_to_module[class_name] = modname
+                continue
+
             # Determine if we should lazy load this module
             should_lazy = self.lazy_import
             if should_lazy is None:
                 # Auto-detect: check if module is safe to lazy load
                 should_lazy = self._is_safe_to_lazy_load(modname)
-
-            if should_lazy and classes and "*" not in classes:
-                for class_name in classes:
-                    self.class_to_module[class_name] = modname
-                continue
 
             if should_lazy and (not classes or "*" in classes):
                 try:
@@ -260,6 +263,8 @@ class ModuleAttributeResolver:
         )
 
         for node in tree.body:
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                continue  # Module docstrings / standalone string literals
             if not isinstance(node, SAFE_NODES):
                 # Found something suspicious (like a top-level function call)
                 return False

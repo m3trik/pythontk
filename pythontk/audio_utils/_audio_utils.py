@@ -23,12 +23,16 @@ class AudioUtils(HelpMixin):
     PLAYABLE_EXTENSIONS = {".wav", ".aif", ".aiff"}
     SOURCE_EXTENSIONS = PLAYABLE_EXTENSIONS | {".mp3", ".ogg", ".m4a", ".flac"}
 
-    @staticmethod
-    def resolve_ffmpeg(required: bool = True) -> Optional[str]:
-        """Resolve ffmpeg executable from PATH.
+    @classmethod
+    def resolve_ffmpeg(
+        cls, required: bool = True, auto_install: bool = False
+    ) -> Optional[str]:
+        """Resolve ffmpeg executable from PATH or managed installs.
 
         Parameters:
-            required: If True, raises when ffmpeg is unavailable.
+            required:      If True, raises when ffmpeg is unavailable.
+            auto_install:  If True, downloads and installs ffmpeg when
+                           it cannot be found on the system PATH.
 
         Returns:
             Path to ffmpeg executable, or None when not found and
@@ -37,6 +41,26 @@ class AudioUtils(HelpMixin):
         ffmpeg_path = shutil.which("ffmpeg")
         if ffmpeg_path:
             return ffmpeg_path
+
+        # Check managed installs from a previous session.
+        from pythontk.core_utils.app_installer import (
+            AppInstaller,
+            FFMPEG_PLATFORMS,
+        )
+
+        managed = AppInstaller.get_path("ffmpeg", executable="ffmpeg", add_to_path=True)
+        if managed:
+            return managed
+
+        if auto_install:
+            try:
+                return AppInstaller.ensure(
+                    "ffmpeg",
+                    platforms=FFMPEG_PLATFORMS,
+                    executable="ffmpeg",
+                )
+            except Exception:
+                pass  # Fall through to required/None logic below
 
         if required:
             raise FileNotFoundError(
