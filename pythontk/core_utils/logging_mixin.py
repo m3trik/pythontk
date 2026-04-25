@@ -79,7 +79,7 @@ class LoggerExt:
     RESULT = 35
     NOTICE = 45
 
-    DEFAULT_BOX_WIDTH = 120
+    DEFAULT_BOX_WIDTH = 100
 
     # Default log colors (Hex)
     LOG_COLORS = {
@@ -199,6 +199,7 @@ class LoggerExt:
             "add_stream_handler": LoggerExt._add_stream_handler,
             "add_text_widget_handler": LoggerExt._add_text_widget_handler,
             "setup_logging_redirect": LoggerExt._setup_logging_redirect,
+            "get_redirect_width": LoggerExt._get_redirect_width,
             "success": LoggerExt._success,
             "result": LoggerExt._result,
             "notice": LoggerExt._notice,
@@ -660,14 +661,20 @@ class LoggerExt:
 
         Parameters:
             max_width: Maximum box width in display columns.  Falls back to
-                ``self.box_width`` if set, otherwise ``DEFAULT_BOX_WIDTH``.
+                ``self.box_width`` if set, then to the narrowest column
+                count reported by attached handlers (see
+                ``get_redirect_width``), otherwise ``DEFAULT_BOX_WIDTH``.
         """
         padding = 1
         # Use non-breaking space to prevent HTML space collapsing in handlers
         space = "\u00a0"
 
         if max_width is None:
-            max_width = getattr(self, "box_width", LoggerExt.DEFAULT_BOX_WIDTH)
+            max_width = getattr(self, "box_width", None)
+        if max_width is None:
+            max_width = LoggerExt._get_redirect_width(self)
+        if max_width is None:
+            max_width = LoggerExt.DEFAULT_BOX_WIDTH
 
         dw = LoggerExt._display_width
         wrap = LoggerExt._wrap_text
@@ -841,6 +848,29 @@ class LoggerExt:
             )
         else:
             raise ValueError("Unsupported target type for logging redirection.")
+
+    @staticmethod
+    def _get_redirect_width(self) -> Optional[int]:
+        """Return the narrowest column count reported by attached handlers.
+
+        Handlers may expose ``available_columns()`` (e.g. uitk's
+        ``TextEditLogHandler`` computes it from viewport width + font
+        metrics). The minimum across all such handlers is returned so a
+        single box fits every redirect target. Returns ``None`` when no
+        handler reports a width.
+        """
+        widths = []
+        for handler in self.handlers:
+            fn = getattr(handler, "available_columns", None)
+            if not callable(fn):
+                continue
+            try:
+                w = fn()
+            except Exception:
+                continue
+            if w and w > 0:
+                widths.append(int(w))
+        return min(widths) if widths else None
 
     @staticmethod
     def _hide_logger_name(self, hide: bool = True) -> None:
