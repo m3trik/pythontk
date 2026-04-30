@@ -316,6 +316,55 @@ class FileUtils(HelpMixin):
             traceback.print_exc()
 
     @staticmethod
+    def atomic_write_text(filepath: str, content: str, encoding: str = "utf-8") -> None:
+        """Write text to a file atomically.
+
+        Writes to a temporary file in the same directory, then renames to the
+        target. The rename is atomic on POSIX and Windows (Python 3.3+ via
+        os.replace), so readers either see the old file or the complete new
+        file — never a partial write. This matters for cloud-synced
+        directories (Dropbox, OneDrive) and for any file other processes may
+        read while we're writing.
+
+        Leaves no temp file behind on success. On failure (write error), the
+        temp file is removed and the original is untouched.
+
+        Parameters:
+            filepath (str): Destination path.
+            content (str): Text to write.
+            encoding (str): Text encoding (default "utf-8").
+        """
+        import tempfile
+
+        filepath = os.fspath(filepath)
+        target_dir = os.path.dirname(os.path.abspath(filepath)) or "."
+
+        # NamedTemporaryFile in the same directory so os.replace stays on one filesystem
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding=encoding,
+            dir=target_dir,
+            delete=False,
+            prefix=".",
+            suffix=".tmp",
+        )
+        try:
+            try:
+                tmp.write(content)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            finally:
+                tmp.close()
+            os.replace(tmp.name, filepath)
+        except Exception:
+            # Best-effort cleanup; original target is untouched.
+            try:
+                os.remove(tmp.name)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
     def copy_file(
         file_path: str,
         destination: str,
