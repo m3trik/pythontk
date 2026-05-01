@@ -20,7 +20,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1-mesa libopengl0 xvfb python3-tk
+          sudo apt-get install -y libegl1 libopengl0 xvfb python3-tk
 
       - name: Install dependencies
         run: |
