@@ -418,7 +418,9 @@ class TestAppInstaller(unittest.TestCase):
 
         dest = os.path.join(self.tmp, "safe_dest")
         os.makedirs(dest)
-        with self.assertRaises(RuntimeError):
+        # Python 3.12+ raises tarfile.OutsideDestinationError (TarError subclass)
+        # before our own RuntimeError fires. Accept either.
+        with self.assertRaises((RuntimeError, _tf.TarError)):
             AppInstaller._extract(tar_path, dest, "tar")
 
     def test_extract_zip_rejects_path_traversal(self):

@@ -451,12 +451,19 @@ class LoggerExt:
             stream = getattr(handler, "stream", None)
             if stream:
                 try:
-                    # Check if we should strip HTML
-                    msg_to_write = message
-                    if handler.formatter and isinstance(
-                        handler.formatter, StripHtmlFormatter
-                    ):
-                        msg_to_write = re.sub(r"<[^>]+>", "", message)
+                    # Mirror the formatter pipeline's HTML-stripping decision.
+                    # The default stream/file handlers attach
+                    # ``LevelAwareFormatter(strip_html=True)``; without this
+                    # second branch, raw output (boxes, dividers) leaks
+                    # ``<span>`` markup into terminals and log files.
+                    formatter = handler.formatter
+                    should_strip = isinstance(formatter, StripHtmlFormatter) or (
+                        isinstance(formatter, LevelAwareFormatter)
+                        and getattr(formatter, "_strip_html", False)
+                    )
+                    msg_to_write = (
+                        re.sub(r"<[^>]+>", "", message) if should_strip else message
+                    )
 
                     stream.write(msg_to_write + "\n")
                     stream.flush()
@@ -656,6 +663,7 @@ class LoggerExt:
         align: str = "left",
         level: str = None,
         max_width: Optional[int] = None,
+        bg: Optional[str] = None,
     ) -> int:
         """Print an ASCII box with title and optional list of lines. Returns box width.
 
@@ -664,6 +672,13 @@ class LoggerExt:
                 ``self.box_width`` if set, then to the narrowest column
                 count reported by attached handlers (see
                 ``get_redirect_width``), otherwise ``DEFAULT_BOX_WIDTH``.
+            bg: Solid background color for the box. Accepts a log-level name
+                (``"ERROR"``, ``"SUCCESS"``…) which resolves via
+                ``LOG_COLORS``, or any CSS color string (``"#222"``,
+                ``"steelblue"``, ``"rgb(40,40,40)"``). Each box row is
+                wrapped in its own span so the background renders as a
+                contiguous block in HTML handlers; ignored by plain-text
+                handlers (HTML is stripped).
         """
         padding = 1
         # Use non-breaking space to prevent HTML space collapsing in handlers
@@ -737,10 +752,25 @@ class LoggerExt:
                     lines.append(f"║{item_line}║")
         lines.append(bottom)
 
-        box_text = "\n".join(lines)
-        color = LoggerExt.get_color(level) if level else None
-        if color:
-            box_text = f'<span style="color:{color}">{box_text}</span>'
+        text_color = LoggerExt._resolve_color(level) if level else None
+        bg_color = LoggerExt._resolve_color(bg) if bg else None
+
+        if bg_color:
+            # Per-line wrapping: a single span across "\n" does not extend its
+            # background through line breaks in HTML rendering, so each row
+            # needs its own span to render as a contiguous solid block.
+            style_parts = []
+            if text_color:
+                style_parts.append(f"color:{text_color}")
+            style_parts.append(f"background-color:{bg_color}")
+            style = ";".join(style_parts)
+            lines = [f'<span style="{style}">{ln}</span>' for ln in lines]
+            box_text = "\n".join(lines)
+        else:
+            box_text = "\n".join(lines)
+            if text_color:
+                box_text = f'<span style="color:{text_color}">{box_text}</span>'
+
         LoggerExt._log_raw(self, box_text)
 
         return width
@@ -853,23 +883,43 @@ class LoggerExt:
     def _get_redirect_width(self) -> Optional[int]:
         """Return the narrowest column count reported by attached handlers.
 
-        Handlers may expose ``available_columns()`` (e.g. uitk's
-        ``TextEditLogHandler`` computes it from viewport width + font
-        metrics). The minimum across all such handlers is returned so a
-        single box fits every redirect target. Returns ``None`` when no
-        handler reports a width.
+        Sources, in priority order per handler:
+        1. A custom ``available_columns()`` method (e.g. uitk's
+           ``TextEditLogHandler`` computes it from viewport width + font
+           metrics).
+        2. For ``StreamHandler`` whose stream is a TTY, the live terminal
+           width via ``os.get_terminal_size``. Files are skipped since
+           ``isatty()`` is False for them.
+
+        The minimum across all reporting handlers is returned so a single
+        box fits every redirect target without being wrapped by terminal
+        autowrap. Returns ``None`` when no handler reports a width.
         """
         widths = []
         for handler in self.handlers:
             fn = getattr(handler, "available_columns", None)
-            if not callable(fn):
+            if callable(fn):
+                try:
+                    w = fn()
+                except Exception:
+                    w = None
+                if w and w > 0:
+                    widths.append(int(w))
+                    continue
+
+            stream = getattr(handler, "stream", None)
+            if stream is None:
                 continue
             try:
-                w = fn()
-            except Exception:
+                if not stream.isatty():
+                    continue
+                import os
+
+                size = os.get_terminal_size(stream.fileno())
+            except (OSError, AttributeError, ValueError):
                 continue
-            if w and w > 0:
-                widths.append(int(w))
+            if size.columns and size.columns > 0:
+                widths.append(int(size.columns))
         return min(widths) if widths else None
 
     @staticmethod
@@ -974,6 +1024,18 @@ class LoggerExt:
     def get_color(cls, level: str) -> str:
         """Get the color code for a given log level."""
         return cls.LOG_COLORS.get(level.upper(), "#FFFFFF")
+
+    @classmethod
+    def _resolve_color(cls, value: str) -> str:
+        """Resolve a color string. Maps a known level name to its ``LOG_COLORS``
+        hex; otherwise returns the value unchanged so raw CSS colors
+        (``"#222"``, ``"steelblue"``, ``"rgb(0,0,0)"``) pass through.
+        """
+        if value is None:
+            return None
+        if isinstance(value, str) and value.upper() in cls.LOG_COLORS:
+            return cls.LOG_COLORS[value.upper()]
+        return value
 
     @classmethod
     def register_html_preset(cls, name: str, format_str: str) -> None:
