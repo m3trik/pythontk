@@ -16,6 +16,7 @@ import unittest
 from pythontk.core_utils.logging_mixin import (
     LoggingMixin,
     LoggerExt,
+    LevelAwareFormatter,
     DefaultTextLogHandler,
 )
 
@@ -373,6 +374,99 @@ class LogBoxTest(BaseTestCase):
         long_item = "a" * 15 + " " + "b" * 15 + " " + "c" * 15
         width = self.logger.log_box("OK", [long_item], max_width=50)
         self.assertLess(width, 50)
+
+    def test_log_box_solid_background(self):
+        """bg= wraps each line in a span carrying background-color so HTML
+        handlers render a contiguous solid block. Accepts both level names
+        and raw CSS colors."""
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget, use_html=True, monospace=True)
+        handler.setLevel(logging.DEBUG)
+        self.logger.handlers = [handler]
+
+        # Level-name form
+        self.logger.log_box("TITLE", ["item"], bg="ERROR")
+        # Raw CSS color form
+        self.logger.log_box("TITLE2", ["item"], bg="#222", level="SUCCESS")
+
+        import time
+
+        time.sleep(0.1)
+
+        self.assertEqual(len(widget.messages), 2)
+
+        first = widget.messages[0]
+        # Level "ERROR" resolved to its hex
+        self.assertIn("background-color:#FFCCCC", first)
+        # Per-line wrapping: one span per box row.
+        # With items, rows are: top, title, sep, item, bottom = 5
+        self.assertEqual(first.count("<span style="), 5 + 1)  # +1 monospace wrapper
+
+        second = widget.messages[1]
+        # Raw color passed through unchanged
+        self.assertIn("background-color:#222", second)
+        # Combined with text color from level
+        self.assertIn("color:#CCFFCC", second)
+
+    def test_log_box_clamps_to_terminal_width(self):
+        """When a stream handler is attached to a TTY, log_box clamps to the
+        live terminal width so the box is not broken by autowrap.
+
+        This was previously broken: a 60-col terminal would still get a
+        100-col box and every line would visually wrap."""
+        from unittest.mock import MagicMock, patch
+        import os as _os
+
+        # Replace stream with a TTY-pretending mock
+        self.logger.handlers = []
+        fake_stream = MagicMock()
+        fake_stream.isatty.return_value = True
+        fake_stream.fileno.return_value = 1
+        handler = logging.StreamHandler(fake_stream)
+        handler.setLevel(logging.DEBUG)
+        self.logger.addHandler(handler)
+
+        fake_size = _os.terminal_size((40, 24))
+        with patch("os.get_terminal_size", return_value=fake_size):
+            long_item = "a" * 80
+            width = self.logger.log_box("T", [long_item])
+
+        # Box must fit the (narrower) reported terminal width
+        self.assertLessEqual(width, 40)
+
+    def test_log_box_ignores_non_tty_stream(self):
+        """File/StringIO streams are not TTYs, so terminal-size probing is
+        skipped and the existing fallback chain (max_width / box_width /
+        DEFAULT_BOX_WIDTH) still applies."""
+        # The test's setUp already uses StringIO, which reports isatty()=False.
+        # Without max_width or box_width, this should fall back to
+        # DEFAULT_BOX_WIDTH (100). A long item must therefore wrap to <=100.
+        self.logger.log_box("T", ["x" * 200])
+        output = self.stream.getvalue().strip()
+        for line in output.split("\n"):
+            self.assertLessEqual(LoggerExt._display_width(line), 100)
+
+    def test_log_box_strips_html_for_levelaware_stream(self):
+        """Default stream/file handlers attach ``LevelAwareFormatter(strip_html=True)``.
+        Raw output (log_box, log_divider) must respect that and not leak
+        ``<span>`` / ``<a>`` markup into the terminal or log file.
+
+        Regression: previously ``_log_raw`` only honored ``StripHtmlFormatter``,
+        so level-colored or bg= boxes printed visible HTML to consoles."""
+        self.logger.handlers = []
+        handler = logging.StreamHandler(self.stream)
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(
+            LevelAwareFormatter(logger=self.logger, strip_html=True)
+        )
+        self.logger.addHandler(handler)
+
+        self.logger.log_box("TITLE", ["item"], bg="ERROR", level="ERROR")
+        output = self.stream.getvalue()
+        self.assertNotIn("<span", output)
+        self.assertNotIn("background-color", output)
+        self.assertIn("TITLE", output)
+        self.assertIn("item", output)
 
     def test_log_box_widget_handler_single_append(self):
         """Widget handler receives exactly one append call for the whole box.
