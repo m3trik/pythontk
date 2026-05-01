@@ -4,6 +4,10 @@ on:
   repository_dispatch:
     types: [bump_dev]
 
+concurrency:
+  group: bump-dev
+  cancel-in-progress: false
+
 jobs:
   bump:
     runs-on: ubuntu-latest
