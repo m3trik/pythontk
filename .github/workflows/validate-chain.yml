@@ -148,17 +148,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout pythontk (PR HEAD)
-        uses: actions/checkout@v4
-        with:
-          path: pythontk
-
-      - name: Checkout uitk
-        uses: actions/checkout@v4
-        with:
-          repository: m3trik/uitk
-          path: uitk
-
       - name: Checkout mayatk
         uses: actions/checkout@v4
         with:
@@ -178,12 +167,11 @@ jobs:
             echo "::warning::mayatk's pythontk pin ($PTK_REQ) does not match upstream PR HEAD ($PTK_UPSTREAM)"
           fi
 
-      - name: Install upstream from PR source
+      - name: Install pyflakes
+        # Static analysis only — no need for pythontk/uitk source or PySide6.
         run: |
           python -m pip install --upgrade pip
-          pip install pyflakes qtpy PySide6
-          pip install -e ./pythontk
-          pip install -e ./uitk --no-deps
+          pip install pyflakes
 
       - name: AST parse-walk (mayatk syntax check)
         run: |
