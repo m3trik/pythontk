@@ -15,11 +15,16 @@ on:
         default: false
 
 jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
       - uses: actions/checkout@v4
         with:

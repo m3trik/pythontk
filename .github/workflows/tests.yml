@@ -1,24 +1,23 @@
 name: Tests
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-- name: Install system dependencies
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1-mesa libopengl0 xvfb python3-tk
@@ -33,7 +32,6 @@ jobs:
         run: |
           xvfb-run -a pytest --tb=short -v --cov=pythontk --cov-report=xml --cov-report=term test/
 
-      
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
