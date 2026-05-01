@@ -1,9 +1,21 @@
-name: Validate Publish Chain (Dry Run)
+name: Validate Publish Chain
 
-# This workflow validates the entire publish chain without making any changes.
-# Trigger it manually from pythontk to test the full chain.
+# Catches downstream breakage *before* a pythontk PR merges. For each
+# downstream package we check out the PR's pythontk source (not the PyPI
+# release) and run that downstream's test suite against it.
+#
+# - uitk     -> pytest against pythontk PR source
+# - mayatk   -> static analysis (Maya runtime unavailable in CI)
+# - tentacle -> pytest against pythontk + uitk PR source; mayatk from PyPI
+#               (mayatk imports maya.cmds, can't be source-installed in CI)
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pythontk/**'
+      - 'pyproject.toml'
+      - '.github/workflows/validate-chain.yml'
   workflow_dispatch:
     inputs:
       validate_downstream:
@@ -11,248 +23,277 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: validate-chain-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate-pythontk:
+    # Pythontk's tests run on windows-latest (in tests.yml) for platform reasons.
+    # This job only does build validation and version extraction, both Linux-safe.
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       would_publish: ${{ steps.check.outputs.would_publish }}
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      - name: Install dependencies
-        run: pip install build twine
-      
-      - name: Install package
-        run: pip install -e .
-      
-      - name: Get version
-        id: version
+
+      - name: Install build tools
         run: |
-          VERSION=$(python -c "from pythontk import __version__; print(__version__)")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-      
-      - name: Check if would publish
-        id: check
-        run: |
-          PYPI_VERSION=$(pip index versions pythontk 2>/dev/null | grep -oP 'Available versions: \K[^,]+' || echo "none")
-          if [ "${{ steps.version.outputs.version }}" != "$PYPI_VERSION" ]; then
-            echo "would_publish=true" >> $GITHUB_OUTPUT
-            echo "✅ pythontk v${{ steps.version.outputs.version }} WOULD be published (PyPI has: $PYPI_VERSION)"
-          else
-            echo "would_publish=false" >> $GITHUB_OUTPUT
-            echo "⏭️ pythontk v${{ steps.version.outputs.version }} already on PyPI - would skip"
-          fi
-      
-      - name: Test build
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build check
         run: |
           rm -rf dist build *.egg-info
           python -m build
           python -m twine check dist/*
-          echo "✅ Build validation passed"
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(grep -oP '__version__\s*=\s*["\x27]\K[^"\x27]+' pythontk/__init__.py)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if would publish
+        id: check
+        run: |
+          PYPI=$(pip index versions pythontk 2>/dev/null | grep -oP 'Available versions: \K[^,]+' || echo "none")
+          if [ "${{ steps.version.outputs.version }}" != "$PYPI" ]; then
+            echo "would_publish=true" >> $GITHUB_OUTPUT
+            echo "pythontk v${{ steps.version.outputs.version }} WOULD publish (PyPI has: $PYPI)"
+          else
+            echo "would_publish=false" >> $GITHUB_OUTPUT
+            echo "pythontk v${{ steps.version.outputs.version }} already on PyPI"
+          fi
 
   validate-uitk:
     needs: validate-pythontk
-    if: github.event.inputs.validate_downstream == 'true'
+    if: github.event_name == 'pull_request' || github.event.inputs.validate_downstream == 'true'
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      would_publish: ${{ steps.check.outputs.would_publish }}
-    
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pythontk (PR HEAD)
+        uses: actions/checkout@v4
+        with:
+          path: pythontk
+
+      - name: Checkout uitk
+        uses: actions/checkout@v4
         with:
           repository: m3trik/uitk
-      
+          path: uitk
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      - name: Install dependencies
-        run: pip install build twine pythontk
-      
-      - name: Check dependency alignment
+
+      - name: Install system dependencies
         run: |
-          echo "Checking dependency alignment..."
-          
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libfontconfig1 python3-tk
+
+      - name: Check pin alignment
+        run: |
           PTK_UPSTREAM="${{ needs.validate-pythontk.outputs.version }}"
-          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
-          
+          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' uitk/pyproject.toml || echo "not pinned")
           if [ "$PTK_REQ" != "$PTK_UPSTREAM" ]; then
-            echo "::warning::pythontk requirement ($PTK_REQ) does not match upstream build ($PTK_UPSTREAM)"
+            echo "::warning::uitk's pythontk pin ($PTK_REQ) does not match upstream PR HEAD ($PTK_UPSTREAM)"
           else
-            echo "✅ pythontk requirement aligned: $PTK_REQ"
+            echo "pythontk pin aligned: $PTK_REQ"
           fi
-      
-      - name: Get version
-        id: version
+
+      - name: Install upstream from PR source, downstream from local
+        # mayatk is installed because uitk's test_color_swatch imports it.
         run: |
-          VERSION=$(grep -oP '__version__\s*=\s*["\x27]\K[^"\x27]+' uitk/__init__.py)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-      
-      - name: Check if would publish
-        id: check
+          python -m pip install --upgrade pip
+          pip install pytest qtpy PySide6 mayatk
+          pip install -e ./pythontk
+          pip install -e ./uitk --no-deps
+
+      - name: Run uitk tests against pythontk PR source
+        # Mirrors uitk/.github/workflows/tests.yml: marking-menu integration
+        # tests skipped (Qt offscreen release-event quirk); pytest may
+        # SIGSEGV during exit cleanup after all tests pass — tolerate.
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
-          PYPI_VERSION=$(pip index versions uitk 2>/dev/null | grep -oP 'Available versions: \K[^,]+' || echo "none")
-          UPSTREAM_CHANGED="${{ needs.validate-pythontk.outputs.would_publish }}"
-          
-          if [ "${{ steps.version.outputs.version }}" != "$PYPI_VERSION" ] || [ "$UPSTREAM_CHANGED" == "true" ]; then
-            echo "would_publish=true" >> $GITHUB_OUTPUT
-            echo "✅ uitk v${{ steps.version.outputs.version }} WOULD be published"
-          else
-            echo "would_publish=false" >> $GITHUB_OUTPUT
-            echo "⏭️ uitk would skip"
+          cd uitk
+          set +e
+          OUTPUT=$(pytest --tb=short -v test/ \
+            --ignore=test/test_marking_menu_integration.py 2>&1)
+          RC=$?
+          echo "$OUTPUT"
+          FAILED=$(echo "$OUTPUT" | grep -oP '\d+(?= failed)' | head -1 || echo "0")
+          PASSED=$(echo "$OUTPUT" | grep -oP '\d+(?= passed)' | head -1 || echo "0")
+          FAILED=${FAILED:-0}
+          PASSED=${PASSED:-0}
+          if [ "$FAILED" -gt 0 ]; then exit 1; fi
+          if [ "$PASSED" -eq 0 ]; then exit 1; fi
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::pytest exited with code $RC after $PASSED passing tests (PySide6+pytest cleanup SIGSEGV)"
           fi
-      
-      - name: Test build
-        run: |
-          rm -rf dist build *.egg-info
-          python -m build
-          python -m twine check dist/*
-          echo "✅ Build validation passed"
+          exit 0
 
   validate-mayatk:
     needs: [validate-pythontk, validate-uitk]
-    if: github.event.inputs.validate_downstream == 'true'
+    if: github.event_name == 'pull_request' || github.event.inputs.validate_downstream == 'true'
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      would_publish: ${{ steps.check.outputs.would_publish }}
-    
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pythontk (PR HEAD)
+        uses: actions/checkout@v4
+        with:
+          path: pythontk
+
+      - name: Checkout uitk
+        uses: actions/checkout@v4
+        with:
+          repository: m3trik/uitk
+          path: uitk
+
+      - name: Checkout mayatk
+        uses: actions/checkout@v4
         with:
           repository: m3trik/mayatk
-      
+          path: mayatk
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      - name: Install dependencies
-        run: pip install build twine pythontk uitk qtpy
-      
-      - name: Check dependency alignment
+
+      - name: Check pin alignment
         run: |
-          echo "Checking dependency alignment..."
-          
           PTK_UPSTREAM="${{ needs.validate-pythontk.outputs.version }}"
-          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
-          
-          UITK_UPSTREAM="${{ needs.validate-uitk.outputs.version }}"
-          UITK_REQ=$(grep -oP 'uitk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
-          
+          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' mayatk/pyproject.toml || echo "not pinned")
           if [ "$PTK_REQ" != "$PTK_UPSTREAM" ]; then
-            echo "::warning::pythontk requirement ($PTK_REQ) does not match upstream build ($PTK_UPSTREAM)"
+            echo "::warning::mayatk's pythontk pin ($PTK_REQ) does not match upstream PR HEAD ($PTK_UPSTREAM)"
           fi
-          if [ "$UITK_REQ" != "$UITK_UPSTREAM" ]; then
-            echo "::warning::uitk requirement ($UITK_REQ) does not match upstream build ($UITK_UPSTREAM)"
-          fi
-      
-      - name: Get version
-        id: version
+
+      - name: Install upstream from PR source
         run: |
-          VERSION=$(grep -oP '__version__\s*=\s*["\x27]\K[^"\x27]+' mayatk/__init__.py)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-      
-      - name: Check if would publish
-        id: check
+          python -m pip install --upgrade pip
+          pip install pyflakes qtpy PySide6
+          pip install -e ./pythontk
+          pip install -e ./uitk --no-deps
+
+      - name: AST parse-walk (mayatk syntax check)
         run: |
-          PYPI_VERSION=$(pip index versions mayatk 2>/dev/null | grep -oP 'Available versions: \K[^,]+' || echo "none")
-          UPSTREAM_CHANGED="${{ needs.validate-uitk.outputs.would_publish }}"
-          
-          if [ "${{ steps.version.outputs.version }}" != "$PYPI_VERSION" ] || [ "$UPSTREAM_CHANGED" == "true" ]; then
-            echo "would_publish=true" >> $GITHUB_OUTPUT
-            echo "✅ mayatk v${{ steps.version.outputs.version }} WOULD be published"
-          else
-            echo "would_publish=false" >> $GITHUB_OUTPUT
-            echo "⏭️ mayatk would skip"
-          fi
-      
-      - name: Test build
+          python -c "
+          import ast, os, sys
+          count, failed = 0, []
+          for root, _, files in os.walk('mayatk/mayatk'):
+              for f in files:
+                  if f.endswith('.py'):
+                      path = os.path.join(root, f)
+                      try:
+                          ast.parse(open(path, encoding='utf-8').read())
+                          count += 1
+                      except SyntaxError as e:
+                          failed.append(f'{path}: {e}')
+          print(f'{count} files parsed OK')
+          if failed:
+              print('SYNTAX ERRORS:')
+              for line in failed: print(f'  {line}')
+              sys.exit(1)
+          "
+
+      - name: pyflakes static analysis (mayatk)
         run: |
-          rm -rf dist build *.egg-info
-          python -m build
-          python -m twine check dist/*
-          echo "✅ Build validation passed"
+          cd mayatk
+          python test/test_static_analysis.py
 
   validate-tentacle:
     needs: [validate-pythontk, validate-uitk, validate-mayatk]
-    if: github.event.inputs.validate_downstream == 'true'
+    if: github.event_name == 'pull_request' || github.event.inputs.validate_downstream == 'true'
     runs-on: ubuntu-latest
-    
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pythontk (PR HEAD)
+        uses: actions/checkout@v4
+        with:
+          path: pythontk
+
+      - name: Checkout uitk
+        uses: actions/checkout@v4
+        with:
+          repository: m3trik/uitk
+          path: uitk
+
+      - name: Checkout tentacle
+        uses: actions/checkout@v4
         with:
           repository: m3trik/tentacle
-      
+          path: tentacle
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      - name: Install dependencies
-        run: pip install build twine pythontk uitk mayatk qtpy
-      
-      - name: Check dependency alignment
+
+      - name: Install system dependencies
         run: |
-          echo "Checking dependency alignment..."
-          
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libfontconfig1 python3-tk
+
+      - name: Check pin alignment
+        run: |
           PTK_UPSTREAM="${{ needs.validate-pythontk.outputs.version }}"
-          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
-          
-          UITK_UPSTREAM="${{ needs.validate-uitk.outputs.version }}"
-          UITK_REQ=$(grep -oP 'uitk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
-          
-          MAYATK_UPSTREAM="${{ needs.validate-mayatk.outputs.version }}"
-          MAYATK_REQ=$(grep -oP 'mayatk>=\K[0-9.]+' pyproject.toml || echo "not pinned")
-          
+          PTK_REQ=$(grep -oP 'pythontk>=\K[0-9.]+' tentacle/pyproject.toml || echo "not pinned")
           if [ "$PTK_REQ" != "$PTK_UPSTREAM" ]; then
-            echo "::warning::pythontk requirement ($PTK_REQ) does not match upstream build ($PTK_UPSTREAM)"
+            echo "::warning::tentacle's pythontk pin ($PTK_REQ) does not match upstream PR HEAD ($PTK_UPSTREAM)"
           fi
-          if [ "$UITK_REQ" != "$UITK_UPSTREAM" ]; then
-            echo "::warning::uitk requirement ($UITK_REQ) does not match upstream build ($UITK_UPSTREAM)"
-          fi
-          if [ "$MAYATK_REQ" != "$MAYATK_UPSTREAM" ]; then
-            echo "::warning::mayatk requirement ($MAYATK_REQ) does not match upstream build ($MAYATK_UPSTREAM)"
-          fi
-      
-      - name: Get version
-        id: version
+
+      - name: Install (pythontk+uitk from PR source, mayatk from PyPI)
         run: |
-          VERSION=$(grep -oP '__version__\s*=\s*["\x27]\K[^"\x27]+' tentacle/__init__.py)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-      
-      - name: Check if would publish
+          python -m pip install --upgrade pip
+          pip install pytest qtpy PySide6 mayatk
+          pip install -e ./pythontk
+          pip install -e ./uitk --no-deps
+          pip install -e ./tentacle --no-deps
+
+      - name: Compile tentacle UI files (pyside6-uic)
         run: |
-          PYPI_VERSION=$(pip index versions tentacletk 2>/dev/null | grep -oP 'Available versions: \K[^,]+' || echo "none")
-          UPSTREAM_CHANGED="${{ needs.validate-mayatk.outputs.would_publish }}"
-          
-          if [ "${{ steps.version.outputs.version }}" != "$PYPI_VERSION" ] || [ "$UPSTREAM_CHANGED" == "true" ]; then
-            echo "✅ tentacletk v${{ steps.version.outputs.version }} WOULD be published"
-          else
-            echo "⏭️ tentacletk would skip"
+          for ui in tentacle/tentacle/ui/*.ui tentacle/tentacle/ui/maya_menus/*.ui; do
+            out="${ui%.ui}_ui.py"
+            pyside6-uic "$ui" -o "$out"
+          done
+
+      - name: Run tentacle structural tests against PR HEAD chain
+        # Tolerate SIGSEGV-on-exit (PySide6+pytest cleanup issue) when all
+        # tests pass, mirroring tentacle/.github/workflows/tests.yml.
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          cd tentacle
+          set +e
+          OUTPUT=$(pytest --tb=short -v test/ 2>&1)
+          RC=$?
+          echo "$OUTPUT"
+          FAILED=$(echo "$OUTPUT" | grep -oP '\d+(?= failed)' | head -1 || echo "0")
+          PASSED=$(echo "$OUTPUT" | grep -oP '\d+(?= passed)' | head -1 || echo "0")
+          FAILED=${FAILED:-0}
+          PASSED=${PASSED:-0}
+          if [ "$FAILED" -gt 0 ]; then exit 1; fi
+          if [ "$PASSED" -eq 0 ]; then exit 1; fi
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::pytest exited with code $RC after $PASSED passing tests"
           fi
-      
-      - name: Test build
-        run: |
-          rm -rf dist build *.egg-info
-          python -m build
-          python -m twine check dist/*
-          echo "✅ Build validation passed"
+          exit 0
 
   summary:
     needs: [validate-pythontk, validate-uitk, validate-mayatk, validate-tentacle]
-    if: always() && github.event.inputs.validate_downstream == 'true'
+    if: always()
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Print summary
         run: |
@@ -260,9 +301,16 @@ jobs:
           echo "  PUBLISH CHAIN VALIDATION SUMMARY"
           echo "============================================"
           echo ""
-          echo "pythontk  v${{ needs.validate-pythontk.outputs.version }} - would_publish: ${{ needs.validate-pythontk.outputs.would_publish }}"
-          echo "uitk      v${{ needs.validate-uitk.outputs.version }} - would_publish: ${{ needs.validate-uitk.outputs.would_publish }}"
-          echo "mayatk    v${{ needs.validate-mayatk.outputs.version }} - would_publish: ${{ needs.validate-mayatk.outputs.would_publish }}"
-          echo "tentacle  - see job output"
+          echo "pythontk     v${{ needs.validate-pythontk.outputs.version }} - would_publish: ${{ needs.validate-pythontk.outputs.would_publish }} - result: ${{ needs.validate-pythontk.result }}"
+          echo "uitk         result: ${{ needs.validate-uitk.result }}"
+          echo "mayatk       result: ${{ needs.validate-mayatk.result }}"
+          echo "tentacle     result: ${{ needs.validate-tentacle.result }}"
           echo ""
-          echo "If all builds passed, the chain is ready to publish."
+          if [ "${{ needs.validate-pythontk.result }}" != "success" ] || \
+             [ "${{ needs.validate-uitk.result }}" != "success" ] || \
+             [ "${{ needs.validate-mayatk.result }}" != "success" ] || \
+             [ "${{ needs.validate-tentacle.result }}" != "success" ]; then
+            echo "Chain validation FAILED"
+            exit 1
+          fi
+          echo "Chain validation PASSED"
