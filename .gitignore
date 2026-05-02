@@ -199,3 +199,6 @@ cython_debug/
 *.bak
 
 test/temp_tests/
+
+# Test runner output (regenerated each run)
+test/logs/
