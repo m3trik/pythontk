@@ -220,6 +220,34 @@ class NamespaceHandler(LoggingMixin):
     def has(self, key: str) -> bool:
         return key in self._attributes
 
+    def peek(self, key: str, default: Any = None) -> Any:
+        """Return the resolved value for *key* if cached, else *default*.
+
+        Pure peek: never invokes the resolver, never resolves placeholders,
+        never mutates state. Use this when you want to know "is this thing
+        already resolved, and if so what is it" without triggering the
+        construction side effects that ``get`` / ``__getitem__`` would.
+
+        The intent here is a clean dict.get-style accessor for callers that
+        explicitly want lazy semantics (e.g. UI editors that should reflect
+        what's already loaded but must not force-load more). It pairs with:
+
+            has(key)   -> bool: is this resolved (no placeholder)
+            peek(key)  -> value-or-default: same check, returns the value
+            raw(key)   -> value-or-placeholder-or-None: introspection
+            get(key)   -> resolves on miss (fires resolver)
+
+        Args:
+            key: The attribute name to look up.
+            default: Returned when *key* is not in the resolved attribute
+                set (whether absent entirely or only present as a deferred
+                placeholder).
+
+        Returns:
+            The resolved value, or *default*.
+        """
+        return self._attributes.get(key, default)
+
     def raw(self, key: str) -> Optional[Any]:
         if key in self._attributes:
             return self._attributes[key]

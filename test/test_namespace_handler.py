@@ -192,6 +192,60 @@ class NamespaceHandlerTest(BaseTestCase):
         self.assertEqual(handler.raw("a"), 1)
         self.assertIsNone(handler.raw("nonexistent"))
 
+    def test_peek_returns_resolved_value(self):
+        """peek returns the value for keys already in resolved attributes."""
+        handler = NamespaceHandler(owner=self.owner)
+        handler.a = 42
+
+        self.assertEqual(handler.peek("a"), 42)
+
+    def test_peek_returns_default_when_missing(self):
+        """peek returns the default for absent keys."""
+        handler = NamespaceHandler(owner=self.owner)
+
+        self.assertIsNone(handler.peek("nope"))
+        self.assertEqual(handler.peek("nope", default="x"), "x")
+
+    def test_peek_does_not_invoke_resolver(self):
+        """peek must not fire the resolver — that's the whole point."""
+        calls = []
+
+        def resolver(key):
+            calls.append(key)
+            return f"resolved:{key}"
+
+        handler = NamespaceHandler(owner=self.owner, resolver=resolver)
+
+        # Confirm the resolver fires for normal access...
+        _ = handler["fires"]
+        self.assertEqual(calls, ["fires"])
+
+        # ...but peek for an unresolved key does NOT fire it.
+        calls.clear()
+        result = handler.peek("never_resolved", default="DEFAULT")
+        self.assertEqual(calls, [])
+        self.assertEqual(result, "DEFAULT")
+        # And the key was not silently cached.
+        self.assertFalse(handler.has("never_resolved"))
+
+    def test_peek_does_not_resolve_placeholders(self):
+        """peek skips placeholders entirely — they aren't resolved values."""
+        handler = NamespaceHandler(owner=self.owner)
+        handler["lazy"] = Placeholder(list, args=([1, 2, 3],))
+
+        # The placeholder is registered but not yet resolved.
+        self.assertIn("lazy", handler)  # __contains__ sees placeholders
+        self.assertFalse(handler.has("lazy"))  # has() does not
+        self.assertIsInstance(handler.raw("lazy"), Placeholder)  # raw exposes it
+
+        # peek treats the placeholder as not-yet-a-value.
+        self.assertIsNone(handler.peek("lazy"))
+        self.assertEqual(handler.peek("lazy", default="x"), "x")
+
+        # Critical: peek did not trigger placeholder resolution.
+        self.assertIsInstance(handler.raw("lazy"), Placeholder)
+        self.assertFalse(handler.has("lazy"))
+
     def test_resolve_with_default(self):
         """Test resolve with default value."""
         handler = NamespaceHandler(owner=self.owner)
