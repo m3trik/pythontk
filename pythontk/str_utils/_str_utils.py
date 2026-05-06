@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Union, List, Optional, Dict, Tuple, Callable
+from typing import Union, List, Optional, Dict, Tuple, Callable, Iterable
 
 # from this package:
 from pythontk.core_utils._core_utils import CoreUtils
@@ -899,6 +899,136 @@ class StrUtils(CoreUtils):
                 break
 
         return s + suffix
+
+    @staticmethod
+    def alpha_sequence(index: int) -> str:
+        """Excel-column-style alphabetic label for a 0-based index.
+
+        ``0 -> "A"``, ``25 -> "Z"``, ``26 -> "AA"``, ``27 -> "AB"``, ``701 -> "ZZ"``,
+        ``702 -> "AAA"``. Useful for producing human-friendly sequential suffixes
+        for collision groups (e.g. ``mat_A``, ``mat_B``, ...).
+
+        Parameters:
+            index: Non-negative 0-based position.
+
+        Returns:
+            Uppercase alphabetic label.
+
+        Raises:
+            ValueError: if ``index`` is negative.
+        """
+        if index < 0:
+            raise ValueError(f"index must be non-negative, got {index}")
+        s = ""
+        n = index
+        while True:
+            s = chr(ord("A") + n % 26) + s
+            n = n // 26 - 1
+            if n < 0:
+                break
+        return s
+
+    @staticmethod
+    def resolve_name_collisions(
+        names: Iterable[str],
+        strip: Union[str, List[str]] = "",
+        strip_trailing_ints: bool = False,
+        strip_trailing_alpha: bool = False,
+        collision_suffix: Union[str, Callable[[int, int], str], None] = "alpha",
+        suffix_separator: str = "_",
+    ) -> Dict[str, str]:
+        """Reduce a batch of names to a shared base form, then disambiguate
+        same-base groups with sequential suffixes.
+
+        Each name is reduced via :func:`format_suffix` using the ``strip*`` kwargs,
+        then names sharing a base are grouped (input order preserved). Within each
+        group:
+
+          - **Single-member group**: the name is renamed to the bare base. This is
+            unconditional — non-colliding names always strip to base regardless of
+            ``collision_suffix``.
+          - **Multi-member group**: if ``collision_suffix`` is not ``None``, each
+            member is renamed to ``f"{base}{suffix_separator}{suffix}"`` where the
+            suffix comes from the chosen scheme. If ``None``, group members keep
+            their original names (caller can treat as an unresolved conflict).
+
+        Parameters:
+            names: Names to process.
+            strip: Forwarded to :func:`format_suffix`.
+            strip_trailing_ints: Forwarded to :func:`format_suffix`.
+            strip_trailing_alpha: Forwarded to :func:`format_suffix`.
+            collision_suffix: Suffix scheme for collision groups. One of:
+
+                - ``"alpha"``: ``A, B, ..., Z, AA, AB, ...`` (Excel-column style).
+                - ``"numeric"``: zero-padded, width = ``max(2, len(str(count)))``.
+                - ``None``: group members keep their original names.
+                - ``callable(index, count) -> str``: custom scheme. Returning the
+                  empty string yields the bare base; returning ``None`` keeps the
+                  original name.
+            suffix_separator: Joined between base and suffix (default ``"_"``).
+
+        Returns:
+            Mapping ``original_name -> new_name`` for names that change. No-ops
+            (where the new name equals the original) are omitted, so the result
+            is directly suitable for driving a rename loop.
+
+        Examples:
+            >>> StrUtils.resolve_name_collisions(
+            ...     ["mat", "mat1", "mat2", "wood", "wood3"],
+            ...     strip_trailing_ints=True,
+            ...     collision_suffix="alpha",
+            ... )
+            {'mat': 'mat_A', 'mat1': 'mat_B', 'mat2': 'mat_C', 'wood3': 'wood'}
+
+            >>> StrUtils.resolve_name_collisions(
+            ...     ["mat", "mat1"], strip_trailing_ints=True, collision_suffix=None,
+            ... )
+            {}
+        """
+
+        def _suffix_at(scheme, index, count):
+            if scheme is None:
+                return None
+            if callable(scheme):
+                return scheme(index, count)
+            if scheme == "alpha":
+                return StrUtils.alpha_sequence(index)
+            if scheme == "numeric":
+                width = max(2, len(str(count)))
+                return str(index + 1).zfill(width)
+            raise ValueError(f"Unknown collision_suffix scheme: {scheme!r}")
+
+        names = list(names)
+        groups: Dict[str, List[str]] = {}
+        for name in names:
+            base = StrUtils.format_suffix(
+                name,
+                strip=strip,
+                strip_trailing_ints=strip_trailing_ints,
+                strip_trailing_alpha=strip_trailing_alpha,
+            )
+            if not base:
+                continue
+            groups.setdefault(base, []).append(name)
+
+        result: Dict[str, str] = {}
+        for base, members in groups.items():
+            if len(members) == 1:
+                name = members[0]
+                if name != base:
+                    result[name] = base
+                continue
+
+            count = len(members)
+            for i, name in enumerate(members):
+                suffix = _suffix_at(collision_suffix, i, count)
+                if suffix is None:
+                    continue  # keep original name
+                new_name = f"{base}{suffix_separator}{suffix}" if suffix else base
+                if new_name != name:
+                    result[name] = new_name
+
+        return result
 
     @staticmethod
     @CoreUtils.listify(threading=True)

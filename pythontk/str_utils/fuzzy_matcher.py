@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import List, Optional, Tuple, Dict
+from typing import Callable, List, Optional, Tuple, Dict, Union
 import re
 
 
@@ -152,45 +152,281 @@ class FuzzyMatcher:
         return fuzzy_matches, paths_to_remove_from_missing, paths_to_remove_from_extra
 
     @staticmethod
-    def _calculate_similarity(name1: str, name2: str) -> float:
+    def _calculate_similarity(
+        name1: str,
+        name2: str,
+        use_base_name: bool = True,
+        use_substring: bool = True,
+        use_prefix: bool = True,
+        use_ratio: bool = False,
+    ) -> float:
         """Calculate similarity score between two names using multiple strategies.
+
+        Strategies short-circuit in order: base_name → substring → prefix → ratio.
+        The first one that produces a non-zero score wins.
 
         Parameters:
             name1: First name to compare
             name2: Second name to compare
+            use_base_name: Trailing-digit base-name strategy. Disable when numbered
+                variants (e.g. texture_001 vs texture_002) should NOT be considered fuzzy
+                matches.
+            use_substring: Substring containment strategy.
+            use_prefix: Common-prefix strategy (>5 shared leading chars).
+            use_ratio: difflib SequenceMatcher.ratio() — generic edit-distance similarity.
+                Off by default since it's a continuous score (vs. the others' discrete
+                signals) and is best used as a last-resort fallback.
 
         Returns:
             Similarity score from 0.0 (no similarity) to 1.0 (identical)
         """
         # Strategy 1: Base name matching (remove trailing digits)
-        base1 = FuzzyMatcher.get_base_name(name1)
-        base2 = FuzzyMatcher.get_base_name(name2)
+        if use_base_name:
+            base1 = FuzzyMatcher.get_base_name(name1)
+            base2 = FuzzyMatcher.get_base_name(name2)
 
-        if base1 == base2 and base1:
-            # Same base name - check if at least one has trailing digits
-            if base1 != name1 or base1 != name2:
-                # At least one has trailing digits and same base - high score
-                return 0.9
-            # Both names are identical to base (no trailing digits) - perfect match
-            elif name1 == name2:
-                return 1.0
+            if base1 == base2 and base1:
+                if base1 != name1 or base1 != name2:
+                    return 0.9
+                elif name1 == name2:
+                    return 1.0
 
         # Strategy 2: Substring matching
-        if name1 in name2 or name2 in name1:
+        if use_substring and (name1 in name2 or name2 in name1):
             return min(len(name1), len(name2)) / max(len(name1), len(name2))
 
         # Strategy 3: Common prefix length
-        common_prefix = 0
-        for a, b in zip(name1, name2):
-            if a == b:
-                common_prefix += 1
-            else:
-                break
+        if use_prefix:
+            common_prefix = 0
+            for a, b in zip(name1, name2):
+                if a == b:
+                    common_prefix += 1
+                else:
+                    break
 
-        if common_prefix > 5:  # Arbitrary threshold for meaningful prefix
-            return common_prefix / max(len(name1), len(name2))
+            if common_prefix > 5:  # Arbitrary threshold for meaningful prefix
+                return common_prefix / max(len(name1), len(name2))
+
+        # Strategy 4: Generic similarity ratio (difflib)
+        if use_ratio:
+            from difflib import SequenceMatcher
+
+            return SequenceMatcher(None, name1, name2).ratio()
 
         return 0.0
+
+    @staticmethod
+    def find_unique_match(
+        target: str,
+        candidates: List[str],
+        score_threshold: float = 0.5,
+        ambiguity_delta: float = 0.05,
+        use_base_name: bool = True,
+        use_substring: bool = True,
+        use_prefix: bool = True,
+        use_ratio: bool = False,
+    ) -> Tuple[Optional[str], float, str]:
+        """Find a single unambiguous best match, surfacing ambiguity instead of silently picking.
+
+        Parameters:
+            target: Name to find a match for.
+            candidates: Candidate names to score against.
+            score_threshold: Minimum similarity required for a candidate to be considered.
+            ambiguity_delta: If a runner-up scores within this delta of the best, the result
+                is reported as ambiguous.
+            use_base_name / use_substring / use_prefix: Toggle individual scoring strategies
+                (see _calculate_similarity).
+
+        Returns:
+            Tuple of (match, score, status) where status is one of:
+                - "unique":    a single clear winner (name, score populated).
+                - "ambiguous": top candidate populated but a runner-up is within
+                  ambiguity_delta; caller should treat as ambiguous.
+                - "no_match":  no candidate met score_threshold; (None, 0.0).
+
+        Examples:
+            >>> FuzzyMatcher.find_unique_match("foo", ["demo_foo", "demo_bar"])
+            ('demo_foo', 0.428..., 'unique')
+        """
+        if target in candidates:
+            return target, 1.0, "unique"
+
+        scored = [
+            (
+                c,
+                FuzzyMatcher._calculate_similarity(
+                    target,
+                    c,
+                    use_base_name=use_base_name,
+                    use_substring=use_substring,
+                    use_prefix=use_prefix,
+                    use_ratio=use_ratio,
+                ),
+            )
+            for c in candidates
+        ]
+        scored = [(c, s) for c, s in scored if s >= score_threshold]
+        if not scored:
+            return None, 0.0, "no_match"
+
+        scored.sort(key=lambda cs: cs[1], reverse=True)
+        best_name, best_score = scored[0]
+        if len(scored) > 1 and scored[1][1] >= best_score - ambiguity_delta:
+            return best_name, best_score, "ambiguous"
+        return best_name, best_score, "unique"
+
+    # --- Strategy pipeline ----------------------------------------------------
+
+    @staticmethod
+    def _builtin_strategy(
+        name: str,
+    ) -> Callable[[str, List[str], float, float], Tuple[Optional[str], float, str]]:
+        """Resolve a built-in strategy name to a matcher callable.
+
+        Built-ins (each runs in isolation — only the named scoring rule fires):
+
+            "exact"     — target ∈ candidates, case-sensitive.
+            "substring" — one stem contains the other.
+            "prefix"    — >5 shared leading characters.
+            "base_name" — trailing-digit base-name equality (e.g. mesh_01 ↔ mesh_02).
+            "ratio"     — difflib SequenceMatcher.ratio() generic similarity.
+            "all"       — base_name + substring + prefix (legacy find_unique_match default).
+        """
+        if name == "exact":
+
+            def _exact(target, candidates, score_threshold, ambiguity_delta):
+                if target in candidates:
+                    dups = sum(1 for c in candidates if c == target)
+                    if dups > 1:
+                        return target, 1.0, "ambiguous"
+                    return target, 1.0, "unique"
+                return None, 0.0, "no_match"
+
+            return _exact
+
+        flags_by_name = {
+            "substring": dict(
+                use_base_name=False,
+                use_substring=True,
+                use_prefix=False,
+                use_ratio=False,
+            ),
+            "prefix": dict(
+                use_base_name=False,
+                use_substring=False,
+                use_prefix=True,
+                use_ratio=False,
+            ),
+            "base_name": dict(
+                use_base_name=True,
+                use_substring=False,
+                use_prefix=False,
+                use_ratio=False,
+            ),
+            "ratio": dict(
+                use_base_name=False,
+                use_substring=False,
+                use_prefix=False,
+                use_ratio=True,
+            ),
+            "all": dict(
+                use_base_name=True,
+                use_substring=True,
+                use_prefix=True,
+                use_ratio=False,
+            ),
+        }
+        if name not in flags_by_name:
+            raise ValueError(
+                f"Unknown built-in strategy: {name!r}. "
+                f"Expected one of: exact, substring, prefix, base_name, ratio, all."
+            )
+        flags = flags_by_name[name]
+
+        def _matcher(target, candidates, score_threshold, ambiguity_delta):
+            return FuzzyMatcher.find_unique_match(
+                target,
+                candidates,
+                score_threshold=score_threshold,
+                ambiguity_delta=ambiguity_delta,
+                **flags,
+            )
+
+        return _matcher
+
+    @staticmethod
+    def find_with_fallbacks(
+        target: str,
+        candidates: List[str],
+        strategies: List[Union[str, Callable]],
+        score_threshold: float = 0.5,
+        ambiguity_delta: float = 0.05,
+        stop_on_ambiguous: bool = True,
+    ) -> Tuple[Optional[str], float, str, str]:
+        """Try strategies in order; return on the first that produces a definitive result.
+
+        Each strategy is run as a complete match-and-disambiguate pass. The pipeline
+        advances on "no_match" only — a "unique" hit returns immediately, and
+        "ambiguous" returns immediately when stop_on_ambiguous is True (the safer
+        default — don't widen the search after a stricter tier already saw a tie).
+
+        Parameters:
+            target: Name to find a match for.
+            candidates: Candidate names to score against.
+            strategies: Ordered list. Each item is either:
+                - a built-in name string (see _builtin_strategy), or
+                - a callable with signature
+                    (target, candidates) -> (name, score, status)
+                  where status is one of "unique", "ambiguous", "no_match".
+                  Custom callables close over their own configuration.
+            score_threshold: Forwarded to built-in strategies.
+            ambiguity_delta: Forwarded to built-in strategies.
+            stop_on_ambiguous: If True (default), an "ambiguous" result halts the
+                pipeline. If False, the pipeline continues to the next strategy.
+
+        Returns:
+            (match, score, status, strategy_name). strategy_name is the built-in key
+            or callable's __name__ for the tier that produced the result; empty string
+            when every tier returned "no_match".
+
+        Examples:
+            >>> # Texture editor: strict stem first, then containment, then ratio.
+            >>> FuzzyMatcher.find_with_fallbacks(
+            ...     "foo_ao",
+            ...     ["demo_foo_ao", "demo_foo_diff"],
+            ...     strategies=["exact", "substring", "ratio"],
+            ... )
+            ('demo_foo_ao', 0.46..., 'unique', 'substring')
+        """
+        for strat in strategies:
+            if isinstance(strat, str):
+                strat_name = strat
+                matcher = FuzzyMatcher._builtin_strategy(strat)
+                result = matcher(
+                    target, candidates, score_threshold, ambiguity_delta
+                )
+            elif callable(strat):
+                strat_name = getattr(strat, "__name__", "custom")
+                result = strat(target, candidates)
+            else:
+                raise TypeError(
+                    f"Strategy must be a name string or callable, got "
+                    f"{type(strat).__name__}"
+                )
+
+            if not (isinstance(result, tuple) and len(result) == 3):
+                raise ValueError(
+                    f"Strategy {strat_name!r} returned malformed result: {result!r} "
+                    f"(expected (name, score, status))"
+                )
+
+            name, score, status = result
+            if status == "unique":
+                return name, score, status, strat_name
+            if status == "ambiguous" and stop_on_ambiguous:
+                return name, score, status, strat_name
+
+        return None, 0.0, "no_match", ""
 
     @staticmethod
     def calculate_levenshtein_distance(s1: str, s2: str) -> int:
