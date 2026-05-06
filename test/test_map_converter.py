@@ -97,9 +97,9 @@ class TestMapConverterTextureFactory(unittest.TestCase):
 
         # Mock UI components
         self.mock_widget = Mock()
-        self.mock_widget.menu = Mock()
-        self.mock_widget.menu.chk000 = Mock()
-        self.mock_widget.menu.chk000.isChecked = Mock(return_value=False)
+        self.mock_widget.option_box.menu = Mock()
+        self.mock_widget.option_box.menu.chk000 = Mock()
+        self.mock_widget.option_box.menu.chk000.isChecked = Mock(return_value=False)
 
     # -------------------------------------------------------------------------
     # Test tb001 with TextureMapFactory Integration
@@ -131,13 +131,13 @@ class TestMapConverterTextureFactory(unittest.TestCase):
             os.path.join(self.test_files_dir, "material_Glossiness.png"),
         ]
         self.mock_sb.file_dialog.return_value = spec_gloss_textures
-        self.mock_widget.menu.chk000.isChecked.return_value = True
+        self.mock_widget.option_box.menu.chk000.isChecked.return_value = True
 
         # Run conversion with packing enabled
         self.converter.tb001(self.mock_widget)
 
         # Verify checkbox was checked
-        self.mock_widget.menu.chk000.isChecked.assert_called()
+        self.mock_widget.option_box.menu.chk000.isChecked.assert_called()
 
     def test_tb001_empty_selection(self):
         """Test tb001 handles empty file selection."""
@@ -471,7 +471,7 @@ class TestMapConverterEdgeCases(unittest.TestCase):
             ImgUtils.save_image(img, spec_file)
 
             self.mock_sb.file_dialog.return_value = [spec_file]
-            self.mock_widget.menu.chk000.isChecked.return_value = False
+            self.mock_widget.option_box.menu.chk000.isChecked.return_value = False
 
             with patch(
                 "pythontk.img_utils.map_factory.MapFactory.prepare_maps"
@@ -575,7 +575,7 @@ class TestMapConverterMethods(unittest.TestCase):
 
         # Mock UI
         self.mock_widget = Mock()
-        self.mock_widget.menu = Mock()
+        self.mock_widget.option_box.menu = Mock()
         self.converter.ui = self.mock_widget
 
     def create_dummy_image(self, name, mode="RGB"):
@@ -697,8 +697,8 @@ class TestMapConverterMethods(unittest.TestCase):
         self.mock_sb.file_dialog.return_value = [bump]
 
         # Mock UI elements used in tb003
-        self.mock_widget.menu.tb003_cmb_format.currentText.return_value = "OpenGL"
-        self.mock_widget.menu.tb003_dsb_intensity.value.return_value = 1.0
+        self.mock_widget.option_box.menu.tb003_cmb_format.currentText.return_value = "OpenGL"
+        self.mock_widget.option_box.menu.tb003_dsb_intensity.value.return_value = 1.0
 
         with patch.object(
             TextureMapFactory, "convert_bump_to_normal", return_value="normal.png"
@@ -731,7 +731,7 @@ class TestMapConverterIntegration(unittest.TestCase):
 
         # Mock UI (needed for parameter retrieval)
         self.mock_widget = Mock()
-        self.mock_widget.menu = Mock()
+        self.mock_widget.option_box.menu = Mock()
         self.converter.ui = self.mock_widget
 
     def create_test_image(self, name, mode="RGB", color=128):
@@ -829,9 +829,9 @@ class TestMapConverterIntegration(unittest.TestCase):
         self.mock_sb.file_dialog.return_value = [bump_path]
 
         # Mock UI options
-        self.mock_widget.menu.tb003_cmb_format.currentData.return_value = "opengl"
-        self.mock_widget.menu.tb003_cmb_format.currentText.return_value = "OpenGL"
-        self.mock_widget.menu.tb003_dsb_intensity.value.return_value = 1.0
+        self.mock_widget.option_box.menu.tb003_cmb_format.currentData.return_value = "opengl"
+        self.mock_widget.option_box.menu.tb003_cmb_format.currentText.return_value = "OpenGL"
+        self.mock_widget.option_box.menu.tb003_dsb_intensity.value.return_value = 1.0
 
         self.converter.tb003(self.mock_widget)
 
