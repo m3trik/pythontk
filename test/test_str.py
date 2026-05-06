@@ -665,6 +665,147 @@ class StrTest(BaseTestCase):
             "pCube_1",
         )
 
+    # -------------------------------------------------------------------------
+    # alpha_sequence Tests
+    # -------------------------------------------------------------------------
+
+    def test_alpha_sequence_single_letter(self):
+        """Indices 0-25 produce A-Z."""
+        self.assertEqual(StrUtils.alpha_sequence(0), "A")
+        self.assertEqual(StrUtils.alpha_sequence(1), "B")
+        self.assertEqual(StrUtils.alpha_sequence(25), "Z")
+
+    def test_alpha_sequence_double_letter(self):
+        """Indices 26+ wrap to AA, AB, ..., AZ, BA."""
+        self.assertEqual(StrUtils.alpha_sequence(26), "AA")
+        self.assertEqual(StrUtils.alpha_sequence(27), "AB")
+        self.assertEqual(StrUtils.alpha_sequence(51), "AZ")
+        self.assertEqual(StrUtils.alpha_sequence(52), "BA")
+
+    def test_alpha_sequence_triple_letter(self):
+        """Index 702 wraps to AAA (after ZZ at 701)."""
+        self.assertEqual(StrUtils.alpha_sequence(701), "ZZ")
+        self.assertEqual(StrUtils.alpha_sequence(702), "AAA")
+
+    def test_alpha_sequence_negative_raises(self):
+        """Negative indices raise ValueError."""
+        with self.assertRaises(ValueError):
+            StrUtils.alpha_sequence(-1)
+
+    # -------------------------------------------------------------------------
+    # resolve_name_collisions Tests
+    # -------------------------------------------------------------------------
+
+    def test_resolve_collisions_alpha_basic(self):
+        """Three colliding mats get _A, _B, _C; lone wood3 just strips to wood."""
+        result = StrUtils.resolve_name_collisions(
+            ["mat", "mat1", "mat2", "wood3"],
+            strip_trailing_ints=True,
+            collision_suffix="alpha",
+        )
+        self.assertEqual(
+            result,
+            {"mat": "mat_A", "mat1": "mat_B", "mat2": "mat_C", "wood3": "wood"},
+        )
+
+    def test_resolve_collisions_single_member_strips_to_base(self):
+        """A non-colliding name still strips to base regardless of suffix scheme."""
+        result = StrUtils.resolve_name_collisions(
+            ["mat3"], strip_trailing_ints=True, collision_suffix="alpha"
+        )
+        self.assertEqual(result, {"mat3": "mat"})
+
+    def test_resolve_collisions_no_change_omitted(self):
+        """A name already at its target base does not appear in the result."""
+        result = StrUtils.resolve_name_collisions(
+            ["mat"], strip_trailing_ints=True, collision_suffix="alpha"
+        )
+        self.assertEqual(result, {})
+
+    def test_resolve_collisions_none_keeps_originals(self):
+        """collision_suffix=None leaves multi-member groups unchanged."""
+        result = StrUtils.resolve_name_collisions(
+            ["mat", "mat1"], strip_trailing_ints=True, collision_suffix=None
+        )
+        self.assertEqual(result, {})
+
+    def test_resolve_collisions_none_still_strips_singletons(self):
+        """Even with collision_suffix=None, single-member groups strip to base."""
+        result = StrUtils.resolve_name_collisions(
+            ["wood3"], strip_trailing_ints=True, collision_suffix=None
+        )
+        self.assertEqual(result, {"wood3": "wood"})
+
+    def test_resolve_collisions_numeric(self):
+        """Numeric scheme zero-pads to width = max(2, len(str(count)))."""
+        result = StrUtils.resolve_name_collisions(
+            ["mat", "mat1", "mat2"],
+            strip_trailing_ints=True,
+            collision_suffix="numeric",
+        )
+        self.assertEqual(
+            result, {"mat": "mat_01", "mat1": "mat_02", "mat2": "mat_03"}
+        )
+
+    def test_resolve_collisions_numeric_pads_for_large_groups(self):
+        """100+ members -> 3-digit padding."""
+        names = [f"x{i}" if i else "x" for i in range(100)]
+        result = StrUtils.resolve_name_collisions(
+            names, strip_trailing_ints=True, collision_suffix="numeric"
+        )
+        self.assertEqual(result["x"], "x_001")
+        self.assertEqual(result["x99"], "x_100")
+
+    def test_resolve_collisions_callable_scheme(self):
+        """Custom callable suffix(i, count) is honored."""
+        result = StrUtils.resolve_name_collisions(
+            ["mat", "mat1"],
+            strip_trailing_ints=True,
+            collision_suffix=lambda i, count: f"v{i}",
+        )
+        self.assertEqual(result, {"mat": "mat_v0", "mat1": "mat_v1"})
+
+    def test_resolve_collisions_preserves_input_order(self):
+        """Within a group, suffixes are assigned in input order."""
+        result = StrUtils.resolve_name_collisions(
+            ["mat2", "mat", "mat1"],
+            strip_trailing_ints=True,
+            collision_suffix="alpha",
+        )
+        self.assertEqual(
+            result, {"mat2": "mat_A", "mat": "mat_B", "mat1": "mat_C"}
+        )
+
+    def test_resolve_collisions_empty_base_skipped(self):
+        """Names that strip to empty are omitted from grouping."""
+        result = StrUtils.resolve_name_collisions(
+            ["123", "mat", "mat1"],
+            strip_trailing_ints=True,
+            collision_suffix="alpha",
+        )
+        self.assertNotIn("123", result)
+        self.assertEqual(result, {"mat": "mat_A", "mat1": "mat_B"})
+
+    def test_resolve_collisions_custom_separator(self):
+        """suffix_separator is used between base and suffix."""
+        result = StrUtils.resolve_name_collisions(
+            ["mat", "mat1"],
+            strip_trailing_ints=True,
+            collision_suffix="alpha",
+            suffix_separator="-",
+        )
+        self.assertEqual(result, {"mat": "mat-A", "mat1": "mat-B"})
+
+    def test_resolve_collisions_alpha_27_members(self):
+        """Group of 27 wraps from Z to AA."""
+        names = [f"x{i}" if i else "x" for i in range(27)]
+        result = StrUtils.resolve_name_collisions(
+            names, strip_trailing_ints=True, collision_suffix="alpha"
+        )
+        self.assertEqual(result["x"], "x_A")
+        self.assertEqual(result["x25"], "x_Z")
+        self.assertEqual(result["x26"], "x_AA")
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

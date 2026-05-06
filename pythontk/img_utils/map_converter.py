@@ -1,5 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
+import os
+import tempfile
 from typing import List, Union, Tuple, Dict, Any
 
 # From this package:
@@ -16,6 +18,7 @@ class MapConverterSlots(ImgUtils):
         self.ui = self.sb.loaded_ui.map_converter
 
         self._source_dir = kwargs.get("source_dir", "")
+        self._texture_provider = kwargs.get("texture_provider", None)
 
     @property
     def source_dir(self):
@@ -27,51 +30,221 @@ class MapConverterSlots(ImgUtils):
         """Set the starting directory for file dialogs."""
         self._source_dir = value
 
+    @property
+    def texture_provider(self):
+        """Callable returning a list of texture paths from the host DCC selection.
+
+        Set by the host integration (e.g. tentacle's materials slot) to power
+        the global "Use Selection" header toggle. Returns None when running
+        standalone — every tool then falls back to the file dialog regardless
+        of the toggle's state.
+        """
+        return self._texture_provider
+
+    @texture_provider.setter
+    def texture_provider(self, fn):
+        self._texture_provider = fn
+
+    def header_init(self, widget):
+        """Add the global Use-Selection toggle to the header menu."""
+        widget.menu.add(
+            "QCheckBox",
+            setText="Use Selection",
+            setObjectName="chk_use_selection",
+            setChecked=False,
+            setToolTip=(
+                "When enabled, every tool reads texture paths from the host "
+                "DCC's current selection instead of opening a file browser."
+            ),
+        )
+
+    def _selection_enabled(self):
+        """True when the header's Use-Selection toggle is on."""
+        try:
+            return self.ui.header.menu.chk_use_selection.isChecked()
+        except (AttributeError, RuntimeError):
+            return False
+
+    def _get_texture_paths(self, *, title, map_type_filter=None, allow_multiple=True):
+        """Resolve texture paths via the global Use-Selection toggle.
+
+        Parameters:
+            title (str): Title shown if the file dialog is used.
+            map_type_filter (Iterable[str], optional): When pulling from
+                selection, restrict to these MapRegistry keys (e.g. ``["Normal",
+                "Normal_DirectX"]``). Ignored when the file dialog is used.
+            allow_multiple (bool): Forwarded to ``file_dialog``.
+
+        Returns:
+            List[str]: Existing absolute paths. Empty list when nothing valid.
+        """
+        use_selected = self._selection_enabled()
+
+        if use_selected and self.texture_provider:
+            paths = list(self.texture_provider() or [])
+            if map_type_filter:
+                wanted = set(map_type_filter)
+                kept, dropped = [], []
+                for p in paths:
+                    key = MapFactory.resolve_map_type(p, key=True)
+                    (kept if key in wanted else dropped).append(p)
+                if dropped:
+                    print(
+                        f"// Skipping {len(dropped)} map(s) not in "
+                        f"{sorted(wanted)} from selection."
+                    )
+                paths = kept
+            if not paths:
+                print("// No matching textures found on the selected objects.")
+                return []
+        else:
+            if use_selected:
+                print(
+                    "// 'Use Selection' is enabled but no texture provider is "
+                    "wired up — falling back to file dialog."
+                )
+            paths = self.sb.file_dialog(
+                file_types=[f"*.{ext}" for ext in self.texture_file_types],
+                title=title,
+                start_dir=self.source_dir,
+                allow_multiple=allow_multiple,
+            )
+            paths = list(paths or [])
+
+        valid = [p for p in paths if p and os.path.isfile(p)]
+        for missing in (p for p in paths if p not in valid):
+            print(f"// Skipping (file not found): {missing}")
+        return valid
+
     def tb000_init(self, widget):
         """ """
-        widget.menu.add(
+        widget.option_box.menu.setTitle("Optimize")
+        widget.option_box.menu.add(
             "QComboBox",
             setObjectName="cmb001",
             setToolTip="Set the output file type.",
         )
 
-        widget.menu.cmb001.addItems([ext.upper() for ext in self.texture_file_types])
-        widget.menu.add(
+        widget.option_box.menu.cmb001.addItems(
+            [ext.upper() for ext in self.texture_file_types]
+        )
+        widget.option_box.menu.add(
             "QComboBox",
             setObjectName="cmb000",
             setToolTip="Set the maximum texture size.",
         )
-        widget.menu.cmb000.addItems(["256", "512", "1024", "2048", "4096", "8192"])
+        widget.option_box.menu.cmb000.addItems(
+            ["256", "512", "1024", "2048", "4096", "8192"]
+        )
+
+        widget.option_box.menu.add(
+            "QComboBox",
+            setObjectName="cmb_mode",
+            setToolTip="Apply the modifier as a Suffix (after base name) or Prefix (before base name). Either way it sits before the map-type suffix.",
+        )
+        widget.option_box.menu.cmb_mode.addItems(["Suffix", "Prefix"])
+
+        widget.option_box.menu.add(
+            "QLineEdit",
+            setObjectName="txt_modifier",
+            setPlaceholderText="e.g. LD",
+            setToolTip=(
+                "Text inserted into the base name (before the map-type suffix). "
+                "Empty = overwrite the original file."
+            ),
+        )
+
+        widget.option_box.menu.add(
+            "QLineEdit",
+            setObjectName="txt_old_folder",
+            setText="old",
+            setPlaceholderText="e.g. old",
+            setToolTip=(
+                "Subdirectory under the texture's folder to move the original into. "
+                "Empty = don't move the original."
+            ),
+        )
 
     def tb000(self, widget):
         """Optimize a texture map(s)"""
-        texture_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
-            title="Select texture map(s) to optimize:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
+        texture_paths = self._get_texture_paths(
+            title="Select texture map(s) to optimize:"
         )
         if not texture_paths:
             return
 
-        file_type = widget.menu.cmb001.currentText()
-        max_size = int(widget.menu.cmb000.currentText())
+        file_type = widget.option_box.menu.cmb001.currentText()
+        max_size = int(widget.option_box.menu.cmb000.currentText())
+        mode = widget.option_box.menu.cmb_mode.currentText().lower()
+        modifier = widget.option_box.menu.txt_modifier.text().strip().strip("_")
+        old_folder = (
+            widget.option_box.menu.txt_old_folder.text().strip().strip("/").strip("\\")
+        )
 
         for texture_path in texture_paths:
             print(f"Optimizing: {texture_path} ..")
-            optimized_map_path = self.optimize_texture(
-                texture_path,
-                output_type=file_type,
-                max_size=max_size,
-                old_files_folder="old",
-                optimize_bit_depth=True,
-            )
+
+            if not modifier:
+                # Overwrite mode: optimize in place. optimize_texture handles
+                # the optional move-to-old-folder for us.
+                optimized_map_path = self.optimize_texture(
+                    texture_path,
+                    output_type=file_type,
+                    max_size=max_size,
+                    old_files_folder=old_folder or None,
+                    optimize_bit_depth=True,
+                )
+            else:
+                # Rename mode: place the modifier between base name and
+                # map-type suffix and save alongside the original.
+                directory = FileUtils.format_path(texture_path, "path")
+                base_name = self.get_base_texture_name(texture_path)
+                map_type = MapFactory.resolve_map_type(texture_path, key=False) or ""
+                out_ext = (
+                    (file_type or FileUtils.format_path(texture_path, "ext"))
+                    .lower()
+                    .lstrip(".")
+                )
+                new_base = (
+                    f"{modifier}_{base_name}"
+                    if mode == "prefix"
+                    else f"{base_name}_{modifier}"
+                )
+                out_filename = (
+                    f"{new_base}_{map_type}.{out_ext}"
+                    if map_type
+                    else f"{new_base}.{out_ext}"
+                )
+                target_path = os.path.join(directory, out_filename)
+
+                # Same-drive temp dir so the final os.replace is a fast rename
+                # and overwrites cleanly on re-run. We can't pass
+                # old_files_folder here because optimize_texture would archive
+                # the original into the temp dir and lose it on cleanup.
+                with tempfile.TemporaryDirectory(dir=directory) as temp_dir:
+                    temp_result = self.optimize_texture(
+                        texture_path,
+                        output_dir=temp_dir,
+                        output_type=file_type,
+                        max_size=max_size,
+                        optimize_bit_depth=True,
+                    )
+                    os.replace(temp_result, target_path)
+
+                if old_folder:
+                    FileUtils.move_file(
+                        texture_path, os.path.join(directory, old_folder)
+                    )
+
+                optimized_map_path = target_path
+
             print(f"// Result: {optimized_map_path}")
         self.source_dir = FileUtils.format_path(texture_paths[0], "path")
 
     def tb001_init(self, widget):
         """ """
-        widget.menu.add(
+        widget.option_box.menu.setTitle("Spec Gloss to PBR")
+        widget.option_box.menu.add(
             "QCheckBox",
             setText="Create MetallicSmoothness map",
             setObjectName="chk000",
@@ -86,16 +259,13 @@ class MapConverterSlots(ImgUtils):
 
         Maps are saved as Metallic/Roughness maps in the same directory.
         """
-        spec_map_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        spec_map_paths = self._get_texture_paths(
             title="Select Specular, Gloss (optional), and Diffuse maps to convert:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
         )
         if not spec_map_paths:
             return
 
-        create_metallic_smoothness = widget.menu.chk000.isChecked()
+        create_metallic_smoothness = widget.option_box.menu.chk000.isChecked()
 
         # Use MapFactory for DRY conversion
         workflow_config = {
@@ -140,18 +310,19 @@ class MapConverterSlots(ImgUtils):
 
     def tb003_init(self, widget):
         """Initialize a 'Bump to Normal' toolbutton with options."""
-        widget.menu.add(
+        widget.option_box.menu.setTitle("Bump to Normal")
+        widget.option_box.menu.add(
             "QComboBox",
             setObjectName="tb003_cmb_format",
             setToolTip="OpenGL: Y+ up, DirectX: Y+ down",
         )
         # Display-friendly items with data values
-        cmb = widget.menu.tb003_cmb_format
+        cmb = widget.option_box.menu.tb003_cmb_format
         cmb.clear()
         cmb.addItem("Format: OpenGL", "opengl")
         cmb.addItem("Format: DirectX", "directx")
 
-        widget.menu.add(
+        widget.option_box.menu.add(
             "QDoubleSpinBox",
             setObjectName="tb003_dsb_intensity",
             setMinimum=0.1,
@@ -165,22 +336,22 @@ class MapConverterSlots(ImgUtils):
 
     def tb003(self, widget):
         """Bump/Height to Normal converter (single entry point with options)."""
-        bump_map_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        bump_map_paths = self._get_texture_paths(
             title="Select bump/height maps to convert:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
+            map_type_filter=["Bump", "Height"],
         )
         if not bump_map_paths:
             return
 
         # Options
         try:
-            output_format = widget.menu.tb003_cmb_format.currentData() or "opengl"
+            output_format = (
+                widget.option_box.menu.tb003_cmb_format.currentData() or "opengl"
+            )
         except Exception:
-            fmt_text = widget.menu.tb003_cmb_format.currentText().lower()
+            fmt_text = widget.option_box.menu.tb003_cmb_format.currentText().lower()
             output_format = "directx" if "directx" in fmt_text else "opengl"
-        intensity = widget.menu.tb003_dsb_intensity.value()
+        intensity = widget.option_box.menu.tb003_dsb_intensity.value()
 
         for bump_path in bump_map_paths:
             print(f"Converting bump to normal ({output_format.upper()}): {bump_path}")
@@ -205,47 +376,42 @@ class MapConverterSlots(ImgUtils):
 
     def b000(self):
         """Convert DirectX to OpenGL"""
-        dx_map_path = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        dx_map_paths = self._get_texture_paths(
             title="Select a DirectX normal map to convert:",
-            start_dir=self.source_dir,
-            allow_multiple=False,
+            map_type_filter=["Normal", "Normal_DirectX"],
         )
-        if not dx_map_path:
+        if not dx_map_paths:
             return
 
-        print(f"Converting: {dx_map_path} ..")
-        gl_map_path = MapFactory.convert_normal_map_format(
-            dx_map_path, target_format="opengl"
-        )
-        print(f"// Result: {gl_map_path}")
-        self.source_dir = FileUtils.format_path(gl_map_path, "path")
+        for dx_map_path in dx_map_paths:
+            print(f"Converting: {dx_map_path} ..")
+            gl_map_path = MapFactory.convert_normal_map_format(
+                dx_map_path, target_format="opengl"
+            )
+            print(f"// Result: {gl_map_path}")
+        self.source_dir = FileUtils.format_path(dx_map_paths[0], "path")
 
     def b001(self):
         """Convert OpenGL to DirectX"""
-        gl_map_path = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        gl_map_paths = self._get_texture_paths(
             title="Select an OpenGL normal map to convert:",
-            start_dir=self.source_dir,
-            allow_multiple=False,
+            map_type_filter=["Normal", "Normal_OpenGL"],
         )
-        if not gl_map_path:
+        if not gl_map_paths:
             return
 
-        print(f"Converting: {gl_map_path} ..")
-        dx_map_path = MapFactory.convert_normal_map_format(
-            gl_map_path, target_format="directx"
-        )
-        print(f"// Result: {dx_map_path}")
-        self.source_dir = FileUtils.format_path(dx_map_path, "path")
+        for gl_map_path in gl_map_paths:
+            print(f"Converting: {gl_map_path} ..")
+            dx_map_path = MapFactory.convert_normal_map_format(
+                gl_map_path, target_format="directx"
+            )
+            print(f"// Result: {dx_map_path}")
+        self.source_dir = FileUtils.format_path(gl_map_paths[0], "path")
 
     def b004(self):
         """Batch pack Transparency into Albedo across texture sets."""
-        paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        paths = self._get_texture_paths(
             title="Select one or more sets of Albedo/Base Color and Transparency maps:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
         )
         if not paths:
             return
@@ -287,11 +453,8 @@ class MapConverterSlots(ImgUtils):
 
     def b005(self):
         """Batch pack Smoothness or Roughness into Metallic across texture sets."""
-        paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        paths = self._get_texture_paths(
             title="Select one or more sets of metallic and smoothness/roughness maps:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
         )
         if not paths:
             return
@@ -335,11 +498,9 @@ class MapConverterSlots(ImgUtils):
     def b006(self):
         """Unpack Metallic and Smoothness maps from MetallicSmoothness textures."""
         print("Unpacking Metallic and Smoothness maps ..")
-        metallic_smoothness_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        metallic_smoothness_paths = self._get_texture_paths(
             title="Select MetallicSmoothness maps to unpack:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
+            map_type_filter=["Metallic_Smoothness"],
         )
         if not metallic_smoothness_paths:
             return
@@ -366,11 +527,9 @@ class MapConverterSlots(ImgUtils):
 
     def b007(self):
         """Unpack Specular and Gloss maps from SpecularGloss textures."""
-        specular_gloss_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        specular_gloss_paths = self._get_texture_paths(
             title="Select SpecularGloss maps to unpack:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
+            map_type_filter=["Specular"],
         )
         if not specular_gloss_paths:
             return
@@ -395,11 +554,8 @@ class MapConverterSlots(ImgUtils):
 
     def b008(self):
         """Batch pack Metallic (R), AO (G), and Smoothness (A) across texture sets."""
-        paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        paths = self._get_texture_paths(
             title="Select one or more sets of Metallic, Ambient Occlusion, and Smoothness maps:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
         )
         if not paths:
             return
@@ -452,11 +608,9 @@ class MapConverterSlots(ImgUtils):
 
     def b009(self):
         """Unpack Metallic, AO, and Smoothness maps from MSAO textures."""
-        msao_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        msao_paths = self._get_texture_paths(
             title="Select MSAO (MetallicSmoothnessAO) maps to unpack:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
+            map_type_filter=["MSAO"],
         )
         if not msao_paths:
             return
@@ -482,11 +636,9 @@ class MapConverterSlots(ImgUtils):
 
     def b010(self):
         """Convert Smoothness maps to Roughness maps."""
-        smoothness_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        smoothness_paths = self._get_texture_paths(
             title="Select Smoothness maps to convert to Roughness:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
+            map_type_filter=["Smoothness"],
         )
         if not smoothness_paths:
             return
@@ -510,11 +662,9 @@ class MapConverterSlots(ImgUtils):
 
     def b011(self):
         """Convert Roughness maps to Smoothness maps."""
-        roughness_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        roughness_paths = self._get_texture_paths(
             title="Select Roughness maps to convert to Smoothness:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
+            map_type_filter=["Roughness"],
         )
         if not roughness_paths:
             return
@@ -549,11 +699,8 @@ class MapConverterSlots(ImgUtils):
         - Specular/Glossiness
         """
         # Get texture paths
-        texture_paths = self.sb.file_dialog(
-            file_types=[f"*.{ext}" for ext in self.texture_file_types],
+        texture_paths = self._get_texture_paths(
             title="Select texture maps for PBR workflow preparation:",
-            start_dir=self.source_dir,
-            allow_multiple=True,
         )
         if not texture_paths:
             return
