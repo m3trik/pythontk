@@ -122,19 +122,25 @@ class MapConverterSlots(ImgUtils):
         widget.option_box.menu.add(
             "QComboBox",
             setObjectName="cmb001",
-            setToolTip="Set the output file type.",
+            setToolTip="Set the output file type. 'Original' keeps each texture's existing format.",
+        )
+        # Falsy sentinels (empty string / 0) — uitk's prefix-mode combobox
+        # replaces explicit None data with the label string, so use values
+        # that still evaluate falsy in the ``if not file_type`` / ``if not
+        # max_size`` checks below.
+        widget.option_box.menu.cmb001.add(
+            [("Original", "")] + [(ext.upper(), ext) for ext in self.texture_file_types],
+            prefix="Format:",
         )
 
-        widget.option_box.menu.cmb001.addItems(
-            [ext.upper() for ext in self.texture_file_types]
-        )
         widget.option_box.menu.add(
             "QComboBox",
             setObjectName="cmb000",
-            setToolTip="Set the maximum texture size.",
+            setToolTip="Maximum dimension (longest side). 'None' disables resizing.",
         )
-        widget.option_box.menu.cmb000.addItems(
-            ["256", "512", "1024", "2048", "4096", "8192"]
+        widget.option_box.menu.cmb000.add(
+            [("None", 0)] + [(s, int(s)) for s in ("256", "512", "1024", "2048", "4096", "8192")],
+            prefix="Clamp:",
         )
 
         widget.option_box.menu.add(
@@ -173,8 +179,10 @@ class MapConverterSlots(ImgUtils):
         if not texture_paths:
             return
 
-        file_type = widget.option_box.menu.cmb001.currentText()
-        max_size = int(widget.option_box.menu.cmb000.currentText())
+        # Falsy sentinels ("", 0) → None so optimize_texture preserves
+        # the original format / skips clamping respectively.
+        file_type = widget.option_box.menu.cmb001.currentData() or None
+        max_size = widget.option_box.menu.cmb000.currentData() or None
         mode = widget.option_box.menu.cmb_mode.currentText().lower()
         modifier = widget.option_box.menu.txt_modifier.text().strip().strip("_")
         old_folder = (

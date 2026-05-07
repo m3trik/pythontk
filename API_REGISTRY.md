@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-04-29_
+_Generated: 2026-05-07_
 
 ## Index
 
@@ -34,6 +34,8 @@ _Generated: 2026-04-29_
 - [`core_utils/package_manager.py`](#core_utils--package_manager)
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
+- [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
+- [`file_utils/mesh_convert/slots.py`](#file_utils--mesh_convert--slots)
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
 - [`img_utils/map_converter.py`](#img_utils--map_converter)
@@ -304,13 +306,13 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1004)** — A generic thread-safe logging handler that writes logs to any widget
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1066)** — A generic thread-safe logging handler that writes logs to any widget
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1056)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1118)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1210)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1272)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -381,6 +383,7 @@ Reusable module attribute resolver for package-style imports.
   - `NamespaceHandler.values(self, inc_placeholders=False)`
   - `NamespaceHandler.setdefault(self, key: str, default: Any = None) -> Any`
   - `NamespaceHandler.has(self, key: str) -> bool`
+  - `NamespaceHandler.peek(self, key: str, default: Any = None) -> Any` — Return the resolved value for *key* if cached, else *default*.
   - `NamespaceHandler.raw(self, key: str) -> Optional[Any]`
   - `NamespaceHandler.resolve(self, key: str, default: Any = None, resolve_placeholders: bool = True) -> Any`
   - `NamespaceHandler.is_resolving(self, key: str) -> bool` — Returns True if this key is currently being resolved (to prevent recursion).
@@ -411,6 +414,7 @@ Reusable module attribute resolver for package-style imports.
   - `FileUtils.get_file(filepath, mode='a+')` *(static)* — Return a file object with the given mode.
   - `FileUtils.get_file_contents(filepath: str, as_list=False, encoding='utf-8') -> None` *(static)* — Get each line of a text file as indices of a list.
   - `FileUtils.write_to_file(filepath, lines)` *(static)* — Write the given list contents to the given file.
+  - `FileUtils.atomic_write_text(filepath: str, content: str, encoding: str = 'utf-8') -> None` *(static)* — Write text to a file atomically.
   - `FileUtils.copy_file(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str` *(static)* — Copies a file to a specified folder, ensuring the folder exists.
   - `FileUtils.move_file(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]` *(class)* — Moves one or more files to a specified folder.
   - `FileUtils.get_file_info(cls, paths, info, hash_algo=None, force_tuples=False)` *(class)* — Returns file and directory information for a list of file strings based on specified parameters.
@@ -424,6 +428,26 @@ Reusable module attribute resolver for package-style imports.
   - `FileUtils.get_json_file(cls)` *(class)* — Get the current json filepath.
   - `FileUtils.set_json(cls, key, value, file=None)` *(class)* — Parameters:
   - `FileUtils.get_json(cls, key, file=None)` *(class)* — Parameters:
+
+<a id="file_utils--mesh_convert--_mesh_convert"></a>
+### `file_utils/mesh_convert/_mesh_convert.py`
+
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L38)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+  - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
+  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+
+<a id="file_utils--mesh_convert--slots"></a>
+### `file_utils/mesh_convert/slots.py`
+
+- **[`class MeshConvertSlots(MeshConvert)`](pythontk/pythontk/file_utils/mesh_convert/slots.py#L13)** — uitk Switchboard slots for the Mesh Converter UI.
+  - `MeshConvertSlots.source_dir(self) -> str` *(property)* — Starting directory for the FBX file dialog.
+  - `MeshConvertSlots.source_dir(self, value: str) -> None`
+  - `MeshConvertSlots.fbx_provider(self) -> Optional[Callable[[], Iterable[str]]]` *(property)* — Callable returning FBX paths from the host DCC selection.
+  - `MeshConvertSlots.fbx_provider(self, fn: Optional[Callable[[], Iterable[str]]]) -> None`
+  - `MeshConvertSlots.header_init(self, widget) -> None` — Add the global Use-Selection toggle to the header menu.
+  - `MeshConvertSlots.tb000_init(self, widget) -> None` — Set up the FBX -> GLB tool button option box.
+  - `MeshConvertSlots.tb000(self, widget) -> None` — Convert the selected FBX file(s) to GLB beside their source.
+- **[`class MeshConvertUi`](pythontk/pythontk/file_utils/mesh_convert/slots.py#L208)**
 
 <a id="file_utils--metadata"></a>
 ### `file_utils/metadata.py`
@@ -477,9 +501,12 @@ Reusable module attribute resolver for package-style imports.
 <a id="img_utils--map_converter"></a>
 ### `img_utils/map_converter.py`
 
-- **[`class MapConverterSlots(ImgUtils)`](pythontk/pythontk/img_utils/map_converter.py#L11)**
+- **[`class MapConverterSlots(ImgUtils)`](pythontk/pythontk/img_utils/map_converter.py#L13)**
   - `MapConverterSlots.source_dir(self)` *(property)* — Get the starting directory for file dialogs.
   - `MapConverterSlots.source_dir(self, value)` — Set the starting directory for file dialogs.
+  - `MapConverterSlots.texture_provider(self)` *(property)* — Callable returning a list of texture paths from the host DCC selection.
+  - `MapConverterSlots.texture_provider(self, fn)`
+  - `MapConverterSlots.header_init(self, widget)` — Add the global Use-Selection toggle to the header menu.
   - `MapConverterSlots.tb000_init(self, widget)`
   - `MapConverterSlots.tb000(self, widget)` — Optimize a texture map(s)
   - `MapConverterSlots.tb001_init(self, widget)`
@@ -497,7 +524,7 @@ Reusable module attribute resolver for package-style imports.
   - `MapConverterSlots.b010(self)` — Convert Smoothness maps to Roughness maps.
   - `MapConverterSlots.b011(self)` — Convert Roughness maps to Smoothness maps.
   - `MapConverterSlots.b012(self)` — Batch prepare textures for PBR workflow using MapFactory.
-- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L678)**
+- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L833)**
 
 <a id="img_utils--map_factory"></a>
 ### `img_utils/map_factory.py`
@@ -769,6 +796,8 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `StrUtils.find_str(find, strings, regex=False, ignore_case=False)` *(static)* — Filter for elements that containing the given string in a list of strings.
   - `StrUtils.find_str_and_format(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)` *(class)* — Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…
   - `StrUtils.format_suffix(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str` *(static)* — Re-format the suffix for the given string.
+  - `StrUtils.alpha_sequence(index: int) -> str` *(static)* — Excel-column-style alphabetic label for a 0-based index.
+  - `StrUtils.resolve_name_collisions(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]` *(static)* — Reduce a batch of names to a shared base form, then disambiguate
   - `StrUtils.time_stamp(filepath, stamp='%m-%d-%Y  %H:%M')` *(static)* — Attach or detach a modified timestamp and date to/from a given file path.
 
 <a id="str_utils--fuzzy_matcher"></a>
@@ -779,6 +808,8 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `FuzzyMatcher.find_best_match(target_name: str, available_names: List[str], score_threshold: float = 0.5) -> Optional[Tuple[str, float]]` *(static)* — Find best fuzzy match for target name from available candidates.
   - `FuzzyMatcher.find_all_matches(target_names: List[str], available_names: List[str], score_threshold: float = 0.5) -> Dict[str, Tuple[str, float]]` *(static)* — Find fuzzy matches for multiple target names.
   - `FuzzyMatcher.find_trailing_digit_matches(missing_paths: List[str], extra_paths: List[str], path_separator: str = '|') -> Tuple[List[Dict[str, str]], List[str], List[str]]` *(static)* — Find fuzzy matches specifically for trailing digit differences in hierarchical paths.
+  - `FuzzyMatcher.find_unique_match(target: str, candidates: List[str], score_threshold: float = 0.5, ambiguity_delta: float = 0.05, use_base_name: bool = True, use_substring: bool = True, use_prefix: bool = True, use_ratio: bool = False) -> Tuple[Optional[str], float, str]` *(static)* — Find a single unambiguous best match, surfacing ambiguity instead of silently picking.
+  - `FuzzyMatcher.find_with_fallbacks(target: str, candidates: List[str], strategies: List[Union[str, Callable]], score_threshold: float = 0.5, ambiguity_delta: float = 0.05, stop_on_ambiguous: bool = True) -> Tuple[Optional[str], float, str, str]` *(static)* — Try strategies in order;
   - `FuzzyMatcher.calculate_levenshtein_distance(s1: str, s2: str) -> int` *(static)* — Calculate Levenshtein (edit) distance between two strings.
   - `FuzzyMatcher.similarity_from_distance(s1: str, s2: str) -> float` *(static)* — Calculate similarity score from Levenshtein distance.
 
