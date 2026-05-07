@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.15"
+__version__ = "0.8.17"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -17,6 +17,8 @@ DEFAULT_INCLUDE = {
     "vid_utils._vid_utils": "*",
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",
+    "file_utils.mesh_convert._mesh_convert": "MeshConvert",
+    "file_utils.mesh_convert.slots": ["MeshConvertSlots", "MeshConvertUi"],
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
     "math_utils.progression": "ProgressionCurves",
@@ -76,6 +78,9 @@ __all__ = [
     "NetUtils",
     "FileUtils",
     "Metadata",
+    "MeshConvert",
+    "MeshConvertSlots",
+    "MeshConvertUi",
     "ImgUtils",
     "IterUtils",
     "MathUtils",

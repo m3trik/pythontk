@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-04-29",
+  "generated_at": "2026-05-07",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -1548,7 +1548,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: str) -> str",
               "summary": "Get the color code for a given log level.",
-              "line": 974,
+              "line": 1024,
               "deprecated": false
             },
             {
@@ -1557,7 +1557,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, format_str: str) -> None",
               "summary": "Register a new HTML preset.",
-              "line": 979,
+              "line": 1041,
               "deprecated": false
             },
             {
@@ -1566,7 +1566,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str) -> str",
               "summary": "Get an HTML preset by name.",
-              "line": 984,
+              "line": 1046,
               "deprecated": false
             },
             {
@@ -1575,7 +1575,7 @@
               "kind": "classmethod",
               "signature": "(cls, message: str, level: str, preset: str = None) -> str",
               "summary": "Format a message using HTML presets.",
-              "line": 989,
+              "line": 1051,
               "deprecated": false
             }
           ]
@@ -1583,7 +1583,7 @@
         {
           "name": "DefaultTextLogHandler",
           "summary": "A generic thread-safe logging handler that writes logs to any widget",
-          "line": 1004,
+          "line": 1066,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -1594,7 +1594,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1017,
+              "line": 1079,
               "deprecated": false
             },
             {
@@ -1603,7 +1603,7 @@
               "kind": "method",
               "signature": "(self, level: str) -> str",
               "summary": "",
-              "line": 1052,
+              "line": 1114,
               "deprecated": false
             }
           ]
@@ -1611,7 +1611,7 @@
         {
           "name": "TableMixin",
           "summary": "Mixin for formatting data as ASCII tables.",
-          "line": 1056,
+          "line": 1118,
           "bases": [],
           "members": [
             {
@@ -1620,7 +1620,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str",
               "summary": "Formats a list of lists as an ASCII table.",
-              "line": 1059,
+              "line": 1121,
               "deprecated": false
             },
             {
@@ -1629,7 +1629,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None",
               "summary": "Logs a formatted table.",
-              "line": 1157,
+              "line": 1219,
               "deprecated": false
             }
           ]
@@ -1637,7 +1637,7 @@
         {
           "name": "LoggingMixin",
           "summary": "Mixin class for logging utilities.",
-          "line": 1210,
+          "line": 1272,
           "bases": [
             "TableMixin"
           ],
@@ -1648,7 +1648,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1231,
+              "line": 1293,
               "deprecated": false
             },
             {
@@ -1657,7 +1657,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1247,
+              "line": 1309,
               "deprecated": false
             },
             {
@@ -1666,7 +1666,7 @@
               "kind": "method",
               "signature": "(cls)",
               "summary": "Access to Python's internal logging module (aliased).",
-              "line": 1258,
+              "line": 1320,
               "deprecated": false
             },
             {
@@ -1675,7 +1675,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: int | str)",
               "summary": "Set log level for the class logger and its handlers.",
-              "line": 1263,
+              "line": 1325,
               "deprecated": false
             }
           ]
@@ -2121,12 +2121,21 @@
               "deprecated": false
             },
             {
+              "name": "peek",
+              "qualname": "NamespaceHandler.peek",
+              "kind": "method",
+              "signature": "(self, key: str, default: Any = None) -> Any",
+              "summary": "Return the resolved value for *key* if cached, else *default*.",
+              "line": 223,
+              "deprecated": false
+            },
+            {
               "name": "raw",
               "qualname": "NamespaceHandler.raw",
               "kind": "method",
               "signature": "(self, key: str) -> Optional[Any]",
               "summary": "",
-              "line": 223,
+              "line": 251,
               "deprecated": false
             },
             {
@@ -2135,7 +2144,7 @@
               "kind": "method",
               "signature": "(self, key: str, default: Any = None, resolve_placeholders: bool = True) -> Any",
               "summary": "",
-              "line": 230,
+              "line": 258,
               "deprecated": false
             },
             {
@@ -2144,7 +2153,7 @@
               "kind": "method",
               "signature": "(self, key: str) -> bool",
               "summary": "Returns True if this key is currently being resolved (to prevent recursion).",
-              "line": 238,
+              "line": 266,
               "deprecated": false
             }
           ]
@@ -2308,12 +2317,21 @@
               "deprecated": false
             },
             {
+              "name": "atomic_write_text",
+              "qualname": "FileUtils.atomic_write_text",
+              "kind": "staticmethod",
+              "signature": "(filepath: str, content: str, encoding: str = 'utf-8') -> None",
+              "summary": "Write text to a file atomically.",
+              "line": 319,
+              "deprecated": false
+            },
+            {
               "name": "copy_file",
               "qualname": "FileUtils.copy_file",
               "kind": "staticmethod",
               "signature": "(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str",
               "summary": "Copies a file to a specified folder, ensuring the folder exists.",
-              "line": 319,
+              "line": 368,
               "deprecated": false
             },
             {
@@ -2322,7 +2340,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]",
               "summary": "Moves one or more files to a specified folder.",
-              "line": 358,
+              "line": 407,
               "deprecated": false
             },
             {
@@ -2331,7 +2349,7 @@
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 426,
+              "line": 475,
               "deprecated": false
             },
             {
@@ -2340,7 +2358,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 509,
+              "line": 558,
               "deprecated": false
             },
             {
@@ -2349,7 +2367,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 577,
+              "line": 626,
               "deprecated": false
             },
             {
@@ -2358,7 +2376,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 622,
+              "line": 671,
               "deprecated": false
             },
             {
@@ -2367,7 +2385,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 675,
+              "line": 724,
               "deprecated": false
             },
             {
@@ -2376,7 +2394,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 697,
+              "line": 746,
               "deprecated": false
             },
             {
@@ -2385,7 +2403,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scans the specified directory or Python file, loads each file as a module, and retrieves classes fr…",
-              "line": 804,
+              "line": 853,
               "deprecated": false
             },
             {
@@ -2394,7 +2412,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Set the current json filepath.",
-              "line": 926,
+              "line": 975,
               "deprecated": false
             },
             {
@@ -2403,7 +2421,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Get the current json filepath.",
-              "line": 936,
+              "line": 985,
               "deprecated": false
             },
             {
@@ -2412,7 +2430,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, value, file=None)",
               "summary": "Parameters:",
-              "line": 948,
+              "line": 997,
               "deprecated": false
             },
             {
@@ -2421,10 +2439,132 @@
               "kind": "classmethod",
               "signature": "(cls, key, file=None)",
               "summary": "Parameters:",
-              "line": 985,
+              "line": 1034,
               "deprecated": false
             }
           ]
+        }
+      ]
+    },
+    {
+      "relpath": "file_utils/mesh_convert/_mesh_convert.py",
+      "summary": "",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MeshConvert",
+          "summary": "3D mesh format conversion via the godotengine/FBX2glTF CLI.",
+          "line": 38,
+          "bases": [
+            "HelpMixin"
+          ],
+          "members": [
+            {
+              "name": "resolve_binary",
+              "qualname": "MeshConvert.resolve_binary",
+              "kind": "classmethod",
+              "signature": "(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]",
+              "summary": "Resolve the FBX2glTF executable from PATH or managed installs.",
+              "line": 64,
+              "deprecated": false
+            },
+            {
+              "name": "fbx_to_glb",
+              "qualname": "MeshConvert.fbx_to_glb",
+              "kind": "classmethod",
+              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None) -> str",
+              "summary": "Convert an FBX file to a binary glTF 2.0 (GLB) file.",
+              "line": 140,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "file_utils/mesh_convert/slots.py",
+      "summary": "",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MeshConvertSlots",
+          "summary": "uitk Switchboard slots for the Mesh Converter UI.",
+          "line": 13,
+          "bases": [
+            "MeshConvert"
+          ],
+          "members": [
+            {
+              "name": "source_dir",
+              "qualname": "MeshConvertSlots.source_dir",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "Starting directory for the FBX file dialog.",
+              "line": 32,
+              "deprecated": false
+            },
+            {
+              "name": "source_dir",
+              "qualname": "MeshConvertSlots.source_dir",
+              "kind": "method",
+              "signature": "(self, value: str) -> None",
+              "summary": "",
+              "line": 37,
+              "deprecated": false
+            },
+            {
+              "name": "fbx_provider",
+              "qualname": "MeshConvertSlots.fbx_provider",
+              "kind": "property",
+              "signature": "(self) -> Optional[Callable[[], Iterable[str]]]",
+              "summary": "Callable returning FBX paths from the host DCC selection.",
+              "line": 41,
+              "deprecated": false
+            },
+            {
+              "name": "fbx_provider",
+              "qualname": "MeshConvertSlots.fbx_provider",
+              "kind": "method",
+              "signature": "(self, fn: Optional[Callable[[], Iterable[str]]]) -> None",
+              "summary": "",
+              "line": 51,
+              "deprecated": false
+            },
+            {
+              "name": "header_init",
+              "qualname": "MeshConvertSlots.header_init",
+              "kind": "method",
+              "signature": "(self, widget) -> None",
+              "summary": "Add the global Use-Selection toggle to the header menu.",
+              "line": 54,
+              "deprecated": false
+            },
+            {
+              "name": "tb000_init",
+              "qualname": "MeshConvertSlots.tb000_init",
+              "kind": "method",
+              "signature": "(self, widget) -> None",
+              "summary": "Set up the FBX -> GLB tool button option box.",
+              "line": 140,
+              "deprecated": false
+            },
+            {
+              "name": "tb000",
+              "qualname": "MeshConvertSlots.tb000",
+              "kind": "method",
+              "signature": "(self, widget) -> None",
+              "summary": "Convert the selected FBX file(s) to GLB beside their source.",
+              "line": 158,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "MeshConvertUi",
+          "summary": "",
+          "line": 208,
+          "bases": [],
+          "members": []
         }
       ]
     },
@@ -2819,7 +2959,7 @@
         {
           "name": "MapConverterSlots",
           "summary": "",
-          "line": 11,
+          "line": 13,
           "bases": [
             "ImgUtils"
           ],
@@ -2830,7 +2970,7 @@
               "kind": "property",
               "signature": "(self)",
               "summary": "Get the starting directory for file dialogs.",
-              "line": 21,
+              "line": 24,
               "deprecated": false
             },
             {
@@ -2839,7 +2979,34 @@
               "kind": "method",
               "signature": "(self, value)",
               "summary": "Set the starting directory for file dialogs.",
-              "line": 26,
+              "line": 29,
+              "deprecated": false
+            },
+            {
+              "name": "texture_provider",
+              "qualname": "MapConverterSlots.texture_provider",
+              "kind": "property",
+              "signature": "(self)",
+              "summary": "Callable returning a list of texture paths from the host DCC selection.",
+              "line": 34,
+              "deprecated": false
+            },
+            {
+              "name": "texture_provider",
+              "qualname": "MapConverterSlots.texture_provider",
+              "kind": "method",
+              "signature": "(self, fn)",
+              "summary": "",
+              "line": 45,
+              "deprecated": false
+            },
+            {
+              "name": "header_init",
+              "qualname": "MapConverterSlots.header_init",
+              "kind": "method",
+              "signature": "(self, widget)",
+              "summary": "Add the global Use-Selection toggle to the header menu.",
+              "line": 48,
               "deprecated": false
             },
             {
@@ -2848,7 +3015,7 @@
               "kind": "method",
               "signature": "(self, widget)",
               "summary": "",
-              "line": 30,
+              "line": 119,
               "deprecated": false
             },
             {
@@ -2857,7 +3024,7 @@
               "kind": "method",
               "signature": "(self, widget)",
               "summary": "Optimize a texture map(s)",
-              "line": 46,
+              "line": 174,
               "deprecated": false
             },
             {
@@ -2866,7 +3033,7 @@
               "kind": "method",
               "signature": "(self, widget)",
               "summary": "",
-              "line": 72,
+              "line": 252,
               "deprecated": false
             },
             {
@@ -2875,7 +3042,7 @@
               "kind": "method",
               "signature": "(self, widget)",
               "summary": "Batch converts Spec/Gloss maps to PBR Metal/Rough using MapFactory.",
-              "line": 81,
+              "line": 262,
               "deprecated": false
             },
             {
@@ -2884,7 +3051,7 @@
               "kind": "method",
               "signature": "(self, widget)",
               "summary": "Initialize a 'Bump to Normal' toolbutton with options.",
-              "line": 141,
+              "line": 319,
               "deprecated": false
             },
             {
@@ -2893,7 +3060,7 @@
               "kind": "method",
               "signature": "(self, widget)",
               "summary": "Bump/Height to Normal converter (single entry point with options).",
-              "line": 166,
+              "line": 345,
               "deprecated": false
             },
             {
@@ -2902,7 +3069,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Convert DirectX to OpenGL",
-              "line": 206,
+              "line": 385,
               "deprecated": false
             },
             {
@@ -2911,7 +3078,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Convert OpenGL to DirectX",
-              "line": 224,
+              "line": 402,
               "deprecated": false
             },
             {
@@ -2920,7 +3087,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Batch pack Transparency into Albedo across texture sets.",
-              "line": 242,
+              "line": 419,
               "deprecated": false
             },
             {
@@ -2929,7 +3096,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Batch pack Smoothness or Roughness into Metallic across texture sets.",
-              "line": 288,
+              "line": 462,
               "deprecated": false
             },
             {
@@ -2938,7 +3105,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Unpack Metallic and Smoothness maps from MetallicSmoothness textures.",
-              "line": 335,
+              "line": 506,
               "deprecated": false
             },
             {
@@ -2947,7 +3114,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Unpack Specular and Gloss maps from SpecularGloss textures.",
-              "line": 367,
+              "line": 536,
               "deprecated": false
             },
             {
@@ -2956,7 +3123,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Batch pack Metallic (R), AO (G), and Smoothness (A) across texture sets.",
-              "line": 396,
+              "line": 563,
               "deprecated": false
             },
             {
@@ -2965,7 +3132,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Unpack Metallic, AO, and Smoothness maps from MSAO textures.",
-              "line": 453,
+              "line": 617,
               "deprecated": false
             },
             {
@@ -2974,7 +3141,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Convert Smoothness maps to Roughness maps.",
-              "line": 483,
+              "line": 645,
               "deprecated": false
             },
             {
@@ -2983,7 +3150,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Convert Roughness maps to Smoothness maps.",
-              "line": 511,
+              "line": 671,
               "deprecated": false
             },
             {
@@ -2992,7 +3159,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Batch prepare textures for PBR workflow using MapFactory.",
-              "line": 539,
+              "line": 697,
               "deprecated": false
             }
           ]
@@ -3000,7 +3167,7 @@
         {
           "name": "MapConverterUi",
           "summary": "",
-          "line": 678,
+          "line": 833,
           "bases": [],
           "members": []
         }
@@ -5134,12 +5301,30 @@
               "deprecated": false
             },
             {
+              "name": "alpha_sequence",
+              "qualname": "StrUtils.alpha_sequence",
+              "kind": "staticmethod",
+              "signature": "(index: int) -> str",
+              "summary": "Excel-column-style alphabetic label for a 0-based index.",
+              "line": 904,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_name_collisions",
+              "qualname": "StrUtils.resolve_name_collisions",
+              "kind": "staticmethod",
+              "signature": "(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]",
+              "summary": "Reduce a batch of names to a shared base form, then disambiguate",
+              "line": 932,
+              "deprecated": false
+            },
+            {
               "name": "time_stamp",
               "qualname": "StrUtils.time_stamp",
               "kind": "staticmethod",
               "signature": "(filepath, stamp='%m-%d-%Y  %H:%M')",
               "summary": "Attach or detach a modified timestamp and date to/from a given file path.",
-              "line": 905,
+              "line": 1035,
               "deprecated": false
             }
           ]
@@ -5194,12 +5379,30 @@
               "deprecated": false
             },
             {
+              "name": "find_unique_match",
+              "qualname": "FuzzyMatcher.find_unique_match",
+              "kind": "staticmethod",
+              "signature": "(target: str, candidates: List[str], score_threshold: float = 0.5, ambiguity_delta: float = 0.05, use_base_name: bool = True, use_substring: bool = True, use_prefix: bool = True, use_ratio: bool = False) -> Tuple[Optional[str], float, str]",
+              "summary": "Find a single unambiguous best match, surfacing ambiguity instead of silently picking.",
+              "line": 219,
+              "deprecated": false
+            },
+            {
+              "name": "find_with_fallbacks",
+              "qualname": "FuzzyMatcher.find_with_fallbacks",
+              "kind": "staticmethod",
+              "signature": "(target: str, candidates: List[str], strategies: List[Union[str, Callable]], score_threshold: float = 0.5, ambiguity_delta: float = 0.05, stop_on_ambiguous: bool = True) -> Tuple[Optional[str], float, str, str]",
+              "summary": "Try strategies in order;",
+              "line": 358,
+              "deprecated": false
+            },
+            {
               "name": "calculate_levenshtein_distance",
               "qualname": "FuzzyMatcher.calculate_levenshtein_distance",
               "kind": "staticmethod",
               "signature": "(s1: str, s2: str) -> int",
               "summary": "Calculate Levenshtein (edit) distance between two strings.",
-              "line": 196,
+              "line": 432,
               "deprecated": false
             },
             {
@@ -5208,7 +5411,7 @@
               "kind": "staticmethod",
               "signature": "(s1: str, s2: str) -> float",
               "summary": "Calculate similarity score from Levenshtein distance.",
-              "line": 225,
+              "line": 461,
               "deprecated": false
             }
           ]
