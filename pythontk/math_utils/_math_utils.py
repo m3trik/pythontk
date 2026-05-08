@@ -1399,18 +1399,29 @@ class MathUtils(HelpMixin):
         """Orders a list of points to form a continuous path.
 
         Parameters:
-            points (List): The list of points to order.
+            points (List): The list of points to order. Each entry may be a
+                plain ``[x, y, z]`` sequence or an object exposing ``.x``,
+                ``.y`` and ``.z`` (e.g. ``om.MPoint``, ``om.MVector``).
             closed_path (bool): Whether to treat the path as a closed loop.
-            distance_metric
+            distance_metric: Optional callable ``(p1, p2) -> float``. Defaults
+                to Euclidean distance that handles both forms above.
 
         Returns:
-            List[pm.datatypes.Point]: Ordered list of points forming a continuous path.
+            List: Ordered list of points (same type as input) forming a
+            continuous path.
         """
         if not points:
             return []
 
         if distance_metric is None:
-            distance_metric = lambda p1, p2: (p1 - p2).length()
+            def distance_metric(p1, p2):
+                # Branchless dispatch: prefer .x/.y/.z (MPoint/MVector/dt.Point),
+                # fall back to subscripting (lists, tuples, numpy arrays).
+                if hasattr(p1, "x"):
+                    dx, dy, dz = p1.x - p2.x, p1.y - p2.y, p1.z - p2.z
+                else:
+                    dx, dy, dz = p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]
+                return (dx * dx + dy * dy + dz * dz) ** 0.5
 
         sorted_points = [points.pop(0)]
         while points:
