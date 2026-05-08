@@ -902,6 +902,75 @@ class MathTest(BaseTestCase):
         result = MathUtils.clamp_range(15, 5, validate=False)
         self.assertEqual(result, (15, 5))
 
+    # -------------------------------------------------------------------------
+    # arrange_points_as_path
+    #
+    # Regression: the default distance_metric used to be
+    # ``(p1 - p2).length()`` which only worked for PyMEL ``dt.Point`` /
+    # OpenMaya ``MPoint``. Plain ``[x, y, z]`` lists (the documented input
+    # type, and what ``cmds.pointPosition`` returns) raised TypeError
+    # because ``list - list`` is undefined.
+    # -------------------------------------------------------------------------
+
+    def test_arrange_points_as_path_with_lists(self):
+        """Default distance_metric must handle plain [x, y, z] lists."""
+        # Three colinear points along the X axis, given out of order.
+        points = [[2.0, 0, 0], [0.0, 0, 0], [1.0, 0, 0]]
+        ordered = MathUtils.arrange_points_as_path(points)
+
+        self.assertEqual(len(ordered), 3)
+        # First point seeds the path; nearest neighbours follow.
+        self.assertEqual(ordered[0], [2.0, 0, 0])
+        self.assertEqual(ordered[1], [1.0, 0, 0])
+        self.assertEqual(ordered[2], [0.0, 0, 0])
+
+    def test_arrange_points_as_path_with_tuples(self):
+        """Tuples should also work via the subscripting fallback."""
+        points = [(0.0, 0, 0), (5.0, 0, 0), (10.0, 0, 0)]
+        ordered = MathUtils.arrange_points_as_path(points)
+        self.assertEqual([p[0] for p in ordered], [0.0, 5.0, 10.0])
+
+    def test_arrange_points_as_path_with_xyz_objects(self):
+        """Objects with .x/.y/.z attributes use the attribute branch."""
+
+        class P:
+            def __init__(self, x, y, z):
+                self.x, self.y, self.z = x, y, z
+
+            def __eq__(self, other):
+                return (
+                    isinstance(other, P)
+                    and (self.x, self.y, self.z) == (other.x, other.y, other.z)
+                )
+
+            def __hash__(self):
+                return hash((self.x, self.y, self.z))
+
+        points = [P(2, 0, 0), P(0, 0, 0), P(1, 0, 0)]
+        ordered = MathUtils.arrange_points_as_path(points)
+        self.assertEqual([p.x for p in ordered], [2, 1, 0])
+
+    def test_arrange_points_as_path_empty(self):
+        """Empty input returns an empty list."""
+        self.assertEqual(MathUtils.arrange_points_as_path([]), [])
+
+    def test_arrange_points_as_path_closed(self):
+        """closed_path appends a copy of the first point at the end."""
+        points = [[0.0, 0, 0], [1.0, 0, 0], [2.0, 0, 0]]
+        ordered = MathUtils.arrange_points_as_path(points, closed_path=True)
+        self.assertEqual(len(ordered), 4)
+        self.assertEqual(ordered[0], ordered[-1])
+
+    def test_arrange_points_as_path_custom_metric(self):
+        """Caller-supplied distance_metric overrides the default."""
+        points = [[0.0, 0, 0], [3.0, 0, 0], [1.0, 0, 0]]
+        # Manhattan distance — same ordering on this colinear set.
+        ordered = MathUtils.arrange_points_as_path(
+            points,
+            distance_metric=lambda a, b: abs(a[0] - b[0]),
+        )
+        self.assertEqual([p[0] for p in ordered], [0.0, 1.0, 3.0])
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)
