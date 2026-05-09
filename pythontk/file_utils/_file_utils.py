@@ -849,6 +849,35 @@ class FileUtils(HelpMixin):
 
         return os.path.abspath(filepath)
 
+    @staticmethod
+    def _canonical_module_path(filepath):
+        """Derive a Python dotted module path from a .py file's location.
+
+        Walks up the parent directories while each is a Python package (has
+        an ``__init__.py``) and joins their names with the file stem.
+        Returns None if the file is not inside a recognizable package
+        (i.e. its parent directory has no ``__init__.py``), in which case
+        the caller should use a synthetic loader.
+        """
+        from pathlib import Path
+
+        p = Path(filepath).resolve()
+        if p.suffix != ".py":
+            return None
+        parts = [] if p.stem == "__init__" else [p.stem]
+        cur = p.parent
+        found_package = False
+        while (cur / "__init__.py").exists():
+            parts.append(cur.name)
+            found_package = True
+            parent = cur.parent
+            if parent == cur:
+                break
+            cur = parent
+        if not found_package or not parts:
+            return None
+        return ".".join(reversed(parts))
+
     @classmethod
     def get_classes_from_path(
         cls,
@@ -859,7 +888,16 @@ class FileUtils(HelpMixin):
         top_level_only=True,
         force_tuples=False,
     ):
-        """Scans the specified directory or Python file, loads each file as a module, and retrieves classes from these modules.
+        """Scan the specified directory or Python file and retrieve class information from each file.
+
+        Loading strategy: when a file lives inside a recognizable package
+        (its parent directory chain has ``__init__.py``), the canonical
+        Python import is used so the returned ``classobj`` values are
+        identical to what ``from <pkg>.<mod> import Cls`` produces. This
+        triggers the parent packages' ``__init__.py`` if they have not
+        already been imported. For loose ``.py`` files outside any
+        package, a synthetic module name (``<stem>_ptk_loader_<id>``) is
+        used and removed from ``sys.modules`` after loading.
 
         Parameters:
             path (str): The path to the directory or Python file to scan for classes.
@@ -933,23 +971,51 @@ class FileUtils(HelpMixin):
                     ]
 
             module_name = Path(filename).stem
-            # Use a unique name to avoid polluting sys.modules
-            unique_module_name = f"{module_name}_ptk_loader_{id(filepath)}"
 
-            spec = importlib.util.spec_from_file_location(unique_module_name, filepath)
-            module_obj = importlib.util.module_from_spec(spec)
-            sys.modules[unique_module_name] = module_obj
-            try:
-                spec.loader.exec_module(module_obj)
-            except Exception as e:
-                import logging
+            # Prefer canonical Python imports when the file is inside a
+            # recognizable package, so the resulting class objects are
+            # identical to what ``from <pkg>.<name> import Cls`` produces.
+            # Without this, registry-loaded classes diverge from canonical
+            # imports and ``isinstance`` / ``==`` checks across the two
+            # paths fail. Falls back to the synthetic loader for loose
+            # .py files or when canonical import raises.
+            module_obj = None
+            canonical_name = cls._canonical_module_path(filepath)
+            if canonical_name:
+                try:
+                    module_obj = importlib.import_module(canonical_name)
+                except Exception:
+                    module_obj = None
 
-                logging.getLogger(__name__).debug("Skipping %s: %s", filepath, e)
-                continue
-            finally:
-                # Clean up sys.modules
-                if unique_module_name in sys.modules:
-                    del sys.modules[unique_module_name]
+            if module_obj is None:
+                unique_module_name = f"{module_name}_ptk_loader_{id(filepath)}"
+                spec = importlib.util.spec_from_file_location(
+                    unique_module_name, filepath
+                )
+                module_obj = importlib.util.module_from_spec(spec)
+                sys.modules[unique_module_name] = module_obj
+                load_failed = False
+                try:
+                    spec.loader.exec_module(module_obj)
+                except Exception as e:
+                    import logging
+
+                    logging.getLogger(__name__).debug(
+                        "Skipping %s: %s", filepath, e
+                    )
+                    load_failed = True
+                finally:
+                    # Always clean up the synthetic name — it exists to
+                    # avoid sys.modules pollution. Canonical imports are
+                    # left in sys.modules where Python's import system
+                    # expects them.
+                    if (
+                        unique_module_name in sys.modules
+                        and sys.modules[unique_module_name] is module_obj
+                    ):
+                        del sys.modules[unique_module_name]
+                if load_failed:
+                    continue
 
             for clss in classes:
                 info = {

@@ -18,6 +18,7 @@ Run with:
     python -m pytest test_file.py -v
     python test_file.py
 """
+import inspect
 import os
 import sys
 import tempfile
@@ -548,6 +549,70 @@ class FileTest(BaseTestCase):
         path = str(self.test_base_path)
         result = FileUtils.get_classes_from_path(path, "classname")
         self.assertIn("BaseTestCase", result)
+
+    def test_classes_in_packages_match_canonical_imports(self):
+        """Classes loaded from a packaged .py must be the *same object*
+        as those obtained via ``from pkg.mod import Cls``.
+
+        Background: previously the loader synthesized a unique module name
+        (``<stem>_ptk_loader_<id>``) per file to avoid sys.modules pollution,
+        which produced a *different class object* than what a normal Python
+        import returns. Downstream ``isinstance`` / ``==`` checks across the
+        two paths failed silently.
+        """
+        from pythontk.iter_utils._iter_utils import IterUtils as Canonical
+
+        filepath = inspect.getfile(Canonical)
+        result = FileUtils.get_classes_from_path(
+            filepath, ["classname", "classobj"]
+        )
+        match = [obj for name, obj in result if name == "IterUtils"]
+        self.assertEqual(len(match), 1)
+        self.assertIs(match[0], Canonical)
+
+    def test_canonical_module_path_walks_up_init_py(self):
+        """``_canonical_module_path`` returns dotted name for a packaged file."""
+        from pythontk.iter_utils._iter_utils import IterUtils
+
+        path = inspect.getfile(IterUtils)
+        self.assertEqual(
+            FileUtils._canonical_module_path(path),
+            "pythontk.iter_utils._iter_utils",
+        )
+
+    def test_canonical_module_path_returns_none_for_loose_file(self):
+        """A .py file outside any package returns None (synthetic loader fallback)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            loose = Path(tmp) / "loose_module.py"
+            loose.write_text("class Loose: pass\n", encoding="utf-8")
+            self.assertIsNone(FileUtils._canonical_module_path(str(loose)))
+
+    def test_canonical_module_path_for_package_init(self):
+        """An ``__init__.py`` resolves to its package's dotted name."""
+        import pythontk.iter_utils as pkg
+
+        init_path = pkg.__file__
+        self.assertEqual(
+            FileUtils._canonical_module_path(init_path),
+            "pythontk.iter_utils",
+        )
+
+    def test_synthetic_loader_fallback_for_loose_file(self):
+        """Loose .py files (no parent ``__init__.py``) still load and yield classes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            loose = Path(tmp) / "loose_widget.py"
+            loose.write_text(
+                "class LooseWidget:\n    label = 'isolated'\n",
+                encoding="utf-8",
+            )
+            result = FileUtils.get_classes_from_path(
+                str(loose), ["classname", "classobj"]
+            )
+            match = [obj for name, obj in result if name == "LooseWidget"]
+            self.assertEqual(len(match), 1)
+            # Class loaded via synthetic loader; its module name is unique
+            # and has been cleaned from sys.modules so it does not pollute.
+            self.assertNotIn(match[0].__module__, sys.modules)
 
     # -------------------------------------------------------------------------
     # Version Management Tests

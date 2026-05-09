@@ -42,7 +42,7 @@ class MeshConvertSlots(MeshConvert):
         """Callable returning FBX paths from the host DCC selection.
 
         Set by the host integration (e.g. tentacle's scene slot) to power
-        the header "Use Selection" toggle. Returns None when running
+        the header "From FBX references" toggle. Returns None when running
         standalone, in which case every tool falls back to the file dialog.
         """
         return self._fbx_provider
@@ -52,16 +52,18 @@ class MeshConvertSlots(MeshConvert):
         self._fbx_provider = fn
 
     def header_init(self, widget) -> None:
-        """Add the global Use-Selection toggle to the header menu."""
+        """Add the From-FBX-references toggle to the header menu."""
         widget.menu.add(
             "QCheckBox",
-            setText="Use Selection",
+            setText="From FBX references",
             setObjectName="chk_use_selection",
             setChecked=False,
             setToolTip=(
                 "When enabled, every tool reads FBX paths from the host DCC's "
-                "current selection (provided by the host integration) instead "
-                "of opening a file browser."
+                "currently selected reference nodes (provided by the host "
+                "integration) instead of opening a file browser. Imported "
+                "geometry is ignored — only nodes whose reference filename "
+                "ends in .fbx contribute."
             ),
         )
 
@@ -83,8 +85,8 @@ class MeshConvertSlots(MeshConvert):
         else:
             if use_selected:
                 print(
-                    "// 'Use Selection' is enabled but no FBX provider is "
-                    "wired up — falling back to file dialog."
+                    "// 'From FBX references' is enabled but no FBX provider "
+                    "is wired up — falling back to file dialog."
                 )
             paths = self.sb.file_dialog(
                 file_types=["*.fbx"],
