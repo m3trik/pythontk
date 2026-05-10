@@ -929,6 +929,47 @@ class StrUtils(CoreUtils):
         return s
 
     @staticmethod
+    def sequential_suffixes(
+        count: int,
+        switch_at: int = 26,
+        lowercase: bool = False,
+    ) -> List[str]:
+        """Generate ``count`` sequential labels for naming sibling items.
+
+        Uses single letters (``A, B, ..., Z``) while ``count <= switch_at`` (and
+        ``<= 26``); otherwise zero-padded numerics (``01, 02, ...``) with width
+        ``max(2, len(str(count)))``. Useful for naming the children of a
+        per-group split — e.g. ``mesh_A``, ``mesh_B`` when there are few, or
+        ``mesh_001`` … ``mesh_120`` when there are many.
+
+        Parameters:
+            count: How many suffixes to produce.
+            switch_at: Inclusive upper bound for the letter scheme; counts
+                above this fall back to numerics. Capped at 26 (the alphabet
+                size) regardless.
+            lowercase: Return lowercase letters when in the letter scheme.
+
+        Returns:
+            List of ``count`` suffix strings.
+
+        Examples:
+            >>> StrUtils.sequential_suffixes(3)
+            ['A', 'B', 'C']
+            >>> StrUtils.sequential_suffixes(30)[:3]
+            ['01', '02', '03']
+            >>> StrUtils.sequential_suffixes(3, lowercase=True)
+            ['a', 'b', 'c']
+        """
+        if count <= 0:
+            return []
+        cap = min(switch_at, 26)
+        if count <= cap:
+            base = ord("a") if lowercase else ord("A")
+            return [chr(base + i) for i in range(count)]
+        pad = max(2, len(str(count)))
+        return [str(i + 1).zfill(pad) for i in range(count)]
+
+    @staticmethod
     def resolve_name_collisions(
         names: Iterable[str],
         strip: Union[str, List[str]] = "",

@@ -693,6 +693,41 @@ class StrTest(BaseTestCase):
             StrUtils.alpha_sequence(-1)
 
     # -------------------------------------------------------------------------
+    # sequential_suffixes Tests
+    # -------------------------------------------------------------------------
+
+    def test_sequential_suffixes_letters_under_threshold(self):
+        """Counts at or below the switch threshold return uppercase letters."""
+        self.assertEqual(StrUtils.sequential_suffixes(0), [])
+        self.assertEqual(StrUtils.sequential_suffixes(3), ["A", "B", "C"])
+        self.assertEqual(
+            StrUtils.sequential_suffixes(26),
+            [chr(ord("A") + i) for i in range(26)],
+        )
+
+    def test_sequential_suffixes_numeric_above_threshold(self):
+        """Counts above the threshold fall back to zero-padded numerics."""
+        out = StrUtils.sequential_suffixes(27)
+        self.assertEqual(len(out), 27)
+        self.assertEqual(out[0], "01")
+        self.assertEqual(out[26], "27")
+        # Padding widens to match the count's digit length.
+        out_120 = StrUtils.sequential_suffixes(120)
+        self.assertEqual(out_120[0], "001")
+        self.assertEqual(out_120[-1], "120")
+
+    def test_sequential_suffixes_lowercase(self):
+        """``lowercase=True`` returns lowercase letters in the letter scheme."""
+        self.assertEqual(StrUtils.sequential_suffixes(3, lowercase=True), ["a", "b", "c"])
+        # Lowercase is irrelevant once we're in numeric mode.
+        out = StrUtils.sequential_suffixes(40, lowercase=True)
+        self.assertTrue(all(s.isdigit() for s in out))
+
+    def test_sequential_suffixes_custom_switch_at(self):
+        """``switch_at`` lets callers force the numeric branch earlier."""
+        self.assertEqual(StrUtils.sequential_suffixes(5, switch_at=3)[:3], ["01", "02", "03"])
+
+    # -------------------------------------------------------------------------
     # resolve_name_collisions Tests
     # -------------------------------------------------------------------------
 
