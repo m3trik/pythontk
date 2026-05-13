@@ -183,19 +183,27 @@ class ImgUtils(HelpMixin):
 
     @classmethod
     def enforce_mode(
-        cls, image: Image.Image, target_mode: str, allow_compatible: bool = True
+        cls, image: Image.Image, target_mode: str, allow_compatible: bool = False
     ) -> Image.Image:
-        """Converts image to target_mode, optionally allowing compatible modes to preserve file size.
+        """Converts image to target_mode. Strict by default.
 
-        Compatible modes:
-        - Target RGB: Allows P (Indexed) and L (Grayscale)
-        - Target RGBA: Allows P (Indexed)
-        - Target L: Strict conversion (P is converted to L)
+        With allow_compatible=True, smaller "compatible" modes are preserved
+        instead of being upcast (file-size efficiency):
+            - Target RGB: keep P (Indexed) and L (Grayscale)
+            - Target RGBA: keep P (Indexed)
+
+        Strict (default) is recommended for textures consumed by DCCs / engines
+        that read PNG palette-transparency as alpha (e.g. Maya's file node sets
+        fileHasAlpha=True from PNG transparency info even when no pixel is
+        actually transparent). Allowing palette mode for RGB targets leaks that
+        signal into downstream FBX export and produces unexpected alphaMode=BLEND
+        materials in glTF.
 
         Parameters:
             image (PIL.Image.Image): Input image.
             target_mode (str): Desired mode (RGB, RGBA, L).
-            allow_compatible (bool): If True, allows smaller compatible modes.
+            allow_compatible (bool): If True, keep smaller compatible modes
+                (P, L) instead of upcasting. Default False (strict).
 
         Returns:
             PIL.Image.Image: The converted (or original) image.
@@ -454,12 +462,17 @@ class ImgUtils(HelpMixin):
         return im.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
     @classmethod
-    def set_bit_depth(cls, image, map_type: str) -> object:
+    def set_bit_depth(cls, image, map_type: str, allow_palette: bool = False) -> object:
         """Sets the bit depth and image mode of an image according to the map type.
 
         Parameters:
             image (PIL.Image.Image): The input image.
             map_type (str): The type of the map to determine the mode and bit depth.
+            allow_palette (bool): If True, palette (P) and grayscale (L) inputs
+                may be preserved when the target mode is RGB/RGBA, trading
+                fidelity for smaller file size. Default False (strict) — palette
+                images get fully upcast, dropping any palette-transparency info
+                that would otherwise be read as alpha by Maya / FBX exporters.
 
         Returns:
             PIL.Image.Image: The image with the specified or recommended bit depth and mode.
@@ -467,21 +480,7 @@ class ImgUtils(HelpMixin):
         # Determine the target mode based on map type
         if map_type in cls.map_modes:
             target_mode = cls.map_modes[map_type]
-
-            # Smart conversion: Avoid up-sampling channels if not necessary
-            # If target is RGB, allow L (Grayscale) and P (Indexed)
-            if target_mode == "RGB" and image.mode in ("L", "P"):
-                pass  # Keep as is
-            # If target is RGBA, allow PA (Indexed Alpha) and P (if transparent)
-            elif target_mode == "RGBA" and image.mode in ("PA", "P"):
-                if image.mode == "P" and "transparency" in image.info:
-                    pass  # Keep as is
-                elif image.mode == "PA":
-                    pass  # Keep as is
-                else:
-                    image = image.convert(target_mode)
-            else:
-                image = image.convert(target_mode)
+            image = cls.enforce_mode(image, target_mode, allow_compatible=allow_palette)
 
         # If the image is already in a standard mode, don't mess with it based on bit depth
         if image.mode in ("RGB", "RGBA", "L", "1", "P"):
@@ -1159,6 +1158,7 @@ class ImgUtils(HelpMixin):
         optimize_bit_depth: bool = True,
         check_existing: bool = False,
         map_type: str = None,
+        allow_palette: bool = False,
     ) -> str:
         """Optimizes a texture by resizing, setting bit depth, and adjusting image type.
 
@@ -1175,6 +1175,10 @@ class ImgUtils(HelpMixin):
             optimize_bit_depth (bool): Adjusts bit depth to match the map type.
             check_existing (bool): If True, returns existing optimized file if it exists and is newer.
             map_type (str, optional): The type of map (e.g., "Normal", "MaskMap") to enforce specific modes.
+            allow_palette (bool): If True, palette (P) inputs may be preserved
+                when the target mode is RGB/RGBA. Default False (strict) — this
+                prevents PNG palette-transparency from being read as alpha by
+                downstream FBX/DCC pipelines.
 
         Returns:
             str: Path to the optimized texture.
@@ -1289,9 +1293,12 @@ class ImgUtils(HelpMixin):
 
         # Optimize bit depth
         if optimize_bit_depth:
-            # Skip bit depth optimization for Paletted images to preserve index
-            if image.mode != "P":
-                image = cls.set_bit_depth(image, map_type_suffix)
+            # Skip bit depth optimization for Paletted images only when caller
+            # explicitly opts into palette preservation; otherwise upcast.
+            if image.mode != "P" or not allow_palette:
+                image = cls.set_bit_depth(
+                    image, map_type_suffix, allow_palette=allow_palette
+                )
 
         if generate_mipmaps:
             image = cls.generate_mipmaps(image)

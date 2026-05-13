@@ -95,11 +95,16 @@ class StrUtils(CoreUtils):
                 return super().get_value(key, args, kwargs)
 
             def format_field(self, value, format_spec):
+                # Preserve unresolved placeholders verbatim, including their
+                # format spec, so a second pass can still apply padding etc.
+                # (`!r`/`!a` conversions on unresolved keys are not preserved.)
                 if (
                     isinstance(value, str)
                     and value.startswith("{")
                     and value.endswith("}")
                 ):
+                    if format_spec:
+                        return value[:-1] + ":" + format_spec + "}"
                     return value
                 return super().format_field(value, format_spec)
 

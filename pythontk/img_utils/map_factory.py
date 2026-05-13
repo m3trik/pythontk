@@ -1994,18 +1994,42 @@ class MapFactory(LoggingMixin):
             priority=8,
         )
 
+    _aliases_by_len_desc: List[str] = None
+
+    @classmethod
+    def _get_aliases_by_len_desc(cls) -> List[str]:
+        """Cached list of every alias across all map types, sorted longest-first.
+
+        Used by `resolve_map_type(key=False)`; mirrors the caching the registry
+        already does for `key=True`.
+        """
+        if cls._aliases_by_len_desc is None:
+            cls._aliases_by_len_desc = sorted(
+                {a for v in cls.map_types.values() for a in v},
+                key=len,
+                reverse=True,
+            )
+        return cls._aliases_by_len_desc
+
     @classmethod
     def resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str:
         """Resolves the map type from a filename or alias using `map_types`.
 
         Parameters:
             file (str): Image filename, full path, or map type suffix.
-            key (bool): If True, get the corresponding key from 'map_types'.
-                        If False, get the abbreviation from 'map_types'.
-            validate (str, optional): If provided, validate the map type against this expected type.
+            key (bool): If True, return the canonical key from `map_types`
+                (e.g. "Ambient_Occlusion").
+                If False, return the matched alias **verbatim from the filename**
+                so a round-trip through `resolve_texture_filename` does not
+                rename the file. Requires an underscore boundary (or full
+                filename equality) to avoid mid-word matches like
+                "diffuse_cube" matching the single-letter alias "E".
+            validate (str, optional): If provided, validate the resolved map
+                type against this expected key. Comparison is case-insensitive
+                so non-canonical filename casing does not falsely fail.
 
         Returns:
-            str: The map type.
+            str: The map type. None when no alias matched.
 
         Raises:
             ValueError: If the map type is not the expected type when 'validate' is provided.
@@ -2016,25 +2040,29 @@ class MapFactory(LoggingMixin):
         if key:
             result = cls._map_registry.resolve_type_from_path(file)
         else:
-            result = next(
-                (
-                    i
-                    for v in cls.map_types.values()
-                    for i in v
-                    if filename.lower().endswith(i.lower())
-                ),
-                (
-                    StrUtils.split_delimited_string(filename, "_", occurrence=-1)[1]
-                    or None
-                ),
-            )
+            filename_lower = filename.lower()
+            result = None
+            for alias in cls._get_aliases_by_len_desc():
+                alias_lower = alias.lower()
+                if filename_lower == alias_lower:
+                    result = filename
+                    break
+                needle = "_" + alias_lower
+                if filename_lower.endswith(needle):
+                    # Slice the alias out of the original filename to preserve case
+                    result = filename[len(filename) - len(alias):]
+                    break
 
         if validate:
-            # Check both keys and values for validation
-            valid_types = [validate] + list(cls.map_types[validate])
-            if result not in valid_types:
+            # Case-insensitive: `result` may carry filename casing (key=False)
+            # which won't match the canonical-cased registry entries verbatim.
+            valid_types_lower = {validate.lower()} | {
+                a.lower() for a in cls.map_types[validate]
+            }
+            if (result or "").lower() not in valid_types_lower:
                 raise ValueError(
-                    f"Invalid map type '{result}'. Expected type is one of: {valid_types}"
+                    f"Invalid map type '{result}'. Expected type is one of: "
+                    f"{[validate] + list(cls.map_types[validate])}"
                 )
 
         return result
@@ -2061,6 +2089,21 @@ class MapFactory(LoggingMixin):
             str: The resolved output file path.
         """
         ImgUtils.assert_pathlike(texture_path, "texture_path")
+
+        # If no map type was resolved, we can't safely synthesize a "<base>_<type>"
+        # filename without dropping naming detail. Preserve the original path
+        # (changing extension if explicitly requested via `ext`).
+        if not map_type:
+            directory = FileUtils.format_path(texture_path, "path")
+            stem, original_ext = os.path.splitext(os.path.basename(texture_path))
+            ext_out = (
+                f".{ext.lower().lstrip('.')}" if ext else original_ext
+            )
+            prefix_str = prefix or ""
+            suffix_str = f"_{suffix.lstrip('_')}" if suffix else ""
+            return os.path.join(
+                directory, f"{prefix_str}{stem}{suffix_str}{ext_out}"
+            )
 
         # Extract sections from the given path
         directory = FileUtils.format_path(texture_path, "path")

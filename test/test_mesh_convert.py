@@ -10,6 +10,7 @@ Run with:
     python -m pytest test_mesh_convert.py -v
     python test_mesh_convert.py
 """
+import json
 import os
 import shutil
 import subprocess
@@ -253,6 +254,277 @@ class TestFbxToGlb(unittest.TestCase):
         ), patch("subprocess.run", side_effect=self._run_simulator(captured)):
             MeshConvert.fbx_to_glb(self.src, dst, auto_install=False, timeout=42)
         self.assertEqual(captured["kwargs"].get("timeout"), 42)
+
+
+class TestCheckGlbMaterials(unittest.TestCase):
+    """Verify the post-conversion material sanity check."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_check_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _png_bytes(mode, size=(4, 4), alpha=None):
+        """Build a small PNG and return its bytes."""
+        from io import BytesIO
+        from PIL import Image
+
+        if mode == "RGBA":
+            im = Image.new("RGBA", size, (200, 100, 50, alpha if alpha is not None else 255))
+        elif mode == "RGB":
+            im = Image.new("RGB", size, (200, 100, 50))
+        else:
+            raise ValueError(mode)
+        buf = BytesIO()
+        im.save(buf, format="PNG")
+        return buf.getvalue()
+
+    @staticmethod
+    def _build_glb(materials, images, textures, image_blobs):
+        """Pack a synthetic GLB. image_blobs is a list of bytes objects."""
+        import struct
+
+        buffer_views = []
+        bin_chunks = []
+        offset = 0
+        for blob in image_blobs:
+            buffer_views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(blob)})
+            bin_chunks.append(blob)
+            # 4-byte align
+            pad = (4 - (len(blob) % 4)) % 4
+            if pad:
+                bin_chunks.append(b"\x00" * pad)
+                offset += pad
+            offset += len(blob)
+
+        bin_data = b"".join(bin_chunks)
+        gltf = {
+            "asset": {"version": "2.0"},
+            "buffers": [{"byteLength": len(bin_data)}],
+            "bufferViews": buffer_views,
+            "images": images,
+            "textures": textures,
+            "materials": materials,
+        }
+        json_bytes = json.dumps(gltf).encode("utf-8")
+        # Pad JSON chunk to 4-byte boundary with spaces
+        pad_json = (4 - (len(json_bytes) % 4)) % 4
+        json_bytes += b" " * pad_json
+
+        header = struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(json_bytes) + 8 + len(bin_data))
+        json_chunk = struct.pack("<I4s", len(json_bytes), b"JSON") + json_bytes
+        bin_chunk = struct.pack("<I4s", len(bin_data), b"BIN\x00") + bin_data
+        return header + json_chunk + bin_chunk
+
+    def _write_glb(self, name, **kw):
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as f:
+            f.write(self._build_glb(**kw))
+        return path
+
+    def test_flags_blend_with_opaque_alpha(self):
+        """Texture is RGBA but alpha=255 everywhere → must flag."""
+        blob = self._png_bytes("RGBA", alpha=255)
+        path = self._write_glb(
+            "opaque_blend.glb",
+            materials=[{
+                "name": "Body_base",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png", "name": "color"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+        findings = MeshConvert.check_glb_materials(path)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["material"], "Body_base")
+        self.assertEqual(findings[0]["alpha_mode"], "BLEND")
+
+    def test_does_not_flag_genuine_transparency(self):
+        """Texture is RGBA with varying alpha → genuine transparency, no flag."""
+        from io import BytesIO
+        from PIL import Image
+        im = Image.new("RGBA", (4, 4))
+        for y in range(4):
+            for x in range(4):
+                im.putpixel((x, y), (200, 100, 50, 30 + 50 * x))
+        buf = BytesIO()
+        im.save(buf, format="PNG")
+        path = self._write_glb(
+            "real_blend.glb",
+            materials=[{
+                "name": "Glass",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[buf.getvalue()],
+        )
+        self.assertEqual(MeshConvert.check_glb_materials(path), [])
+
+    def test_does_not_flag_opaque_material(self):
+        """alphaMode=OPAQUE is never flagged, even if texture is RGBA."""
+        blob = self._png_bytes("RGBA", alpha=255)
+        path = self._write_glb(
+            "opaque.glb",
+            materials=[{
+                "name": "Plain",
+                "alphaMode": "OPAQUE",
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+        self.assertEqual(MeshConvert.check_glb_materials(path), [])
+
+    def test_does_not_flag_rgb_texture(self):
+        """No alpha channel → can't have leaked transparency, no flag."""
+        blob = self._png_bytes("RGB")
+        path = self._write_glb(
+            "no_alpha.glb",
+            materials=[{
+                "name": "RGBish",
+                "alphaMode": "BLEND",  # weird but possible
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+        self.assertEqual(MeshConvert.check_glb_materials(path), [])
+
+    def test_mask_mode_is_also_checked(self):
+        """alphaMode=MASK with uniformly-255 alpha is still wrong."""
+        blob = self._png_bytes("RGBA", alpha=255)
+        path = self._write_glb(
+            "mask.glb",
+            materials=[{
+                "name": "Leaf",
+                "alphaMode": "MASK",
+                "alphaCutoff": 0.5,
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+        findings = MeshConvert.check_glb_materials(path)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["alpha_mode"], "MASK")
+
+    def test_does_not_flag_transparency_from_basecolorfactor(self):
+        """Material is legitimately transparent via baseColorFactor[3] < 1.0 —
+        even with an opaque texture this is real transparency, not a leak."""
+        blob = self._png_bytes("RGBA", alpha=255)
+        path = self._write_glb(
+            "factor_alpha.glb",
+            materials=[{
+                "name": "TintedGlass",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 0.4],
+                    "baseColorTexture": {"index": 0},
+                },
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+        self.assertEqual(MeshConvert.check_glb_materials(path), [])
+
+    def test_basecolorfactor_alpha_1_still_flags(self):
+        """Factor alpha = 1.0 is fully opaque so it must NOT exempt the
+        material — the texture-alpha leak should still be caught."""
+        blob = self._png_bytes("RGBA", alpha=255)
+        path = self._write_glb(
+            "factor_one.glb",
+            materials=[{
+                "name": "Body",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                    "baseColorTexture": {"index": 0},
+                },
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+        self.assertEqual(len(MeshConvert.check_glb_materials(path)), 1)
+
+    def test_reason_differs_per_alpha_mode(self):
+        """BLEND reason mentions depth-write; MASK reason mentions no-op
+        alpha-test. They must not be the same boilerplate."""
+        blob = self._png_bytes("RGBA", alpha=255)
+
+        blend_path = self._write_glb(
+            "blend_reason.glb",
+            materials=[{"name": "B", "alphaMode": "BLEND",
+                        "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+        mask_path = self._write_glb(
+            "mask_reason.glb",
+            materials=[{"name": "M", "alphaMode": "MASK", "alphaCutoff": 0.5,
+                        "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+        blend_reason = MeshConvert.check_glb_materials(blend_path)[0]["reason"]
+        mask_reason = MeshConvert.check_glb_materials(mask_path)[0]["reason"]
+        self.assertIn("depth-write", blend_reason)
+        self.assertIn("no-op", mask_reason)
+        self.assertNotEqual(blend_reason, mask_reason)
+
+    def test_shared_image_decoded_once(self):
+        """Two materials referencing the same image should both flag, but
+        the underlying image must only be decoded a single time (cache)."""
+        from unittest.mock import patch
+        from PIL import Image as PILImage
+
+        blob = self._png_bytes("RGBA", alpha=255)
+        path = self._write_glb(
+            "shared_image.glb",
+            materials=[
+                {"name": "A", "alphaMode": "BLEND",
+                 "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+                {"name": "B", "alphaMode": "BLEND",
+                 "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+            ],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[blob],
+        )
+
+        real_open = PILImage.open
+        calls = {"n": 0}
+
+        def counting_open(*a, **kw):
+            calls["n"] += 1
+            return real_open(*a, **kw)
+
+        with patch("PIL.Image.open", side_effect=counting_open):
+            findings = MeshConvert.check_glb_materials(path)
+
+        self.assertEqual(len(findings), 2, "both materials must be flagged")
+        self.assertEqual(calls["n"], 1, "image should be decoded only once")
+
+    def test_raises_on_non_glb(self):
+        path = os.path.join(self.tmp, "not_a_glb.bin")
+        with open(path, "wb") as f:
+            f.write(b"not glTF")
+        with self.assertRaises(ValueError):
+            MeshConvert.check_glb_materials(path)
+
+    def test_raises_on_missing_file(self):
+        with self.assertRaises(FileNotFoundError):
+            MeshConvert.check_glb_materials(os.path.join(self.tmp, "nope.glb"))
 
 
 @unittest.skipUnless(

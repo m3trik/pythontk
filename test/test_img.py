@@ -228,6 +228,96 @@ class ImgTest(BaseTestCase):
         # Should return None or empty for unknown types
         self.assertTrue(result is None or result == "")
 
+    def test_resolve_map_type_prefers_longest_alias(self):
+        """resolve_map_type(key=False) must prefer the longest alias match.
+
+        Regression: previously returned 'AO' for 'Cart_Mixed_AO.png' because
+        'AO' iterated before 'Mixed_AO' in the aliases list. Output round-trip
+        through resolve_texture_filename then dropped 'Mixed_'.
+        """
+        self.assertEqual(
+            TextureMapFactory.resolve_map_type("Cart_Mixed_AO.png", key=False),
+            "Mixed_AO",
+        )
+        self.assertEqual(
+            TextureMapFactory.resolve_map_type(
+                "Cart_AmbientOcclusion.PNG", key=False
+            ),
+            "AmbientOcclusion",
+        )
+
+    def test_resolve_map_type_requires_underscore_boundary(self):
+        """resolve_map_type(key=False) must not match mid-word.
+
+        Regression: 'diffuse_cube.dds' returned 'E' because filename ends in 'e'
+        and 'E' is an Emissive alias. 'ibl_brdf_lut.dds' returned 'lut' via the
+        fallback path. Both should return None now.
+        """
+        for fn in ("diffuse_cube.dds", "specular_cube.dds", "ibl_brdf_lut.dds"):
+            self.assertIsNone(
+                TextureMapFactory.resolve_map_type(fn, key=False),
+                f"expected None for {fn}",
+            )
+
+    def test_resolve_map_type_preserves_filename_case(self):
+        """The returned alias must match the case in the filename, not the
+        canonical alias case in the registry, so re-saving doesn't rename."""
+        self.assertEqual(
+            TextureMapFactory.resolve_map_type("foo_Base_color.png", key=False),
+            "Base_color",
+        )
+
+    def test_resolve_texture_filename_preserves_when_map_type_empty(self):
+        """When the resolver can't identify a map type, resolve_texture_filename
+        must NOT synthesize a renamed path — it should round-trip the original.
+        """
+        for fn in ("diffuse_cube.dds", "ibl_brdf_lut.dds", "random_file.png"):
+            out = TextureMapFactory.resolve_texture_filename(fn, "")
+            self.assertEqual(os.path.basename(out), fn)
+            out_none = TextureMapFactory.resolve_texture_filename(fn, None or "")
+            self.assertEqual(os.path.basename(out_none), fn)
+
+    def test_resolve_map_type_validate_is_case_insensitive(self):
+        """validate= must accept filename-cased results.
+
+        Regression: after switching key=False to return filename-cased aliases,
+        validate compared against canonical-case registry entries and raised
+        ValueError on perfectly valid files with lowercase names.
+        """
+        # Lowercase filename — alias is "Normal_DirectX" canonically.
+        result = TextureMapFactory.resolve_map_type(
+            "asset_normal_directx.png", key=False, validate="Normal_DirectX"
+        )
+        self.assertEqual(result, "normal_directx")
+        # Should not raise.
+        TextureMapFactory.resolve_map_type(
+            "asset_Normal.png", key=False, validate="Normal"
+        )
+        # Genuinely invalid type still raises.
+        with self.assertRaises(ValueError):
+            TextureMapFactory.resolve_map_type(
+                "asset_Roughness.png", key=False, validate="Normal"
+            )
+
+    def test_resolve_texture_filename_round_trip_preserves_suffix_exact(self):
+        """End-to-end: detect alias from filename, pass it back to
+        resolve_texture_filename. Output filename must equal input.
+        """
+        cases = [
+            "Cart_Mixed_AO.png",
+            "Cart_AmbientOcclusion.PNG",
+            "foo_Base_color.png",
+            "asset_Roughness.png",
+        ]
+        for fn in cases:
+            rt = TextureMapFactory.resolve_map_type(fn, key=False)
+            self.assertIsNotNone(rt, f"resolver dropped suffix for {fn}")
+            out = TextureMapFactory.resolve_texture_filename(fn, rt)
+            self.assertEqual(
+                os.path.basename(out), fn,
+                f"round-trip changed filename: {fn} -> {os.path.basename(out)}",
+            )
+
     # -------------------------------------------------------------------------
     # Filter Images By Type Tests
     # -------------------------------------------------------------------------
