@@ -1,13 +1,16 @@
 # !/usr/bin/python
 # coding=utf-8
+import base64
+import json
 import logging
 import os
 import platform as _platform
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -224,3 +227,181 @@ class MeshConvert(HelpMixin):
                 f"  stdout: {result.stdout}"
             )
         return dst_abs
+
+    # ------------------------------------------------------------------ #
+    # Post-conversion material sanity check
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def check_glb_materials(cls, glb_path: str) -> List[Dict[str, str]]:
+        """Inspect a GLB for materials flagged transparent that should be opaque.
+
+        Catches the Maya/Stingray/OpenPBR/Standard-Surface failure mode where
+        a color texture happens to carry an alpha channel (often PNG palette
+        transparency) without any actual transparency intent. Maya's FBX
+        exporter writes a TransparencyFactor; FBX2glTF then sets
+        ``alphaMode: BLEND`` and the renderer disables depth-write —
+        producing the "inverted face" / wrong-render-order artifact.
+
+        A material is flagged when its ``alphaMode`` is BLEND or MASK *and*
+        its base-color texture's alpha channel is uniformly 255. Genuine
+        transparency (varying alpha) is not reported.
+
+        Parameters:
+            glb_path: Path to a binary glTF (.glb) file.
+
+        Returns:
+            List of findings. Each finding is a dict with keys:
+                material   — material name (or '<material[i]>')
+                alpha_mode — "BLEND" or "MASK"
+                image      — image name / uri / fallback id
+                reason     — short human-readable explanation
+        """
+        from io import BytesIO
+
+        try:
+            from PIL import Image
+        except ImportError as exc:
+            raise RuntimeError(
+                "check_glb_materials requires Pillow (PIL). Install it with "
+                "`pip install pillow`."
+            ) from exc
+
+        if not os.path.isfile(glb_path):
+            raise FileNotFoundError(glb_path)
+
+        with open(glb_path, "rb") as f:
+            header = f.read(12)
+            if len(header) < 12 or header[:4] != b"glTF":
+                raise ValueError(f"Not a GLB file: {glb_path}")
+            _version, _total = struct.unpack("<II", header[4:])
+            chunk0_len, chunk0_type = struct.unpack("<I4s", f.read(8))
+            if chunk0_type != b"JSON":
+                raise ValueError(f"Malformed GLB: first chunk is not JSON ({glb_path})")
+            gltf = json.loads(f.read(chunk0_len).decode("utf-8"))
+            bin_data: Optional[bytes] = None
+            header = f.read(8)
+            if len(header) == 8:
+                bin_len, bin_type = struct.unpack("<I4s", header)
+                if bin_type == b"BIN\x00":
+                    bin_data = f.read(bin_len)
+
+        materials = gltf.get("materials", []) or []
+        textures = gltf.get("textures", []) or []
+        images = gltf.get("images", []) or []
+        buffer_views = gltf.get("bufferViews", []) or []
+
+        # Reason text per alpha mode — BLEND and MASK fail in different ways.
+        REASONS = {
+            "BLEND": (
+                "alphaMode=BLEND but base-color alpha is uniformly opaque (255). "
+                "Renderers disable depth-write for BLEND, causing render-order "
+                "artifacts (faces drawing in the wrong order)."
+            ),
+            "MASK": (
+                "alphaMode=MASK but base-color alpha is uniformly opaque (255). "
+                "Every fragment passes the cutoff so alpha-testing is a no-op; "
+                "the material should be OPAQUE."
+            ),
+        }
+
+        # Decoded once per source image even if multiple materials reference it.
+        # Value is (extrema_min, extrema_max) or None when the image was
+        # unreadable / had no alpha channel and is therefore safe to skip.
+        alpha_extrema_cache: Dict[int, Optional[Tuple[int, int]]] = {}
+
+        def _image_alpha_extrema(img_idx: int) -> Optional[Tuple[int, int]]:
+            if img_idx in alpha_extrema_cache:
+                return alpha_extrema_cache[img_idx]
+            img_entry = images[img_idx]
+            img_bytes = cls._extract_image_bytes(
+                img_entry, glb_path, bin_data, buffer_views
+            )
+            result: Optional[tuple] = None
+            if img_bytes:
+                try:
+                    with Image.open(BytesIO(img_bytes)) as im:
+                        im.load()
+                        has_alpha_channel = im.mode in ("RGBA", "LA", "PA") or (
+                            im.mode == "P" and "transparency" in im.info
+                        )
+                        if has_alpha_channel:
+                            result = im.convert("RGBA").getchannel("A").getextrema()
+                except Exception as exc:  # noqa: BLE001 — decoder reports varied errors
+                    logger.debug(
+                        "check_glb_materials: skipped image %s (%s)", img_idx, exc
+                    )
+            alpha_extrema_cache[img_idx] = result
+            return result
+
+        findings: List[Dict[str, str]] = []
+        for mi, mat in enumerate(materials):
+            alpha_mode = mat.get("alphaMode", "OPAQUE")
+            if alpha_mode not in REASONS:  # OPAQUE or unknown — skip
+                continue
+            pbr = mat.get("pbrMetallicRoughness") or {}
+
+            # Real transparency can come from the scalar baseColorFactor[3];
+            # don't flag those as "accidentally transparent".
+            bc_factor = pbr.get("baseColorFactor")
+            if bc_factor and len(bc_factor) >= 4 and bc_factor[3] < 1.0:
+                continue
+
+            bct = pbr.get("baseColorTexture")
+            if not bct:
+                continue
+            tex_idx = bct.get("index")
+            if tex_idx is None or tex_idx >= len(textures):
+                continue
+            img_idx = textures[tex_idx].get("source")
+            if img_idx is None or img_idx >= len(images):
+                continue
+
+            extrema = _image_alpha_extrema(img_idx)
+            if extrema != (255, 255):
+                continue
+
+            img_entry = images[img_idx]
+            findings.append(
+                {
+                    "material": mat.get("name") or f"<material[{mi}]>",
+                    "alpha_mode": alpha_mode,
+                    "image": (
+                        img_entry.get("name")
+                        or img_entry.get("uri")
+                        or f"image[{img_idx}]"
+                    ),
+                    "reason": REASONS[alpha_mode],
+                }
+            )
+
+        return findings
+
+    @staticmethod
+    def _extract_image_bytes(
+        img_entry: dict,
+        glb_path: str,
+        bin_data: Optional[bytes],
+        buffer_views: list,
+    ) -> Optional[bytes]:
+        """Return raw bytes for a glTF image entry, or None if unavailable."""
+        uri = img_entry.get("uri")
+        if uri:
+            if uri.startswith("data:"):
+                try:
+                    _, b64 = uri.split(",", 1)
+                    return base64.b64decode(b64)
+                except Exception:
+                    return None
+            sibling = os.path.join(os.path.dirname(glb_path), uri)
+            if os.path.isfile(sibling):
+                with open(sibling, "rb") as f:
+                    return f.read()
+            return None
+        bv_idx = img_entry.get("bufferView")
+        if bv_idx is None or bin_data is None or bv_idx >= len(buffer_views):
+            return None
+        bv = buffer_views[bv_idx]
+        offset = bv.get("byteOffset", 0)
+        length = bv.get("byteLength", 0)
+        return bin_data[offset : offset + length] or None

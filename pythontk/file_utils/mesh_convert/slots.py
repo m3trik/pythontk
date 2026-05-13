@@ -1,7 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import os
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert._mesh_convert import (
@@ -156,6 +156,20 @@ class MeshConvertSlots(MeshConvert):
             setChecked=True,
             setToolTip="Replace any existing .glb at the destination.",
         )
+        widget.option_box.menu.add(
+            "QCheckBox",
+            setText="Check materials",
+            setObjectName="chk_check_materials",
+            setChecked=True,
+            setToolTip=(
+                "After conversion, scan the GLB for materials flagged "
+                "transparent whose base-color alpha is fully opaque — the "
+                "classic Stingray/OpenPBR/Standard-Surface artifact where "
+                "an RGBA texture leaks through despite no opacity input.\n\n"
+                "Findings are printed to the console and summarized in a "
+                "warning dialog."
+            ),
+        )
 
     def tb000(self, widget) -> None:
         """Convert the selected FBX file(s) to GLB beside their source."""
@@ -168,6 +182,7 @@ class MeshConvertSlots(MeshConvert):
 
         draco = widget.option_box.menu.chk_draco.isChecked()
         overwrite = widget.option_box.menu.chk_overwrite.isChecked()
+        check_materials = widget.option_box.menu.chk_check_materials.isChecked()
         extra_args = ["--draco"] if draco else None
 
         # Conversion of a half-GB FBX takes ~75 s. Block re-clicks and signal
@@ -177,6 +192,7 @@ class MeshConvertSlots(MeshConvert):
 
         widget.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        all_findings: List[Tuple[str, List[Dict[str, str]]]] = []
         try:
             ok_count = 0
             for fbx_path in fbx_paths:
@@ -191,6 +207,22 @@ class MeshConvertSlots(MeshConvert):
                     )
                     print(f"// Result: {out_path}")
                     ok_count += 1
+                    if check_materials:
+                        try:
+                            findings = self.check_glb_materials(out_path)
+                        except (RuntimeError, ValueError, OSError) as exc:
+                            print(f"// Material check failed for {out_path}: {exc}")
+                            findings = []
+                        if findings:
+                            all_findings.append((out_path, findings))
+                            for f in findings:
+                                print(
+                                    f"//   [WARN] {f['material']} "
+                                    f"(alphaMode={f['alpha_mode']}, "
+                                    f"image={f['image']}): {f['reason']}"
+                                )
+                        else:
+                            print(f"// Material check OK: {os.path.basename(out_path)}")
                 except FileExistsError as exc:
                     print(f"// Skipped (exists, overwrite=False): {exc}")
                 except (RuntimeError, OSError) as exc:
@@ -201,10 +233,59 @@ class MeshConvertSlots(MeshConvert):
             QApplication.restoreOverrideCursor()
             widget.setEnabled(True)
 
+        if all_findings:
+            self._show_material_findings_dialog(all_findings)
+
         try:
             self.source_dir = FileUtils.format_path(fbx_paths[0], "path")
         except Exception:
             pass
+
+    @staticmethod
+    def _show_material_findings_dialog(
+        all_findings: List[Tuple[str, List[Dict[str, str]]]],
+    ) -> None:
+        """Render a warning dialog summarizing material issues across files.
+
+        Summary lives in the always-visible rich-text body; the per-finding
+        list goes into ``detailedText`` so large batches stay readable
+        (Qt provides a scrollable, expandable area).
+        """
+        from qtpy.QtCore import Qt
+        from qtpy.QtWidgets import QApplication, QMessageBox
+
+        total = sum(len(f) for _, f in all_findings)
+        summary = (
+            f"<p><b>{total} material issue(s)</b> found across "
+            f"{len(all_findings)} GLB file(s).</p>"
+            "<p>These materials are flagged <b>transparent</b> in the GLB but "
+            "their base-color textures are fully opaque — renderers may "
+            "disable depth-write (BLEND) or alpha-test as a no-op (MASK).</p>"
+            "<p><b>Fix at source:</b> in Maya, ensure the color texture has "
+            "no alpha channel (or convert palette PNGs to RGB), and verify "
+            "the shader's opacity/transparency input is unconnected.</p>"
+            "<p><i>Click &ldquo;Show Details&hellip;&rdquo; for the full list.</i></p>"
+        )
+
+        detail_lines: List[str] = []
+        for glb_path, findings in all_findings:
+            detail_lines.append(os.path.basename(glb_path))
+            for f in findings:
+                detail_lines.append(
+                    f"  - {f['material']}  "
+                    f"[alphaMode={f['alpha_mode']}]  "
+                    f"image={f['image']}"
+                )
+            detail_lines.append("")  # blank line between files
+
+        box = QMessageBox(QApplication.activeWindow())
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Material check: opaque-with-alpha")
+        box.setTextFormat(Qt.RichText)
+        box.setText(summary)
+        box.setDetailedText("\n".join(detail_lines).rstrip())
+        box.setStandardButtons(QMessageBox.Ok)
+        box.exec_()
 
 
 class MeshConvertUi:

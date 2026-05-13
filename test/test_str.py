@@ -841,6 +841,50 @@ class StrTest(BaseTestCase):
         self.assertEqual(result["x25"], "x_Z")
         self.assertEqual(result["x26"], "x_AA")
 
+    # -------------------------------------------------------------------------
+    # replace_placeholders Tests
+    # -------------------------------------------------------------------------
+
+    def test_replace_placeholders_basic(self):
+        self.assertEqual(
+            StrUtils.replace_placeholders("{a}_{b}", a="x", b="y"), "x_y"
+        )
+
+    def test_replace_placeholders_format_spec(self):
+        self.assertEqual(
+            StrUtils.replace_placeholders("v{n:03d}", n=5), "v005"
+        )
+
+    def test_replace_placeholders_missing_preserves_placeholder(self):
+        self.assertEqual(
+            StrUtils.replace_placeholders("{a}_{b}", a="x"), "x_{b}"
+        )
+
+    def test_replace_placeholders_missing_preserves_format_spec(self):
+        # The bug fixed in SafeFormatter.format_field: unresolved {n:03d}
+        # used to collapse to {n}, losing padding for a second pass.
+        self.assertEqual(
+            StrUtils.replace_placeholders("{stem}_v{n:03d}", stem="shot"),
+            "shot_v{n:03d}",
+        )
+        self.assertEqual(
+            StrUtils.replace_placeholders("{user}_{stem}_v{n:03d}", user="maya"),
+            "maya_{stem}_v{n:03d}",
+        )
+
+    def test_replace_placeholders_two_stage_substitution(self):
+        # Stage 1 leaves {n:03d} intact; stage 2 applies the spec.
+        stage1 = StrUtils.replace_placeholders("{user}_{stem}_v{n:03d}", user="m")
+        self.assertEqual(stage1.format(stem="shot", n=7), "m_shot_v007")
+
+    def test_replace_placeholders_other_format_specs_preserved(self):
+        self.assertEqual(
+            StrUtils.replace_placeholders("{key:>10}"), "{key:>10}"
+        )
+        self.assertEqual(
+            StrUtils.replace_placeholders("{key:.4f}"), "{key:.4f}"
+        )
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

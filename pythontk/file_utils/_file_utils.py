@@ -55,6 +55,88 @@ class FileUtils(HelpMixin):
             )
 
     @staticmethod
+    def next_version_path(
+        filepath: str,
+        format: str = "{stem}_v{n:03d}{ext}",
+        start: int = 1,
+    ) -> str:
+        """Return the next available versioned path for `filepath`.
+
+        Scans the parent directory for siblings whose names match `format`
+        and returns the path with `n` set to one past the highest existing
+        version. If the input basename itself matches `format`, its version
+        is also used as a floor so the result is always newer than the input.
+        `start` is used only when no on-disk version is found AND the input
+        basename is not itself versioned; it is a fallback, not a minimum
+        floor (an existing v005 returns v006 even if `start=10`).
+
+        Parameters:
+            filepath (str): Path used to derive the directory, stem, and ext.
+            format (str): Format string with fields `stem`, `ext`, and `n`
+                (e.g. "{stem}_v{n:03d}{ext}"). The `n` width controls output
+                zero-padding only — matching is width-agnostic.
+            start (int): Version returned when no existing match is found.
+
+        Returns:
+            str: The next versioned path (not created on disk).
+        """
+        import string
+
+        parsed = list(string.Formatter().parse(format))
+        fields = {f for _, f, _, _ in parsed if f is not None}
+        if "n" not in fields:
+            raise ValueError("format must contain an '{n}' field")
+        unknown = fields - {"n", "stem", "ext"}
+        if unknown:
+            raise ValueError(f"unsupported field(s) in format: {sorted(unknown)}")
+
+        fp = os.path.expandvars(filepath)
+        directory = os.path.dirname(fp) or "."
+        basename = os.path.basename(fp)
+
+        def build_regex(stem_pat: str, ext_pat: str):
+            parts = []
+            for literal, field, _spec, _conv in parsed:
+                parts.append(re.escape(literal))
+                if field is None:
+                    continue
+                if field == "n":
+                    parts.append(r"(?P<n>\d+)")
+                elif field == "stem":
+                    parts.append(stem_pat)
+                elif field == "ext":
+                    parts.append(ext_pat)
+            return re.compile("^" + "".join(parts) + "$")
+
+        m = build_regex(r"(?P<stem>.+?)", r"(?P<ext>\.[^.]+)").match(basename)
+        if m:
+            gd = m.groupdict()
+            root, real_ext = os.path.splitext(basename)
+            stem = gd.get("stem") if "stem" in fields else root
+            ext = gd.get("ext") if "ext" in fields else real_ext
+            input_n = int(m.group("n"))
+        else:
+            stem, ext = os.path.splitext(basename)
+            input_n = 0
+
+        sibling_regex = build_regex(re.escape(stem), re.escape(ext))
+        highest = 0
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if not entry.is_file():
+                        continue
+                    sm = sibling_regex.match(entry.name)
+                    if sm:
+                        highest = max(highest, int(sm.group("n")))
+        except FileNotFoundError:
+            pass
+
+        floor = max(input_n, highest)
+        next_n = floor + 1 if floor else start
+        return os.path.join(directory, format.format(stem=stem, ext=ext, n=next_n))
+
+    @staticmethod
     def get_dir_contents(
         dirPath,
         content="file",

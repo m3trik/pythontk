@@ -304,6 +304,65 @@ class FileTest(BaseTestCase):
         self.assertTrue(os.path.isdir(existing))
 
     # -------------------------------------------------------------------------
+    # next_version_path Tests
+    # -------------------------------------------------------------------------
+
+    def test_next_version_path_empty_dir_starts_at_start(self):
+        with tempfile.TemporaryDirectory() as d:
+            result = FileUtils.next_version_path(os.path.join(d, "shot.ma"))
+            self.assertEqual(os.path.basename(result), "shot_v001.ma")
+
+    def test_next_version_path_picks_max_plus_one_across_gaps(self):
+        with tempfile.TemporaryDirectory() as d:
+            for n in (3, 5):
+                open(os.path.join(d, f"shot_v{n:03d}.ma"), "w").close()
+            result = FileUtils.next_version_path(os.path.join(d, "shot.ma"))
+            self.assertEqual(os.path.basename(result), "shot_v006.ma")
+
+    def test_next_version_path_input_version_acts_as_floor(self):
+        with tempfile.TemporaryDirectory() as d:
+            # input claims v009 but nothing on disk -> next is v010
+            result = FileUtils.next_version_path(os.path.join(d, "shot_v009.ma"))
+            self.assertEqual(os.path.basename(result), "shot_v010.ma")
+
+    def test_next_version_path_custom_format(self):
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "shot.v002.ma"), "w").close()
+            result = FileUtils.next_version_path(
+                os.path.join(d, "shot.ma"), format="{stem}.v{n:03d}{ext}"
+            )
+            self.assertEqual(os.path.basename(result), "shot.v003.ma")
+
+    def test_next_version_path_does_not_leak_across_stems(self):
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "shot_v005.ma"), "w").close()
+            result = FileUtils.next_version_path(os.path.join(d, "other.ma"))
+            self.assertEqual(os.path.basename(result), "other_v001.ma")
+
+    def test_next_version_path_ignores_matching_directories(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "shot_v009.ma"))  # dir, not file
+            result = FileUtils.next_version_path(os.path.join(d, "shot.ma"))
+            self.assertEqual(os.path.basename(result), "shot_v001.ma")
+
+    def test_next_version_path_format_without_n_raises(self):
+        with self.assertRaises(ValueError):
+            FileUtils.next_version_path("shot.ma", format="{stem}{ext}")
+
+    def test_next_version_path_format_with_unknown_field_raises(self):
+        with self.assertRaises(ValueError):
+            FileUtils.next_version_path(
+                "shot.ma", format="{stem}_{user}_v{n:03d}{ext}"
+            )
+
+    def test_next_version_path_missing_dir_returns_start(self):
+        # Nonexistent parent dir should not crash; falls back to start.
+        result = FileUtils.next_version_path(
+            os.path.join(tempfile.gettempdir(), "no_such_dir_xyz", "shot.ma")
+        )
+        self.assertEqual(os.path.basename(result), "shot_v001.ma")
+
+    # -------------------------------------------------------------------------
     # get_file_info Tests
     # -------------------------------------------------------------------------
 
