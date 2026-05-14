@@ -7,6 +7,7 @@ from typing import List, Union, Tuple, Dict, Any
 # From this package:
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.img_utils.map_factory import MapFactory
+from pythontk.img_utils.map_registry import MapRegistry
 from pythontk.file_utils._file_utils import FileUtils
 
 
@@ -145,6 +146,20 @@ class MapConverterSlots(ImgUtils):
 
         widget.option_box.menu.add(
             "QComboBox",
+            setObjectName="cmb_secondary_scale",
+            setToolTip=(
+                "Downscale non-critical maps (roughness, metallic, AO, masks, "
+                "height, etc.) by this fraction of the clamp. Resolution-critical "
+                "maps (base color, normals, emissive) always use the full clamp."
+            ),
+        )
+        widget.option_box.menu.cmb_secondary_scale.add(
+            [("Full", 1.0), ("1/2", 0.5), ("1/4", 0.25), ("1/8", 0.125)],
+            prefix="Secondary:",
+        )
+
+        widget.option_box.menu.add(
+            "QComboBox",
             setObjectName="cmb_mode",
             setToolTip="Apply the modifier as a Suffix (after base name) or Prefix (before base name). Either way it sits before the map-type suffix.",
         )
@@ -183,14 +198,31 @@ class MapConverterSlots(ImgUtils):
         # the original format / skips clamping respectively.
         file_type = widget.option_box.menu.cmb001.currentData() or None
         max_size = widget.option_box.menu.cmb000.currentData() or None
+        secondary_scale = (
+            widget.option_box.menu.cmb_secondary_scale.currentData() or 1.0
+        )
         mode = widget.option_box.menu.cmb_mode.currentText().lower()
         modifier = widget.option_box.menu.txt_modifier.text().strip().strip("_")
         old_folder = (
             widget.option_box.menu.txt_old_folder.text().strip().strip("/").strip("\\")
         )
 
+        registry = MapRegistry()
+
         for texture_path in texture_paths:
             print(f"Optimizing: {texture_path} ..")
+
+            # Apply the secondary scale to non-critical maps so masks/roughness/
+            # etc. shrink relative to base color and normals.
+            effective_max_size = max_size
+            if max_size and secondary_scale != 1.0:
+                map_type_key = MapFactory.resolve_map_type(texture_path, key=True)
+                if not registry.is_resolution_critical(map_type_key):
+                    effective_max_size = max(1, int(max_size * secondary_scale))
+                    print(
+                        f"// Secondary scale {secondary_scale:g}x → clamp "
+                        f"{effective_max_size} ({map_type_key or 'unknown type'})"
+                    )
 
             if not modifier:
                 # Overwrite mode: optimize in place. optimize_texture handles
@@ -198,7 +230,7 @@ class MapConverterSlots(ImgUtils):
                 optimized_map_path = self.optimize_texture(
                     texture_path,
                     output_type=file_type,
-                    max_size=max_size,
+                    max_size=effective_max_size,
                     old_files_folder=old_folder or None,
                     optimize_bit_depth=True,
                 )
@@ -234,7 +266,7 @@ class MapConverterSlots(ImgUtils):
                         texture_path,
                         output_dir=temp_dir,
                         output_type=file_type,
-                        max_size=max_size,
+                        max_size=effective_max_size,
                         optimize_bit_depth=True,
                     )
                     os.replace(temp_result, target_path)

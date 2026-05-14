@@ -50,6 +50,7 @@ class MapType:
     default_background: Tuple[int, ...] = (0, 0, 0, 255)  # Default background color
     is_packed: bool = False  # Is this a packed map (e.g. ORM, MSAO)?
     scale_as_mask: bool = False  # Should this map be scaled down by mask_map_scale?
+    resolution_critical: bool = False  # Surface detail depends on full resolution (color, normals, emissive). Others may be downscaled as a fraction.
     input_fallbacks: List[str] = field(
         default_factory=list
     )  # Safe substitutes for INPUT (e.g. Bump -> Normal)
@@ -114,6 +115,7 @@ class MapRegistry(SingletonMixin):
             mode="RGB",
             default_background=(127, 127, 127, 255),
             input_fallbacks=["Albedo_Transparency", "Diffuse"],
+            resolution_critical=True,
         ),
         "Diffuse": MapType(
             name="Diffuse",
@@ -126,6 +128,7 @@ class MapRegistry(SingletonMixin):
             mode="RGB",
             default_background=(127, 127, 127, 255),
             input_fallbacks=["Base_Color"],
+            resolution_critical=True,
         ),
         "Albedo_Transparency": MapType(
             name="Albedo_Transparency",
@@ -143,6 +146,7 @@ class MapRegistry(SingletonMixin):
             default_background=(0, 0, 0, 255),
             input_fallbacks=["Base_Color"],
             workflows=WF.ALL_ENGINES,
+            resolution_critical=True,
         ),
         "Roughness": MapType(
             name="Roughness",
@@ -191,6 +195,7 @@ class MapRegistry(SingletonMixin):
             mode="RGB",
             default_background=(127, 127, 255, 255),
             input_fallbacks=["Normal_OpenGL", "Normal_DirectX", "Bump", "Height"],
+            resolution_critical=True,
         ),
         "Normal_OpenGL": MapType(
             name="Normal_OpenGL",
@@ -206,6 +211,7 @@ class MapRegistry(SingletonMixin):
             mode="RGB",
             default_background=(127, 127, 255, 255),
             input_fallbacks=["Normal", "Normal_DirectX", "Bump", "Height"],
+            resolution_critical=True,
         ),
         "Normal_DirectX": MapType(
             name="Normal_DirectX",
@@ -222,6 +228,7 @@ class MapRegistry(SingletonMixin):
             mode="RGB",
             default_background=(127, 127, 255, 255),
             input_fallbacks=["Normal", "Normal_OpenGL", "Bump", "Height"],
+            resolution_critical=True,
         ),
         "ORM": MapType(
             name="ORM",
@@ -367,6 +374,7 @@ class MapRegistry(SingletonMixin):
             default_background=(0, 0, 0, 255),
             input_fallbacks=["Emission"],
             workflows=[WF.STD],
+            resolution_critical=True,
         ),
         "Detail_Mask": MapType(
             name="Detail_Mask",
@@ -613,6 +621,19 @@ class MapRegistry(SingletonMixin):
     def get_scale_as_mask_types(self) -> List[str]:
         """Get list of map types that should be scaled as masks."""
         return [name for name, m in self._maps.items() if m.scale_as_mask]
+
+    def get_resolution_critical_types(self) -> List[str]:
+        """Get list of map types whose surface detail requires full resolution."""
+        return [name for name, m in self._maps.items() if m.resolution_critical]
+
+    def is_resolution_critical(self, name: str) -> bool:
+        """True when surface detail for ``name`` requires full resolution.
+
+        Unknown names default to True (treat as critical) so callers don't
+        silently downscale maps the registry doesn't recognise.
+        """
+        m = self._maps.get(name)
+        return True if m is None else m.resolution_critical
 
     def get_passthrough_maps(self) -> List[str]:
         """Get list of maps that should be passed through if not consumed."""
