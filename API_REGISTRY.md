@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-05-07_
+_Generated: 2026-05-14_
 
 ## Index
 
@@ -409,6 +409,7 @@ Reusable module attribute resolver for package-style imports.
 - **[`class FileUtils(HelpMixin)`](pythontk/pythontk/file_utils/_file_utils.py#L16)**
   - `FileUtils.is_valid(filepath: str, expected_type: Optional[str] = None) -> bool` *(static)* — Check if a path is valid, optionally requiring a specific type ('file' or 'dir').
   - `FileUtils.create_dir(filepath: str) -> None` *(static)* — Create a directory if one doesn't already exist.
+  - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str` *(static)* — Return the next available versioned path for `filepath`.
   - `FileUtils.get_dir_contents(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)` *(static)* — Get the contents of a directory and any of its children.
   - `FileUtils.open_explorer(path: str, create_dir: bool = False, logger=None) -> bool` *(static)* — Open the file explorer at the given path.
   - `FileUtils.get_file(filepath, mode='a+')` *(static)* — Return a file object with the given mode.
@@ -423,7 +424,7 @@ Reusable module attribute resolver for package-style imports.
   - `FileUtils.remap_file_paths(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]` *(static)* — Remap a list of file paths to a new directory while preserving their relative
   - `FileUtils.append_path(cls, path, **kwargs)` *(class)* — Append a directory to the python path.
   - `FileUtils.get_object_path(obj, inc_filename: bool = False) -> str` *(static)* — Retrieve the absolute file path associated with a Python object.
-  - `FileUtils.get_classes_from_path(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)` *(class)* — Scans the specified directory or Python file, loads each file as a module, and retrieves classes fr…
+  - `FileUtils.get_classes_from_path(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)` *(class)* — Scan the specified directory or Python file and retrieve class information from each file.
   - `FileUtils.set_json_file(cls, file)` *(class)* — Set the current json filepath.
   - `FileUtils.get_json_file(cls)` *(class)* — Get the current json filepath.
   - `FileUtils.set_json(cls, key, value, file=None)` *(class)* — Parameters:
@@ -432,9 +433,10 @@ Reusable module attribute resolver for package-style imports.
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
-- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L38)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L41)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+  - `MeshConvert.check_glb_materials(cls, glb_path: str) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
 
 <a id="file_utils--mesh_convert--slots"></a>
 ### `file_utils/mesh_convert/slots.py`
@@ -444,10 +446,10 @@ Reusable module attribute resolver for package-style imports.
   - `MeshConvertSlots.source_dir(self, value: str) -> None`
   - `MeshConvertSlots.fbx_provider(self) -> Optional[Callable[[], Iterable[str]]]` *(property)* — Callable returning FBX paths from the host DCC selection.
   - `MeshConvertSlots.fbx_provider(self, fn: Optional[Callable[[], Iterable[str]]]) -> None`
-  - `MeshConvertSlots.header_init(self, widget) -> None` — Add the global Use-Selection toggle to the header menu.
+  - `MeshConvertSlots.header_init(self, widget) -> None` — Add the From-FBX-references toggle to the header menu.
   - `MeshConvertSlots.tb000_init(self, widget) -> None` — Set up the FBX -> GLB tool button option box.
   - `MeshConvertSlots.tb000(self, widget) -> None` — Convert the selected FBX file(s) to GLB beside their source.
-- **[`class MeshConvertUi`](pythontk/pythontk/file_utils/mesh_convert/slots.py#L208)**
+- **[`class MeshConvertUi`](pythontk/pythontk/file_utils/mesh_convert/slots.py#L291)**
 
 <a id="file_utils--metadata"></a>
 ### `file_utils/metadata.py`
@@ -464,7 +466,7 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
   - `ImgUtils.allow_large_images(cls)` *(class)* — Context manager to safely load very large images.
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
-  - `ImgUtils.enforce_mode(cls, image: Image.Image, target_mode: str, allow_compatible: bool = True) -> Image.Image` *(class)* — Converts image to target_mode, optionally allowing compatible modes to preserve file size.
+  - `ImgUtils.enforce_mode(cls, image: Image.Image, target_mode: str, allow_compatible: bool = False) -> Image.Image` *(class)* — Converts image to target_mode.
   - `ImgUtils.assert_pathlike(obj: object, name: str = 'argument') -> None` *(static)* — Assert that the given object is a valid path-like object.
   - `ImgUtils.create_image(mode, size=(4096, 4096), color=None)` *(static)* — Create a new image.
   - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, **kwargs)` *(class)* — Saves an image to the specified path, with optional mode conversion.
@@ -474,7 +476,7 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.are_identical(cls, imageA, imageB)` *(class)* — Check if two images are the same.
   - `ImgUtils.resize_image(cls, image, x, y)` *(class)* — Returns a resized copy of an image.
   - `ImgUtils.ensure_pot(cls, image: Union[str, Image.Image]) -> Image.Image` *(class)* — Resizes an image to the nearest Power of Two dimensions.
-  - `ImgUtils.set_bit_depth(cls, image, map_type: str) -> object` *(class)* — Sets the bit depth and image mode of an image according to the map type.
+  - `ImgUtils.set_bit_depth(cls, image, map_type: str, allow_palette: bool = False) -> object` *(class)* — Sets the bit depth and image mode of an image according to the map type.
   - `ImgUtils.invert_grayscale_image(cls, image: Union[str, Image.Image]) -> Image.Image` *(class)* — Inverts a grayscale image.
   - `ImgUtils.invert_channels(cls, image, channels='RGBA')` *(class)* — Invert specified channels in an image.
   - `ImgUtils.create_mask(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))` *(class)* — Create mask(s) from the given image(s).
@@ -493,7 +495,7 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.generate_mipmaps(cls, image: Image.Image) -> Image.Image` *(class)* — Generates mipmaps for an image.
   - `ImgUtils.depalettize_image(cls, image: Image.Image) -> Image.Image` *(class)* — Converts a paletted image (Mode P) to RGB or RGBA.
   - `ImgUtils.batch_optimize_textures(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all textures in a directory.
-  - `ImgUtils.optimize_texture(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `ImgUtils.optimize_texture(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
   - `ImgUtils.is_image_constant(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]` *(class)* — Check if an image is constant color.
   - `ImgUtils.get_base_texture_name(cls, filepath_or_filename: str) -> str` *(class)* — Extracts the base texture name from a filename or path,
   - `ImgUtils.extract_channels(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]` *(class)* — Generic channel extraction utility.
@@ -501,7 +503,7 @@ Reusable module attribute resolver for package-style imports.
 <a id="img_utils--map_converter"></a>
 ### `img_utils/map_converter.py`
 
-- **[`class MapConverterSlots(ImgUtils)`](pythontk/pythontk/img_utils/map_converter.py#L13)**
+- **[`class MapConverterSlots(ImgUtils)`](pythontk/pythontk/img_utils/map_converter.py#L14)**
   - `MapConverterSlots.source_dir(self)` *(property)* — Get the starting directory for file dialogs.
   - `MapConverterSlots.source_dir(self, value)` — Set the starting directory for file dialogs.
   - `MapConverterSlots.texture_provider(self)` *(property)* — Callable returning a list of texture paths from the host DCC selection.
@@ -524,7 +526,7 @@ Reusable module attribute resolver for package-style imports.
   - `MapConverterSlots.b010(self)` — Convert Smoothness maps to Roughness maps.
   - `MapConverterSlots.b011(self)` — Convert Roughness maps to Smoothness maps.
   - `MapConverterSlots.b012(self)` — Batch prepare textures for PBR workflow using MapFactory.
-- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L833)**
+- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L865)**
 
 <a id="img_utils--map_factory"></a>
 ### `img_utils/map_factory.py`
@@ -657,7 +659,7 @@ Texture Map Factory for PBR workflow preparation - Refactored.
 
 - **[`class WF`](pythontk/pythontk/img_utils/map_registry.py#L7)** — Workflow identifiers.
 - **[`class MapType`](pythontk/pythontk/img_utils/map_registry.py#L43)** — Defines the properties of a texture map type.
-- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/img_utils/map_registry.py#L65)** — Central registry for map type definitions.
+- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/img_utils/map_registry.py#L66)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
   - `MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]` — Generate the workflow presets dictionary.
@@ -666,6 +668,8 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapRegistry.get_output_fallbacks(self) -> Dict[str, Tuple[str, ...]]` — Generate the output fallback dictionary.
   - `MapRegistry.get_precedence_rules(self) -> Dict[str, List[str]]` — Generate the precedence rules dictionary.
   - `MapRegistry.get_scale_as_mask_types(self) -> List[str]` — Get list of map types that should be scaled as masks.
+  - `MapRegistry.get_resolution_critical_types(self) -> List[str]` — Get list of map types whose surface detail requires full resolution.
+  - `MapRegistry.is_resolution_critical(self, name: str) -> bool` — True when surface detail for ``name`` requires full resolution.
   - `MapRegistry.get_passthrough_maps(self) -> List[str]` — Get list of maps that should be passed through if not consumed.
   - `MapRegistry.get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]` — Generate the map backgrounds dictionary.
   - `MapRegistry.get_map_modes(self) -> Dict[str, str]` — Generate the map modes dictionary.
@@ -797,6 +801,7 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `StrUtils.find_str_and_format(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)` *(class)* — Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…
   - `StrUtils.format_suffix(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str` *(static)* — Re-format the suffix for the given string.
   - `StrUtils.alpha_sequence(index: int) -> str` *(static)* — Excel-column-style alphabetic label for a 0-based index.
+  - `StrUtils.sequential_suffixes(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]` *(static)* — Generate ``count`` sequential labels for naming sibling items.
   - `StrUtils.resolve_name_collisions(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]` *(static)* — Reduce a batch of names to a shared base form, then disambiguate
   - `StrUtils.time_stamp(filepath, stamp='%m-%d-%Y  %H:%M')` *(static)* — Attach or detach a modified timestamp and date to/from a given file path.
 
