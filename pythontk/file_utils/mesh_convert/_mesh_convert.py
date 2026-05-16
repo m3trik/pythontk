@@ -226,6 +226,20 @@ class MeshConvert(HelpMixin):
                 f"FBX2glTF exited 0 but {dst_abs} was not created.\n"
                 f"  stdout: {result.stdout}"
             )
+
+        try:
+            fixes = cls.fix_glb_phantom_opaque_alpha(dst_abs)
+            for fx in fixes:
+                logger.info(
+                    "fix_glb_phantom_opaque_alpha: %s baseColorFactor[3] %.3f -> %.3f (image: %s)",
+                    fx["material"],
+                    fx["old_alpha"],
+                    fx["new_alpha"],
+                    fx["image"],
+                )
+        except Exception as exc:  # noqa: BLE001 — never let post-process kill a successful conversion
+            logger.warning("fix_glb_phantom_opaque_alpha skipped: %s", exc)
+
         return dst_abs
 
     # ------------------------------------------------------------------ #
@@ -376,6 +390,167 @@ class MeshConvert(HelpMixin):
             )
 
         return findings
+
+    @classmethod
+    def fix_glb_phantom_opaque_alpha(cls, glb_path: str) -> List[Dict]:
+        """Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
+
+        When a Maya phong/lambert/blinn shader has its ``.transparency`` fed
+        by a file node's ``.outTransparency``, Maya's FBX exporter writes
+        ``TransparencyFactor=1.0`` (the texture is meant to modulate
+        per-pixel). FBX2glTF then computes
+        ``baseColorFactor[3] = 1 - 1 = 0`` — multiplying every fragment's
+        alpha by zero and rendering the mesh fully invisible regardless of
+        texture content.
+
+        A material is fixed when ALL of:
+            - ``alphaMode`` is BLEND or MASK
+            - ``baseColorFactor[3]`` is ~0
+            - ``baseColorTexture`` exists and references an image with
+              *varying* alpha (a real cutout mask, not uniformly 0 or 255)
+
+        On match, ``baseColorFactor[3]`` is reset to 1.0 so per-pixel alpha
+        from the texture controls visibility as intended.
+
+        Parameters:
+            glb_path: Path to a binary glTF (.glb) file (modified in place).
+
+        Returns:
+            List of fix records. Empty when nothing matched. Each record:
+                material   — material name
+                old_alpha  — original baseColorFactor[3]
+                new_alpha  — 1.0
+                image      — the baseColorTexture image identifier
+        """
+        from io import BytesIO
+
+        try:
+            from PIL import Image
+        except ImportError as exc:
+            raise RuntimeError(
+                "fix_glb_phantom_opaque_alpha requires Pillow (PIL). "
+                "Install it with `pip install pillow`."
+            ) from exc
+
+        if not os.path.isfile(glb_path):
+            raise FileNotFoundError(glb_path)
+
+        with open(glb_path, "rb") as f:
+            magic = f.read(4)
+            if magic != b"glTF":
+                raise ValueError(f"Not a GLB file: {glb_path}")
+            version_bytes = f.read(4)
+            f.read(4)  # total length — recomputed on write
+            chunk0_len = struct.unpack("<I", f.read(4))[0]
+            chunk0_type = f.read(4)
+            if chunk0_type != b"JSON":
+                raise ValueError(f"Malformed GLB: first chunk not JSON ({glb_path})")
+            json_bytes = f.read(chunk0_len)
+            gltf = json.loads(json_bytes.decode("utf-8"))
+            rest = f.read()
+
+        bin_data: Optional[bytes] = None
+        if len(rest) >= 8:
+            bin_len = struct.unpack("<I", rest[:4])[0]
+            if rest[4:8] == b"BIN\x00":
+                bin_data = rest[8 : 8 + bin_len]
+
+        materials = gltf.get("materials", []) or []
+        textures = gltf.get("textures", []) or []
+        images = gltf.get("images", []) or []
+        buffer_views = gltf.get("bufferViews", []) or []
+
+        alpha_extrema_cache: Dict[int, Optional[Tuple[int, int]]] = {}
+
+        def _alpha_extrema(img_idx: int) -> Optional[Tuple[int, int]]:
+            if img_idx in alpha_extrema_cache:
+                return alpha_extrema_cache[img_idx]
+            result: Optional[Tuple[int, int]] = None
+            if img_idx < len(images):
+                img_bytes = cls._extract_image_bytes(
+                    images[img_idx], glb_path, bin_data, buffer_views
+                )
+                if img_bytes:
+                    try:
+                        with Image.open(BytesIO(img_bytes)) as im:
+                            im.load()
+                            has_alpha = im.mode in ("RGBA", "LA", "PA") or (
+                                im.mode == "P" and "transparency" in im.info
+                            )
+                            if has_alpha:
+                                result = im.convert("RGBA").getchannel("A").getextrema()
+                    except Exception as exc:  # noqa: BLE001 — varied decoder errors
+                        logger.debug(
+                            "fix_glb_phantom_opaque_alpha: skipped image %s (%s)",
+                            img_idx,
+                            exc,
+                        )
+            alpha_extrema_cache[img_idx] = result
+            return result
+
+        EPSILON = 1e-4
+        fixes: List[Dict] = []
+        for mi, mat in enumerate(materials):
+            if mat.get("alphaMode") not in ("BLEND", "MASK"):
+                continue
+            pbr = mat.get("pbrMetallicRoughness") or {}
+            bcf = pbr.get("baseColorFactor")
+            if not bcf or len(bcf) < 4 or bcf[3] > EPSILON:
+                continue
+            bct = pbr.get("baseColorTexture")
+            if not bct:
+                continue
+            tex_idx = bct.get("index")
+            if tex_idx is None or tex_idx >= len(textures):
+                continue
+            img_idx = textures[tex_idx].get("source")
+            if img_idx is None:
+                continue
+            extrema = _alpha_extrema(img_idx)
+            # Skip uniform alpha (genuinely-transparent or genuinely-opaque
+            # textures) — only varying alpha indicates a real cutout mask
+            # whose per-pixel control was cancelled by baseColorFactor[3]=0.
+            if extrema is None or extrema[0] == extrema[1]:
+                continue
+
+            old_alpha = bcf[3]
+            bcf[3] = 1.0
+            pbr["baseColorFactor"] = bcf
+            mat["pbrMetallicRoughness"] = pbr
+
+            img_entry = images[img_idx] if img_idx < len(images) else {}
+            fixes.append(
+                {
+                    "material": mat.get("name") or f"<material[{mi}]>",
+                    "old_alpha": old_alpha,
+                    "new_alpha": 1.0,
+                    "image": (
+                        img_entry.get("name")
+                        or img_entry.get("uri")
+                        or f"image[{img_idx}]"
+                    ),
+                }
+            )
+
+        if not fixes:
+            return []
+
+        # Re-serialize JSON (compact) and pad to 4-byte align with 0x20.
+        new_json = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
+        pad = (4 - (len(new_json) % 4)) % 4
+        new_json = new_json + (b" " * pad)
+        new_total = 12 + 8 + len(new_json) + len(rest)
+
+        with open(glb_path, "wb") as f:
+            f.write(b"glTF")
+            f.write(version_bytes)
+            f.write(struct.pack("<I", new_total))
+            f.write(struct.pack("<I", len(new_json)))
+            f.write(b"JSON")
+            f.write(new_json)
+            f.write(rest)
+
+        return fixes
 
     @staticmethod
     def _extract_image_bytes(

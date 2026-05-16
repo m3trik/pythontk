@@ -503,5 +503,103 @@ class MockTextWidget:
         self.messages.append(text)
 
 
+class LogGroupTest(BaseTestCase):
+    """Tests for _log_group: bold title + bar-prefixed indented items.
+
+    Routes through a stream handler so we can assert on the stripped
+    plain-text output that downstream consoles/files see, plus a mock
+    text widget to confirm the HTML emitted to Qt widgets keeps the
+    structure (single QTextBlock per group → continuous left rule).
+    """
+
+    BAR = "▎"  # U+258E LEFT ONE QUARTER BLOCK
+
+    def setUp(self):
+        super().setUp()
+        self.logger = logging.Logger("test_group", logging.DEBUG)
+        self.logger.handlers = []
+        LoggerExt.patch(self.logger)
+        self.stream = io.StringIO()
+        handler = logging.StreamHandler(self.stream)
+        handler.setLevel(logging.DEBUG)
+        # log_group always wraps items in <span> for color; only handlers
+        # configured to strip HTML produce the plain-text form that
+        # console/file consumers see. Match that here so the assertions
+        # check real-world output rather than raw HTML.
+        handler.setFormatter(LevelAwareFormatter(logger=self.logger, strip_html=True))
+        self.logger.addHandler(handler)
+
+    def tearDown(self):
+        for handler in self.logger.handlers[:]:
+            handler.close()
+            self.logger.removeHandler(handler)
+        super().tearDown()
+
+    def test_log_group_prefixes_items_with_bar(self):
+        """Each item line is prefixed with the U+258E bar character."""
+        self.logger.log_group("Header:", ["a.png", "b.png", "c.png"])
+        lines = self.stream.getvalue().split("\n")
+        item_lines = [ln for ln in lines if "png" in ln]
+        self.assertEqual(len(item_lines), 3)
+        for ln in item_lines:
+            self.assertTrue(
+                ln.lstrip().startswith(self.BAR),
+                f"Expected line to start with bar after strip: {ln!r}",
+            )
+
+    def test_log_group_indent_positions_item(self):
+        """Default indent=2 → bar at col 0, item text at col 2."""
+        self.logger.log_group("Header:", ["item"])
+        lines = self.stream.getvalue().split("\n")
+        item_line = next(ln for ln in lines if "item" in ln)
+        # Format: "<bar><space>item" → 3 chars before "item"
+        self.assertEqual(item_line[0], self.BAR)
+        self.assertEqual(item_line[1], " ")
+        self.assertTrue(item_line[2:].startswith("item"))
+
+    def test_log_group_emits_one_log_raw_call(self):
+        """All items + title go through a single _log_raw — critical for
+        the bar to render as a continuous rule in Qt (one QTextBlock).
+        """
+        widget = MockTextWidget()
+        # Swap stream handler for a text-widget handler.
+        for h in self.logger.handlers[:]:
+            self.logger.removeHandler(h)
+        self.logger.addHandler(DefaultTextLogHandler(widget))
+
+        self.logger.log_group("Header:", ["a", "b", "c"])
+        # DefaultTextLogHandler uses a Timer; pump it.
+        import time
+
+        time.sleep(0.05)
+        # Exactly one append() call — the whole group is one message.
+        self.assertEqual(
+            len(widget.messages),
+            1,
+            f"Expected 1 append (single QTextBlock), got {len(widget.messages)}: "
+            f"{widget.messages!r}",
+        )
+        msg = widget.messages[0]
+        # All three items must be in that single message.
+        for token in ("a", "b", "c", "Header:"):
+            self.assertIn(token, msg)
+
+    def test_log_group_empty_items_falls_back_to_title(self):
+        """An empty items list emits the title alone (no bar, no formatting)."""
+        self.logger.log_group("Just a header", [])
+        output = self.stream.getvalue().strip()
+        self.assertEqual(output, "Just a header")
+        self.assertNotIn(self.BAR, output)
+
+    def test_log_group_leading_blank_line(self):
+        """A blank line precedes each group so consecutive groups separate
+        visually rather than butting together.
+        """
+        self.logger.log_group("First:", ["x"])
+        # Output starts with "\n" before the title (the leading "\n" in html).
+        out = self.stream.getvalue()
+        self.assertTrue(out.startswith("\n"), f"Expected leading newline, got {out!r}")
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)
