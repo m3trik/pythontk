@@ -13,6 +13,7 @@ Run with:
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -525,6 +526,191 @@ class TestCheckGlbMaterials(unittest.TestCase):
     def test_raises_on_missing_file(self):
         with self.assertRaises(FileNotFoundError):
             MeshConvert.check_glb_materials(os.path.join(self.tmp, "nope.glb"))
+
+
+class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
+    """Verify the post-conversion fix for the Maya phong → FBX → glTF
+    transparency translation bug, where baseColorFactor[3]=0 cancels the
+    per-pixel alpha of a real cutout mask."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_fix_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _varying_alpha_png():
+        from io import BytesIO
+        from PIL import Image
+        im = Image.new("RGBA", (4, 4))
+        for y in range(4):
+            for x in range(4):
+                im.putpixel((x, y), (200, 100, 50, 30 + 50 * x))
+        buf = BytesIO()
+        im.save(buf, format="PNG")
+        return buf.getvalue()
+
+    @staticmethod
+    def _opaque_alpha_png():
+        from io import BytesIO
+        from PIL import Image
+        im = Image.new("RGBA", (4, 4), (200, 100, 50, 255))
+        buf = BytesIO()
+        im.save(buf, format="PNG")
+        return buf.getvalue()
+
+    def _write_glb(self, name, materials, images, textures, image_blobs):
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as f:
+            f.write(TestCheckGlbMaterials._build_glb(
+                materials=materials,
+                images=images,
+                textures=textures,
+                image_blobs=image_blobs,
+            ))
+        return path
+
+    @staticmethod
+    def _read_alpha_factor(path):
+        with open(path, "rb") as f:
+            f.read(12)
+            chunk0_len = struct.unpack("<I", f.read(4))[0]
+            f.read(4)  # JSON
+            gltf = json.loads(f.read(chunk0_len).decode("utf-8"))
+        return gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][3]
+
+    def test_fixes_blend_with_zero_alpha_and_varying_texture(self):
+        """The bug pattern: BLEND + baseColorFactor[3]=0 + varying-alpha texture."""
+        path = self._write_glb(
+            "buggy.glb",
+            materials=[{
+                "name": "TREELINE_D",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                    "baseColorTexture": {"index": 0},
+                },
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[self._varying_alpha_png()],
+        )
+        fixes = MeshConvert.fix_glb_phantom_opaque_alpha(path)
+        self.assertEqual(len(fixes), 1)
+        self.assertEqual(fixes[0]["material"], "TREELINE_D")
+        self.assertEqual(fixes[0]["new_alpha"], 1.0)
+        self.assertEqual(self._read_alpha_factor(path), 1.0)
+
+    def test_fixes_mask_with_zero_alpha(self):
+        """Same bug under alphaMode=MASK."""
+        path = self._write_glb(
+            "buggy_mask.glb",
+            materials=[{
+                "name": "FoliageMask",
+                "alphaMode": "MASK",
+                "alphaCutoff": 0.5,
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                    "baseColorTexture": {"index": 0},
+                },
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[self._varying_alpha_png()],
+        )
+        fixes = MeshConvert.fix_glb_phantom_opaque_alpha(path)
+        self.assertEqual(len(fixes), 1)
+        self.assertEqual(self._read_alpha_factor(path), 1.0)
+
+    def test_skips_opaque_material(self):
+        """alphaMode=OPAQUE never gets touched."""
+        path = self._write_glb(
+            "opaque.glb",
+            materials=[{
+                "name": "Plain",
+                "alphaMode": "OPAQUE",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                    "baseColorTexture": {"index": 0},
+                },
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[self._varying_alpha_png()],
+        )
+        self.assertEqual(MeshConvert.fix_glb_phantom_opaque_alpha(path), [])
+        self.assertEqual(self._read_alpha_factor(path), 0.0)
+
+    def test_skips_when_factor_already_nonzero(self):
+        """Genuine partial-transparency factor must not be promoted."""
+        path = self._write_glb(
+            "partial.glb",
+            materials=[{
+                "name": "Glass",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 0.5],
+                    "baseColorTexture": {"index": 0},
+                },
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[self._varying_alpha_png()],
+        )
+        self.assertEqual(MeshConvert.fix_glb_phantom_opaque_alpha(path), [])
+        self.assertEqual(self._read_alpha_factor(path), 0.5)
+
+    def test_skips_when_texture_alpha_uniform(self):
+        """Uniformly-opaque alpha (the 'check' bug) is NOT fixed by this pass."""
+        path = self._write_glb(
+            "uniform.glb",
+            materials=[{
+                "name": "UniformAlpha",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                    "baseColorTexture": {"index": 0},
+                },
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[self._opaque_alpha_png()],
+        )
+        self.assertEqual(MeshConvert.fix_glb_phantom_opaque_alpha(path), [])
+        self.assertEqual(self._read_alpha_factor(path), 0.0)
+
+    def test_skips_when_no_base_color_texture(self):
+        """No texture means no per-pixel alpha to recover; leave alone."""
+        path = self._write_glb(
+            "no_tex.glb",
+            materials=[{
+                "name": "NoTex",
+                "alphaMode": "BLEND",
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                },
+            }],
+            images=[],
+            textures=[],
+            image_blobs=[],
+        )
+        self.assertEqual(MeshConvert.fix_glb_phantom_opaque_alpha(path), [])
+
+    def test_returns_empty_when_nothing_to_fix(self):
+        """No changes → no rewrite, empty list returned, file untouched."""
+        path = self._write_glb(
+            "clean.glb",
+            materials=[{
+                "name": "Plain",
+                "alphaMode": "OPAQUE",
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+            }],
+            images=[{"bufferView": 0, "mimeType": "image/png"}],
+            textures=[{"source": 0}],
+            image_blobs=[self._opaque_alpha_png()],
+        )
+        before = open(path, "rb").read()
+        self.assertEqual(MeshConvert.fix_glb_phantom_opaque_alpha(path), [])
+        self.assertEqual(open(path, "rb").read(), before)
 
 
 @unittest.skipUnless(

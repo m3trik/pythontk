@@ -2099,15 +2099,25 @@ class MapFactory(LoggingMixin):
             ext_out = (
                 f".{ext.lower().lstrip('.')}" if ext else original_ext
             )
+            # Idempotent affix application: strip the configured prefix/suffix from
+            # the existing stem before re-applying, so "Optimized_foo" + prefix
+            # "Optimized_" stays "Optimized_foo" (not "Optimized_Optimized_foo").
+            stem_core = StrUtils.strip_known_affix(
+                stem, prefix=prefix or "", suffix=suffix or ""
+            )
             prefix_str = prefix or ""
             suffix_str = f"_{suffix.lstrip('_')}" if suffix else ""
             return os.path.join(
-                directory, f"{prefix_str}{stem}{suffix_str}{ext_out}"
+                directory, f"{prefix_str}{stem_core}{suffix_str}{ext_out}"
             )
 
         # Extract sections from the given path
         directory = FileUtils.format_path(texture_path, "path")
-        base_name = cls.get_base_texture_name(texture_path)
+        # Strip the configured prefix/suffix from the base so we can re-apply
+        # them idempotently below.
+        base_name = cls.get_base_texture_name(
+            texture_path, prefix=prefix or "", suffix=suffix or ""
+        )
         original_ext = FileUtils.format_path(texture_path, "ext")
 
         # Ensure map_type does not start with an underscore
@@ -2132,7 +2142,12 @@ class MapFactory(LoggingMixin):
         return os.path.join(directory, new_name)
 
     @classmethod
-    def get_base_texture_name(cls, filepath_or_filename: str) -> str:
+    def get_base_texture_name(
+        cls,
+        filepath_or_filename: str,
+        prefix: str = "",
+        suffix: str = "",
+    ) -> str:
         """Extracts the base texture name from a filename or path,
         removing known suffixes (e.g., _normal, _roughness).
 
@@ -2142,9 +2157,13 @@ class MapFactory(LoggingMixin):
 
         Parameters:
             filepath_or_filename (str): A texture path or name.
+            prefix (str): Optional user-defined prefix to strip from the resolved base
+                (case-insensitive). Lets callers safely re-apply it without producing
+                e.g. ``Mat_Mat_brick`` when the source filename already had ``Mat_``.
+            suffix (str): Optional user-defined suffix to strip from the resolved base.
 
         Returns:
-            str: The base name without map-type suffix.
+            str: The base name without map-type suffix, with any configured user prefix/suffix removed.
         """
         ImgUtils.assert_pathlike(filepath_or_filename, "filepath_or_filename")
 
@@ -2196,14 +2215,29 @@ class MapFactory(LoggingMixin):
 
         base_name = StrUtils.format_suffix(base_name, strip=full_pattern)
 
-        return base_name.rstrip("_")
+        # Strip any configured user prefix/suffix so callers can re-apply them
+        # idempotently, then collapse a trailing underscore (preserves the
+        # original behavior for filenames like 'foo_.png' even when no affix
+        # was supplied).
+        return StrUtils.strip_known_affix(
+            base_name, prefix=prefix, suffix=suffix
+        ).rstrip("_")
 
     @classmethod
-    def group_textures_by_set(cls, image_paths: List[str]) -> Dict[str, List[str]]:
+    def group_textures_by_set(
+        cls,
+        image_paths: List[str],
+        prefix: str = "",
+        suffix: str = "",
+    ) -> Dict[str, List[str]]:
         """Groups texture maps into sets based on matching base names.
 
         Parameters:
             image_paths (List[str]): A list of full image file paths.
+            prefix (str): Optional prefix to strip from set keys so files like
+                ``Mat_brick_Albedo.png`` and ``brick_Normal.png`` group together
+                when the caller's affix is ``Mat_``.
+            suffix (str): Optional suffix to strip from set keys (same rationale).
 
         Returns:
             Dict[str, List[str]]: A dictionary where:
@@ -2212,8 +2246,9 @@ class MapFactory(LoggingMixin):
         """
         texture_sets = {}
         for path in image_paths:
-            base_name = cls.get_base_texture_name(path)  # Extract base texture name
-            # print(f"[grouping] {path} → {base_name}")
+            base_name = cls.get_base_texture_name(
+                path, prefix=prefix, suffix=suffix
+            )
             if base_name not in texture_sets:
                 texture_sets[base_name] = []
 
@@ -2376,6 +2411,8 @@ class MapFactory(LoggingMixin):
         group_by_set: bool = True,
         max_workers: int = 1,
         progress_callback: Callable = None,
+        prefix: str = "",
+        suffix: str = "",
         **kwargs,
     ) -> Union[List[str], Dict[str, List[str]]]:
         """
@@ -2451,11 +2488,15 @@ class MapFactory(LoggingMixin):
 
         if group_by_set:
             # Group by texture set
-            texture_sets = cls.group_textures_by_set(files)
+            texture_sets = cls.group_textures_by_set(
+                files, prefix=prefix, suffix=suffix
+            )
         else:
             # Treat all files as a single set
             # Use the common prefix or just the first file's base name as the key
-            base_name = cls.get_base_texture_name(files[0])
+            base_name = cls.get_base_texture_name(
+                files[0], prefix=prefix, suffix=suffix
+            )
             texture_sets = {base_name: files}
 
         results = {}
@@ -2824,7 +2865,10 @@ class MapFactory(LoggingMixin):
 
     @classmethod
     def detect_normal_map_format(
-        cls, image: Union[str, "Image.Image"], threshold: float = 0.1
+        cls,
+        image: Union[str, "Image.Image"],
+        threshold: float = 0.25,
+        min_gradient_std: float = 1.0,
     ) -> Optional[str]:
         """Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
 
@@ -2839,7 +2883,14 @@ class MapFactory(LoggingMixin):
 
         Parameters:
             image (str | PIL.Image.Image): Input normal map.
-            threshold (float): Correlation threshold (0.0 to 1.0).
+            threshold (float): Correlation magnitude required to call a format.
+                0.25 is empirically conservative — small biases on near-flat
+                inputs (e.g. baked maps with large neutral backgrounds) can
+                still produce |r| around 0.1, so anything looser is noise.
+            min_gradient_std (float): Per-channel gradient std-dev floor
+                (8-bit units). When both dR/dy and dG/dx are below this floor
+                the image is effectively flat and correlation is meaningless;
+                returns None rather than emitting a confident-looking guess.
 
         Returns:
             str | None: "OpenGL", "DirectX", or None if indeterminate.
@@ -2849,37 +2900,32 @@ class MapFactory(LoggingMixin):
             if img.mode != "RGB":
                 img = img.convert("RGB")
 
-            # Resize for speed if too large (we just need statistics)
             # 512x512 is plenty for statistical analysis
             if max(img.size) > 512:
                 img.thumbnail((512, 512))
 
             arr = np.array(img, dtype=np.float32)
-
-            # Extract R and G channels
             R = arr[:, :, 0]
             G = arr[:, :, 1]
 
-            # Calculate gradients
-            # dR/dy: Gradient of Red in Y direction (axis 0)
-            dRy = np.gradient(R, axis=0)
+            # dR/dy along image rows; dG/dx along image cols.
+            dRy = np.gradient(R, axis=0).ravel()
+            dGx = np.gradient(G, axis=1).ravel()
 
-            # dG/dx: Gradient of Green in X direction (axis 1)
-            dGx = np.gradient(G, axis=1)
+            # Variance floor: flat or near-flat inputs produce meaningless
+            # correlations (often NaN, often spuriously signed).
+            if dRy.std() < min_gradient_std or dGx.std() < min_gradient_std:
+                return None
 
-            # Flatten arrays
-            dRy_flat = dRy.flatten()
-            dGx_flat = dGx.flatten()
-
-            # Calculate correlation coefficient
-            correlation = np.corrcoef(dRy_flat, dGx_flat)[0, 1]
+            correlation = np.corrcoef(dRy, dGx)[0, 1]
+            if not np.isfinite(correlation):
+                return None
 
             if correlation > threshold:
                 return "OpenGL"
-            elif correlation < -threshold:
+            if correlation < -threshold:
                 return "DirectX"
-            else:
-                return None
+            return None
 
         except Exception as e:
             print(f"Error detecting normal map format: {e}")

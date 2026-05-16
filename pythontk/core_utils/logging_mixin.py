@@ -94,13 +94,33 @@ class LoggerExt:
         "NOTICE": "#E5CCFF",  # Pastel lavender
     }
 
-    # HTML Presets for formatting log messages
+    # HTML Presets for formatting log messages.
+    # Block-level tags (<h3>, <blockquote>, <div>) are avoided inside presets
+    # because handlers wrap each record in an inline <span> — nesting a block
+    # element inside an inline element is invalid and Qt's QTextDocument
+    # renders it unpredictably. `header` keeps <h3> deliberately (it has
+    # always been block-level and callers expect the larger heading style).
     HTML_PRESETS = {
         "default": '<span style="color:{color}">{message}</span>',
         "bold": '<span style="color:{color}; font-weight:bold">{message}</span>',
         "italic": '<span style="color:{color}; font-style:italic">{message}</span>',
-        "header": '<br><h3 style="color:{color}">{message}</h3>',
+        # ~1em top margin restores a single line of breathing room above
+        # section headers without re-introducing the doubled gap that the
+        # original `<br><h3>` produced.
+        "header": '<h3 style="color:{color}; margin:1em 0 0.1em 0">{message}</h3>',
         "highlight": '<br><hl style="color:{color}">{message}</hl>',
+        # Slack-style left rule: U+258E "▎" (left one-quarter block) in a
+        # muted gray, paired with a softened message color. The bar reads
+        # as a quiet column when stacked on consecutive lines in a
+        # monospace widget; the message stays legible but recedes from
+        # the prominence of section headers above it. {color} is
+        # intentionally not used — the muted palette is fixed so the
+        # blockquote always reads as secondary content regardless of the
+        # log level it's emitted at.
+        "blockquote": (
+            '<span style="color:#666666">▎</span> '
+            '<span style="color:#AAAAAA">{message}</span>'
+        ),
     }
 
     # Default presets for log levels
@@ -206,6 +226,7 @@ class LoggerExt:
             "progress": LoggerExt._progress,
             "log_box": LoggerExt._log_box,
             "log_divider": LoggerExt._log_divider,
+            "log_group": LoggerExt._log_group,
             "log_raw": LoggerExt._log_raw,
             "hide_logger_name": LoggerExt._hide_logger_name,
             "error_once": LoggerExt._error_once,
@@ -804,6 +825,65 @@ class LoggerExt:
         # No spaces in the tag — _wrap_text splits on spaces and would
         # break the tag if any are present inside attributes.
         return f'<a href="{href}" style="text-decoration:underline">' f"{safe_text}</a>"
+
+    @staticmethod
+    def _log_group(
+        self,
+        title: str,
+        items: List[str],
+        level: str = "INFO",
+        item_color: str = "#888888",
+        indent: int = 2,
+    ) -> None:
+        """Emit a bold title + indented item list as one log entry.
+
+        Renders as a single visual block in HTML widgets — no per-line
+        ``[LEVEL] name:`` prefix, no paragraph margin between items — and
+        as a clean header + indented lines in stripped text output
+        (console, files).
+
+        Use when several related lines belong together (e.g. a category
+        header with its members) rather than as separate log records that
+        each pick up the standard prefix and paragraph spacing.
+
+        Parameters:
+            title:      The group header text.
+            items:      The lines listed under the title.
+            level:      Log level name (``"INFO"``, ``"SUCCESS"``…) — only
+                        used to colour the title; items use ``item_color``.
+            item_color: CSS colour for item lines and the left-rule bar;
+                        muted gray by default so items recede visually
+                        from the title.
+            indent:     Total leading-column position of each item line.
+                        The first column is occupied by a U+258E "▎" left
+                        one-quarter block which acts as a Slack-style
+                        blockquote rule; remaining columns are spaces.
+                        Because the whole group is one ``log_raw`` record
+                        (single QTextBlock with ``white-space:pre``), the
+                        bar characters stack into a continuous vertical
+                        line in monospace — no inter-paragraph gaps.
+        """
+        if not items:
+            LoggerExt._log_raw(self, title)
+            return
+
+        title_color = LoggerExt.get_color(level)
+        # Bar at column 0; pad fills the remaining (indent - 1) columns so
+        # the item text starts at the requested indent column.
+        pad = " " * max(indent - 1, 0)
+        item_lines = "\n".join(
+            f'<span style="color:{item_color}">▎{pad}{item}</span>' for item in items
+        )
+        # Leading "\n" gives one blank line above each group so consecutive
+        # groups (and a group following a regular log line) read as
+        # separate visual chunks. The outer handler wrapper uses
+        # white-space:pre, so the newline renders as a hard line break in
+        # widgets and survives HTML stripping for console/file output.
+        html = (
+            f'\n<span style="color:{title_color}; font-weight:bold">{title}</span>\n'
+            f"{item_lines}"
+        )
+        LoggerExt._log_raw(self, html)
 
     @staticmethod
     def _log_divider(self, width: Optional[int] = None, char: str = "─") -> None:

@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>200</width>
-    <height>374</height>
+    <height>387</height>
    </rect>
   </property>
   <property name="tabShape">
@@ -592,6 +592,22 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
        </widget>
       </item>
       <item>
+       <widget class="Footer" name="footer" native="true">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>19</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>19</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
        <spacer name="verticalSpacer">
         <property name="orientation">
          <enum>Qt::Vertical</enum>
@@ -625,6 +641,11 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
    <extends>QGroupBox</extends>
    <header>uitk.widgets.collapsableGroup.CollapsableGroup.h</header>
    <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>Footer</class>
+   <extends>QWidget</extends>
+   <header>uitk.widgets.footer</header>
   </customwidget>
  </customwidgets>
  <resources/>

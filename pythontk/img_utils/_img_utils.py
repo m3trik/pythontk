@@ -741,6 +741,146 @@ class ImgUtils(HelpMixin):
 
         return im.point(adjust_contrast)  # Pass the contrast filter to im.point.
 
+    @classmethod
+    def gaussian_blur(
+        cls,
+        image: Union[str, "Image.Image", "np.ndarray"],
+        radius: float = 2.0,
+        channel: Optional[str] = None,
+    ) -> Union["Image.Image", "np.ndarray"]:
+        """Apply a Gaussian blur to an image or 2D/3D numpy array.
+
+        Numpy in → numpy out (same dtype / shape); PIL in → PIL out. Choose
+        based on what the caller already holds; no implicit conversion.
+
+        Parameters:
+            image: File path, PIL Image, or numpy array (HxW or HxWxC, uint8/float).
+            radius: Blur radius (PIL units; ~sigma in pixels). 0 returns a copy.
+            channel: For RGBA inputs, optionally restrict the blur to a single
+                channel (``"R"``, ``"G"``, ``"B"``, or ``"A"``) and leave the
+                others untouched. Useful for softening only the alpha of a cutout.
+
+        Returns:
+            Blurred image, in the same form as the input.
+        """
+        if radius <= 0:
+            if isinstance(image, np.ndarray):
+                return image.copy()
+            im = cls.ensure_image(image)
+            return im.copy()
+
+        # Numpy path
+        if isinstance(image, np.ndarray):
+            return cls._gaussian_blur_array(image, radius, channel)
+
+        # PIL path
+        im = cls.ensure_image(image)
+        if channel and im.mode in ("RGBA", "LA"):
+            bands = list(im.split())
+            idx = {"R": 0, "G": 1, "B": 2, "A": 3}.get(channel.upper())
+            if idx is None or idx >= len(bands):
+                raise ValueError(
+                    f"Channel {channel!r} not present in image mode {im.mode!r}"
+                )
+            bands[idx] = bands[idx].filter(ImageFilter.GaussianBlur(radius=radius))
+            return Image.merge(im.mode, bands)
+        return im.filter(ImageFilter.GaussianBlur(radius=radius))
+
+    @staticmethod
+    def _gaussian_blur_array(
+        arr: "np.ndarray", radius: float, channel: Optional[str]
+    ) -> "np.ndarray":
+        """Numpy-array blur via PIL (avoids pulling in scipy/cv2)."""
+        # 2D grayscale
+        if arr.ndim == 2:
+            src = Image.fromarray(arr if arr.dtype == np.uint8 else arr.astype(np.uint8))
+            blurred = src.filter(ImageFilter.GaussianBlur(radius=radius))
+            out = np.asarray(blurred)
+            return out.astype(arr.dtype, copy=False)
+
+        # 3D: HxWxC
+        if arr.ndim == 3:
+            chans = arr.shape[2]
+            mode = {1: "L", 2: "LA", 3: "RGB", 4: "RGBA"}.get(chans)
+            if mode is None:
+                raise ValueError(f"Unsupported channel count: {chans}")
+            src = Image.fromarray(
+                arr if arr.dtype == np.uint8 else arr.astype(np.uint8), mode=mode
+            )
+            if channel and mode in ("RGBA", "LA"):
+                bands = list(src.split())
+                idx = {"R": 0, "G": 1, "B": 2, "A": 3}.get(channel.upper())
+                if idx is None or idx >= len(bands):
+                    raise ValueError(
+                        f"Channel {channel!r} not present in mode {mode!r}"
+                    )
+                bands[idx] = bands[idx].filter(ImageFilter.GaussianBlur(radius=radius))
+                blurred = Image.merge(mode, bands)
+            else:
+                blurred = src.filter(ImageFilter.GaussianBlur(radius=radius))
+            out = np.asarray(blurred)
+            return out.astype(arr.dtype, copy=False)
+
+        raise ValueError(f"Unsupported array shape: {arr.shape}")
+
+    @staticmethod
+    def radial_gradient(
+        size: Tuple[int, int],
+        center: Tuple[float, float] = (0.5, 0.5),
+        max_radius: Optional[float] = None,
+        falloff_power: float = 1.0,
+        invert: bool = False,
+        dtype: type = None,
+    ) -> "np.ndarray":
+        """Generate a normalized radial gradient as a 2D numpy array.
+
+        At the centre the value is 1.0 and it falls toward 0.0 at ``max_radius``
+        (or further). Useful for shadow/vignette opacity masks where a single
+        contact point should be the brightest part and falloff increases with
+        distance.
+
+        Parameters:
+            size: ``(width, height)`` in pixels.
+            center: Origin of the gradient in *normalized* image coords
+                ``(u, v)`` where ``(0,0)`` is top-left and ``(1,1)`` is
+                bottom-right. ``(0.5, 1.0)`` = bottom-centre (common for
+                ground-contact shadows).
+            max_radius: Distance (in pixels) at which the gradient hits 0.
+                ``None`` → image diagonal (full coverage).
+            falloff_power: Exponent applied to the normalized distance before
+                inverting. ``1.0`` = linear; ``<1`` = sharper falloff near the
+                centre; ``>1`` = softer, lingers longer.
+            invert: If True, return ``1 - result`` (centre dark, edges bright).
+            dtype: Output dtype. ``None`` → ``float32``. Pass ``np.uint8`` to
+                get a 0-255 mask ready to use as an alpha channel.
+
+        Returns:
+            2D numpy array shape ``(height, width)`` with values in ``[0, 1]``
+            (or ``[0, 255]`` for uint8).
+        """
+        w, h = int(size[0]), int(size[1])
+        cx = float(center[0]) * (w - 1)
+        cy = float(center[1]) * (h - 1)
+
+        if max_radius is None:
+            max_radius = math.hypot(w - 1, h - 1)
+        max_radius = max(float(max_radius), 1.0)
+
+        y, x = np.ogrid[:h, :w]
+        dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+        norm = np.clip(dist / max_radius, 0.0, 1.0)
+        if falloff_power != 1.0:
+            norm = norm ** float(falloff_power)
+        result = 1.0 - norm
+        if invert:
+            result = 1.0 - result
+
+        if dtype is None or dtype == np.float32:
+            return result.astype(np.float32, copy=False)
+        if dtype == np.uint8:
+            return (result * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+        return result.astype(dtype, copy=False)
+
     @staticmethod
     def convert_rgb_to_gray(data):
         """Convert an RGB Image data array to grayscale.
@@ -1379,7 +1519,12 @@ class ImgUtils(HelpMixin):
             return False, None
 
     @classmethod
-    def get_base_texture_name(cls, filepath_or_filename: str) -> str:
+    def get_base_texture_name(
+        cls,
+        filepath_or_filename: str,
+        prefix: str = "",
+        suffix: str = "",
+    ) -> str:
         """Extracts the base texture name from a filename or path,
         removing known suffixes (e.g., _normal, _roughness).
 
@@ -1389,9 +1534,13 @@ class ImgUtils(HelpMixin):
 
         Parameters:
             filepath_or_filename (str): A texture path or name.
+            prefix (str): Optional user-defined prefix to strip from the resolved base
+                (case-insensitive). Lets callers safely re-apply it without producing
+                e.g. ``Mat_Mat_brick`` when the source filename already had ``Mat_``.
+            suffix (str): Optional user-defined suffix to strip from the resolved base.
 
         Returns:
-            str: The base name without map-type suffix.
+            str: The base name without map-type suffix, with any configured user prefix/suffix removed.
         """
         cls.assert_pathlike(filepath_or_filename, "filepath_or_filename")
 
@@ -1401,12 +1550,12 @@ class ImgUtils(HelpMixin):
         short_suffixes = []
         long_suffixes = []
 
-        for suffixes in cls.map_types.values():
-            for suffix in suffixes:
-                if len(suffix) <= 3:
-                    short_suffixes.append(suffix)
+        for type_aliases in cls.map_types.values():
+            for alias in type_aliases:
+                if len(alias) <= 3:
+                    short_suffixes.append(alias)
                 else:
-                    long_suffixes.append(suffix)
+                    long_suffixes.append(alias)
 
         # Sort by length descending to ensure longest match first
         short_suffixes.sort(key=len, reverse=True)
@@ -1431,8 +1580,8 @@ class ImgUtils(HelpMixin):
                 else:
                     short_parts.append(re.escape(s))
 
-            p = "|".join(short_parts)
-            patterns.append(p)
+            p_short = "|".join(short_parts)
+            patterns.append(p_short)
 
         suffixes_pattern = "|".join(patterns)
 
@@ -1440,7 +1589,13 @@ class ImgUtils(HelpMixin):
         pattern = f"(?:_{suffixes_pattern}|{suffixes_pattern})$"
         base_name = StrUtils.format_suffix(base_name, strip=pattern)
 
-        return base_name.rstrip("_")
+        # Strip any configured user prefix/suffix so callers can re-apply them
+        # idempotently, then collapse a trailing underscore (preserves the
+        # original behavior for filenames like 'foo_.png' even when no affix
+        # was supplied).
+        return StrUtils.strip_known_affix(
+            base_name, prefix=prefix, suffix=suffix
+        ).rstrip("_")
 
     @classmethod
     def extract_channels(

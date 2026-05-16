@@ -906,6 +906,93 @@ class StrUtils(CoreUtils):
         return s + suffix
 
     @staticmethod
+    def strip_known_affix(
+        string: str,
+        prefix: str = "",
+        suffix: str = "",
+    ) -> str:
+        """Strip a configured prefix and/or suffix from a string, case-insensitively.
+
+        Pure primitive: only literal affix matches (plus adjacent ``_`` separators)
+        are removed. Leading/trailing underscores elsewhere in the string are
+        preserved — callers that want a fully scrubbed name should chain
+        ``.strip("_")`` themselves, or use :py:meth:`apply_affix`.
+
+        Matching rules:
+        - Case-insensitive on the affix core (underscores in the supplied affix are
+          treated as separators, not part of the token).
+        - The match consumes any adjacent ``_`` runs on the affix side and tolerates
+          stray ``_`` between the affix and the string boundary
+          (``_Mat_brick`` with prefix ``Mat_`` → ``brick``).
+        - Boundary required: the core must be followed by ``_`` or end-of-string
+          (prefix) / preceded by ``_`` or start-of-string (suffix). This prevents
+          false positives like ``Matte_door`` for prefix ``Mat_``.
+
+        Parameters:
+            string: The string to strip.
+            prefix: Prefix to remove (e.g. ``"Mat_"``). Matched case-insensitively.
+            suffix: Suffix to remove (e.g. ``"_MAT"``). Matched case-insensitively.
+
+        Returns:
+            The string with the configured affixes removed. If neither matches,
+            returns the input unchanged.
+        """
+        import re
+
+        s = string
+        if prefix:
+            core = prefix.strip("_")
+            if core:
+                s = re.sub(
+                    rf"^_*(?i:{re.escape(core)})(?:_+|$)",
+                    "",
+                    s,
+                )
+        if suffix:
+            core = suffix.strip("_")
+            if core:
+                s = re.sub(
+                    rf"(?:_+|^)(?i:{re.escape(core)})_*$",
+                    "",
+                    s,
+                )
+        return s
+
+    @staticmethod
+    def apply_affix(
+        string: str,
+        prefix: str = "",
+        suffix: str = "",
+    ) -> str:
+        """Idempotently apply a prefix and/or suffix to a string.
+
+        If both ``prefix`` and ``suffix`` are empty, returns ``string`` unchanged
+        (no implicit underscore cleanup). Otherwise strips any pre-existing
+        occurrence of the configured affixes via :py:meth:`strip_known_affix`,
+        cleans dangling separator underscores on the affix side(s), and applies
+        the affixes. Safe to call repeatedly without producing ``Mat_Mat_brick``
+        duplicates or ``Mat_brick_`` trailing-underscore artifacts.
+
+        Parameters:
+            string: The base string.
+            prefix: Prefix to apply (e.g. ``"Mat_"``).
+            suffix: Suffix to apply (e.g. ``"_MAT"``).
+
+        Returns:
+            ``f"{prefix}{core}{suffix}"`` with no duplicate affixes and no
+            dangling underscores between the affixes and the core. Internal
+            underscores in the core are preserved.
+        """
+        if not prefix and not suffix:
+            return string
+        core = StrUtils.strip_known_affix(string, prefix=prefix, suffix=suffix)
+        if prefix:
+            core = core.lstrip("_")
+        if suffix:
+            core = core.rstrip("_")
+        return f"{prefix}{core}{suffix}"
+
+    @staticmethod
     def alpha_sequence(index: int) -> str:
         """Excel-column-style alphabetic label for a 0-based index.
 

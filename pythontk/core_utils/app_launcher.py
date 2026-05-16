@@ -16,7 +16,7 @@ class AppLauncher:
     """
 
     @staticmethod
-    def launch(app_identifier, args=None, cwd=None, detached=True):
+    def launch(app_identifier, args=None, cwd=None, detached=True, env=None):
         """
         Launches an application.
 
@@ -24,6 +24,8 @@ class AppLauncher:
         :param args: A list of arguments to pass to the application.
         :param cwd: The working directory for the application.
         :param detached: If True, launches as a separate process (application keeps running if script ends).
+        :param env: Optional mapping of environment variables for the child process.
+                    If None, the child inherits the current process's environment.
         :return: The subprocess.Popen object or None if launch failed.
         """
         system = platform.system().lower()
@@ -44,6 +46,9 @@ class AppLauncher:
             logger.debug(f"Launching: {cmd} (Detached: {detached})")
 
             kwargs = {"cwd": cwd, "shell": False}
+
+            if env is not None:
+                kwargs["env"] = env
 
             if detached:
                 if system == "windows":
