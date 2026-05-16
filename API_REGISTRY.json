@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-05-14",
+  "generated_at": "2026-05-16",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -505,7 +505,7 @@
               "name": "launch",
               "qualname": "AppLauncher.launch",
               "kind": "staticmethod",
-              "signature": "(app_identifier, args=None, cwd=None, detached=True)",
+              "signature": "(app_identifier, args=None, cwd=None, detached=True, env=None)",
               "summary": "Launches an application.",
               "line": 19,
               "deprecated": false
@@ -516,7 +516,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier, args=None, cwd=None, timeout=None)",
               "summary": "Execute an application synchronously and return its result.",
-              "line": 66,
+              "line": 71,
               "deprecated": false
             },
             {
@@ -525,7 +525,7 @@
               "kind": "staticmethod",
               "signature": "(process, timeout=15, check_fn=None)",
               "summary": "Waits until the application is ready.",
-              "line": 104,
+              "line": 109,
               "deprecated": false
             },
             {
@@ -534,7 +534,7 @@
               "kind": "staticmethod",
               "signature": "(pid)",
               "summary": "Returns a list of window titles owned by the given PID.",
-              "line": 184,
+              "line": 189,
               "deprecated": false
             },
             {
@@ -543,7 +543,7 @@
               "kind": "staticmethod",
               "signature": "(path, user_scope=True)",
               "summary": "Appends a directory to the system PATH.",
-              "line": 217,
+              "line": 222,
               "deprecated": false
             },
             {
@@ -552,7 +552,7 @@
               "kind": "staticmethod",
               "signature": "(root_paths, executable_name, depth=3)",
               "summary": "Scans directories for a specific executable.",
-              "line": 267,
+              "line": 272,
               "deprecated": false
             },
             {
@@ -561,7 +561,7 @@
               "kind": "staticmethod",
               "signature": "(path)",
               "summary": "Checks if the path is permanently stored in the system configuration (e.g.",
-              "line": 306,
+              "line": 311,
               "deprecated": false
             },
             {
@@ -570,7 +570,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier)",
               "summary": "Attempts to locate the executable for the given application identifier.",
-              "line": 359,
+              "line": 364,
               "deprecated": false
             },
             {
@@ -579,7 +579,7 @@
               "kind": "staticmethod",
               "signature": "(process_name)",
               "summary": "Returns a list of PIDs of running processes matching the given name.",
-              "line": 386,
+              "line": 391,
               "deprecated": false
             },
             {
@@ -588,7 +588,7 @@
               "kind": "staticmethod",
               "signature": "(pid, force=False)",
               "summary": "Terminates the process with the given PID.",
-              "line": 438,
+              "line": 443,
               "deprecated": false
             }
           ]
@@ -1539,7 +1539,7 @@
               "kind": "classmethod",
               "signature": "(cls, logger: internal_logging.Logger) -> None",
               "summary": "Patch the logger with additional methods and setup.",
-              "line": 122,
+              "line": 142,
               "deprecated": false
             },
             {
@@ -1548,7 +1548,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: str) -> str",
               "summary": "Get the color code for a given log level.",
-              "line": 1024,
+              "line": 1104,
               "deprecated": false
             },
             {
@@ -1557,7 +1557,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, format_str: str) -> None",
               "summary": "Register a new HTML preset.",
-              "line": 1041,
+              "line": 1121,
               "deprecated": false
             },
             {
@@ -1566,7 +1566,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str) -> str",
               "summary": "Get an HTML preset by name.",
-              "line": 1046,
+              "line": 1126,
               "deprecated": false
             },
             {
@@ -1575,7 +1575,7 @@
               "kind": "classmethod",
               "signature": "(cls, message: str, level: str, preset: str = None) -> str",
               "summary": "Format a message using HTML presets.",
-              "line": 1051,
+              "line": 1131,
               "deprecated": false
             }
           ]
@@ -1583,7 +1583,7 @@
         {
           "name": "DefaultTextLogHandler",
           "summary": "A generic thread-safe logging handler that writes logs to any widget",
-          "line": 1066,
+          "line": 1146,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -1594,7 +1594,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1079,
+              "line": 1159,
               "deprecated": false
             },
             {
@@ -1603,7 +1603,7 @@
               "kind": "method",
               "signature": "(self, level: str) -> str",
               "summary": "",
-              "line": 1114,
+              "line": 1194,
               "deprecated": false
             }
           ]
@@ -1611,7 +1611,7 @@
         {
           "name": "TableMixin",
           "summary": "Mixin for formatting data as ASCII tables.",
-          "line": 1118,
+          "line": 1198,
           "bases": [],
           "members": [
             {
@@ -1620,7 +1620,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str",
               "summary": "Formats a list of lists as an ASCII table.",
-              "line": 1121,
+              "line": 1201,
               "deprecated": false
             },
             {
@@ -1629,7 +1629,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None",
               "summary": "Logs a formatted table.",
-              "line": 1219,
+              "line": 1299,
               "deprecated": false
             }
           ]
@@ -1637,7 +1637,7 @@
         {
           "name": "LoggingMixin",
           "summary": "Mixin class for logging utilities.",
-          "line": 1272,
+          "line": 1352,
           "bases": [
             "TableMixin"
           ],
@@ -1648,7 +1648,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1293,
+              "line": 1373,
               "deprecated": false
             },
             {
@@ -1657,7 +1657,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1309,
+              "line": 1389,
               "deprecated": false
             },
             {
@@ -1666,7 +1666,7 @@
               "kind": "method",
               "signature": "(cls)",
               "summary": "Access to Python's internal logging module (aliased).",
-              "line": 1320,
+              "line": 1400,
               "deprecated": false
             },
             {
@@ -1675,7 +1675,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: int | str)",
               "summary": "Set log level for the class logger and its handlers.",
-              "line": 1325,
+              "line": 1405,
               "deprecated": false
             }
           ]
@@ -2492,7 +2492,16 @@
               "kind": "classmethod",
               "signature": "(cls, glb_path: str) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 236,
+              "line": 250,
+              "deprecated": false
+            },
+            {
+              "name": "fix_glb_phantom_opaque_alpha",
+              "qualname": "MeshConvert.fix_glb_phantom_opaque_alpha",
+              "kind": "classmethod",
+              "signature": "(cls, glb_path: str) -> List[Dict]",
+              "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
+              "line": 395,
               "deprecated": false
             }
           ]
@@ -2840,12 +2849,30 @@
               "deprecated": false
             },
             {
+              "name": "gaussian_blur",
+              "qualname": "ImgUtils.gaussian_blur",
+              "kind": "classmethod",
+              "signature": "(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']",
+              "summary": "Apply a Gaussian blur to an image or 2D/3D numpy array.",
+              "line": 745,
+              "deprecated": false
+            },
+            {
+              "name": "radial_gradient",
+              "qualname": "ImgUtils.radial_gradient",
+              "kind": "staticmethod",
+              "signature": "(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'",
+              "summary": "Generate a normalized radial gradient as a 2D numpy array.",
+              "line": 827,
+              "deprecated": false
+            },
+            {
               "name": "convert_rgb_to_gray",
               "qualname": "ImgUtils.convert_rgb_to_gray",
               "kind": "staticmethod",
               "signature": "(data)",
               "summary": "Convert an RGB Image data array to grayscale.",
-              "line": 745,
+              "line": 885,
               "deprecated": false
             },
             {
@@ -2854,7 +2881,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Manually convert the image to a NumPy array, iterate over the pixels",
-              "line": 769,
+              "line": 909,
               "deprecated": false
             },
             {
@@ -2863,7 +2890,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert to 8 bit 'L' grayscale.",
-              "line": 797,
+              "line": 937,
               "deprecated": false
             },
             {
@@ -2872,7 +2899,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 813,
+              "line": 953,
               "deprecated": false
             },
             {
@@ -2881,7 +2908,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 915,
+              "line": 1055,
               "deprecated": false
             },
             {
@@ -2890,7 +2917,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 1065,
+              "line": 1205,
               "deprecated": false
             },
             {
@@ -2899,7 +2926,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 1077,
+              "line": 1217,
               "deprecated": false
             },
             {
@@ -2908,7 +2935,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Generates mipmaps for an image.",
-              "line": 1088,
+              "line": 1228,
               "deprecated": false
             },
             {
@@ -2917,7 +2944,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 1109,
+              "line": 1249,
               "deprecated": false
             },
             {
@@ -2926,7 +2953,7 @@
               "kind": "classmethod",
               "signature": "(cls, directory: str, **kwargs)",
               "summary": "Batch optimizes all textures in a directory.",
-              "line": 1129,
+              "line": 1269,
               "deprecated": false
             },
             {
@@ -2935,7 +2962,7 @@
               "kind": "classmethod",
               "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str",
               "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
-              "line": 1147,
+              "line": 1287,
               "deprecated": false
             },
             {
@@ -2944,16 +2971,16 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 1341,
+              "line": 1481,
               "deprecated": false
             },
             {
               "name": "get_base_texture_name",
               "qualname": "ImgUtils.get_base_texture_name",
               "kind": "classmethod",
-              "signature": "(cls, filepath_or_filename: str) -> str",
+              "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 1382,
+              "line": 1522,
               "deprecated": false
             },
             {
@@ -2962,7 +2989,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 1446,
+              "line": 1601,
               "deprecated": false
             }
           ]
@@ -3896,18 +3923,18 @@
               "name": "get_base_texture_name",
               "qualname": "MapFactory.get_base_texture_name",
               "kind": "classmethod",
-              "signature": "(cls, filepath_or_filename: str) -> str",
+              "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 2135,
+              "line": 2145,
               "deprecated": false
             },
             {
               "name": "group_textures_by_set",
               "qualname": "MapFactory.group_textures_by_set",
               "kind": "classmethod",
-              "signature": "(cls, image_paths: List[str]) -> Dict[str, List[str]]",
+              "signature": "(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]",
               "summary": "Groups texture maps into sets based on matching base names.",
-              "line": 2202,
+              "line": 2227,
               "deprecated": false
             },
             {
@@ -3916,7 +3943,7 @@
               "kind": "classmethod",
               "signature": "(cls, files, types='')",
               "summary": "Parameters:",
-              "line": 2225,
+              "line": 2260,
               "deprecated": false
             },
             {
@@ -3925,7 +3952,7 @@
               "kind": "classmethod",
               "signature": "(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]",
               "summary": "Sort image files by map type based on the input format.",
-              "line": 2240,
+              "line": 2275,
               "deprecated": false
             },
             {
@@ -3934,7 +3961,7 @@
               "kind": "classmethod",
               "signature": "(cls, files, map_types)",
               "summary": "Check if the given images contain the given map types.",
-              "line": 2275,
+              "line": 2310,
               "deprecated": false
             },
             {
@@ -3943,7 +3970,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Check the map type for one of the normal values in map_types.",
-              "line": 2302,
+              "line": 2337,
               "deprecated": false
             },
             {
@@ -3952,7 +3979,7 @@
               "kind": "classmethod",
               "signature": "(cls, handler_class: Type[WorkflowHandler])",
               "summary": "Register a custom workflow handler (extensibility).",
-              "line": 2321,
+              "line": 2356,
               "deprecated": false
             },
             {
@@ -3961,7 +3988,7 @@
               "kind": "classmethod",
               "signature": "(cls, conversion: MapConversion)",
               "summary": "Register a custom map conversion (extensibility).",
-              "line": 2326,
+              "line": 2361,
               "deprecated": false
             },
             {
@@ -3970,7 +3997,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_type: str) -> Tuple[str, ...]",
               "summary": "Get fallback map types for a given map type.",
-              "line": 2331,
+              "line": 2366,
               "deprecated": false
             },
             {
@@ -3979,7 +4006,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, List[str]]",
               "summary": "Returns a dictionary of map precedence rules.",
-              "line": 2343,
+              "line": 2378,
               "deprecated": false
             },
             {
@@ -3988,16 +4015,16 @@
               "kind": "classmethod",
               "signature": "(cls, sorted_maps: Dict[str, List[str]]) -> None",
               "summary": "Filters out maps that are rendered redundant by other present maps (e.g.",
-              "line": 2351,
+              "line": 2386,
               "deprecated": false
             },
             {
               "name": "prepare_maps",
               "qualname": "MapFactory.prepare_maps",
               "kind": "classmethod",
-              "signature": "(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]",
+              "signature": "(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', **kwargs) -> Union[List[str], Dict[str, List[str]]]",
               "summary": "Main factory method.",
-              "line": 2372,
+              "line": 2407,
               "deprecated": false
             },
             {
@@ -4006,7 +4033,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…",
-              "line": 2714,
+              "line": 2755,
               "deprecated": false
             },
             {
@@ -4015,16 +4042,16 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.",
-              "line": 2772,
+              "line": 2813,
               "deprecated": false
             },
             {
               "name": "detect_normal_map_format",
               "qualname": "MapFactory.detect_normal_map_format",
               "kind": "classmethod",
-              "signature": "(cls, image: Union[str, 'Image.Image'], threshold: float = 0.1) -> Optional[str]",
+              "signature": "(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]",
               "summary": "Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.",
-              "line": 2826,
+              "line": 2867,
               "deprecated": false
             },
             {
@@ -4033,7 +4060,7 @@
               "kind": "classmethod",
               "signature": "(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.",
-              "line": 2889,
+              "line": 2935,
               "deprecated": false
             },
             {
@@ -4042,7 +4069,7 @@
               "kind": "classmethod",
               "signature": "(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a bump/height map to a tangent-space normal map.",
-              "line": 2963,
+              "line": 3009,
               "deprecated": false
             },
             {
@@ -4051,7 +4078,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]",
               "summary": "Extracts gloss from a specific channel in the specular map.",
-              "line": 3118,
+              "line": 3164,
               "deprecated": false
             },
             {
@@ -4060,7 +4087,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]",
               "summary": "Converts Specular/Glossiness maps to PBR Metal/Rough.",
-              "line": 3152,
+              "line": 3198,
               "deprecated": false
             },
             {
@@ -4069,7 +4096,7 @@
               "kind": "classmethod",
               "signature": "(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'",
               "summary": "Computes Base Color from Specular workflow with better metal handling.",
-              "line": 3244,
+              "line": 3290,
               "deprecated": false
             },
             {
@@ -4078,7 +4105,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'",
               "summary": "Creates a metallic map from a specular (and optional glossiness) map.",
-              "line": 3300,
+              "line": 3346,
               "deprecated": false
             },
             {
@@ -4087,7 +4114,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'",
               "summary": "Estimates roughness from a specular map.",
-              "line": 3345,
+              "line": 3391,
               "deprecated": false
             },
             {
@@ -4096,7 +4123,7 @@
               "kind": "classmethod",
               "signature": "(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'",
               "summary": "Converts a Base Color map to a true Albedo map by:",
-              "line": 3393,
+              "line": 3439,
               "deprecated": false
             },
             {
@@ -4105,7 +4132,7 @@
               "kind": "staticmethod",
               "signature": "(map_type: str, available: dict) -> Optional[Any]",
               "summary": "Get the converted map based on the given map type and available maps.",
-              "line": 3436,
+              "line": 3482,
               "deprecated": false
             },
             {
@@ -4114,7 +4141,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Packs Metallic (R), AO (G), Detail (B), and Smoothness/Roughness (A) into a single MSAO texture.",
-              "line": 3484,
+              "line": 3530,
               "deprecated": false
             },
             {
@@ -4123,7 +4150,7 @@
               "kind": "classmethod",
               "signature": "(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Smoothness map to a Roughness map by inverting the grayscale values.",
-              "line": 3569,
+              "line": 3615,
               "deprecated": false
             },
             {
@@ -4132,7 +4159,7 @@
               "kind": "classmethod",
               "signature": "(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Roughness map to a Smoothness map by inverting the grayscale values.",
-              "line": 3622,
+              "line": 3668,
               "deprecated": false
             },
             {
@@ -4141,7 +4168,7 @@
               "kind": "classmethod",
               "signature": "(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.",
-              "line": 3675,
+              "line": 3721,
               "deprecated": false
             },
             {
@@ -4150,7 +4177,7 @@
               "kind": "classmethod",
               "signature": "(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpacks Metallic (R), AO (G), and Smoothness (A) maps from a combined MSAO texture.",
-              "line": 3705,
+              "line": 3751,
               "deprecated": false
             },
             {
@@ -4159,7 +4186,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.",
-              "line": 3735,
+              "line": 3781,
               "deprecated": false
             },
             {
@@ -4168,7 +4195,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Metallic (RGB) and Smoothness (A) from a combined map.",
-              "line": 3760,
+              "line": 3806,
               "deprecated": false
             },
             {
@@ -4177,7 +4204,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Specular (RGB) and Glossiness (A) from a combined map.",
-              "line": 3786,
+              "line": 3832,
               "deprecated": false
             }
           ]
@@ -5337,12 +5364,30 @@
               "deprecated": false
             },
             {
+              "name": "strip_known_affix",
+              "qualname": "StrUtils.strip_known_affix",
+              "kind": "staticmethod",
+              "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
+              "summary": "Strip a configured prefix and/or suffix from a string, case-insensitively.",
+              "line": 909,
+              "deprecated": false
+            },
+            {
+              "name": "apply_affix",
+              "qualname": "StrUtils.apply_affix",
+              "kind": "staticmethod",
+              "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
+              "summary": "Idempotently apply a prefix and/or suffix to a string.",
+              "line": 962,
+              "deprecated": false
+            },
+            {
               "name": "alpha_sequence",
               "qualname": "StrUtils.alpha_sequence",
               "kind": "staticmethod",
               "signature": "(index: int) -> str",
               "summary": "Excel-column-style alphabetic label for a 0-based index.",
-              "line": 909,
+              "line": 996,
               "deprecated": false
             },
             {
@@ -5351,7 +5396,7 @@
               "kind": "staticmethod",
               "signature": "(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]",
               "summary": "Generate ``count`` sequential labels for naming sibling items.",
-              "line": 937,
+              "line": 1024,
               "deprecated": false
             },
             {
@@ -5360,7 +5405,7 @@
               "kind": "staticmethod",
               "signature": "(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]",
               "summary": "Reduce a batch of names to a shared base form, then disambiguate",
-              "line": 978,
+              "line": 1065,
               "deprecated": false
             },
             {
@@ -5369,7 +5414,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, stamp='%m-%d-%Y  %H:%M')",
               "summary": "Attach or detach a modified timestamp and date to/from a given file path.",
-              "line": 1081,
+              "line": 1168,
               "deprecated": false
             }
           ]
