@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-05-16_
+_Generated: 2026-05-17_
 
 ## Index
 
@@ -477,6 +477,7 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.are_identical(cls, imageA, imageB)` *(class)* — Check if two images are the same.
   - `ImgUtils.resize_image(cls, image, x, y)` *(class)* — Returns a resized copy of an image.
   - `ImgUtils.ensure_pot(cls, image: Union[str, Image.Image]) -> Image.Image` *(class)* — Resizes an image to the nearest Power of Two dimensions.
+  - `ImgUtils.format_bit_depth(cls, mode_or_image) -> str` *(class)* — Format bit depth as e.g.
   - `ImgUtils.set_bit_depth(cls, image, map_type: str, allow_palette: bool = False) -> object` *(class)* — Sets the bit depth and image mode of an image according to the map type.
   - `ImgUtils.invert_grayscale_image(cls, image: Union[str, Image.Image]) -> Image.Image` *(class)* — Inverts a grayscale image.
   - `ImgUtils.invert_channels(cls, image, channels='RGBA')` *(class)* — Invert specified channels in an image.
