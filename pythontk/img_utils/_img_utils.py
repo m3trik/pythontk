@@ -51,6 +51,8 @@ class ImgUtils(HelpMixin):
         "I;16S": 16,
         "I;16BS": 16,
         "I;16LS": 16,
+        "LA": 16,
+        "PA": 16,
         "RGB": 24,
         "RGBA": 32,
         "CMYK": 32,
@@ -460,6 +462,18 @@ class ImgUtils(HelpMixin):
 
         print(f"Resizing to POT: {width}x{height} -> {new_width}x{new_height}")
         return im.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+    @classmethod
+    def format_bit_depth(cls, mode_or_image) -> str:
+        """Format bit depth as e.g. '24bit (8x3)' — total bits with (per-channel x channels) breakdown."""
+        mode = mode_or_image.mode if hasattr(mode_or_image, "mode") else mode_or_image
+        total = cls.bit_depth.get(mode, 8)
+        try:
+            channels = Image.getmodebands(mode) if Image else 1
+        except (KeyError, ValueError):
+            channels = 1
+        bpc = total // channels if channels else total
+        return f"{total}bit ({bpc}x{channels})"
 
     @classmethod
     def set_bit_depth(cls, image, map_type: str, allow_palette: bool = False) -> object:
@@ -1473,7 +1487,8 @@ class ImgUtils(HelpMixin):
         image.save(final_output_path, format=output_type or image.format, **save_kwargs)
 
         print(
-            f"Saved optimized texture: {final_output_path} ({image.size[0]}x{image.size[1]})"
+            f"Saved optimized texture: {final_output_path} "
+            f"({image.size[0]}x{image.size[1]}, {cls.format_bit_depth(image)})"
         )
         return final_output_path
 

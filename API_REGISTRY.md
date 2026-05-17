@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-05-14_
+_Generated: 2026-05-16_
 
 ## Index
 
@@ -127,7 +127,7 @@ Lightweight, DCC-agnostic color primitives.
 ### `core_utils/app_launcher.py`
 
 - **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L13)** — A utility class for launching applications on Windows and Linux.
-  - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True)` *(static)* — Launches an application.
+  - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
   - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None)` *(static)* — Execute an application synchronously and return its result.
   - `AppLauncher.wait_for_ready(process, timeout=15, check_fn=None)` *(static)* — Waits until the application is ready.
   - `AppLauncher.get_window_titles(pid)` *(static)* — Returns a list of window titles owned by the given PID.
@@ -306,13 +306,13 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1066)** — A generic thread-safe logging handler that writes logs to any widget
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1146)** — A generic thread-safe logging handler that writes logs to any widget
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1118)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1198)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1272)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1352)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -437,6 +437,7 @@ Reusable module attribute resolver for package-style imports.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.check_glb_materials(cls, glb_path: str) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
+  - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb_path: str) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
 
 <a id="file_utils--mesh_convert--slots"></a>
 ### `file_utils/mesh_convert/slots.py`
@@ -485,6 +486,8 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.get_background(cls, image, mode=None, average=False)` *(class)* — Sample the pixel values of each corner of an image and if they are uniform, return the result.
   - `ImgUtils.replace_color(cls, image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None)` *(class)* — Parameters:
   - `ImgUtils.set_contrast(cls, image, level=255)` *(class)* — Parameters:
+  - `ImgUtils.gaussian_blur(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']` *(class)* — Apply a Gaussian blur to an image or 2D/3D numpy array.
+  - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
   - `ImgUtils.convert_rgb_to_gray(data)` *(static)* — Convert an RGB Image data array to grayscale.
   - `ImgUtils.convert_rgb_to_hsv(cls, image)` *(class)* — Manually convert the image to a NumPy array, iterate over the pixels
   - `ImgUtils.convert_i_to_l(cls, image)` *(class)* — Convert to 8 bit 'L' grayscale.
@@ -497,7 +500,7 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.batch_optimize_textures(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all textures in a directory.
   - `ImgUtils.optimize_texture(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
   - `ImgUtils.is_image_constant(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]` *(class)* — Check if an image is constant color.
-  - `ImgUtils.get_base_texture_name(cls, filepath_or_filename: str) -> str` *(class)* — Extracts the base texture name from a filename or path,
+  - `ImgUtils.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
   - `ImgUtils.extract_channels(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]` *(class)* — Generic channel extraction utility.
 
 <a id="img_utils--map_converter"></a>
@@ -610,8 +613,8 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapFactory.register_conversions(cls, registry: ConversionRegistry)` *(class)* — Register all standard PBR conversions.
   - `MapFactory.resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str` *(class)* — Resolves the map type from a filename or alias using `map_types`.
   - `MapFactory.resolve_texture_filename(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str` *(class)* — Generates a correctly formatted filename while preserving the original suffix and file extension.
-  - `MapFactory.get_base_texture_name(cls, filepath_or_filename: str) -> str` *(class)* — Extracts the base texture name from a filename or path,
-  - `MapFactory.group_textures_by_set(cls, image_paths: List[str]) -> Dict[str, List[str]]` *(class)* — Groups texture maps into sets based on matching base names.
+  - `MapFactory.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
+  - `MapFactory.group_textures_by_set(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]` *(class)* — Groups texture maps into sets based on matching base names.
   - `MapFactory.filter_images_by_type(cls, files, types='')` *(class)* — Parameters:
   - `MapFactory.sort_images_by_type(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]` *(class)* — Sort image files by map type based on the input format.
   - `MapFactory.contains_map_types(cls, files, map_types)` *(class)* — Check if the given images contain the given map types.
@@ -621,10 +624,10 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapFactory.get_map_fallbacks(cls, map_type: str) -> Tuple[str, ...]` *(class)* — Get fallback map types for a given map type.
   - `MapFactory.get_precedence_rules(cls) -> Dict[str, List[str]]` *(class)* — Returns a dictionary of map precedence rules.
   - `MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, List[str]]) -> None` *(class)* — Filters out maps that are rendered redundant by other present maps (e.g.
-  - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
+  - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
   - `MapFactory.pack_transparency_into_albedo(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…
   - `MapFactory.pack_smoothness_into_metallic(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
-  - `MapFactory.detect_normal_map_format(cls, image: Union[str, 'Image.Image'], threshold: float = 0.1) -> Optional[str]` *(class)* — Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
+  - `MapFactory.detect_normal_map_format(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]` *(class)* — Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
   - `MapFactory.convert_normal_map_format(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.
   - `MapFactory.convert_bump_to_normal(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Convert a bump/height map to a tangent-space normal map.
   - `MapFactory.extract_gloss_from_spec(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]` *(class)* — Extracts gloss from a specific channel in the specular map.
@@ -800,6 +803,8 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `StrUtils.find_str(find, strings, regex=False, ignore_case=False)` *(static)* — Filter for elements that containing the given string in a list of strings.
   - `StrUtils.find_str_and_format(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)` *(class)* — Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…
   - `StrUtils.format_suffix(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str` *(static)* — Re-format the suffix for the given string.
+  - `StrUtils.strip_known_affix(string: str, prefix: str = '', suffix: str = '') -> str` *(static)* — Strip a configured prefix and/or suffix from a string, case-insensitively.
+  - `StrUtils.apply_affix(string: str, prefix: str = '', suffix: str = '') -> str` *(static)* — Idempotently apply a prefix and/or suffix to a string.
   - `StrUtils.alpha_sequence(index: int) -> str` *(static)* — Excel-column-style alphabetic label for a 0-based index.
   - `StrUtils.sequential_suffixes(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]` *(static)* — Generate ``count`` sequential labels for naming sibling items.
   - `StrUtils.resolve_name_collisions(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]` *(static)* — Reduce a batch of names to a shared base form, then disambiguate
