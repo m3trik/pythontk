@@ -1,5 +1,22 @@
 # !/usr/bin/python
 # coding=utf-8
+"""Map Converter UI — slot file for ``map_converter.ui``.
+
+Bundles texture-map conversion, channel packing, PBR-workflow prep, and bulk
+optimization into a single uitk Switchboard panel. The heavy lifting lives in
+``MapFactory`` / ``ImgUtils`` — this module is the UI wiring only.
+
+Two public classes:
+    MapConverterSlots
+        Switchboard slot class. Method names map to widget ``objectName`` in
+        the .ui file: ``tb*`` = toolbutton (has an options menu populated by
+        the matching ``*_init`` hook), ``b*`` = plain button. Host integrations
+        can inject a ``texture_provider`` callable to read the DCC selection.
+    MapConverterUi
+        Standalone launcher. ``MapConverterUi()`` returns a wired-up UI; run
+        the module directly to open it outside any host (``python -m
+        pythontk.img_utils.map_converter``).
+"""
 import os
 import tempfile
 from typing import List, Union, Tuple, Dict, Any
@@ -12,6 +29,14 @@ from pythontk.file_utils._file_utils import FileUtils
 
 
 class MapConverterSlots(ImgUtils):
+    """Switchboard slots for ``map_converter.ui``.
+
+    Slot methods are bound to widgets by name. The ``Use Selection`` header
+    toggle (installed by :meth:`header_init`) routes every tool through
+    :attr:`texture_provider` when set; otherwise tools fall back to a file
+    dialog. Set :attr:`source_dir` to seed the initial dialog directory.
+    """
+
     def __init__(self, switchboard, **kwargs):
         super().__init__()
 
@@ -118,7 +143,7 @@ class MapConverterSlots(ImgUtils):
         return valid
 
     def tb000_init(self, widget):
-        """ """
+        """Populate the Optimize toolbutton's option menu (format, clamp, modifier)."""
         widget.option_box.menu.setTitle("Optimize")
         widget.option_box.menu.add(
             "QComboBox",
@@ -863,8 +888,16 @@ class MapConverterSlots(ImgUtils):
 
 
 class MapConverterUi:
-    def __new__(self):
-        """Get the Map Converter UI."""
+    """Standalone launcher. Constructing the class returns a configured UI.
+
+    ``__new__`` is overridden to return the wired Switchboard UI directly,
+    so ``MapConverterUi()`` yields the UI (not an instance). Use this when
+    running outside a host DCC. Hosts that need to inject a
+    ``texture_provider`` should register :class:`MapConverterSlots`
+    themselves rather than going through this launcher.
+    """
+
+    def __new__(cls):
         from uitk import Switchboard
 
         sb = Switchboard(ui_source="map_converter.ui", slot_source=MapConverterSlots)
@@ -877,11 +910,5 @@ class MapConverterUi:
         return ui
 
 
-# -----------------------------------------------------------------------------
-
 if __name__ == "__main__":
     MapConverterUi().show(pos="screen", app_exec=True)
-
-# -----------------------------------------------------------------------------
-# Notes
-# -----------------------------------------------------------------------------

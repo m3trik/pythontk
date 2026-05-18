@@ -1,7 +1,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/Version-0.8.32-blue.svg)](https://pypi.org/project/pythontk/)
-[![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-1140%20passed-brightgreen.svg)](test/)
+[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 
 # pythontk
 
@@ -138,7 +137,7 @@ ptk.ImgUtils.pack_channels(
 Convert Specular/Glossiness to Metal/Roughness:
 
 ```python
-base_color, metallic, roughness = ptk.ImgUtils.convert_spec_gloss_to_pbr(
+base_color, metallic, roughness = ptk.MapFactory.convert_spec_gloss_to_pbr(
     specular_map="specular.png",
     glossiness_map="gloss.png",
     diffuse_map="diffuse.png"
@@ -148,7 +147,7 @@ base_color, metallic, roughness = ptk.ImgUtils.convert_spec_gloss_to_pbr(
 ### Normal Map Generation
 
 ```python
-ptk.ImgUtils.convert_bump_to_normal(
+ptk.MapFactory.convert_bump_to_normal(
     "height.png",
     output_format="opengl",  # or "directx"
     intensity=1.5,
@@ -161,9 +160,21 @@ ptk.ImgUtils.convert_bump_to_normal(
 Identify texture types from filenames (100+ naming conventions):
 
 ```python
-ptk.TextureMapFactory.resolve_map_type("character_Normal_DirectX.png")  # "Normal_DirectX"
-ptk.TextureMapFactory.resolve_map_type("material_BC.tga")               # "Base_Color"
-ptk.TextureMapFactory.resolve_map_type("metal_AO.jpg")                  # "Ambient_Occlusion"
+ptk.MapFactory.resolve_map_type("character_Normal_DirectX.png")  # "Normal_DirectX"
+ptk.MapFactory.resolve_map_type("material_BC.tga")               # "Base_Color"
+ptk.MapFactory.resolve_map_type("metal_AO.jpg")                  # "Ambient_Occlusion"
+```
+
+### Map Converter & Map Packer UIs
+
+The `img_utils` package ships two Qt panels (requires [uitk](https://github.com/m3trik/uitk)) wrapping the helpers above:
+
+- **Map Converter** — optimize, format-convert (DX↔GL normals, smoothness↔roughness, bump↔normal), unpack/repack channel-packed maps, and prep texture sets for engine workflows (Unity URP/HDRP, Unreal, glTF, Godot). Exposes a `texture_provider` hook so host integrations (e.g. a Maya/Blender slot) can feed the current selection in place of a file dialog.
+- **Map Packer** — interactive RGBA channel packer with built-in presets (ORM, MSAO, MetallicSmoothness) and per-user preset storage.
+
+```bash
+python -m pythontk.img_utils.map_converter   # standalone launcher
+python -m pythontk.img_utils.map_packer
 ```
 
 ---
@@ -177,11 +188,12 @@ Match objects when numbering differs:
 ```python
 from pythontk import FuzzyMatcher
 
-matches = FuzzyMatcher.find_trailing_digit_matches(
+matches, matched_missing, matched_extra = FuzzyMatcher.find_trailing_digit_matches(
     missing_paths=["group1|mesh_01", "group1|mesh_02"],
     extra_paths=["group1|mesh_03", "group1|mesh_05"]
 )
-# Matches mesh_01→mesh_03, mesh_02→mesh_05
+# matches: list of {'target_path': 'group1|mesh_01', 'current_path': 'group1|mesh_03', ...}
+# matched_missing / matched_extra: paths the matcher consumed, ready to drop from each side
 ```
 
 ### Batch Rename
@@ -235,7 +247,7 @@ factor = ProgressionCurves.ease_in_out(0.5)
 factor = ProgressionCurves.bounce(0.5)
 factor = ProgressionCurves.elastic(0.5)
 factor = ProgressionCurves.weighted(0.5, weight_curve=2.0, weight_bias=0.3)
-factor = ProgressionCurves.calculate_progression_factor(5, 10, "ease_in_out")
+factor = ProgressionCurves.calculate_progression_factor(5, 10, calculation_mode="ease_in_out")
 ```
 
 ### Range Remapping
@@ -308,20 +320,8 @@ display_data = ptk.ImgUtils.linear_to_srgb(linear_data)
 | `clamp(val, min, max)` | Constrain to range |
 | `lerp(a, b, t)` | Linear interpolation |
 
-| Module | Classes |
-|--------|---------|
-| `core_utils` | `CoreUtils`, `LoggingMixin`, `HelpMixin` |
-| `str_utils` | `StrUtils`, `FuzzyMatcher` |
-| `file_utils` | `FileUtils` |
-| `iter_utils` | `IterUtils` |
-| `math_utils` | `MathUtils`, `ProgressionCurves` |
-| `img_utils` | `ImgUtils` |
-| `vid_utils` | `VidUtils` |
+Full public surface (every class, method, signature) is auto-generated at [`API_REGISTRY.md`](../API_REGISTRY.md). The list above is a curated subset.
 
 ## License
 
 MIT License
-
-<!-- Test update: 2025-12-02 20:53 -->
-
-<!-- Test update: 2025-12-02 21:05:10 -->
