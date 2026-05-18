@@ -251,7 +251,7 @@ class MapPackerSlots(ImgUtils):
 
 
 class MapPackerUi:
-    def __new__(self):
+    def __new__(cls):
         from uitk import Switchboard
 
         sb = Switchboard(ui_source="map_packer.ui", slot_source=MapPackerSlots)
