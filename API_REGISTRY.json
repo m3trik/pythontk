@@ -1548,7 +1548,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: str) -> str",
               "summary": "Get the color code for a given log level.",
-              "line": 1104,
+              "line": 1103,
               "deprecated": false
             },
             {
@@ -1557,7 +1557,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, format_str: str) -> None",
               "summary": "Register a new HTML preset.",
-              "line": 1121,
+              "line": 1120,
               "deprecated": false
             },
             {
@@ -1566,7 +1566,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str) -> str",
               "summary": "Get an HTML preset by name.",
-              "line": 1126,
+              "line": 1125,
               "deprecated": false
             },
             {
@@ -1575,7 +1575,7 @@
               "kind": "classmethod",
               "signature": "(cls, message: str, level: str, preset: str = None) -> str",
               "summary": "Format a message using HTML presets.",
-              "line": 1131,
+              "line": 1130,
               "deprecated": false
             }
           ]
@@ -1583,7 +1583,7 @@
         {
           "name": "DefaultTextLogHandler",
           "summary": "A generic thread-safe logging handler that writes logs to any widget",
-          "line": 1146,
+          "line": 1145,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -1594,7 +1594,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1159,
+              "line": 1158,
               "deprecated": false
             },
             {
@@ -1603,7 +1603,7 @@
               "kind": "method",
               "signature": "(self, level: str) -> str",
               "summary": "",
-              "line": 1194,
+              "line": 1193,
               "deprecated": false
             }
           ]
@@ -1611,7 +1611,7 @@
         {
           "name": "TableMixin",
           "summary": "Mixin for formatting data as ASCII tables.",
-          "line": 1198,
+          "line": 1197,
           "bases": [],
           "members": [
             {
@@ -1620,7 +1620,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str",
               "summary": "Formats a list of lists as an ASCII table.",
-              "line": 1201,
+              "line": 1200,
               "deprecated": false
             },
             {
@@ -1629,7 +1629,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None",
               "summary": "Logs a formatted table.",
-              "line": 1299,
+              "line": 1298,
               "deprecated": false
             }
           ]
@@ -1637,7 +1637,7 @@
         {
           "name": "LoggingMixin",
           "summary": "Mixin class for logging utilities.",
-          "line": 1352,
+          "line": 1351,
           "bases": [
             "TableMixin"
           ],
@@ -1648,7 +1648,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1373,
+              "line": 1372,
               "deprecated": false
             },
             {
@@ -1657,7 +1657,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1389,
+              "line": 1388,
               "deprecated": false
             },
             {
@@ -1666,7 +1666,7 @@
               "kind": "method",
               "signature": "(cls)",
               "summary": "Access to Python's internal logging module (aliased).",
-              "line": 1400,
+              "line": 1399,
               "deprecated": false
             },
             {
@@ -1675,7 +1675,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: int | str)",
               "summary": "Set log level for the class logger and its handlers.",
-              "line": 1405,
+              "line": 1404,
               "deprecated": false
             }
           ]
@@ -2509,93 +2509,6 @@
       ]
     },
     {
-      "relpath": "file_utils/mesh_convert/slots.py",
-      "summary": "",
-      "functions": [],
-      "classes": [
-        {
-          "name": "MeshConvertSlots",
-          "summary": "uitk Switchboard slots for the Mesh Converter UI.",
-          "line": 13,
-          "bases": [
-            "MeshConvert"
-          ],
-          "members": [
-            {
-              "name": "source_dir",
-              "qualname": "MeshConvertSlots.source_dir",
-              "kind": "property",
-              "signature": "(self) -> str",
-              "summary": "Starting directory for the FBX file dialog.",
-              "line": 32,
-              "deprecated": false
-            },
-            {
-              "name": "source_dir",
-              "qualname": "MeshConvertSlots.source_dir",
-              "kind": "method",
-              "signature": "(self, value: str) -> None",
-              "summary": "",
-              "line": 37,
-              "deprecated": false
-            },
-            {
-              "name": "fbx_provider",
-              "qualname": "MeshConvertSlots.fbx_provider",
-              "kind": "property",
-              "signature": "(self) -> Optional[Callable[[], Iterable[str]]]",
-              "summary": "Callable returning FBX paths from the host DCC selection.",
-              "line": 41,
-              "deprecated": false
-            },
-            {
-              "name": "fbx_provider",
-              "qualname": "MeshConvertSlots.fbx_provider",
-              "kind": "method",
-              "signature": "(self, fn: Optional[Callable[[], Iterable[str]]]) -> None",
-              "summary": "",
-              "line": 51,
-              "deprecated": false
-            },
-            {
-              "name": "header_init",
-              "qualname": "MeshConvertSlots.header_init",
-              "kind": "method",
-              "signature": "(self, widget) -> None",
-              "summary": "Add the From-FBX-references toggle to the header menu.",
-              "line": 54,
-              "deprecated": false
-            },
-            {
-              "name": "tb000_init",
-              "qualname": "MeshConvertSlots.tb000_init",
-              "kind": "method",
-              "signature": "(self, widget) -> None",
-              "summary": "Set up the FBX -> GLB tool button option box.",
-              "line": 142,
-              "deprecated": false
-            },
-            {
-              "name": "tb000",
-              "qualname": "MeshConvertSlots.tb000",
-              "kind": "method",
-              "signature": "(self, widget) -> None",
-              "summary": "Convert the selected FBX file(s) to GLB beside their source.",
-              "line": 174,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "MeshConvertUi",
-          "summary": "",
-          "line": 291,
-          "bases": [],
-          "members": []
-        }
-      ]
-    },
-    {
       "relpath": "file_utils/metadata.py",
       "summary": "",
       "functions": [],
@@ -3006,296 +2919,100 @@
       ]
     },
     {
-      "relpath": "img_utils/map_converter.py",
-      "summary": "Map Converter UI — slot file for ``map_converter.ui``.",
+      "relpath": "img_utils/map_compositor.py",
+      "summary": "Pure image-compositing engine — alpha-composite layered texture maps",
       "functions": [],
       "classes": [
         {
-          "name": "MapConverterSlots",
-          "summary": "Switchboard slots for ``map_converter.ui``.",
-          "line": 31,
+          "name": "BatchResult",
+          "summary": "Outcome of a full composite + retry-with-mask cycle.",
+          "line": 27,
           "bases": [
-            "ImgUtils"
+            "Enum"
+          ],
+          "members": []
+        },
+        {
+          "name": "NormalOutputMode",
+          "summary": "How the engine handles DirectX/OpenGL normal-map output.",
+          "line": 35,
+          "bases": [
+            "Enum"
+          ],
+          "members": []
+        },
+        {
+          "name": "MapCompositor",
+          "summary": "Alpha-composite layered texture maps and auto-generate the",
+          "line": 55,
+          "bases": [
+            "ptk.LoggingMixin"
           ],
           "members": [
             {
-              "name": "source_dir",
-              "qualname": "MapConverterSlots.source_dir",
+              "name": "removeNormalMap",
+              "qualname": "MapCompositor.removeNormalMap",
               "kind": "property",
-              "signature": "(self)",
-              "summary": "Get the starting directory for file dialogs.",
-              "line": 50,
-              "deprecated": false
-            },
-            {
-              "name": "source_dir",
-              "qualname": "MapConverterSlots.source_dir",
-              "kind": "method",
-              "signature": "(self, value)",
-              "summary": "Set the starting directory for file dialogs.",
-              "line": 55,
-              "deprecated": false
-            },
-            {
-              "name": "texture_provider",
-              "qualname": "MapConverterSlots.texture_provider",
-              "kind": "property",
-              "signature": "(self)",
-              "summary": "Callable returning a list of texture paths from the host DCC selection.",
-              "line": 60,
-              "deprecated": false
-            },
-            {
-              "name": "texture_provider",
-              "qualname": "MapConverterSlots.texture_provider",
-              "kind": "method",
-              "signature": "(self, fn)",
+              "signature": "(self) -> bool",
               "summary": "",
-              "line": 71,
+              "line": 94,
               "deprecated": false
             },
             {
-              "name": "header_init",
-              "qualname": "MapConverterSlots.header_init",
+              "name": "removeNormalMap",
+              "qualname": "MapCompositor.removeNormalMap",
               "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Add the global Use-Selection toggle to the header menu.",
-              "line": 74,
-              "deprecated": false
-            },
-            {
-              "name": "tb000_init",
-              "qualname": "MapConverterSlots.tb000_init",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Populate the Optimize toolbutton's option menu (format, clamp, modifier).",
-              "line": 145,
-              "deprecated": false
-            },
-            {
-              "name": "tb000",
-              "qualname": "MapConverterSlots.tb000",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Optimize a texture map(s)",
-              "line": 214,
-              "deprecated": false
-            },
-            {
-              "name": "tb001_init",
-              "qualname": "MapConverterSlots.tb001_init",
-              "kind": "method",
-              "signature": "(self, widget)",
+              "signature": "(self, value: bool) -> None",
               "summary": "",
-              "line": 309,
+              "line": 98,
               "deprecated": false
             },
             {
-              "name": "tb001",
-              "qualname": "MapConverterSlots.tb001",
+              "name": "reset",
+              "qualname": "MapCompositor.reset",
               "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Batch converts Spec/Gloss maps to PBR Metal/Rough using MapFactory.",
-              "line": 319,
+              "signature": "(self) -> None",
+              "summary": "Clear per-session state (masks, progress counters).",
+              "line": 101,
               "deprecated": false
             },
             {
-              "name": "tb003_init",
-              "qualname": "MapConverterSlots.tb003_init",
+              "name": "process_batch",
+              "qualname": "MapCompositor.process_batch",
               "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Initialize a 'Bump to Normal' toolbutton with options.",
-              "line": 376,
+              "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult",
+              "summary": "Drive a full composite → retry-with-mask → re-composite cycle.",
+              "line": 112,
               "deprecated": false
             },
             {
-              "name": "tb003",
-              "qualname": "MapConverterSlots.tb003",
+              "name": "apply_output_template",
+              "qualname": "MapCompositor.apply_output_template",
               "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Bump/Height to Normal converter (single entry point with options).",
-              "line": 402,
+              "signature": "(self, output_dir: str) -> List[str]",
+              "summary": "Post-process composited output for a target workflow.",
+              "line": 140,
               "deprecated": false
             },
             {
-              "name": "b000",
-              "qualname": "MapConverterSlots.b000",
+              "name": "composite_images",
+              "qualname": "MapCompositor.composite_images",
               "kind": "method",
-              "signature": "(self)",
-              "summary": "Convert DirectX to OpenGL",
-              "line": 442,
+              "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages",
+              "summary": "Composite each map type and write the result.",
+              "line": 208,
               "deprecated": false
             },
             {
-              "name": "b001",
-              "qualname": "MapConverterSlots.b001",
+              "name": "retry_failed",
+              "qualname": "MapCompositor.retry_failed",
               "kind": "method",
-              "signature": "(self)",
-              "summary": "Convert OpenGL to DirectX",
-              "line": 459,
-              "deprecated": false
-            },
-            {
-              "name": "b004",
-              "qualname": "MapConverterSlots.b004",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Batch pack Transparency into Albedo across texture sets.",
-              "line": 476,
-              "deprecated": false
-            },
-            {
-              "name": "b005",
-              "qualname": "MapConverterSlots.b005",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Batch pack Smoothness or Roughness into Metallic across texture sets.",
-              "line": 519,
-              "deprecated": false
-            },
-            {
-              "name": "b006",
-              "qualname": "MapConverterSlots.b006",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Unpack Metallic and Smoothness maps from MetallicSmoothness textures.",
-              "line": 563,
-              "deprecated": false
-            },
-            {
-              "name": "b007",
-              "qualname": "MapConverterSlots.b007",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Unpack Specular and Gloss maps from SpecularGloss textures.",
-              "line": 593,
-              "deprecated": false
-            },
-            {
-              "name": "b008_init",
-              "qualname": "MapConverterSlots.b008_init",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Populate the MSAO pack toolbutton's option menu (channel layout).",
-              "line": 620,
-              "deprecated": false
-            },
-            {
-              "name": "b008",
-              "qualname": "MapConverterSlots.b008",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Batch pack Metallic, AO, and Smoothness/Roughness into an MSAO texture.",
-              "line": 636,
-              "deprecated": false
-            },
-            {
-              "name": "b009_init",
-              "qualname": "MapConverterSlots.b009_init",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Populate the MSAO unpack toolbutton's option menu (channel layout).",
-              "line": 694,
-              "deprecated": false
-            },
-            {
-              "name": "b009",
-              "qualname": "MapConverterSlots.b009",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Unpack Metallic, AO, and Smoothness maps from MSAO textures.",
-              "line": 715,
-              "deprecated": false
-            },
-            {
-              "name": "b013_init",
-              "qualname": "MapConverterSlots.b013_init",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Populate the MRAO pack toolbutton's option menu (channel layout).",
-              "line": 748,
-              "deprecated": false
-            },
-            {
-              "name": "b013",
-              "qualname": "MapConverterSlots.b013",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Batch pack Metallic, Roughness/Smoothness, and AO into an MRAO texture.",
-              "line": 764,
-              "deprecated": false
-            },
-            {
-              "name": "b014_init",
-              "qualname": "MapConverterSlots.b014_init",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Populate the MRAO unpack toolbutton's option menu (channel layout).",
-              "line": 819,
-              "deprecated": false
-            },
-            {
-              "name": "b014",
-              "qualname": "MapConverterSlots.b014",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Unpack Metallic, Roughness, and AO from MRAO textures.",
-              "line": 840,
-              "deprecated": false
-            },
-            {
-              "name": "b015",
-              "qualname": "MapConverterSlots.b015",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Batch pack AO, Roughness/Smoothness, and Metallic into an ORM texture.",
-              "line": 873,
-              "deprecated": false
-            },
-            {
-              "name": "b016",
-              "qualname": "MapConverterSlots.b016",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Unpack AO, Roughness, and Metallic from ORM textures.",
-              "line": 925,
-              "deprecated": false
-            },
-            {
-              "name": "b010",
-              "qualname": "MapConverterSlots.b010",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Convert Smoothness maps to Roughness maps.",
-              "line": 953,
-              "deprecated": false
-            },
-            {
-              "name": "b011",
-              "qualname": "MapConverterSlots.b011",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Convert Roughness maps to Smoothness maps.",
-              "line": 979,
-              "deprecated": false
-            },
-            {
-              "name": "b012",
-              "qualname": "MapConverterSlots.b012",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Batch prepare textures for PBR workflow using MapFactory.",
-              "line": 1005,
+              "signature": "(self, failed: SortedImages, name: str) -> SortedImages",
+              "summary": "Fill the masked area of each failed layer with the map-type's",
+              "line": 225,
               "deprecated": false
             }
           ]
-        },
-        {
-          "name": "MapConverterUi",
-          "summary": "Standalone launcher.",
-          "line": 1150,
-          "bases": [],
-          "members": []
         }
       ]
     },
@@ -4411,75 +4128,6 @@
       ]
     },
     {
-      "relpath": "img_utils/map_packer.py",
-      "summary": "",
-      "functions": [],
-      "classes": [
-        {
-          "name": "MapPackerSlots",
-          "summary": "",
-          "line": 9,
-          "bases": [
-            "ImgUtils"
-          ],
-          "members": [
-            {
-              "name": "header_init",
-              "qualname": "MapPackerSlots.header_init",
-              "kind": "method",
-              "signature": "(self, widget)",
-              "summary": "Configure the header menu with presets for common packed map types.",
-              "line": 104,
-              "deprecated": false
-            },
-            {
-              "name": "source_dir",
-              "qualname": "MapPackerSlots.source_dir",
-              "kind": "property",
-              "signature": "(self)",
-              "summary": "",
-              "line": 147,
-              "deprecated": false
-            },
-            {
-              "name": "source_dir",
-              "qualname": "MapPackerSlots.source_dir",
-              "kind": "method",
-              "signature": "(self, value)",
-              "summary": "",
-              "line": 151,
-              "deprecated": false
-            },
-            {
-              "name": "b000",
-              "qualname": "MapPackerSlots.b000",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Batch pack up to 4 channels into RGBA maps across texture sets.",
-              "line": 154,
-              "deprecated": false
-            },
-            {
-              "name": "b001",
-              "qualname": "MapPackerSlots.b001",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "Open the last output directory in the system file explorer.",
-              "line": 234,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "MapPackerUi",
-          "summary": "",
-          "line": 253,
-          "bases": [],
-          "members": []
-        }
-      ]
-    },
-    {
       "relpath": "img_utils/map_registry.py",
       "summary": "",
       "functions": [],
@@ -5362,7 +5010,7 @@
         {
           "name": "RpcClient",
           "summary": "Generic HTTP JSON-RPC client for a DCC plugin server.",
-          "line": 40,
+          "line": 36,
           "bases": [],
           "members": [
             {
@@ -5371,7 +5019,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "",
-              "line": 62,
+              "line": 58,
               "deprecated": false
             },
             {
@@ -5380,7 +5028,7 @@
               "kind": "method",
               "signature": "(self, timeout: float = 1.0) -> bool",
               "summary": "Return True if the plugin's HTTP server is reachable.",
-              "line": 69,
+              "line": 65,
               "deprecated": false
             },
             {
@@ -5389,7 +5037,7 @@
               "kind": "method",
               "signature": "(self, op: str, timeout: float = 60.0, **kwargs: Any) -> Any",
               "summary": "Call *op* with *kwargs* and return its value.",
-              "line": 83,
+              "line": 79,
               "deprecated": false
             },
             {
@@ -5398,7 +5046,7 @@
               "kind": "method",
               "signature": "(self) -> list",
               "summary": "Convenience: ``self.invoke('system.list_ops')``.",
-              "line": 115,
+              "line": 111,
               "deprecated": false
             },
             {
@@ -5407,7 +5055,7 @@
               "kind": "method",
               "signature": "(self, op: str = '', timeout: float = 5.0) -> Any",
               "summary": "Return one op's description, or all ops if *op* is empty.",
-              "line": 124,
+              "line": 120,
               "deprecated": false
             },
             {
@@ -5416,7 +5064,7 @@
               "kind": "method",
               "signature": "(self, exe: Optional[str] = None, timeout: float = 30.0, force_new: bool = False, poll_interval: float = 0.5, auto_cleanup: bool = False) -> bool",
               "summary": "Ensure the plugin is reachable;",
-              "line": 150,
+              "line": 146,
               "deprecated": false
             },
             {
@@ -5425,7 +5073,7 @@
               "kind": "method",
               "signature": "(self, force: bool = False) -> None",
               "summary": "Terminate the DCC process this connection launched.",
-              "line": 217,
+              "line": 213,
               "deprecated": false
             }
           ]
@@ -5897,6 +5545,49 @@
               "signature": "(cls, input_filepath: str, output_filepath: str = None, frame_rate: Union[float, int] = None, delete_original: bool = False, **ffmpeg_options) -> Union[str, None]",
               "summary": "Compresses a video file using FFmpeg.",
               "line": 156,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "vid_utils/frame_extractor.py",
+      "summary": "Extract still frames from a video file via OpenCV.",
+      "functions": [
+        {
+          "name": "extract_frames",
+          "qualname": "extract_frames",
+          "kind": "function",
+          "signature": "(video_path: str, output_folder: str, step: int = 5) -> List[str]",
+          "summary": "Convenience wrapper around :meth:`FrameExtractor.extract_frames`.",
+          "line": 143,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "FrameExtractor",
+          "summary": "Extract frames from a video file at a configurable step interval.",
+          "line": 25,
+          "bases": [],
+          "members": [
+            {
+              "name": "extract_frames",
+              "qualname": "FrameExtractor.extract_frames",
+              "kind": "method",
+              "signature": "(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]",
+              "summary": "Save every ``step``-th frame from ``video_path`` to ``output_folder``.",
+              "line": 30,
+              "deprecated": false
+            },
+            {
+              "name": "get_video_info",
+              "qualname": "FrameExtractor.get_video_info",
+              "kind": "method",
+              "signature": "(self, video_path: str) -> dict",
+              "summary": "Return metadata for ``video_path`` (filename, frame count, fps,",
+              "line": 105,
               "deprecated": false
             }
           ]
