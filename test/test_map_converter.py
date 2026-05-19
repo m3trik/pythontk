@@ -645,24 +645,57 @@ class TestMapConverterMethods(unittest.TestCase):
         smoothness = self.create_dummy_image("mat_Smoothness.png", "L")
 
         self.mock_sb.file_dialog.return_value = [metallic, ao, smoothness]
+        self.mock_widget.option_box.menu.cmb_msao_layout.currentData.return_value = (
+            "rgba"
+        )
 
         with patch.object(
             TextureMapFactory, "pack_msao_texture", return_value="packed.png"
         ) as mock_method:
-            self.converter.b008()
+            self.converter.b008(self.mock_widget)
             mock_method.assert_called()
 
     def test_b009_unpack_msao(self):
         """Test b009: Unpack MSAO."""
         msao = self.create_dummy_image("mat_MSAO.png", "RGBA")
         self.mock_sb.file_dialog.return_value = [msao]
+        self.mock_widget.option_box.menu.cmb_msao_unpack_layout.currentData.return_value = (
+            ""
+        )
 
         with patch.object(
             TextureMapFactory,
             "unpack_msao_texture",
             return_value=("m.png", "a.png", "s.png"),
         ) as mock_method:
-            self.converter.b009()
+            self.converter.b009(self.mock_widget)
+            mock_method.assert_called()
+
+    def test_b015_pack_orm(self):
+        """Test b015: Pack ORM."""
+        ao = self.create_dummy_image("mat_AO.png", "L")
+        roughness = self.create_dummy_image("mat_Roughness.png", "L")
+        metallic = self.create_dummy_image("mat_Metallic.png", "L")
+
+        self.mock_sb.file_dialog.return_value = [ao, roughness, metallic]
+
+        with patch.object(
+            TextureMapFactory, "pack_orm_texture", return_value="packed.png"
+        ) as mock_method:
+            self.converter.b015()
+            mock_method.assert_called()
+
+    def test_b016_unpack_orm(self):
+        """Test b016: Unpack ORM."""
+        orm = self.create_dummy_image("mat_ORM.png", "RGB")
+        self.mock_sb.file_dialog.return_value = [orm]
+
+        with patch.object(
+            TextureMapFactory,
+            "unpack_orm_texture",
+            return_value=("a.png", "r.png", "m.png"),
+        ) as mock_method:
+            self.converter.b016()
             mock_method.assert_called()
 
     def test_b010_convert_smoothness_roughness(self):
@@ -795,8 +828,11 @@ class TestMapConverterIntegration(unittest.TestCase):
             ao_path,
             smoothness_path,
         ]
+        self.mock_widget.option_box.menu.cmb_msao_layout.currentData.return_value = (
+            "rgba"
+        )
 
-        self.converter.b008()
+        self.converter.b008(self.mock_widget)
 
         expected_output = os.path.join(self.test_files_dir, "mat_MSAO.png")
         self.assertTrue(os.path.exists(expected_output))

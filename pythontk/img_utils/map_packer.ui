@@ -470,6 +470,19 @@
        </layout>
       </item>
       <item>
+       <spacer name="verticalSpacer">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>0</width>
+          <height>10</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item>
        <widget class="Footer" name="footer" native="true">
         <property name="minimumSize">
          <size>
@@ -485,19 +498,6 @@
         </property>
        </widget>
       </item>
-      <item>
-       <spacer name="verticalSpacer">
-        <property name="orientation">
-         <enum>Qt::Vertical</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>0</width>
-          <height>10</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
      </layout>
     </item>
    </layout>
@@ -510,19 +510,19 @@
    <header>uitk.widgets.header</header>
   </customwidget>
   <customwidget>
+   <class>Footer</class>
+   <extends>QWidget</extends>
+   <header>uitk.widgets.footer</header>
+  </customwidget>
+  <customwidget>
    <class>ComboBox</class>
    <extends>QComboBox</extends>
-   <header>uitk.widgets.comboBox</header>
+   <header>uitk.widgets.comboBox.ComboBox.h</header>
   </customwidget>
   <customwidget>
    <class>LineEdit</class>
    <extends>QLineEdit</extends>
    <header>uitk.widgets.lineEdit</header>
-  </customwidget>
-  <customwidget>
-   <class>Footer</class>
-   <extends>QWidget</extends>
-   <header>uitk.widgets.footer</header>
   </customwidget>
  </customwidgets>
  <resources/>

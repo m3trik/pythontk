@@ -37,6 +37,7 @@ class ResolutionCriticalTest(BaseTestCase):
             "Bump",
             "ORM",
             "MSAO",
+            "MRAO",
             "Metallic_Smoothness",
             "Opacity",
         ):

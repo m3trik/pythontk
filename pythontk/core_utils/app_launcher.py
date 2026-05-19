@@ -2,6 +2,7 @@
 # coding=utf-8
 import os
 import sys
+import glob
 import subprocess
 import shutil
 import platform
@@ -471,7 +472,10 @@ class AppLauncher:
     @staticmethod
     def _find_windows_app(app_name):
         """
-        Looks up the application in the Windows Registry App Paths.
+        Looks up the application in the Windows Registry App Paths, then falls
+        back to scanning the Program Files install roots up to two levels deep
+        (covers vendors that don't register App Paths — Adobe Substance 3D
+        Painter, Houdini, Reaper, etc.).
         """
         import winreg
 
@@ -511,5 +515,25 @@ class AppLauncher:
                         continue
             except OSError:
                 continue
+
+        # Program Files glob fallback
+        program_files_roots = [
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+            os.environ.get("ProgramW6432"),
+        ]
+        seen = set()
+        for root in program_files_roots:
+            if not root or root in seen:
+                continue
+            seen.add(root)
+            for pattern in (
+                os.path.join(root, app_name),
+                os.path.join(root, "*", app_name),
+                os.path.join(root, "*", "*", app_name),
+            ):
+                for match in glob.glob(pattern):
+                    if os.path.isfile(match):
+                        return match
 
         return None

@@ -130,6 +130,65 @@ class TestMapFactoryRefactored(unittest.TestCase):
             any("_AO." in n or "_Ambient_Occlusion." in n for n in result_names)
         )
 
+    def test_prepare_maps_unity_hdrp_rgb_layout(self):
+        """MSAO workflow honours mask_map_layout='rgb' end-to-end."""
+        config = {"mask_map": True, "mask_map_layout": "rgb"}
+        results = MapFactory.prepare_maps(
+            self.texture_paths,
+            output_dir=self.output_dir,
+            callback=lambda *args: None,
+            **config,
+        )
+        result_names = [os.path.basename(p) for p in results]
+        self.assertTrue(any("MSAO" in n for n in result_names))
+
+        from PIL import Image
+
+        msao_path = next(p for p in results if "MSAO" in os.path.basename(p))
+        with Image.open(msao_path) as img:
+            self.assertEqual(img.mode, "RGB")
+
+    def test_prepare_maps_mrao(self):
+        """Test MRAO packing workflow (default 3-channel layout)."""
+        config = {"mrao_map": True}
+        results = MapFactory.prepare_maps(
+            self.texture_paths,
+            output_dir=self.output_dir,
+            callback=lambda *args: None,
+            **config,
+        )
+        result_names = [os.path.basename(p) for p in results]
+
+        self.assertTrue(any("MRAO" in n for n in result_names))
+        # Check the produced file is RGB (3-channel default) and channels are M/R/AO.
+        from PIL import Image
+
+        mrao_path = next(
+            p for p in results if "MRAO" in os.path.basename(p)
+        )
+        with Image.open(mrao_path) as img:
+            self.assertEqual(img.mode, "RGB")
+
+    def test_prepare_maps_mrao_rgba_layout(self):
+        """Test MRAO packing workflow with RGBA (MSAO-mirror) layout."""
+        config = {"mrao_map": True, "mrao_layout": "rgba"}
+        results = MapFactory.prepare_maps(
+            self.texture_paths,
+            output_dir=self.output_dir,
+            callback=lambda *args: None,
+            **config,
+        )
+        result_names = [os.path.basename(p) for p in results]
+        self.assertTrue(any("MRAO" in n for n in result_names))
+
+        from PIL import Image
+
+        mrao_path = next(
+            p for p in results if "MRAO" in os.path.basename(p)
+        )
+        with Image.open(mrao_path) as img:
+            self.assertEqual(img.mode, "RGBA")
+
     def test_prepare_maps_unreal_engine(self):
         """Test Unreal Engine workflow (ORM + DirectX Normal)."""
         config = {"orm_map": True, "normal_type": "DirectX"}
@@ -424,7 +483,8 @@ class TestMapFactoryExtended(unittest.TestCase):
         result = self.context.create_mask_map(self.context.inventory)
         self.assertIsNotNone(result)
         self.context.logger.info.assert_called_with(
-            "Created Mask Map from components", extra={"preset": "highlight"}
+            "Created Mask Map from components (layout=rgba)",
+            extra={"preset": "highlight"},
         )
 
     def test_create_metallic_smoothness_map(self):
@@ -501,6 +561,38 @@ class TestMapFactoryExtended(unittest.TestCase):
         self.assertIsNotNone(metallic)
         self.assertIsNotNone(ao)
         self.assertIsNotNone(smoothness)
+
+    def test_unpack_mrao_rgb(self):
+        """Unpack a 3-channel MRAO texture (auto-detect)."""
+        packed_path = os.path.join(self.test_files_dir, "test_MRAO.png")
+        img = ImgUtils.create_image("RGB", (64, 64), (200, 100, 150))
+        ImgUtils.save_image(img, packed_path)
+
+        self.context.inventory = {}
+
+        metallic = self.context.get_metallic_from_mrao(packed_path)
+        roughness = self.context.get_roughness_from_mrao(packed_path)
+        ao = self.context.get_ao_from_mrao(packed_path)
+
+        self.assertIsNotNone(metallic)
+        self.assertIsNotNone(roughness)
+        self.assertIsNotNone(ao)
+
+    def test_unpack_mrao_rgba(self):
+        """Unpack a 4-channel MRAO texture (MSAO-mirror layout, auto-detect)."""
+        packed_path = os.path.join(self.test_files_dir, "test_MRAO_rgba.png")
+        img = ImgUtils.create_image("RGBA", (64, 64), (200, 150, 0, 100))
+        ImgUtils.save_image(img, packed_path)
+
+        self.context.inventory = {}
+
+        metallic = self.context.get_metallic_from_mrao(packed_path)
+        roughness = self.context.get_roughness_from_mrao(packed_path)
+        ao = self.context.get_ao_from_mrao(packed_path)
+
+        self.assertIsNotNone(metallic)
+        self.assertIsNotNone(roughness)
+        self.assertIsNotNone(ao)
 
     def test_unpack_orm(self):
         # Create a packed map
