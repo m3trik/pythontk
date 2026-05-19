@@ -168,15 +168,16 @@ ptk.MapFactory.resolve_map_type("metal_AO.jpg")                  # "Ambient_Occl
 
 ### Map Converter & Map Packer UIs
 
-The `img_utils` package ships two Qt panels (requires [uitk](https://github.com/m3trik/uitk)) wrapping the helpers above:
+### UI panels (in `extapps`)
 
-- **Map Converter** — optimize, format-convert (DX↔GL normals, smoothness↔roughness, bump↔normal), unpack/repack channel-packed maps, and prep texture sets for engine workflows (Unity URP/HDRP, Unreal, glTF, Godot). Exposes a `texture_provider` hook so host integrations (e.g. a Maya/Blender slot) can feed the current selection in place of a file dialog.
-- **Map Packer** — interactive RGBA channel packer with built-in presets (ORM, MSAO, MetallicSmoothness) and per-user preset storage.
+The Qt panels that consume these helpers ship in the
+[extapps](https://github.com/m3trik/extapps) repo — `pythontk` itself
+remains DCC- and UI-agnostic. Each panel has a pythontk-side engine /
+helper that's reusable headlessly:
 
-```bash
-python -m pythontk.img_utils.map_converter   # standalone launcher
-python -m pythontk.img_utils.map_packer
-```
+- **Map Converter** (`extapps.map_converter`) — optimize, format-convert (DX↔GL normals, smoothness↔roughness, bump↔normal), unpack/repack channel-packed maps, and prep texture sets for engine workflows (Unity URP/HDRP, Unreal, glTF, Godot). Engine: `pythontk.ImgUtils` + `MapFactory`.
+- **Map Packer** (`extapps.map_packer`) — interactive RGBA channel packer with built-in presets (ORM, MSAO, MetallicSmoothness). Engine: `pythontk.ImgUtils` + `MapFactory`.
+- **Map Compositor** (`extapps.map_compositor`) — multi-layer texture compositing with auto DX/GL normal-map complement. Engine: `pythontk.MapCompositor`.
 
 ---
 

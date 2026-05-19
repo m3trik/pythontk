@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-05-18_
+_Generated: 2026-05-19_
 
 ## Index
 
@@ -47,6 +47,9 @@ _Generated: 2026-05-18_
 - [`math_utils/progression.py`](#math_utils--progression)
 - [`net_utils/_net_utils.py`](#net_utils--_net_utils)
 - [`net_utils/credentials.py`](#net_utils--credentials)
+- [`net_utils/rpc/client.py`](#net_utils--rpc--client) — Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
+- [`net_utils/rpc/installer.py`](#net_utils--rpc--installer) — Generic DCC plugin installer (symlink-first, copytree fallback).
+- [`net_utils/rpc/job.py`](#net_utils--rpc--job) — One-shot batch pipeline over :class:`RpcClient`.
 - [`net_utils/ssh_client.py`](#net_utils--ssh_client)
 - [`str_utils/_str_utils.py`](#str_utils--_str_utils)
 - [`str_utils/fuzzy_matcher.py`](#str_utils--fuzzy_matcher)
@@ -126,7 +129,7 @@ Lightweight, DCC-agnostic color primitives.
 <a id="core_utils--app_launcher"></a>
 ### `core_utils/app_launcher.py`
 
-- **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L13)** — A utility class for launching applications on Windows and Linux.
+- **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L14)** — A utility class for launching applications on Windows and Linux.
   - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
   - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None)` *(static)* — Execute an application synchronously and return its result.
   - `AppLauncher.wait_for_ready(process, timeout=15, check_fn=None)` *(static)* — Waits until the application is ready.
@@ -527,12 +530,20 @@ Map Converter UI — slot file for ``map_converter.ui``.
   - `MapConverterSlots.b005(self)` — Batch pack Smoothness or Roughness into Metallic across texture sets.
   - `MapConverterSlots.b006(self)` — Unpack Metallic and Smoothness maps from MetallicSmoothness textures.
   - `MapConverterSlots.b007(self)` — Unpack Specular and Gloss maps from SpecularGloss textures.
-  - `MapConverterSlots.b008(self)` — Batch pack Metallic (R), AO (G), and Smoothness (A) across texture sets.
-  - `MapConverterSlots.b009(self)` — Unpack Metallic, AO, and Smoothness maps from MSAO textures.
+  - `MapConverterSlots.b008_init(self, widget)` — Populate the MSAO pack toolbutton's option menu (channel layout).
+  - `MapConverterSlots.b008(self, widget)` — Batch pack Metallic, AO, and Smoothness/Roughness into an MSAO texture.
+  - `MapConverterSlots.b009_init(self, widget)` — Populate the MSAO unpack toolbutton's option menu (channel layout).
+  - `MapConverterSlots.b009(self, widget)` — Unpack Metallic, AO, and Smoothness maps from MSAO textures.
+  - `MapConverterSlots.b013_init(self, widget)` — Populate the MRAO pack toolbutton's option menu (channel layout).
+  - `MapConverterSlots.b013(self, widget)` — Batch pack Metallic, Roughness/Smoothness, and AO into an MRAO texture.
+  - `MapConverterSlots.b014_init(self, widget)` — Populate the MRAO unpack toolbutton's option menu (channel layout).
+  - `MapConverterSlots.b014(self, widget)` — Unpack Metallic, Roughness, and AO from MRAO textures.
+  - `MapConverterSlots.b015(self)` — Batch pack AO, Roughness/Smoothness, and Metallic into an ORM texture.
+  - `MapConverterSlots.b016(self)` — Unpack AO, Roughness, and Metallic from ORM textures.
   - `MapConverterSlots.b010(self)` — Convert Smoothness maps to Roughness maps.
   - `MapConverterSlots.b011(self)` — Convert Roughness maps to Smoothness maps.
   - `MapConverterSlots.b012(self)` — Batch prepare textures for PBR workflow using MapFactory.
-- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L890)** — Standalone launcher.
+- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L1150)** — Standalone launcher.
 
 <a id="img_utils--map_factory"></a>
 ### `img_utils/map_factory.py`
@@ -568,6 +579,11 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `TextureProcessor.get_smoothness_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
   - `TextureProcessor.get_roughness_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
   - `TextureProcessor.get_ao_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.unpack_mrao(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack MRAO and cache results.
+  - `TextureProcessor.get_metallic_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_roughness_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_smoothness_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_ao_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
   - `TextureProcessor.unpack_orm(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack ORM and cache results.
   - `TextureProcessor.get_ao_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
   - `TextureProcessor.get_roughness_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
@@ -577,42 +593,47 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `TextureProcessor.get_base_color_from_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
   - `TextureProcessor.get_opacity_from_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
   - `TextureProcessor.create_orm_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create ORM map from components.
+  - `TextureProcessor.create_mrao_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create MRAO (Metallic R / Roughness G / AO B) map from components.
   - `TextureProcessor.create_mask_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create Mask Map (MSAO) from components.
   - `TextureProcessor.create_metallic_smoothness_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create Metallic-Smoothness map from components.
-- **[`class WorkflowHandler(ABC)`](pythontk/pythontk/img_utils/map_factory.py#L941)** — Abstract base for workflow-specific map processing.
+- **[`class WorkflowHandler(ABC)`](pythontk/pythontk/img_utils/map_factory.py#L1057)** — Abstract base for workflow-specific map processing.
   - `WorkflowHandler.can_handle(self, context: TextureProcessor) -> bool` — Check if this handler should process the workflow.
   - `WorkflowHandler.process(self, context: TextureProcessor) -> Optional[str]` — Process and return the output map path.
   - `WorkflowHandler.get_consumed_types(self) -> List[str]` — Return list of map types this handler consumes.
   - `WorkflowHandler.is_explicitly_requested(self, context: TextureProcessor, map_type: str) -> bool` — Check if a map type is explicitly requested in the config.
-- **[`class ORMMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L972)** — Handles Unreal Engine / glTF ORM packing.
+- **[`class ORMMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1088)** — Handles Unreal Engine / glTF ORM packing.
   - `ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `ORMMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1061)** — Handles Unity HDRP Mask Map (MSAO).
+- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1177)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
+  - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+  - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
+- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1287)** — Handles Unity HDRP Mask Map (MSAO).
   - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1172)** — Handles packed Metallic+Smoothness.
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1395)** — Handles packed Metallic+Smoothness.
   - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1257)** — Handles separate metallic and roughness maps.
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1480)** — Handles separate metallic and roughness maps.
   - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
   - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1298)** — Handles base color / albedo with optional packing.
+- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1521)** — Handles base color / albedo with optional packing.
   - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1438)** — Handles normal map format conversion.
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1661)** — Handles normal map format conversion.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1601)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1824)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/img_utils/map_factory.py#L1669)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/img_utils/map_factory.py#L1892)** — Refactored factory with pluggable workflow system.
   - `MapFactory.register_conversions(cls, registry: ConversionRegistry)` *(class)* — Register all standard PBR conversions.
   - `MapFactory.resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str` *(class)* — Resolves the map type from a filename or alias using `map_types`.
   - `MapFactory.resolve_texture_filename(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str` *(class)* — Generates a correctly formatted filename while preserving the original suffix and file extension.
@@ -640,11 +661,14 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapFactory.create_roughness_from_spec(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'` *(class)* — Estimates roughness from a specular map.
   - `MapFactory.convert_base_color_to_albedo(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'` *(class)* — Converts a Base Color map to a true Albedo map by:
   - `MapFactory.get_converted_map(map_type: str, available: dict) -> Optional[Any]` *(static)* — Get the converted map based on the given map type and available maps.
-  - `MapFactory.pack_msao_texture(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Packs Metallic (R), AO (G), Detail (B), and Smoothness/Roughness (A) into a single MSAO texture.
+  - `MapFactory.pack_orm_texture(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.
+  - `MapFactory.pack_msao_texture(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']` *(class)* — Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.
+  - `MapFactory.pack_mrao_texture(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']` *(class)* — Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.
   - `MapFactory.convert_smoothness_to_roughness(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Convert a Smoothness map to a Roughness map by inverting the grayscale values.
   - `MapFactory.convert_roughness_to_smoothness(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Convert a Roughness map to a Smoothness map by inverting the grayscale values.
   - `MapFactory.unpack_orm_texture(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]` *(class)* — Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.
-  - `MapFactory.unpack_msao_texture(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]` *(class)* — Unpacks Metallic (R), AO (G), and Smoothness (A) maps from a combined MSAO texture.
+  - `MapFactory.unpack_msao_texture(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]` *(class)* — Unpack Metallic, AO, and Smoothness from a combined MSAO texture.
+  - `MapFactory.unpack_mrao_texture(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]` *(class)* — Unpack Metallic, Roughness, and AO from a combined MRAO texture.
   - `MapFactory.unpack_albedo_transparency(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.
   - `MapFactory.unpack_metallic_smoothness(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Metallic (RGB) and Smoothness (A) from a combined map.
   - `MapFactory.unpack_specular_gloss(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Specular (RGB) and Glossiness (A) from a combined map.
@@ -664,8 +688,8 @@ Texture Map Factory for PBR workflow preparation - Refactored.
 ### `img_utils/map_registry.py`
 
 - **[`class WF`](pythontk/pythontk/img_utils/map_registry.py#L7)** — Workflow identifiers.
-- **[`class MapType`](pythontk/pythontk/img_utils/map_registry.py#L43)** — Defines the properties of a texture map type.
-- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/img_utils/map_registry.py#L66)** — Central registry for map type definitions.
+- **[`class MapType`](pythontk/pythontk/img_utils/map_registry.py#L44)** — Defines the properties of a texture map type.
+- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/img_utils/map_registry.py#L67)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
   - `MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]` — Generate the workflow presets dictionary.
@@ -776,6 +800,38 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `Credentials.get_password(target_name: str) -> str` *(static)* — Retrieve a password from the OS secure store or environment.
   - `Credentials.get_credential(target_name: str) -> dict | None` *(static)* — Retrieve full credentials (username and password).
   - `Credentials.set_credential(target_name: str, username: str, password: str, persist: str = 'local_machine') -> bool` *(static)* — Save credentials to the OS secure store.
+
+<a id="net_utils--rpc--client"></a>
+### `net_utils/rpc/client.py`
+
+Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
+
+- **[`class RpcClient`](pythontk/pythontk/net_utils/rpc/client.py#L40)** — Generic HTTP JSON-RPC client for a DCC plugin server.
+  - `RpcClient.url(self) -> str` *(property)*
+  - `RpcClient.ping(self, timeout: float = 1.0) -> bool` — Return True if the plugin's HTTP server is reachable.
+  - `RpcClient.invoke(self, op: str, timeout: float = 60.0, **kwargs: Any) -> Any` — Call *op* with *kwargs* and return its value.
+  - `RpcClient.list_ops(self) -> list` — Convenience: ``self.invoke('system.list_ops')``.
+  - `RpcClient.describe(self, op: str = '', timeout: float = 5.0) -> Any` — Return one op's description, or all ops if *op* is empty.
+  - `RpcClient.connect(self, exe: Optional[str] = None, timeout: float = 30.0, force_new: bool = False, poll_interval: float = 0.5, auto_cleanup: bool = False) -> bool` — Ensure the plugin is reachable;
+  - `RpcClient.shutdown(self, force: bool = False) -> None` — Terminate the DCC process this connection launched.
+
+<a id="net_utils--rpc--installer"></a>
+### `net_utils/rpc/installer.py`
+
+Generic DCC plugin installer (symlink-first, copytree fallback).
+
+- [`install_plugin(plugin_src: Union[str, Path], dest: Union[str, Path], force: bool = False) -> Optional[Path]`](pythontk/pythontk/net_utils/rpc/installer.py#L31) — Install *plugin_src* at *dest*.
+- [`uninstall_plugin(dest: Union[str, Path]) -> bool`](pythontk/pythontk/net_utils/rpc/installer.py#L79) — Remove a plugin install at *dest*.
+- [`is_plugin_installed(dest: Union[str, Path]) -> bool`](pythontk/pythontk/net_utils/rpc/installer.py#L94) — True if *dest* looks like an installed plugin (has ``__init__.py``).
+
+<a id="net_utils--rpc--job"></a>
+### `net_utils/rpc/job.py`
+
+One-shot batch pipeline over :class:`RpcClient`.
+
+- [`run_batch(calls: List[Call], client: RpcClient, stop_on_error: bool = False) -> List[Result]`](pythontk/pythontk/net_utils/rpc/job.py#L55) — Connect, fire every call in *calls*, return a Result per call.
+- **[`class Call`](pythontk/pythontk/net_utils/rpc/job.py#L30)** — One queued op invocation.
+- **[`class Result`](pythontk/pythontk/net_utils/rpc/job.py#L42)** — Outcome of a single :class:`Call`.
 
 <a id="net_utils--ssh_client"></a>
 ### `net_utils/ssh_client.py`

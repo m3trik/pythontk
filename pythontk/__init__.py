@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.37"
+__version__ = "0.8.38"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -13,12 +13,13 @@ DEFAULT_INCLUDE = {
     "img_utils._img_utils": "*",
     "img_utils.map_factory": ["MapFactory"],
     "img_utils.map_registry": "MapRegistry",
+    "img_utils.map_compositor": ["MapCompositor", "BatchResult", "NormalOutputMode"],
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
+    "vid_utils.frame_extractor": ["FrameExtractor", "extract_frames"],
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",
     "file_utils.mesh_convert._mesh_convert": "MeshConvert",
-    "file_utils.mesh_convert.slots": ["MeshConvertSlots", "MeshConvertUi"],
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
     "math_utils.progression": "ProgressionCurves",
@@ -86,9 +87,12 @@ __all__ = [
     "FileUtils",
     "Metadata",
     "MeshConvert",
-    "MeshConvertSlots",
-    "MeshConvertUi",
     "ImgUtils",
+    "MapCompositor",
+    "BatchResult",
+    "NormalOutputMode",
+    "FrameExtractor",
+    "extract_frames",
     "IterUtils",
     "MathUtils",
     "ProgressionCurves",

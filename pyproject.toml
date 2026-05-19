@@ -16,7 +16,7 @@ classifiers = [
 ]
 
 # Dependencies
-dependencies = ["numpy"]
+dependencies = ["numpy", "Pillow"]
 
 [project.urls]
 Homepage = "https://github.com/m3trik/pythontk"

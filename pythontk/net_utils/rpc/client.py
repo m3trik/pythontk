@@ -4,9 +4,7 @@
 
 Drives the "Python client talks to a long-lived process over loopback"
 pattern. The remote end is any HTTP server that speaks the wire format
-below; the canonical implementation today is the Marmoset Toolbag plugin
-in :mod:`mayatk.mat_utils.marmoset_bridge.marmoset_rpc`, but nothing
-here is Maya- or Toolbag-specific.
+below; nothing here is host-application-specific.
 
 Wire format:
 
@@ -18,9 +16,7 @@ Wire format:
                                        -> ``{"value": {...} or [...]}``
 
 Adapters subclass :class:`RpcClient` to bind defaults (port, app finder,
-label) for a given host application. See
-:class:`mayatk.mat_utils.marmoset_bridge.marmoset_rpc.MarmosetConnection`
-as the reference implementation.
+label) for a given host application.
 
 Session-safety note: :meth:`shutdown` only acts on the process that
 :meth:`connect` launched. A host app the user opened manually is never

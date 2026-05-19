@@ -964,9 +964,8 @@ class LoggerExt:
         """Return the narrowest column count reported by attached handlers.
 
         Sources, in priority order per handler:
-        1. A custom ``available_columns()`` method (e.g. uitk's
-           ``TextEditLogHandler`` computes it from viewport width + font
-           metrics).
+        1. A custom ``available_columns()`` method on the handler (host
+           integrations can supply this to report e.g. viewport width).
         2. For ``StreamHandler`` whose stream is a TTY, the live terminal
            width via ``os.get_terminal_size``. Files are skipped since
            ``isatty()`` is False for them.
