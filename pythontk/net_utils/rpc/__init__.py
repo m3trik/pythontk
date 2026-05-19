@@ -16,7 +16,4 @@ Public symbols are exposed at the top of :mod:`pythontk` via
 ``DEFAULT_INCLUDE`` (see ``pythontk/__init__.py``). No re-exports here --
 this subpackage's ``__init__.py`` is intentionally docstring-only, in
 line with the root CLAUDE.md convention.
-
-Reference implementation: :mod:`mayatk.mat_utils.marmoset_bridge.marmoset_rpc`
-wires a Marmoset Toolbag plugin to the same wire format.
 """
