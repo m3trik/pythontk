@@ -617,13 +617,33 @@ class MapConverterSlots(ImgUtils):
         except Exception:
             pass
 
-    def b008(self):
-        """Batch pack Metallic (R), AO (G), and Smoothness (A) across texture sets."""
+    def b008_init(self, widget):
+        """Populate the MSAO pack toolbutton's option menu (channel layout)."""
+        widget.option_box.menu.setTitle("Pack MSAO")
+        widget.option_box.menu.add(
+            "QComboBox",
+            setObjectName="cmb_msao_layout",
+            setToolTip=(
+                "RGBA: HDRP Mask Map (R=Metallic, G=AO, B=Detail, A=Smoothness).\n"
+                "RGB: 3-channel parallel layout (R=Metallic, G=Smoothness, B=AO)."
+            ),
+        )
+        widget.option_box.menu.cmb_msao_layout.add(
+            [("RGBA (HDRP Mask Map)", "rgba"), ("RGB (3-channel)", "rgb")],
+            prefix="Layout:",
+        )
+
+    def b008(self, widget):
+        """Batch pack Metallic, AO, and Smoothness/Roughness into an MSAO texture."""
         paths = self._get_texture_paths(
             title="Select one or more sets of Metallic, Ambient Occlusion, and Smoothness maps:",
         )
         if not paths:
             return
+
+        layout = (
+            widget.option_box.menu.cmb_msao_layout.currentData() or "rgba"
+        )
 
         texture_sets = MapFactory.group_textures_by_set(paths)
 
@@ -643,7 +663,6 @@ class MapConverterSlots(ImgUtils):
                 print(f"Skipping {base_name}: No Ambient Occlusion map found.")
                 continue
 
-            # Use smoothness or convert roughness
             alpha_map_path = smoothness_map_path or roughness_map_path
             invert_alpha = roughness_map_path is not None
 
@@ -651,11 +670,11 @@ class MapConverterSlots(ImgUtils):
                 print(f"Skipping {base_name}: No Smoothness or Roughness map found.")
                 continue
 
-            print(f"Packing MSAO for {base_name}:")
-            print(f"  Metallic (R): {metallic_map_path}")
-            print(f"  AO (G): {ao_map_path}")
+            print(f"Packing MSAO ({layout.upper()}) for {base_name}:")
+            print(f"  Metallic: {metallic_map_path}")
+            print(f"  AO:       {ao_map_path}")
             print(
-                f"  {'Roughness' if invert_alpha else 'Smoothness'} (A): {alpha_map_path}"
+                f"  {'Roughness' if invert_alpha else 'Smoothness'}: {alpha_map_path}"
             )
 
             packed_path = MapFactory.pack_msao_texture(
@@ -663,6 +682,7 @@ class MapConverterSlots(ImgUtils):
                 ao_map_path,
                 alpha_map_path,
                 invert_alpha=invert_alpha,
+                layout=layout,
             )
             print(f"// Result: {packed_path}")
 
@@ -671,7 +691,28 @@ class MapConverterSlots(ImgUtils):
         except Exception:
             pass
 
-    def b009(self):
+    def b009_init(self, widget):
+        """Populate the MSAO unpack toolbutton's option menu (channel layout)."""
+        widget.option_box.menu.setTitle("Unpack MSAO")
+        widget.option_box.menu.add(
+            "QComboBox",
+            setObjectName="cmb_msao_unpack_layout",
+            setToolTip=(
+                "Auto-detect: pick layout from the source image mode (RGBA → HDRP Mask Map, RGB → 3-channel).\n"
+                "RGBA: force HDRP Mask Map (R=Metallic, G=AO, B=Detail, A=Smoothness).\n"
+                "RGB: force 3-channel parallel layout (R=Metallic, G=Smoothness, B=AO)."
+            ),
+        )
+        widget.option_box.menu.cmb_msao_unpack_layout.add(
+            [
+                ("Auto-detect", ""),
+                ("RGBA (HDRP Mask Map)", "rgba"),
+                ("RGB (3-channel)", "rgb"),
+            ],
+            prefix="Layout:",
+        )
+
+    def b009(self, widget):
         """Unpack Metallic, AO, and Smoothness maps from MSAO textures."""
         msao_paths = self._get_texture_paths(
             title="Select MSAO (MetallicSmoothnessAO) maps to unpack:",
@@ -680,12 +721,17 @@ class MapConverterSlots(ImgUtils):
         if not msao_paths:
             return
 
+        layout = (
+            widget.option_box.menu.cmb_msao_unpack_layout.currentData() or None
+        )
+
         for msao_path in msao_paths:
-            print(f"Unpacking MSAO: {msao_path} ..")
+            label = (layout or "auto").upper()
+            print(f"Unpacking MSAO [{label}]: {msao_path} ..")
 
             try:
                 metallic_path, ao_path, smoothness_path = (
-                    MapFactory.unpack_msao_texture(msao_path)
+                    MapFactory.unpack_msao_texture(msao_path, layout=layout)
                 )
                 print(f"// Metallic map: {metallic_path}")
                 print(f"// AO map: {ao_path}")
@@ -696,6 +742,211 @@ class MapConverterSlots(ImgUtils):
 
         try:
             self.source_dir = FileUtils.format_path(msao_paths[0], "path")
+        except Exception:
+            pass
+
+    def b013_init(self, widget):
+        """Populate the MRAO pack toolbutton's option menu (channel layout)."""
+        widget.option_box.menu.setTitle("Pack MRAO")
+        widget.option_box.menu.add(
+            "QComboBox",
+            setObjectName="cmb_mrao_layout",
+            setToolTip=(
+                "RGB: industry standard (R=Metallic, G=Roughness, B=AO).\n"
+                "RGBA: MSAO mirror (R=Metallic, G=AO, B=Detail, A=Roughness)."
+            ),
+        )
+        widget.option_box.menu.cmb_mrao_layout.add(
+            [("RGB (3-channel)", "rgb"), ("RGBA (MSAO mirror)", "rgba")],
+            prefix="Layout:",
+        )
+
+    def b013(self, widget):
+        """Batch pack Metallic, Roughness/Smoothness, and AO into an MRAO texture."""
+        paths = self._get_texture_paths(
+            title="Select one or more sets of Metallic, Roughness, and Ambient Occlusion maps:",
+        )
+        if not paths:
+            return
+
+        layout = widget.option_box.menu.cmb_mrao_layout.currentData() or "rgb"
+
+        texture_sets = MapFactory.group_textures_by_set(paths)
+
+        for base_name, files in texture_sets.items():
+            sorted_maps = MapFactory.sort_images_by_type(files)
+
+            metallic_map_path = sorted_maps.get("Metallic", [None])[0]
+            ao_map_path = sorted_maps.get("Ambient_Occlusion", [None])[0]
+            roughness_map_path = sorted_maps.get("Roughness", [None])[0]
+            smoothness_map_path = sorted_maps.get("Smoothness", [None])[0]
+
+            if not metallic_map_path:
+                print(f"Skipping {base_name}: No Metallic map found.")
+                continue
+
+            # Prefer Roughness; fall back to Smoothness with inversion.
+            roughness_source = roughness_map_path or smoothness_map_path
+            invert_roughness = (
+                roughness_map_path is None and smoothness_map_path is not None
+            )
+
+            if not roughness_source:
+                print(f"Skipping {base_name}: No Roughness or Smoothness map found.")
+                continue
+
+            print(f"Packing MRAO ({layout.upper()}) for {base_name}:")
+            print(f"  Metallic:  {metallic_map_path}")
+            print(
+                f"  {'Smoothness' if invert_roughness else 'Roughness'}: {roughness_source}"
+            )
+            print(f"  AO:        {ao_map_path or '(missing — defaults to white)'}")
+
+            packed_path = MapFactory.pack_mrao_texture(
+                metallic_map_path,
+                roughness_source,
+                ao_map_path,
+                invert_roughness=invert_roughness,
+                layout=layout,
+            )
+            print(f"// Result: {packed_path}")
+
+        try:
+            self.source_dir = FileUtils.format_path(paths[0], "path")
+        except Exception:
+            pass
+
+    def b014_init(self, widget):
+        """Populate the MRAO unpack toolbutton's option menu (channel layout)."""
+        widget.option_box.menu.setTitle("Unpack MRAO")
+        widget.option_box.menu.add(
+            "QComboBox",
+            setObjectName="cmb_mrao_unpack_layout",
+            setToolTip=(
+                "Auto-detect: pick layout from the source image mode (RGB → industry standard, RGBA → MSAO mirror).\n"
+                "RGB: force 3-channel industry layout (R=Metallic, G=Roughness, B=AO).\n"
+                "RGBA: force MSAO mirror (R=Metallic, G=AO, B=Detail, A=Roughness)."
+            ),
+        )
+        widget.option_box.menu.cmb_mrao_unpack_layout.add(
+            [
+                ("Auto-detect", ""),
+                ("RGB (3-channel)", "rgb"),
+                ("RGBA (MSAO mirror)", "rgba"),
+            ],
+            prefix="Layout:",
+        )
+
+    def b014(self, widget):
+        """Unpack Metallic, Roughness, and AO from MRAO textures."""
+        mrao_paths = self._get_texture_paths(
+            title="Select MRAO (MetallicRoughnessAO) maps to unpack:",
+            map_type_filter=["MRAO"],
+        )
+        if not mrao_paths:
+            return
+
+        layout = (
+            widget.option_box.menu.cmb_mrao_unpack_layout.currentData() or None
+        )
+
+        for mrao_path in mrao_paths:
+            label = (layout or "auto").upper()
+            print(f"Unpacking MRAO [{label}]: {mrao_path} ..")
+
+            try:
+                metallic_path, roughness_path, ao_path = (
+                    MapFactory.unpack_mrao_texture(mrao_path, layout=layout)
+                )
+                print(f"// Metallic map:  {metallic_path}")
+                print(f"// Roughness map: {roughness_path}")
+                print(f"// AO map:        {ao_path}")
+
+            except Exception as e:
+                print(f"// Error unpacking {mrao_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(mrao_paths[0], "path")
+        except Exception:
+            pass
+
+    def b015(self):
+        """Batch pack AO, Roughness/Smoothness, and Metallic into an ORM texture."""
+        paths = self._get_texture_paths(
+            title="Select one or more sets of Ambient Occlusion, Roughness, and Metallic maps:",
+        )
+        if not paths:
+            return
+
+        texture_sets = MapFactory.group_textures_by_set(paths)
+
+        for base_name, files in texture_sets.items():
+            sorted_maps = MapFactory.sort_images_by_type(files)
+
+            ao_map_path = sorted_maps.get("Ambient_Occlusion", [None])[0]
+            metallic_map_path = sorted_maps.get("Metallic", [None])[0]
+            roughness_map_path = sorted_maps.get("Roughness", [None])[0]
+            smoothness_map_path = sorted_maps.get("Smoothness", [None])[0]
+
+            # Prefer Roughness; fall back to Smoothness with inversion.
+            roughness_source = roughness_map_path or smoothness_map_path
+            invert_roughness = (
+                roughness_map_path is None and smoothness_map_path is not None
+            )
+
+            if not roughness_source:
+                print(f"Skipping {base_name}: No Roughness or Smoothness map found.")
+                continue
+
+            if not metallic_map_path:
+                print(f"Skipping {base_name}: No Metallic map found.")
+                continue
+
+            print(f"Packing ORM for {base_name}:")
+            print(f"  AO (R):        {ao_map_path or '(missing — defaults to white)'}")
+            print(
+                f"  {'Smoothness' if invert_roughness else 'Roughness'} (G): {roughness_source}"
+            )
+            print(f"  Metallic (B):  {metallic_map_path}")
+
+            packed_path = MapFactory.pack_orm_texture(
+                ao_map_path,
+                roughness_source,
+                metallic_map_path,
+                invert_roughness=invert_roughness,
+            )
+            print(f"// Result: {packed_path}")
+
+        try:
+            self.source_dir = FileUtils.format_path(paths[0], "path")
+        except Exception:
+            pass
+
+    def b016(self):
+        """Unpack AO, Roughness, and Metallic from ORM textures."""
+        orm_paths = self._get_texture_paths(
+            title="Select ORM (Occlusion Roughness Metallic) maps to unpack:",
+            map_type_filter=["ORM"],
+        )
+        if not orm_paths:
+            return
+
+        for orm_path in orm_paths:
+            print(f"Unpacking ORM: {orm_path} ..")
+
+            try:
+                ao_path, roughness_path, metallic_path = (
+                    MapFactory.unpack_orm_texture(orm_path)
+                )
+                print(f"// AO map:        {ao_path}")
+                print(f"// Roughness map: {roughness_path}")
+                print(f"// Metallic map:  {metallic_path}")
+
+            except Exception as e:
+                print(f"// Error unpacking {orm_path}: {e}")
+
+        try:
+            self.source_dir = FileUtils.format_path(orm_paths[0], "path")
         except Exception:
             pass
 
@@ -775,6 +1026,7 @@ class MapConverterSlots(ImgUtils):
             "Standard PBR (Separate Maps)",
             "Unity URP (Packed: Albedo+Alpha, Metallic+Smoothness)",
             "Unity HDRP (Mask Map: MSAO)",
+            "MRAO (Packed: Metallic+Roughness+AO)",
             "Unreal Engine (BaseColor+Alpha)",
             "glTF 2.0 (Separate Maps)",
             "Godot (Separate Maps)",
@@ -814,6 +1066,14 @@ class MapConverterSlots(ImgUtils):
                 "albedo_transparency": False,
                 "metallic_smoothness": False,
                 "mask_map": True,
+                "normal_type": "OpenGL",
+                "output_extension": "png",
+            },
+            "MRAO (Packed: Metallic+Roughness+AO)": {
+                "albedo_transparency": False,
+                "metallic_smoothness": False,
+                "mask_map": False,
+                "mrao_map": True,
                 "normal_type": "OpenGL",
                 "output_extension": "png",
             },

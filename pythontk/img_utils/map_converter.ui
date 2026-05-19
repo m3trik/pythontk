@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>200</width>
-    <height>387</height>
+    <height>382</height>
    </rect>
   </property>
   <property name="tabShape">
@@ -438,7 +438,7 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="b008">
+             <widget class="PushButton" name="b008">
               <property name="enabled">
                <bool>true</bool>
               </property>
@@ -461,10 +461,72 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Pack Metallic Smoothness AO  &lt;/p&gt;&lt;p&gt;Combines Metallic, Smoothness (or Roughness), and Ambient Occlusion maps into a single packed texture.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select Metallic, Roughness (or Smoothness), and AO maps. Multiple sets can be processed in batch.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- Output channels: R=Metallic, G=AO, B=Empty, A=Smoothness.  &lt;/p&gt;&lt;p&gt;- If an existing MSAO map of the same name exists, it will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Pack Metallic Smoothness AO  &lt;/p&gt;&lt;p&gt;Combines Metallic, Smoothness (or Roughness), and Ambient Occlusion maps into a single packed texture.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select Metallic, Roughness (or Smoothness), and AO maps. Multiple sets can be processed in batch.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- RGBA (HDRP Mask Map): R=Metallic, G=AO, B=Detail, A=Smoothness.  &lt;/p&gt;&lt;p&gt;- RGB (3-channel parallel to MRAO): R=Metallic, G=Smoothness, B=AO.  &lt;/p&gt;&lt;p&gt;- If an existing MSAO map of the same name exists, it will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>MSAO</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="PushButton" name="b013">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>19</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>19</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Pack Metallic Roughness AO  &lt;/p&gt;&lt;p&gt;Combines Metallic, Roughness (or Smoothness), and Ambient Occlusion maps into a single packed texture.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select Metallic, Roughness (or Smoothness), and AO maps. Multiple sets can be processed in batch.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- RGB (default, industry standard): R=Metallic, G=Roughness, B=AO.  &lt;/p&gt;&lt;p&gt;- RGBA (mirror of MSAO): R=Metallic, G=AO, B=Detail, A=Roughness.  &lt;/p&gt;&lt;p&gt;- If an existing MRAO map of the same name exists, it will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>MRAO</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b015">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>19</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>19</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Pack Occlusion Roughness Metallic  &lt;/p&gt;&lt;p&gt;Combines Ambient Occlusion, Roughness (or Smoothness), and Metallic maps into a single packed ORM texture.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select Metallic, Roughness (or Smoothness), and AO maps. Multiple sets can be processed in batch.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- Output channels: R=Occlusion, G=Roughness, B=Metallic (Unreal/glTF convention).  &lt;/p&gt;&lt;p&gt;- If an existing ORM map of the same name exists, it will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>ORM</string>
               </property>
              </widget>
             </item>
@@ -555,7 +617,7 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="b009">
+             <widget class="PushButton" name="b009">
               <property name="enabled">
                <bool>true</bool>
               </property>
@@ -578,10 +640,72 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
                </size>
               </property>
               <property name="toolTip">
-               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Unpack Metallic Smoothness AO  &lt;/p&gt;&lt;p&gt;Separates a packed MetallicSmoothnessAO map into individual Metallic, Smoothness (or Roughness), and AO maps.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select one or more MSAO maps to process. Batch processing is supported.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- Output maps: Metallic, Smoothness (or Roughness), and AO.  &lt;/p&gt;&lt;p&gt;- If existing maps of the same name exist, they will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Unpack Metallic Smoothness AO  &lt;/p&gt;&lt;p&gt;Separates a packed MetallicSmoothnessAO map into individual Metallic, Smoothness (or Roughness), and AO maps.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select one or more MSAO maps to process. Batch processing is supported.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- Output maps: Metallic, Smoothness (or Roughness), and AO.  &lt;/p&gt;&lt;p&gt;- Layout defaults to Auto-detect from image mode (RGBA = HDRP Mask Map, RGB = 3-channel parallel layout); override via the options menu when the file's name lies about its layout.  &lt;/p&gt;&lt;p&gt;- If existing maps of the same name exist, they will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
               </property>
               <property name="text">
                <string>MSAO</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="PushButton" name="b014">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>19</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>19</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Unpack Metallic Roughness AO  &lt;/p&gt;&lt;p&gt;Separates a packed MetallicRoughnessAO map into individual Metallic, Roughness, and AO maps.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select one or more MRAO maps to process. Batch processing is supported.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- Output maps: Metallic, Roughness, and AO.  &lt;/p&gt;&lt;p&gt;- Layout defaults to Auto-detect from image mode (RGB = industry standard, RGBA = MSAO mirror); override via the options menu when needed.  &lt;/p&gt;&lt;p&gt;- If existing maps of the same name exist, they will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>MRAO</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="b016">
+              <property name="enabled">
+               <bool>true</bool>
+              </property>
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>19</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>19</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Unpack Occlusion Roughness Metallic  &lt;/p&gt;&lt;p&gt;Separates a packed ORM map into individual Occlusion, Roughness, and Metallic maps.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;Usage: Select one or more ORM maps to process. Batch processing is supported.  &lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;- Input channels: R=Occlusion, G=Roughness, B=Metallic (Unreal/glTF convention).  &lt;/p&gt;&lt;p&gt;- If existing maps of the same name exist, they will be overwritten.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>ORM</string>
               </property>
              </widget>
             </item>
@@ -590,6 +714,19 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
          </item>
         </layout>
        </widget>
+      </item>
+      <item>
+       <spacer name="verticalSpacer">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>0</width>
+          <height>10</height>
+         </size>
+        </property>
+       </spacer>
       </item>
       <item>
        <widget class="Footer" name="footer" native="true">
@@ -606,19 +743,6 @@ Converts a &lt;b&gt;Normal Map&lt;/b&gt; from &lt;b&gt;OpenGL&lt;/b&gt; format t
          </size>
         </property>
        </widget>
-      </item>
-      <item>
-       <spacer name="verticalSpacer">
-        <property name="orientation">
-         <enum>Qt::Vertical</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>0</width>
-          <height>10</height>
-         </size>
-        </property>
-       </spacer>
       </item>
      </layout>
     </item>

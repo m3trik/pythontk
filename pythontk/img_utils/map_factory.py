@@ -243,6 +243,7 @@ class TextureProcessor:
         if ext.lower() in ["jpg", "jpeg"] and map_type in [
             "MaskMap",
             "MSAO",
+            "MRAO",
             "ORM",
             "Albedo_Transparency",
         ]:
@@ -435,9 +436,10 @@ class TextureProcessor:
             if will_resize:
                 img_obj = ImgUtils.depalettize_image(img_obj)
 
-            # 2. Enforce Mode
+            # 2. Enforce Mode (skipped when the map type has no fixed mode,
+            # e.g. MRAO which supports both 3- and 4-channel layouts)
             map_def = MapRegistry().get(map_type)
-            if map_def:
+            if map_def and map_def.mode:
                 img_obj = ImgUtils.enforce_mode(img_obj, map_def.mode)
 
             # 3. Resize
@@ -748,6 +750,59 @@ class TextureProcessor:
         self.unpack_msao(source_path)
         return self.inventory["AO"]
 
+    def unpack_mrao(self, source_path: Union[str, "Image.Image"]) -> None:
+        """Helper to unpack MRAO and cache results.
+
+        Layout is detected from the source image mode (RGB → 3-channel,
+        RGBA → 4-channel mirror of MSAO).
+        """
+        if (
+            "Metallic" in self.inventory
+            and "Roughness" in self.inventory
+            and "AO" in self.inventory
+        ):
+            return
+
+        metallic_img, roughness_img, ao_img = MapFactory.unpack_mrao_texture(
+            source_path, self.output_dir, optimize=False, save=False
+        )
+
+        self.inventory["Metallic"] = metallic_img
+        self.inventory["Roughness"] = roughness_img
+        self.inventory["AO"] = ao_img
+        self.inventory["Ambient_Occlusion"] = self.inventory["AO"]
+        if self.logger:
+            self.logger.info(
+                "Unpacked Metallic, Roughness, and AO from MRAO map",
+                extra={"preset": "highlight"},
+            )
+
+    def get_metallic_from_mrao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_mrao(source_path)
+        return self.inventory["Metallic"]
+
+    def get_roughness_from_mrao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_mrao(source_path)
+        return self.inventory["Roughness"]
+
+    def get_smoothness_from_mrao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_mrao(source_path)
+        if not self.inventory.get("Roughness"):
+            return None
+        return self.convert_roughness_to_smoothness(self.inventory["Roughness"])
+
+    def get_ao_from_mrao(
+        self, source_path: Union[str, "Image.Image"]
+    ) -> Union[str, "Image.Image"]:
+        self.unpack_mrao(source_path)
+        return self.inventory["AO"]
+
     def unpack_orm(self, source_path: Union[str, "Image.Image"]) -> None:
         """Helper to unpack ORM and cache results."""
         if (
@@ -852,21 +907,74 @@ class TextureProcessor:
             )
         return orm_img
 
+    def create_mrao_map(
+        self, inventory: Dict[str, Union[str, "Image.Image"]]
+    ) -> "Image.Image":
+        """Create MRAO (Metallic R / Roughness G / AO B) map from components.
+
+        Honours ``mrao_layout`` in config: ``"rgb"`` (default, 3-channel
+        industry-standard order) or ``"rgba"`` (4-channel mirror of MSAO with
+        roughness in alpha).
+        """
+        metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
+        ao = self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
+
+        # Get roughness with inversion tracking
+        roughness = None
+        invert = False
+        if "Roughness" in inventory:
+            roughness = inventory["Roughness"]
+        elif "Smoothness" in inventory:
+            roughness = inventory["Smoothness"]
+            invert = True
+        elif "Glossiness" in inventory:
+            roughness = inventory["Glossiness"]
+            invert = True
+
+        if not (metallic or roughness or ao):
+            raise ValueError("Missing components for MRAO map")
+
+        layout = self.config.get("mrao_layout", "rgb")
+        detail = None
+        if layout == "rgba":
+            detail = (
+                self.resolve_map("Detail_Mask", "Detail", allow_conversion=False)
+                or None
+            )
+
+        mrao_img = MapFactory.pack_mrao_texture(
+            metallic_map_path=metallic,
+            roughness_map_path=roughness,
+            ao_map_path=ao,
+            detail_map_path=detail,
+            output_dir=self.output_dir,
+            suffix="_MRAO",
+            invert_roughness=invert,
+            layout=layout,
+            save=False,
+        )
+        if self.logger:
+            self.logger.info(
+                f"Created MRAO map from components (layout={layout})",
+                extra={"preset": "highlight"},
+            )
+        return mrao_img
+
     def create_mask_map(
         self, inventory: Dict[str, Union[str, "Image.Image"]]
     ) -> "Image.Image":
-        """Create Mask Map (MSAO) from components."""
-        # Resolve required components
+        """Create Mask Map (MSAO) from components.
+
+        Honours ``mask_map_layout`` in config: ``"rgba"`` (default; HDRP Mask
+        Map: R=Metallic, G=AO, B=Detail, A=Smoothness) or ``"rgb"`` (3-channel
+        parallel to MRAO: R=Metallic, G=Smoothness, B=AO).
+        """
         metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
         ao = self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False) or None
-        detail = (
-            self.resolve_map("Detail_Mask", "Detail", allow_conversion=False) or None
-        )
 
         # Get smoothness with inversion tracking
         smoothness = None
         invert = False
-
         if "Smoothness" in inventory:
             smoothness = inventory["Smoothness"]
         elif "Glossiness" in inventory:
@@ -874,12 +982,18 @@ class TextureProcessor:
         elif "Roughness" in inventory:
             smoothness = inventory["Roughness"]
             invert = True
-        else:
-            smoothness = None
 
         if not metallic and not ao and not smoothness:
             raise ValueError(
                 "Missing components for Mask Map (need at least Metallic, AO, or Smoothness)"
+            )
+
+        layout = self.config.get("mask_map_layout", "rgba")
+        detail = None
+        if layout == "rgba":
+            detail = (
+                self.resolve_map("Detail_Mask", "Detail", allow_conversion=False)
+                or None
             )
 
         mask_map = MapFactory.pack_msao_texture(
@@ -890,11 +1004,13 @@ class TextureProcessor:
             output_dir=self.output_dir,
             suffix="_MaskMap",
             invert_alpha=invert,
+            layout=layout,
             save=False,
         )
         if self.logger:
             self.logger.info(
-                "Created Mask Map from components", extra={"preset": "highlight"}
+                f"Created Mask Map from components (layout={layout})",
+                extra={"preset": "highlight"},
             )
         return mask_map
 
@@ -1058,6 +1174,116 @@ class ORMMapHandler(WorkflowHandler):
         ]
 
 
+class MRAOMapHandler(WorkflowHandler):
+    """Handles MRAO packing (Metallic R, Roughness G, AO B by default).
+
+    Mirror of :class:`ORMMapHandler` for pipelines that prefer the Unity-style
+    M/R/AO channel order. Honours ``mrao_layout`` config (``"rgb"`` /
+    ``"rgba"``) to optionally produce a 4-channel layout parallel to MSAO.
+    """
+
+    def can_handle(self, context: TextureProcessor) -> bool:
+        # Legacy support: 'convert' implies packing
+        # New support: 'pack' explicitly controls packing
+        if not context.config.get("pack", context.config.get("convert", True)):
+            return False
+
+        # Explicitly disabled?
+        if context.config.get("mrao_map") is False:
+            return False
+
+        if self.is_explicitly_requested(context, "MRAO"):
+            return True
+
+        return False
+
+    def process(self, context: TextureProcessor) -> Optional[str]:
+        if "MRAO" in context.inventory:
+            return context.save_map(context.inventory["MRAO"], "MRAO")
+
+        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
+        ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
+
+        # Resolve roughness with inversion tracking
+        roughness = None
+        invert = False
+        roughness_map = context.resolve_map("Roughness", allow_conversion=False)
+        if roughness_map:
+            roughness = roughness_map
+        else:
+            smoothness = context.resolve_map(
+                "Smoothness", "Glossiness", allow_conversion=False
+            )
+            if smoothness:
+                roughness = smoothness
+                invert = True
+            else:
+                # Last resort: derive via the broader conversion system
+                roughness = context.resolve_map(
+                    "Roughness", "Specular", allow_conversion=True
+                )
+
+        if not any([metallic, roughness, ao]):
+            return None
+
+        if not metallic and not context.config.get("force_packed_maps", False):
+            if context.logger:
+                context.logger.warning(
+                    "No metallic map for MRAO red channel"
+                )
+            return None
+
+        if not roughness and not context.config.get("force_packed_maps", False):
+            if context.logger:
+                context.logger.warning(
+                    "No roughness map for MRAO green channel"
+                )
+            return None
+
+        layout = context.config.get("mrao_layout", "rgb")
+        detail = None
+        if layout == "rgba":
+            detail = context.resolve_map(
+                "Detail_Mask", "Detail", allow_conversion=False
+            )
+
+        try:
+            mrao_image = MapFactory.pack_mrao_texture(
+                metallic_map_path=metallic,
+                roughness_map_path=roughness,
+                ao_map_path=ao,
+                detail_map_path=detail,
+                layout=layout,
+                invert_roughness=invert,
+                save=False,
+            )
+            if context.logger:
+                context.logger.info(
+                    f"Created MRAO map (layout={layout})",
+                    extra={"preset": "highlight"},
+                )
+            sources = [img for img in [metallic, roughness, ao, detail] if img]
+            return context.save_map(mrao_image, "MRAO", source_images=sources)
+        except Exception as e:
+            if context.logger:
+                context.logger.error(f"Error creating MRAO map: {str(e)}")
+            return None
+
+    def get_consumed_types(self) -> List[str]:
+        return [
+            "Metallic",
+            "MRAO",
+            "Roughness",
+            "Smoothness",
+            "Glossiness",
+            "Ambient_Occlusion",
+            "AO",
+            "Specular",
+            "Detail",
+            "Detail_Mask",
+        ]
+
+
 class MaskMapHandler(WorkflowHandler):
     """Handles Unity HDRP Mask Map (MSAO)."""
 
@@ -1124,32 +1350,29 @@ class MaskMapHandler(WorkflowHandler):
             if context.logger:
                 context.logger.info("No AO map, using white for Mask Map green channel")
 
-        try:
-            # Use pack_channels directly to allow missing AO (defaults to white)
-            # Pass output_path=None to get the PIL Image object back instead of saving to disk
-            mask_map_image = ImgUtils.pack_channels(
-                channel_files={
-                    "R": metallic,
-                    "G": ao,
-                    "B": None,
-                    "A": smoothness,
-                },
-                channels=["R", "G", "B", "A"],
-                out_mode="RGBA",
-                fill_values={"R": 0, "G": 255, "B": 0, "A": 0 if invert else 255},
-                output_path=None,  # Return Image object
+        layout = context.config.get("mask_map_layout", "rgba")
+        detail = None
+        if layout == "rgba":
+            detail = context.resolve_map(
+                "Detail_Mask", "Detail", allow_conversion=False
             )
 
-            if invert:
-                # Invert the alpha channel after packing if needed
-                mask_map_image = ImgUtils.invert_channels(mask_map_image, "A")
-
+        try:
+            mask_map_image = MapFactory.pack_msao_texture(
+                metallic_map_path=metallic,
+                ao_map_path=ao,
+                alpha_map_path=smoothness,
+                detail_map_path=detail,
+                invert_alpha=invert,
+                layout=layout,
+                save=False,
+            )
             if context.logger:
                 context.logger.info(
-                    "Created Unity HDRP Mask Map", extra={"preset": "highlight"}
+                    f"Created Unity HDRP Mask Map (layout={layout})",
+                    extra={"preset": "highlight"},
                 )
-            # Pass the PIL Image directly to save_map, which handles optimization and saving
-            sources = [img for img in [metallic, ao, smoothness] if img]
+            sources = [img for img in [metallic, ao, smoothness, detail] if img]
             return context.save_map(mask_map_image, "MSAO", source_images=sources)
         except Exception as e:
             if context.logger:
@@ -1685,7 +1908,10 @@ class MapFactory(LoggingMixin):
         "albedo_transparency": False,
         "metallic_smoothness": False,
         "mask_map": False,
+        "mask_map_layout": "rgba",  # "rgba" (HDRP default) or "rgb" (3-channel parallel to MRAO)
         "orm_map": False,
+        "mrao_map": False,
+        "mrao_layout": "rgb",  # "rgb" (industry default) or "rgba" (mirror of MSAO)
         "convert_specgloss_to_pbr": False,
         "normal_type": "OpenGL",
         "cleanup_base_color": False,
@@ -1699,6 +1925,7 @@ class MapFactory(LoggingMixin):
         BaseColorHandler,
         NormalMapHandler,
         ORMMapHandler,
+        MRAOMapHandler,
         MaskMapHandler,
         MetallicSmoothnessHandler,
         OutputFallbackHandler,
@@ -1941,6 +2168,68 @@ class MapFactory(LoggingMixin):
             "AO",
             "MSAO",
             lambda inv, ctx: ctx.get_ao_from_msao(inv["MSAO"]),
+            priority=8,
+        )
+
+        # Packing conversions (MRAO)
+        # Priority 10: All components present, native Roughness
+        registry.register(
+            "MRAO",
+            ["Metallic", "Roughness", "Ambient_Occlusion"],
+            lambda inv, ctx: ctx.create_mrao_map(inv),
+            priority=10,
+        )
+        # Priority 9: All components present, converted Smoothness
+        registry.register(
+            "MRAO",
+            ["Metallic", "Smoothness", "Ambient_Occlusion"],
+            lambda inv, ctx: ctx.create_mrao_map(inv),
+            priority=9,
+        )
+        # Priority 8: Missing AO, native Roughness
+        registry.register(
+            "MRAO",
+            ["Metallic", "Roughness"],
+            lambda inv, ctx: ctx.create_mrao_map(inv),
+            priority=8,
+        )
+        # Priority 7: Missing AO, converted Smoothness
+        registry.register(
+            "MRAO",
+            ["Metallic", "Smoothness"],
+            lambda inv, ctx: ctx.create_mrao_map(inv),
+            priority=7,
+        )
+
+        # Unpacking conversions (MRAO)
+        registry.register(
+            "Metallic",
+            "MRAO",
+            lambda inv, ctx: ctx.get_metallic_from_mrao(inv["MRAO"]),
+            priority=8,
+        )
+        registry.register(
+            "Roughness",
+            "MRAO",
+            lambda inv, ctx: ctx.get_roughness_from_mrao(inv["MRAO"]),
+            priority=8,
+        )
+        registry.register(
+            "Smoothness",
+            "MRAO",
+            lambda inv, ctx: ctx.get_smoothness_from_mrao(inv["MRAO"]),
+            priority=8,
+        )
+        registry.register(
+            "Ambient_Occlusion",
+            "MRAO",
+            lambda inv, ctx: ctx.get_ao_from_mrao(inv["MRAO"]),
+            priority=8,
+        )
+        registry.register(
+            "AO",
+            "MRAO",
+            lambda inv, ctx: ctx.get_ao_from_mrao(inv["MRAO"]),
             priority=8,
         )
 
@@ -3527,6 +3816,78 @@ class MapFactory(LoggingMixin):
         return None
 
     @classmethod
+    def pack_orm_texture(
+        cls,
+        ao_map_path: Optional[str],
+        roughness_map_path: Optional[str],
+        metallic_map_path: Optional[str],
+        output_dir: str = None,
+        suffix: str = "_ORM",
+        invert_roughness: bool = False,
+        output_path: str = None,
+        save: bool = True,
+    ) -> Union[str, "Image.Image"]:
+        """Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.
+
+        Parameters:
+            ao_map_path (str): AO texture. Can be None (fills white).
+            roughness_map_path (str): Roughness texture. Can be None (fills black).
+            metallic_map_path (str): Metallic texture. Can be None (fills black).
+            output_dir (str, optional): Output directory. Defaults to the first source's directory.
+            suffix (str, optional): Suffix for the output file name.
+            invert_roughness (bool, optional): Treat ``roughness_map_path`` as Smoothness and invert it.
+            output_path (str, optional): Explicit output path. Overrides output_dir/suffix logic.
+            save (bool, optional): If True, saves to disk. If False, returns PIL Image.
+
+        Returns:
+            str | Image.Image: Path to the packed ORM texture or PIL Image.
+        """
+        if ao_map_path and isinstance(ao_map_path, str):
+            ImgUtils.assert_pathlike(ao_map_path, "ao_map_path")
+        if roughness_map_path and isinstance(roughness_map_path, str):
+            ImgUtils.assert_pathlike(roughness_map_path, "roughness_map_path")
+        if metallic_map_path and isinstance(metallic_map_path, str):
+            ImgUtils.assert_pathlike(metallic_map_path, "metallic_map_path")
+
+        if save and output_path is None:
+            source_map = ao_map_path or roughness_map_path or metallic_map_path
+            if not source_map:
+                raise ValueError("No source maps provided to derive output name")
+
+            base_name = cls.get_base_texture_name(source_map)
+
+            if output_dir is None:
+                if isinstance(source_map, str):
+                    output_dir = os.path.dirname(source_map)
+                else:
+                    raise ValueError(
+                        "Cannot derive output directory from Image object; provide output_dir explicitly"
+                    )
+            elif not os.path.isdir(output_dir):
+                raise ValueError(
+                    f"The specified output directory '{output_dir}' is not valid."
+                )
+
+            output_path = os.path.join(
+                output_dir, f"{base_name}{suffix}.{DEFAULT_EXTENSION}"
+            )
+        elif not save:
+            output_path = None
+
+        return ImgUtils.pack_channels(
+            channel_files={
+                "R": ao_map_path,
+                "G": roughness_map_path,
+                "B": metallic_map_path,
+            },
+            output_path=output_path,
+            out_mode="RGB",
+            invert_channels=["G"] if invert_roughness else None,
+            fill_values={"R": 255, "G": 0, "B": 0},
+            save=save,
+        )
+
+    @classmethod
     def pack_msao_texture(
         cls,
         metallic_map_path: str,
@@ -3538,23 +3899,30 @@ class MapFactory(LoggingMixin):
         invert_alpha: bool = False,
         output_path: str = None,
         save: bool = True,
+        layout: str = "rgba",
     ) -> Union[str, "Image.Image"]:
-        """Packs Metallic (R), AO (G), Detail (B), and Smoothness/Roughness (A) into a single MSAO texture.
+        """Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.
 
         Parameters:
             metallic_map_path (str): Path to the metallic texture map.
             ao_map_path (str): Path to the ambient occlusion texture map. Can be None (fills with white).
-            alpha_map_path (str): Path to the smoothness or roughness texture map. Can be None (fills with white).
-            detail_map_path (str, optional): Path to the detail mask map. Can be None (fills with black).
-            output_dir (str, optional): Output directory. If None, uses metallic map directory.
+            alpha_map_path (str): Path to the smoothness/roughness texture map. Can be None (fills with white).
+            detail_map_path (str, optional): Path to the detail mask map (RGBA layout only).
+            output_dir (str, optional): Output directory. If None, uses the first source map's directory.
             suffix (str, optional): Suffix for the output file name.
-            invert_alpha (bool, optional): If True, inverts the alpha channel (roughness to smoothness).
+            invert_alpha (bool, optional): If True, inverts the smoothness channel (roughness → smoothness).
+            layout (str, optional): ``"rgba"`` (default; HDRP Mask Map: R=M, G=AO, B=Detail, A=S) or
+                ``"rgb"`` (3-channel parallel to MRAO: R=M, G=S, B=AO).
             output_path (str, optional): Explicit output path. Overrides output_dir/suffix logic.
             save (bool, optional): If True, saves to disk. If False, returns PIL Image.
 
         Returns:
             str | Image.Image: Path to the packed MSAO texture or PIL Image.
         """
+        layout = (layout or "rgba").lower()
+        if layout not in ("rgba", "rgb"):
+            raise ValueError(f"Unsupported MSAO layout: {layout!r}")
+
         if isinstance(metallic_map_path, str):
             ImgUtils.assert_pathlike(metallic_map_path, "metallic_map_path")
         if ao_map_path and isinstance(ao_map_path, str):
@@ -3565,7 +3933,6 @@ class MapFactory(LoggingMixin):
             ImgUtils.assert_pathlike(detail_map_path, "detail_map_path")
 
         if save and output_path is None:
-            # Derive base name from the first available map
             source_map = (
                 metallic_map_path or ao_map_path or alpha_map_path or detail_map_path
             )
@@ -3592,7 +3959,22 @@ class MapFactory(LoggingMixin):
         elif not save:
             output_path = None
 
-        # Pack channels using the existing pack_channels method
+        if layout == "rgb":
+            # 3-channel parallel layout: R=Metallic, G=Smoothness, B=AO
+            return ImgUtils.pack_channels(
+                channel_files={
+                    "R": metallic_map_path,
+                    "G": alpha_map_path,
+                    "B": ao_map_path,
+                },
+                output_path=output_path,
+                out_mode="RGB",
+                invert_channels=["G"] if invert_alpha else None,
+                fill_values={"R": 0, "G": 255, "B": 255},
+                save=save,
+            )
+
+        # Default HDRP Mask Map layout: R=Metallic, G=AO, B=Detail, A=Smoothness
         return ImgUtils.pack_channels(
             channel_files={
                 "R": metallic_map_path,
@@ -3603,11 +3985,109 @@ class MapFactory(LoggingMixin):
             output_path=output_path,
             out_mode="RGBA",
             invert_channels=["A"] if invert_alpha else None,
-            fill_values={
-                "G": 255,
-                "B": 0,
-                "A": 255,
-            },  # AO=White, Detail=Black, Alpha=White
+            fill_values={"G": 255, "B": 0, "A": 255},
+            save=save,
+        )
+
+    @classmethod
+    def pack_mrao_texture(
+        cls,
+        metallic_map_path: Optional[str],
+        roughness_map_path: Optional[str],
+        ao_map_path: Optional[str],
+        detail_map_path: Optional[str] = None,
+        output_dir: str = None,
+        suffix: str = "_MRAO",
+        invert_roughness: bool = False,
+        output_path: str = None,
+        save: bool = True,
+        layout: str = "rgb",
+    ) -> Union[str, "Image.Image"]:
+        """Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.
+
+        Parameters:
+            metallic_map_path (str): Metallic texture. Can be None (fills black).
+            roughness_map_path (str): Roughness texture. Can be None (fills black).
+            ao_map_path (str): AO texture. Can be None (fills white).
+            detail_map_path (str, optional): Detail mask (RGBA layout only).
+            output_dir (str, optional): Output directory. If None, uses the first source map's directory.
+            suffix (str, optional): Suffix for the output file name.
+            invert_roughness (bool, optional): Treat ``roughness_map_path`` as Smoothness and invert it.
+            layout (str, optional): ``"rgb"`` (default; industry standard: R=M, G=R, B=AO) or
+                ``"rgba"`` (mirror of MSAO: R=M, G=AO, B=Detail, A=R).
+            output_path (str, optional): Explicit output path. Overrides output_dir/suffix logic.
+            save (bool, optional): If True, saves to disk. If False, returns PIL Image.
+
+        Returns:
+            str | Image.Image: Path to the packed MRAO texture or PIL Image.
+        """
+        layout = (layout or "rgb").lower()
+        if layout not in ("rgb", "rgba"):
+            raise ValueError(f"Unsupported MRAO layout: {layout!r}")
+
+        if metallic_map_path and isinstance(metallic_map_path, str):
+            ImgUtils.assert_pathlike(metallic_map_path, "metallic_map_path")
+        if roughness_map_path and isinstance(roughness_map_path, str):
+            ImgUtils.assert_pathlike(roughness_map_path, "roughness_map_path")
+        if ao_map_path and isinstance(ao_map_path, str):
+            ImgUtils.assert_pathlike(ao_map_path, "ao_map_path")
+        if detail_map_path and isinstance(detail_map_path, str):
+            ImgUtils.assert_pathlike(detail_map_path, "detail_map_path")
+
+        if save and output_path is None:
+            source_map = (
+                metallic_map_path or roughness_map_path or ao_map_path or detail_map_path
+            )
+            if not source_map:
+                raise ValueError("No source maps provided to derive output name")
+
+            base_name = cls.get_base_texture_name(source_map)
+
+            if output_dir is None:
+                if isinstance(source_map, str):
+                    output_dir = os.path.dirname(source_map)
+                else:
+                    raise ValueError(
+                        "Cannot derive output directory from Image object; provide output_dir explicitly"
+                    )
+            elif not os.path.isdir(output_dir):
+                raise ValueError(
+                    f"The specified output directory '{output_dir}' is not valid."
+                )
+
+            output_path = os.path.join(
+                output_dir, f"{base_name}{suffix}.{DEFAULT_EXTENSION}"
+            )
+        elif not save:
+            output_path = None
+
+        if layout == "rgba":
+            # Mirror of MSAO: R=Metallic, G=AO, B=Detail, A=Roughness
+            return ImgUtils.pack_channels(
+                channel_files={
+                    "R": metallic_map_path,
+                    "G": ao_map_path,
+                    "B": detail_map_path,
+                    "A": roughness_map_path,
+                },
+                output_path=output_path,
+                out_mode="RGBA",
+                invert_channels=["A"] if invert_roughness else None,
+                fill_values={"R": 0, "G": 255, "B": 0, "A": 0},
+                save=save,
+            )
+
+        # Default 3-channel industry layout: R=Metallic, G=Roughness, B=AO
+        return ImgUtils.pack_channels(
+            channel_files={
+                "R": metallic_map_path,
+                "G": roughness_map_path,
+                "B": ao_map_path,
+            },
+            output_path=output_path,
+            out_mode="RGB",
+            invert_channels=["G"] if invert_roughness else None,
+            fill_values={"R": 0, "G": 0, "B": 255},
             save=save,
         )
 
@@ -3747,6 +4227,15 @@ class MapFactory(LoggingMixin):
         else:
             return results.get("R"), results.get("G"), results.get("B")
 
+    @staticmethod
+    def _detect_packed_layout(source: Union[str, "Image.Image"]) -> str:
+        """Return ``"rgba"`` if ``source`` has an alpha channel, else ``"rgb"``."""
+        try:
+            img = ImgUtils.ensure_image(source)
+            return "rgba" if "A" in img.getbands() else "rgb"
+        except Exception:
+            return "rgba"
+
     @classmethod
     def unpack_msao_texture(
         cls,
@@ -3757,25 +4246,105 @@ class MapFactory(LoggingMixin):
         smoothness_suffix: str = "_Smoothness",
         invert_smoothness: bool = False,
         save: bool = True,
+        layout: Optional[str] = None,
         **kwargs,
     ) -> Union[
         Tuple[str, str, str], Tuple["Image.Image", "Image.Image", "Image.Image"]
     ]:
-        """Unpacks Metallic (R), AO (G), and Smoothness (A) maps from a combined MSAO texture."""
+        """Unpack Metallic, AO, and Smoothness from a combined MSAO texture.
+
+        Layout is auto-detected from the image mode when not specified:
+        - ``"rgba"`` (HDRP Mask Map): R=Metallic, G=AO, B=Detail, A=Smoothness.
+        - ``"rgb"`` (3-channel parallel to MRAO): R=Metallic, G=Smoothness, B=AO.
+
+        Returns the (metallic, ao, smoothness) tuple regardless of layout.
+        """
+        resolved_layout = (
+            (layout or "").lower() or cls._detect_packed_layout(msao_map_path)
+        )
+        if resolved_layout not in ("rgba", "rgb"):
+            raise ValueError(f"Unsupported MSAO layout: {layout!r}")
+
+        if resolved_layout == "rgb":
+            channel_config = {
+                "R": {"suffix": metallic_suffix},
+                "G": {"suffix": smoothness_suffix, "invert": invert_smoothness},
+                "B": {"suffix": ao_suffix},
+            }
+            results = ImgUtils.extract_channels(
+                msao_map_path,
+                channel_config,
+                output_dir=output_dir,
+                save=save,
+                **kwargs,
+            )
+            # (metallic, ao, smoothness)
+            return results.get("R"), results.get("B"), results.get("G")
+
         channel_config = {
             "R": {"suffix": metallic_suffix},
             "G": {"suffix": ao_suffix},
             "A": {"suffix": smoothness_suffix, "invert": invert_smoothness},
         }
-
         results = ImgUtils.extract_channels(
             msao_map_path, channel_config, output_dir=output_dir, save=save, **kwargs
         )
+        return results.get("R"), results.get("G"), results.get("A")
 
-        if save:
-            return results.get("R"), results.get("G"), results.get("A")
-        else:
-            return results.get("R"), results.get("G"), results.get("A")
+    @classmethod
+    def unpack_mrao_texture(
+        cls,
+        mrao_map_path: str,
+        output_dir: str = None,
+        metallic_suffix: str = "_Metallic",
+        roughness_suffix: str = "_Roughness",
+        ao_suffix: str = "_AO",
+        invert_roughness: bool = False,
+        save: bool = True,
+        layout: Optional[str] = None,
+        **kwargs,
+    ) -> Union[
+        Tuple[str, str, str], Tuple["Image.Image", "Image.Image", "Image.Image"]
+    ]:
+        """Unpack Metallic, Roughness, and AO from a combined MRAO texture.
+
+        Layout is auto-detected from the image mode when not specified:
+        - ``"rgb"`` (industry default): R=Metallic, G=Roughness, B=AO.
+        - ``"rgba"`` (mirror of MSAO): R=Metallic, G=AO, B=Detail, A=Roughness.
+
+        Returns the (metallic, roughness, ao) tuple regardless of layout.
+        """
+        resolved_layout = (
+            (layout or "").lower() or cls._detect_packed_layout(mrao_map_path)
+        )
+        if resolved_layout not in ("rgb", "rgba"):
+            raise ValueError(f"Unsupported MRAO layout: {layout!r}")
+
+        if resolved_layout == "rgba":
+            channel_config = {
+                "R": {"suffix": metallic_suffix},
+                "G": {"suffix": ao_suffix},
+                "A": {"suffix": roughness_suffix, "invert": invert_roughness},
+            }
+            results = ImgUtils.extract_channels(
+                mrao_map_path,
+                channel_config,
+                output_dir=output_dir,
+                save=save,
+                **kwargs,
+            )
+            # (metallic, roughness, ao)
+            return results.get("R"), results.get("A"), results.get("G")
+
+        channel_config = {
+            "R": {"suffix": metallic_suffix},
+            "G": {"suffix": roughness_suffix, "invert": invert_roughness},
+            "B": {"suffix": ao_suffix},
+        }
+        results = ImgUtils.extract_channels(
+            mrao_map_path, channel_config, output_dir=output_dir, save=save, **kwargs
+        )
+        return results.get("R"), results.get("G"), results.get("B")
 
     @classmethod
     def unpack_albedo_transparency(

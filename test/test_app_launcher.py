@@ -175,6 +175,30 @@ class TestAppLauncher(unittest.TestCase):
             print(f"AppLauncher found ls at: {path}")
             self.assertTrue(path, "Could not find ls on Linux")
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows-specific install layout")
+    def test_find_app_program_files_glob_fallback(self):
+        """find_app should locate ``PF\\<vendor>\\<app>\\<app>.exe`` even when
+        the app is not in PATH and not in the App Paths registry — covers
+        Adobe Substance 3D Painter and similar vendors."""
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as fake_pf:
+            vendor_dir = os.path.join(fake_pf, "FakeVendor", "FakeApp")
+            os.makedirs(vendor_dir)
+            exe_path = os.path.join(vendor_dir, "FakeApp.exe")
+            open(exe_path, "w").close()
+
+            fake_env = {
+                "ProgramFiles": fake_pf,
+                "ProgramFiles(x86)": "",
+                "ProgramW6432": "",
+                "PATH": "",  # ensure shutil.which can't find it
+            }
+            with patch.dict(os.environ, fake_env, clear=False):
+                found = AppLauncher.find_app("FakeApp")
+                self.assertEqual(found, exe_path)
+
 
 if __name__ == "__main__":
     unittest.main()

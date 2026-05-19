@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-05-17_
+_Generated: 2026-05-18_
 
 ## Index
 
@@ -38,7 +38,7 @@ _Generated: 2026-05-17_
 - [`file_utils/mesh_convert/slots.py`](#file_utils--mesh_convert--slots)
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
-- [`img_utils/map_converter.py`](#img_utils--map_converter)
+- [`img_utils/map_converter.py`](#img_utils--map_converter) — Map Converter UI — slot file for ``map_converter.ui``.
 - [`img_utils/map_factory.py`](#img_utils--map_factory) — Texture Map Factory for PBR workflow preparation - Refactored.
 - [`img_utils/map_packer.py`](#img_utils--map_packer)
 - [`img_utils/map_registry.py`](#img_utils--map_registry)
@@ -507,13 +507,15 @@ Reusable module attribute resolver for package-style imports.
 <a id="img_utils--map_converter"></a>
 ### `img_utils/map_converter.py`
 
-- **[`class MapConverterSlots(ImgUtils)`](pythontk/pythontk/img_utils/map_converter.py#L14)**
+Map Converter UI — slot file for ``map_converter.ui``.
+
+- **[`class MapConverterSlots(ImgUtils)`](pythontk/pythontk/img_utils/map_converter.py#L31)** — Switchboard slots for ``map_converter.ui``.
   - `MapConverterSlots.source_dir(self)` *(property)* — Get the starting directory for file dialogs.
   - `MapConverterSlots.source_dir(self, value)` — Set the starting directory for file dialogs.
   - `MapConverterSlots.texture_provider(self)` *(property)* — Callable returning a list of texture paths from the host DCC selection.
   - `MapConverterSlots.texture_provider(self, fn)`
   - `MapConverterSlots.header_init(self, widget)` — Add the global Use-Selection toggle to the header menu.
-  - `MapConverterSlots.tb000_init(self, widget)`
+  - `MapConverterSlots.tb000_init(self, widget)` — Populate the Optimize toolbutton's option menu (format, clamp, modifier).
   - `MapConverterSlots.tb000(self, widget)` — Optimize a texture map(s)
   - `MapConverterSlots.tb001_init(self, widget)`
   - `MapConverterSlots.tb001(self, widget)` — Batch converts Spec/Gloss maps to PBR Metal/Rough using MapFactory.
@@ -530,7 +532,7 @@ Reusable module attribute resolver for package-style imports.
   - `MapConverterSlots.b010(self)` — Convert Smoothness maps to Roughness maps.
   - `MapConverterSlots.b011(self)` — Convert Roughness maps to Smoothness maps.
   - `MapConverterSlots.b012(self)` — Batch prepare textures for PBR workflow using MapFactory.
-- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L865)**
+- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L890)** — Standalone launcher.
 
 <a id="img_utils--map_factory"></a>
 ### `img_utils/map_factory.py`

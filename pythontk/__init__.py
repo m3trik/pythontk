@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.34"
+__version__ = "0.8.36"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -48,6 +48,13 @@ DEFAULT_INCLUDE = {
     "net_utils.ssh_client": "SSHClient",
     "net_utils.credentials": "Credentials",
     "net_utils._net_utils": "NetUtils",
+    "net_utils.rpc.client": "RpcClient",
+    "net_utils.rpc.installer": [
+        "install_plugin",
+        "uninstall_plugin",
+        "is_plugin_installed",
+    ],
+    "net_utils.rpc.job": ["Call", "Result", "run_batch"],
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
     "color_utils._color_utils": ["Color", "ColorPair", "Palette"],
 }

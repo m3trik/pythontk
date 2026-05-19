@@ -27,6 +27,7 @@ class _WorkflowPreset:
     metallic_smoothness: bool = False
     mask_map: bool = False
     orm_map: bool = False
+    mrao_map: bool = False
     opacity: bool = False
     emissive: bool = False
     ambient_occlusion: bool = False
@@ -260,7 +261,9 @@ class MapRegistry(SingletonMixin):
                 "MSA",
             ],
             color_space="Linear",
-            mode="RGBA",
+            # mode=None: preserve the natural mode produced by pack_msao_texture
+            # (RGBA for the default HDRP Mask Map layout, RGB for the 3-channel parallel layout).
+            mode=None,
             default_background=(0, 255, 0, 255),
             is_packed=True,
             scale_as_mask=True,
@@ -280,6 +283,41 @@ class MapRegistry(SingletonMixin):
                 "Metallic_Smoothness",
             ],
             workflows=[WF.HDRP],
+        ),
+        "MRAO": MapType(
+            name="MRAO",
+            aliases=[
+                "Metallic_RoughnessAO",
+                "MetallicRoughnessAO",
+                "MetallicRoughAO",
+                "MetallicRoughness_AO",
+                "MetallicRoughnessAmbientOcclusion",
+                "MetallicRoughnessOcclusion",
+                "MetalRoughAO",
+                "MetalRoughAmbientOcclusion",
+                "MRA",
+            ],
+            color_space="Linear",
+            # mode=None: preserve the natural mode produced by pack_mrao_texture
+            # (RGB for the default 3-channel layout, RGBA for the MSAO mirror).
+            mode=None,
+            default_background=(0, 0, 255, 255),
+            is_packed=True,
+            scale_as_mask=True,
+            output_fallbacks=[
+                "ORM",
+                "Ambient_Occlusion",
+                "Roughness",
+                "Metallic",
+            ],
+            replaces=[
+                "Metallic",
+                "Ambient_Occlusion",
+                "Roughness",
+                "Smoothness",
+                "Glossiness",
+            ],
+            workflows=[],
         ),
         "Metallic_Smoothness": MapType(
             name="Metallic_Smoothness",
