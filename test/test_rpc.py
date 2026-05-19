@@ -343,10 +343,14 @@ class TestRpcInstaller(unittest.TestCase):
         self.assertTrue(marker.is_file(), "Idempotent install wiped the dir.")
 
     def test_install_force_rebuilds(self):
-        install_plugin(self.src, self.dest)
-        marker = self.dest / "_marker.txt"
-        marker.write_text("delete me", encoding="utf-8")
-        install_plugin(self.src, self.dest, force=True)
+        # Force the copytree path so the marker is a real file inside the
+        # dest dir (not written through a symlink into ``self.src``, which
+        # would survive force-rebuild via the recreated symlink on Linux).
+        with unittest.mock.patch("os.symlink", side_effect=OSError("denied")):
+            install_plugin(self.src, self.dest)
+            marker = self.dest / "_marker.txt"
+            marker.write_text("delete me", encoding="utf-8")
+            install_plugin(self.src, self.dest, force=True)
         self.assertFalse(marker.is_file(), "force=True should rebuild.")
 
     def test_install_returns_none_for_missing_source(self):
