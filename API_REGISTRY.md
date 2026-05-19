@@ -35,12 +35,10 @@ _Generated: 2026-05-19_
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
-- [`file_utils/mesh_convert/slots.py`](#file_utils--mesh_convert--slots)
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
-- [`img_utils/map_converter.py`](#img_utils--map_converter) — Map Converter UI — slot file for ``map_converter.ui``.
+- [`img_utils/map_compositor.py`](#img_utils--map_compositor) — Pure image-compositing engine — alpha-composite layered texture maps
 - [`img_utils/map_factory.py`](#img_utils--map_factory) — Texture Map Factory for PBR workflow preparation - Refactored.
-- [`img_utils/map_packer.py`](#img_utils--map_packer)
 - [`img_utils/map_registry.py`](#img_utils--map_registry)
 - [`iter_utils/_iter_utils.py`](#iter_utils--_iter_utils)
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
@@ -54,6 +52,7 @@ _Generated: 2026-05-19_
 - [`str_utils/_str_utils.py`](#str_utils--_str_utils)
 - [`str_utils/fuzzy_matcher.py`](#str_utils--fuzzy_matcher)
 - [`vid_utils/_vid_utils.py`](#vid_utils--_vid_utils)
+- [`vid_utils/frame_extractor.py`](#vid_utils--frame_extractor) — Extract still frames from a video file via OpenCV.
 
 ---
 
@@ -309,13 +308,13 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1146)** — A generic thread-safe logging handler that writes logs to any widget
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1145)** — A generic thread-safe logging handler that writes logs to any widget
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1198)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1197)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1352)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1351)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -442,19 +441,6 @@ Reusable module attribute resolver for package-style imports.
   - `MeshConvert.check_glb_materials(cls, glb_path: str) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb_path: str) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
 
-<a id="file_utils--mesh_convert--slots"></a>
-### `file_utils/mesh_convert/slots.py`
-
-- **[`class MeshConvertSlots(MeshConvert)`](pythontk/pythontk/file_utils/mesh_convert/slots.py#L13)** — uitk Switchboard slots for the Mesh Converter UI.
-  - `MeshConvertSlots.source_dir(self) -> str` *(property)* — Starting directory for the FBX file dialog.
-  - `MeshConvertSlots.source_dir(self, value: str) -> None`
-  - `MeshConvertSlots.fbx_provider(self) -> Optional[Callable[[], Iterable[str]]]` *(property)* — Callable returning FBX paths from the host DCC selection.
-  - `MeshConvertSlots.fbx_provider(self, fn: Optional[Callable[[], Iterable[str]]]) -> None`
-  - `MeshConvertSlots.header_init(self, widget) -> None` — Add the From-FBX-references toggle to the header menu.
-  - `MeshConvertSlots.tb000_init(self, widget) -> None` — Set up the FBX -> GLB tool button option box.
-  - `MeshConvertSlots.tb000(self, widget) -> None` — Convert the selected FBX file(s) to GLB beside their source.
-- **[`class MeshConvertUi`](pythontk/pythontk/file_utils/mesh_convert/slots.py#L291)**
-
 <a id="file_utils--metadata"></a>
 ### `file_utils/metadata.py`
 
@@ -507,43 +493,21 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
   - `ImgUtils.extract_channels(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]` *(class)* — Generic channel extraction utility.
 
-<a id="img_utils--map_converter"></a>
-### `img_utils/map_converter.py`
+<a id="img_utils--map_compositor"></a>
+### `img_utils/map_compositor.py`
 
-Map Converter UI — slot file for ``map_converter.ui``.
+Pure image-compositing engine — alpha-composite layered texture maps
 
-- **[`class MapConverterSlots(ImgUtils)`](pythontk/pythontk/img_utils/map_converter.py#L31)** — Switchboard slots for ``map_converter.ui``.
-  - `MapConverterSlots.source_dir(self)` *(property)* — Get the starting directory for file dialogs.
-  - `MapConverterSlots.source_dir(self, value)` — Set the starting directory for file dialogs.
-  - `MapConverterSlots.texture_provider(self)` *(property)* — Callable returning a list of texture paths from the host DCC selection.
-  - `MapConverterSlots.texture_provider(self, fn)`
-  - `MapConverterSlots.header_init(self, widget)` — Add the global Use-Selection toggle to the header menu.
-  - `MapConverterSlots.tb000_init(self, widget)` — Populate the Optimize toolbutton's option menu (format, clamp, modifier).
-  - `MapConverterSlots.tb000(self, widget)` — Optimize a texture map(s)
-  - `MapConverterSlots.tb001_init(self, widget)`
-  - `MapConverterSlots.tb001(self, widget)` — Batch converts Spec/Gloss maps to PBR Metal/Rough using MapFactory.
-  - `MapConverterSlots.tb003_init(self, widget)` — Initialize a 'Bump to Normal' toolbutton with options.
-  - `MapConverterSlots.tb003(self, widget)` — Bump/Height to Normal converter (single entry point with options).
-  - `MapConverterSlots.b000(self)` — Convert DirectX to OpenGL
-  - `MapConverterSlots.b001(self)` — Convert OpenGL to DirectX
-  - `MapConverterSlots.b004(self)` — Batch pack Transparency into Albedo across texture sets.
-  - `MapConverterSlots.b005(self)` — Batch pack Smoothness or Roughness into Metallic across texture sets.
-  - `MapConverterSlots.b006(self)` — Unpack Metallic and Smoothness maps from MetallicSmoothness textures.
-  - `MapConverterSlots.b007(self)` — Unpack Specular and Gloss maps from SpecularGloss textures.
-  - `MapConverterSlots.b008_init(self, widget)` — Populate the MSAO pack toolbutton's option menu (channel layout).
-  - `MapConverterSlots.b008(self, widget)` — Batch pack Metallic, AO, and Smoothness/Roughness into an MSAO texture.
-  - `MapConverterSlots.b009_init(self, widget)` — Populate the MSAO unpack toolbutton's option menu (channel layout).
-  - `MapConverterSlots.b009(self, widget)` — Unpack Metallic, AO, and Smoothness maps from MSAO textures.
-  - `MapConverterSlots.b013_init(self, widget)` — Populate the MRAO pack toolbutton's option menu (channel layout).
-  - `MapConverterSlots.b013(self, widget)` — Batch pack Metallic, Roughness/Smoothness, and AO into an MRAO texture.
-  - `MapConverterSlots.b014_init(self, widget)` — Populate the MRAO unpack toolbutton's option menu (channel layout).
-  - `MapConverterSlots.b014(self, widget)` — Unpack Metallic, Roughness, and AO from MRAO textures.
-  - `MapConverterSlots.b015(self)` — Batch pack AO, Roughness/Smoothness, and Metallic into an ORM texture.
-  - `MapConverterSlots.b016(self)` — Unpack AO, Roughness, and Metallic from ORM textures.
-  - `MapConverterSlots.b010(self)` — Convert Smoothness maps to Roughness maps.
-  - `MapConverterSlots.b011(self)` — Convert Roughness maps to Smoothness maps.
-  - `MapConverterSlots.b012(self)` — Batch prepare textures for PBR workflow using MapFactory.
-- **[`class MapConverterUi`](pythontk/pythontk/img_utils/map_converter.py#L1150)** — Standalone launcher.
+- **[`class BatchResult(Enum)`](pythontk/pythontk/img_utils/map_compositor.py#L27)** — Outcome of a full composite + retry-with-mask cycle.
+- **[`class NormalOutputMode(Enum)`](pythontk/pythontk/img_utils/map_compositor.py#L35)** — How the engine handles DirectX/OpenGL normal-map output.
+- **[`class MapCompositor(ptk.LoggingMixin)`](pythontk/pythontk/img_utils/map_compositor.py#L55)** — Alpha-composite layered texture maps and auto-generate the
+  - `MapCompositor.removeNormalMap(self) -> bool` *(property)*
+  - `MapCompositor.removeNormalMap(self, value: bool) -> None`
+  - `MapCompositor.reset(self) -> None` — Clear per-session state (masks, progress counters).
+  - `MapCompositor.process_batch(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult` — Drive a full composite → retry-with-mask → re-composite cycle.
+  - `MapCompositor.apply_output_template(self, output_dir: str) -> List[str]` — Post-process composited output for a target workflow.
+  - `MapCompositor.composite_images(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages` — Composite each map type and write the result.
+  - `MapCompositor.retry_failed(self, failed: SortedImages, name: str) -> SortedImages` — Fill the masked area of each failed layer with the map-type's
 
 <a id="img_utils--map_factory"></a>
 ### `img_utils/map_factory.py`
@@ -673,17 +637,6 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapFactory.unpack_metallic_smoothness(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Metallic (RGB) and Smoothness (A) from a combined map.
   - `MapFactory.unpack_specular_gloss(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Specular (RGB) and Glossiness (A) from a combined map.
 
-<a id="img_utils--map_packer"></a>
-### `img_utils/map_packer.py`
-
-- **[`class MapPackerSlots(ImgUtils)`](pythontk/pythontk/img_utils/map_packer.py#L9)**
-  - `MapPackerSlots.header_init(self, widget)` — Configure the header menu with presets for common packed map types.
-  - `MapPackerSlots.source_dir(self)` *(property)*
-  - `MapPackerSlots.source_dir(self, value)`
-  - `MapPackerSlots.b000(self)` — Batch pack up to 4 channels into RGBA maps across texture sets.
-  - `MapPackerSlots.b001(self)` — Open the last output directory in the system file explorer.
-- **[`class MapPackerUi`](pythontk/pythontk/img_utils/map_packer.py#L253)**
-
 <a id="img_utils--map_registry"></a>
 ### `img_utils/map_registry.py`
 
@@ -806,7 +759,7 @@ Texture Map Factory for PBR workflow preparation - Refactored.
 
 Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 
-- **[`class RpcClient`](pythontk/pythontk/net_utils/rpc/client.py#L40)** — Generic HTTP JSON-RPC client for a DCC plugin server.
+- **[`class RpcClient`](pythontk/pythontk/net_utils/rpc/client.py#L36)** — Generic HTTP JSON-RPC client for a DCC plugin server.
   - `RpcClient.url(self) -> str` *(property)*
   - `RpcClient.ping(self, timeout: float = 1.0) -> bool` — Return True if the plugin's HTTP server is reachable.
   - `RpcClient.invoke(self, op: str, timeout: float = 60.0, **kwargs: Any) -> Any` — Call *op* with *kwargs* and return its value.
@@ -890,3 +843,13 @@ One-shot batch pipeline over :class:`RpcClient`.
   - `VidUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Finds FFmpeg executable path in system path or managed installs.
   - `VidUtils.get_video_frame_rate(cls, filepath: str) -> float` *(class)* — Extracts frame rate from a video file using FFmpeg.
   - `VidUtils.compress_video(cls, input_filepath: str, output_filepath: str = None, frame_rate: Union[float, int] = None, delete_original: bool = False, **ffmpeg_options) -> Union[str, None]` *(class)* — Compresses a video file using FFmpeg.
+
+<a id="vid_utils--frame_extractor"></a>
+### `vid_utils/frame_extractor.py`
+
+Extract still frames from a video file via OpenCV.
+
+- [`extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]`](pythontk/pythontk/vid_utils/frame_extractor.py#L143) — Convenience wrapper around :meth:`FrameExtractor.extract_frames`.
+- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L25)** — Extract frames from a video file at a configurable step interval.
+  - `FrameExtractor.extract_frames(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]` — Save every ``step``-th frame from ``video_path`` to ``output_folder``.
+  - `FrameExtractor.get_video_info(self, video_path: str) -> dict` — Return metadata for ``video_path`` (filename, frame count, fps,
