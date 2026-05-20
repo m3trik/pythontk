@@ -347,14 +347,25 @@ class MapCompositor(ptk.LoggingMixin):
         )
         self.logger.log_group(title, [ptk.format_path(fp, "file") for fp, _ in layers])
 
+        # Resolve the effective fill colour used both for the alpha_composite
+        # pre-fill and the final solid bg. When corners are transparent, fall
+        # back to the registered default; otherwise honour the artist's
+        # opaque bg so we don't override a deliberate non-default choice.
+        if bg[3] == 0:
+            fill_bg = ptk.ImgUtils.map_backgrounds.get(key, bg)
+        else:
+            fill_bg = bg
+
         composited = self._alpha_composite_layers(
-            first_image, remaining, bg, mode, filepath0
+            first_image, remaining, bg, mode, filepath0, fill_bg=fill_bg
         )
 
-        if bg[3] == 0:
-            bg = ptk.ImgUtils.map_backgrounds.get(key, bg)
+        # Replace src RGB with fill_bg at partial-alpha pixels so the paste
+        # below blends bg↔bg at edges instead of bg↔0 — kills the dark/light
+        # rim halo exporters seed by leaving RGB=0 in transparent regions.
+        composited = self._fill_transparent_rgb(composited, fill_bg)
 
-        result = Image.new("RGBA", composited.size, bg[:3] + (255,))
+        result = Image.new("RGBA", composited.size, fill_bg[:3] + (255,))
         result.paste(composited, mask=composited)
         result = ptk.ImgUtils.set_bit_depth(result, key)
         mode = result.mode
@@ -405,14 +416,19 @@ class MapCompositor(ptk.LoggingMixin):
         bg: Tuple[int, int, int, int],
         mode: str,
         first_filepath: str,
+        fill_bg: Optional[Tuple[int, int, int, int]] = None,
     ) -> Image.Image:
         composited = first_image.convert("RGBA")
+        if fill_bg is not None:
+            composited = self._fill_transparent_rgb(composited, fill_bg)
         self._tick(first_filepath)
         for filepath, im in remaining:
             self._tick(filepath)
             if mode == "I":
                 im = im.convert("RGB")
             im = ptk.replace_color(im, from_color=bg, mode="RGBA")
+            if fill_bg is not None:
+                im = self._fill_transparent_rgb(im, fill_bg)
             try:
                 composited = Image.alpha_composite(composited, im.convert("RGBA"))
             except ValueError as e:
@@ -420,6 +436,31 @@ class MapCompositor(ptk.LoggingMixin):
                     f"alpha_composite failed for <b>{ptk.format_path(filepath, 'file')}</b>: {e}"
                 )
         return composited
+
+    @staticmethod
+    def _fill_transparent_rgb(
+        image: Image.Image, bg: Tuple[int, int, int, int]
+    ) -> Image.Image:
+        """Overwrite RGB with ``bg`` wherever alpha < 255.
+
+        Prevents dark/light rim halos when a subsequent ``alpha_composite``
+        or ``paste(..., mask=...)`` blends the source against a solid bg.
+        Common failure mode: exporters write (0,0,0,α) in semi-transparent
+        edges; the later blend then biases the result toward 0 instead of
+        toward bg. After this pass the blend reduces to bg↔bg at edges
+        (i.e. stays at bg).
+
+        Only partial-alpha pixels are touched; fully-opaque pixels keep
+        their authored RGB. No-op for non-RGBA inputs.
+        """
+        if image.mode != "RGBA":
+            return image
+        arr = np.array(image)
+        mask = arr[:, :, 3] < 255
+        if not mask.any():
+            return image
+        arr[mask, 0:3] = bg[:3]
+        return Image.fromarray(arr, mode="RGBA")
 
     def _tick(self, filepath: str) -> None:
         """Advance the global progress counter.
