@@ -513,6 +513,137 @@ class TestSetBitDepthIntegration(unittest.TestCase):
             self.assertEqual(saved.mode, "L")
 
 
+class TestEdgeHaloPreservation(unittest.TestCase, _LoggerCaptureMixin):
+    """Partial-alpha edge pixels with RGB=0 (a common export artifact from
+    Substance / Painter where transparent regions aren't propagated into RGB)
+    must not produce a dark rim halo when composited against the map type's
+    default background.
+
+    Two failure modes are covered:
+      * Single layer: ``paste(composited, mask=composited)`` blends src RGB
+        with the white roughness bg using alpha as the weight. With src RGB=0
+        at a partial-alpha edge, the blend collapses toward 0/255 mid-gray.
+      * Multi layer: ``alpha_composite`` blends a subsequent layer's
+        partial-alpha edge (RGB=0) into the previously-composited base,
+        darkening the underlying content at those positions.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mc_halo_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_partial_alpha_roughness(self, size=(16, 16), content=180):
+        """Roughness source: transparent corners (so the compositor takes the
+        transparent-bg path), a center block of opaque content, and an
+        intermediate ring of (0,0,0,128) — the dark-halo trigger."""
+        im = Image.new("RGBA", size, (0, 0, 0, 0))
+        w, h = size
+        cx0, cx1 = w // 4, 3 * w // 4
+        cy0, cy1 = h // 4, 3 * h // 4
+        # Opaque content block in the middle.
+        for x in range(cx0, cx1):
+            for y in range(cy0, cy1):
+                im.putpixel((x, y), (content, content, content, 255))
+        # Partial-alpha edge ring with RGB=0 — only at pixels still at the
+        # transparent background. Don't disturb the opaque content.
+        ring = []
+        for x in range(cx0 - 1, cx1 + 1):
+            ring.append((x, cy0 - 1))
+            ring.append((x, cy1))
+        for y in range(cy0 - 1, cy1 + 1):
+            ring.append((cx0 - 1, y))
+            ring.append((cx1, y))
+        for x, y in ring:
+            if 0 <= x < w and 0 <= y < h and im.getpixel((x, y)) == (0, 0, 0, 0):
+                im.putpixel((x, y), (0, 0, 0, 128))
+        return im
+
+    def test_single_layer_partial_alpha_edges_have_no_dark_halo(self):
+        # Single-layer Roughness; the registry default bg is (255,255,255).
+        # Interior content must survive; edge ring must not darken below content.
+        src = self._make_partial_alpha_roughness(size=(16, 16), content=180)
+        path = os.path.join(self.tmp, "src_Roughness.png")
+        src.save(path)
+
+        engine = MapCompositor()
+        engine.total_len = 1
+        engine.composite_images(
+            {"Roughness": [(path, _load(path))]}, self.tmp, name="test"
+        )
+
+        out = os.path.join(self.tmp, "test_Roughness.png")
+        with Image.open(out) as saved:
+            saved = saved.copy()
+        self.assertEqual(saved.mode, "L")
+
+        # Interior content (alpha=255 in source) must round-trip exactly.
+        for px in [(5, 5), (6, 6), (8, 8), (10, 10)]:
+            self.assertEqual(
+                saved.getpixel(px),
+                180,
+                f"interior content was altered at {px}: got {saved.getpixel(px)}",
+            )
+
+        # Edge ring pixels (alpha=128 RGB=0 in source) must NOT be a dark
+        # halo value. Acceptable outcomes: bg (255) or content (180);
+        # anything strictly less than the content is the halo bug.
+        for px in [(3, 7), (12, 7), (7, 3), (7, 12)]:
+            val = saved.getpixel(px)
+            self.assertGreaterEqual(
+                val,
+                180,
+                f"edge halo at {px}: got {val} — expected >= content (180)",
+            )
+
+    def test_multi_layer_subsequent_partial_alpha_does_not_darken_base(self):
+        # Two roughness layers: first is solid opaque content; second has
+        # partial-alpha edges with RGB=0 overlapping the first's content.
+        # The underlying content must not be darkened by the blend.
+        size = (16, 16)
+
+        # Layer A: fully opaque content (no alpha at the corners — pick a
+        # uniform opaque bg so bg detection picks an opaque color).
+        first = Image.new("RGBA", size, (255, 255, 255, 255))  # white bg
+        for x in range(4, 12):
+            for y in range(4, 12):
+                first.putpixel((x, y), (180, 180, 180, 255))
+        path_a = os.path.join(self.tmp, "a_Roughness.png")
+        first.save(path_a)
+
+        # Layer B: same uniform white bg so bg detection agrees, but with
+        # partial-alpha edges at RGB=0 overlapping layer A's content.
+        second = Image.new("RGBA", size, (255, 255, 255, 255))
+        for x in range(5, 11):
+            for y in range(5, 11):
+                second.putpixel((x, y), (0, 0, 0, 128))  # partial alpha black
+        path_b = os.path.join(self.tmp, "b_Roughness.png")
+        second.save(path_b)
+
+        engine = MapCompositor()
+        engine.total_len = 2
+        engine.composite_images(
+            {"Roughness": [(path_a, _load(path_a)), (path_b, _load(path_b))]},
+            self.tmp,
+            name="test",
+        )
+
+        out = os.path.join(self.tmp, "test_Roughness.png")
+        with Image.open(out) as saved:
+            saved = saved.copy()
+        # Pixel under the partial-alpha edge of layer B: the underlying
+        # layer A content (180) blended with bg (255) is the acceptable
+        # outcome; anything below 180 means RGB=0 from layer B leaked in.
+        for px in [(5, 5), (6, 6), (10, 10), (7, 8)]:
+            val = saved.getpixel(px)
+            self.assertGreaterEqual(
+                val,
+                180,
+                f"layer-A content darkened at {px}: got {val} (< 180)",
+            )
+
+
 class TestFilterRedundantMapsIntegration(unittest.TestCase):
     def test_orm_drops_metallic_roughness_ao(self):
         import pythontk as ptk
