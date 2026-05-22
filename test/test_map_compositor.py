@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from typing import List
 
+import numpy as np
 from PIL import Image
 
 from pythontk.img_utils.map_compositor import BatchResult, MapCompositor, NormalOutputMode
@@ -597,6 +598,38 @@ class TestEdgeHaloPreservation(unittest.TestCase, _LoggerCaptureMixin):
                 f"edge halo at {px}: got {val} — expected >= content (180)",
             )
 
+    def test_clean_no_alpha_roughness_round_trips_byte_identical(self):
+        # Regression guard: when the source has no partial-alpha pixels,
+        # the fill must be a strict no-op. Locks in that the fix doesn't
+        # touch opaque content under any circumstance.
+        # Corners must be uniform so the compositor takes the happy path
+        # rather than the mask-retry route.
+        size = (16, 16)
+        im = Image.new("L", size, 255)  # uniform white bg / corners
+        # Paint a deterministic pattern in the interior only, leaving the
+        # outermost border at 255 so corners stay uniform.
+        for x in range(1, size[0] - 1):
+            for y in range(1, size[1] - 1):
+                im.putpixel((x, y), (x * 13 + y * 7) % 256)
+        path = os.path.join(self.tmp, "src_Roughness.png")
+        im.save(path)
+
+        engine = MapCompositor()
+        engine.total_len = 1
+        engine.composite_images(
+            {"Roughness": [(path, _load(path))]}, self.tmp, name="test"
+        )
+
+        out = os.path.join(self.tmp, "test_Roughness.png")
+        src_arr = np.array(_load(path).convert("L"))
+        out_arr = np.array(_load(out))
+        self.assertEqual(out_arr.shape, src_arr.shape)
+        # Every pixel must round-trip byte-identical; the fill_transparent_rgb
+        # path must not touch fully-opaque content.
+        diff = (out_arr.astype(int) - src_arr.astype(int))
+        self.assertEqual(int(np.abs(diff).max()), 0,
+                         "clean L-mode roughness must round-trip byte-identical")
+
     def test_multi_layer_subsequent_partial_alpha_does_not_darken_base(self):
         # Two roughness layers: first is solid opaque content; second has
         # partial-alpha edges with RGB=0 overlapping the first's content.
@@ -771,7 +804,7 @@ class TestNormalOutputMode(unittest.TestCase, _LoggerCaptureMixin):
 
 
 class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
-    """When optimize_output is on, the save path runs ImgUtils.optimize_texture."""
+    """When optimize_output is on, the save path runs TextureOptimizer.optimize_texture."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mc_opt_")
@@ -783,9 +816,9 @@ class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
         import pythontk as ptk
 
         calls = []
-        original = ptk.ImgUtils.optimize_texture
+        original = ptk.TextureOptimizer.optimize_texture
         try:
-            ptk.ImgUtils.optimize_texture = classmethod(
+            ptk.TextureOptimizer.optimize_texture = classmethod(
                 lambda cls, path, **kw: calls.append((path, kw)) or path
             )
 
@@ -801,15 +834,15 @@ class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][1].get("map_type"), "Base_Color")
         finally:
-            ptk.ImgUtils.optimize_texture = original
+            ptk.TextureOptimizer.optimize_texture = original
 
     def test_optimize_not_called_when_disabled(self):
         import pythontk as ptk
 
         calls = []
-        original = ptk.ImgUtils.optimize_texture
+        original = ptk.TextureOptimizer.optimize_texture
         try:
-            ptk.ImgUtils.optimize_texture = classmethod(
+            ptk.TextureOptimizer.optimize_texture = classmethod(
                 lambda cls, path, **kw: calls.append(path) or path
             )
 
@@ -822,7 +855,7 @@ class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
             engine.composite_images({"Base_Color": [(p, _load(p))]}, self.tmp, name="t")
             self.assertEqual(calls, [])
         finally:
-            ptk.ImgUtils.optimize_texture = original
+            ptk.TextureOptimizer.optimize_texture = original
 
 
 class TestNormalModeConflictPrefilter(unittest.TestCase):

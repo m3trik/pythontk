@@ -776,11 +776,20 @@ class LoggerExt:
         text_color = LoggerExt._resolve_color(level) if level else None
         bg_color = LoggerExt._resolve_color(bg) if bg else None
 
+        # Box drawing chars (╔ ═ ║ ╚) only align when rendered in a
+        # monospace cell. HTML viewers (QTextEdit / browser) often inherit
+        # a proportional font from outer wrappers, which collapses the
+        # column math. Carry the font-family inline on each span so the
+        # boxes render correctly regardless of enclosing context.
+        mono_css = (
+            "font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre"
+        )
+
         if bg_color:
             # Per-line wrapping: a single span across "\n" does not extend its
             # background through line breaks in HTML rendering, so each row
             # needs its own span to render as a contiguous solid block.
-            style_parts = []
+            style_parts = [mono_css]
             if text_color:
                 style_parts.append(f"color:{text_color}")
             style_parts.append(f"background-color:{bg_color}")
@@ -790,7 +799,9 @@ class LoggerExt:
         else:
             box_text = "\n".join(lines)
             if text_color:
-                box_text = f'<span style="color:{text_color}">{box_text}</span>'
+                box_text = (
+                    f'<span style="color:{text_color};{mono_css}">{box_text}</span>'
+                )
 
         LoggerExt._log_raw(self, box_text)
 
