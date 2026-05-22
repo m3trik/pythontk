@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.46"
+__version__ = "0.8.48"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -14,6 +14,7 @@ DEFAULT_INCLUDE = {
     "img_utils.map_factory": ["MapFactory"],
     "img_utils.map_registry": "MapRegistry",
     "img_utils.map_compositor": ["MapCompositor", "BatchResult", "NormalOutputMode"],
+    "img_utils.texture_optimizer": ["TextureOptimizer", "Op"],
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
     "vid_utils.frame_extractor": ["FrameExtractor", "extract_frames"],
@@ -91,6 +92,7 @@ __all__ = [
     "MapCompositor",
     "BatchResult",
     "NormalOutputMode",
+    "TextureOptimizer",
     "FrameExtractor",
     "extract_frames",
     "IterUtils",

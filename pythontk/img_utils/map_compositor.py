@@ -59,6 +59,20 @@ class MapCompositor(ptk.LoggingMixin):
     Status messages are emitted via ``self.logger`` with HTML colouring.
     Attach to a Qt text widget with ``self.logger.setup_logging_redirect(widget)``.
     Progress-bar updates flow through ``progress_callback(percent)``.
+
+    Alpha handling at partial-alpha edges
+    -------------------------------------
+    Source pixels with ``0 < alpha < 255`` have their RGB rewritten to the
+    resolved background colour before each composite/paste so the blend
+    reduces to ``bg ↔ bg`` at edges instead of ``bg ↔ 0``. This kills the
+    dark-rim halos exporters seed by leaving ``RGB=0`` in transparent
+    regions. The trade-off is intentional: partial-alpha pixels lose their
+    authored RGB. That's correct for value maps (Roughness, Metallic,
+    Ambient_Occlusion, Height) where alpha is purely a content mask. For
+    colour maps with deliberate partial-alpha content (e.g. feathered
+    foliage in Albedo_Transparency, soft-blended Base_Color edges), edge
+    colour will be flattened to the registry default — bake the blend
+    upstream if that matters.
     """
 
     def __init__(
@@ -390,7 +404,7 @@ class MapCompositor(ptk.LoggingMixin):
         return True
 
     def _maybe_optimize(self, out_path: str, map_type: str) -> None:
-        """Run ImgUtils.optimize_texture on the just-saved file when enabled.
+        """Run TextureOptimizer.optimize_texture on the just-saved file when enabled.
 
         Optimization rewrites the file in place with map-type-correct bit
         depth and (optionally) a tighter mode. No-op when disabled.
@@ -398,7 +412,7 @@ class MapCompositor(ptk.LoggingMixin):
         if not self.optimize_output:
             return
         try:
-            ptk.ImgUtils.optimize_texture(
+            ptk.TextureOptimizer.optimize_texture(
                 out_path,
                 map_type=map_type,
                 optimize_bit_depth=True,
@@ -450,8 +464,12 @@ class MapCompositor(ptk.LoggingMixin):
         toward bg. After this pass the blend reduces to bg↔bg at edges
         (i.e. stays at bg).
 
-        Only partial-alpha pixels are touched; fully-opaque pixels keep
-        their authored RGB. No-op for non-RGBA inputs.
+        Destructive on partial alpha — partial-alpha pixels lose their
+        authored RGB and adopt ``bg`` instead. Fully-opaque pixels are
+        untouched. This is correct for value maps where alpha is a content
+        mask; for colour maps with deliberate partial-alpha content, this
+        flattens edge colour. See :class:`MapCompositor` docstring for the
+        wider rationale. No-op for non-RGBA inputs.
         """
         if image.mode != "RGBA":
             return image

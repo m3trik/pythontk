@@ -959,6 +959,103 @@ class StrUtils(CoreUtils):
         return s
 
     @staticmethod
+    def infer_affix_mode(
+        text: str,
+        delimiter: str = "_",
+        *,
+        default: str = "prefix",
+    ) -> str:
+        """Infer ``"prefix"`` or ``"suffix"`` from *delimiter* placement in *text*.
+
+        Pure primitive for tools that let users type either form
+        (``"MAT_"`` vs ``"_MAT"``) and want to interpret intent without
+        an explicit toggle.
+
+        Rule:
+        - Leading delimiter (e.g. ``"_MAT"`` with ``delimiter="_"``) →
+          the token attaches at the END of a base name, so it's a
+          ``"suffix"``.
+        - Trailing delimiter (e.g. ``"MAT_"``) → it attaches at the
+          START, so it's a ``"prefix"``.
+        - Both edges or neither edge has the delimiter (or *delimiter*
+          is empty) → can't decide → return *default*.
+
+        Parameters:
+            text: The affix string.
+            delimiter: Boundary token that signals which side the affix
+                attaches to. Pass ``""`` to skip detection entirely.
+            default: Fallback when detection is ambiguous or disabled.
+                Library default is ``"prefix"`` because type-leading
+                prefixes (``MAT_brick``, ``GEO_arm``) are the more
+                common asset-naming convention.
+
+        Returns:
+            ``"prefix"`` or ``"suffix"``.
+        """
+        fallback = (default or "prefix").lower()
+        if fallback not in ("prefix", "suffix"):
+            fallback = "prefix"
+        if not text or not delimiter:
+            return fallback
+
+        starts = text.startswith(delimiter)
+        ends = text.endswith(delimiter)
+        if starts and not ends:
+            return "suffix"
+        if ends and not starts:
+            return "prefix"
+        return fallback
+
+    @staticmethod
+    def split_affix(
+        text: str,
+        mode: str = "auto",
+        *,
+        default: str = "prefix",
+        delimiter: str = "_",
+    ) -> Tuple[str, str]:
+        """Split an affix string into a ``(prefix, suffix)`` pair per *mode*.
+
+        Pure primitive — turns a user-supplied affix string plus a mode
+        declaration into the pair consumed by :py:meth:`apply_affix`.
+
+        Modes:
+        - ``"prefix"``: returns ``(text, "")``.
+        - ``"suffix"``: returns ``("", text)``.
+        - ``"auto"``: delegates to :py:meth:`infer_affix_mode` using
+          *delimiter* and *default* — leading delimiter (e.g.
+          ``"_MAT"``) → suffix; trailing delimiter (e.g. ``"MAT_"``)
+          → prefix; ambiguous → *default*.
+
+        Parameters:
+            text: The affix string entered by the user.
+            mode: ``"prefix"``, ``"suffix"``, or ``"auto"`` (default).
+            default: Fallback mode used when ``mode="auto"`` and *text*
+                has no boundary delimiter. Defaults to ``"prefix"``.
+            delimiter: Boundary character used by auto-detection.
+                Defaults to ``"_"``; pass ``""`` to disable detection
+                so auto always falls through to *default*.
+
+        Returns:
+            ``(prefix, suffix)`` — at most one element is non-empty. An
+            empty *text* returns ``("", "")``.
+        """
+        if not text:
+            return ("", "")
+
+        m = (mode or "auto").lower()
+        if m not in ("prefix", "suffix", "auto"):
+            m = "auto"
+        if m == "auto":
+            m = StrUtils.infer_affix_mode(
+                text, delimiter=delimiter, default=default
+            )
+
+        if m == "prefix":
+            return (text, "")
+        return ("", text)
+
+    @staticmethod
     def apply_affix(
         string: str,
         prefix: str = "",
