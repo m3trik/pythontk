@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-05-20",
+  "generated_at": "2026-05-22",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -1548,7 +1548,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: str) -> str",
               "summary": "Get the color code for a given log level.",
-              "line": 1103,
+              "line": 1114,
               "deprecated": false
             },
             {
@@ -1557,7 +1557,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, format_str: str) -> None",
               "summary": "Register a new HTML preset.",
-              "line": 1120,
+              "line": 1131,
               "deprecated": false
             },
             {
@@ -1566,7 +1566,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str) -> str",
               "summary": "Get an HTML preset by name.",
-              "line": 1125,
+              "line": 1136,
               "deprecated": false
             },
             {
@@ -1575,7 +1575,7 @@
               "kind": "classmethod",
               "signature": "(cls, message: str, level: str, preset: str = None) -> str",
               "summary": "Format a message using HTML presets.",
-              "line": 1130,
+              "line": 1141,
               "deprecated": false
             }
           ]
@@ -1583,7 +1583,7 @@
         {
           "name": "DefaultTextLogHandler",
           "summary": "A generic thread-safe logging handler that writes logs to any widget",
-          "line": 1145,
+          "line": 1156,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -1594,7 +1594,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1158,
+              "line": 1169,
               "deprecated": false
             },
             {
@@ -1603,7 +1603,7 @@
               "kind": "method",
               "signature": "(self, level: str) -> str",
               "summary": "",
-              "line": 1193,
+              "line": 1204,
               "deprecated": false
             }
           ]
@@ -1611,7 +1611,7 @@
         {
           "name": "TableMixin",
           "summary": "Mixin for formatting data as ASCII tables.",
-          "line": 1197,
+          "line": 1208,
           "bases": [],
           "members": [
             {
@@ -1620,7 +1620,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str",
               "summary": "Formats a list of lists as an ASCII table.",
-              "line": 1200,
+              "line": 1211,
               "deprecated": false
             },
             {
@@ -1629,7 +1629,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None",
               "summary": "Logs a formatted table.",
-              "line": 1298,
+              "line": 1309,
               "deprecated": false
             }
           ]
@@ -1637,7 +1637,7 @@
         {
           "name": "LoggingMixin",
           "summary": "Mixin class for logging utilities.",
-          "line": 1351,
+          "line": 1362,
           "bases": [
             "TableMixin"
           ],
@@ -1648,7 +1648,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1372,
+              "line": 1383,
               "deprecated": false
             },
             {
@@ -1657,7 +1657,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1388,
+              "line": 1399,
               "deprecated": false
             },
             {
@@ -1666,7 +1666,7 @@
               "kind": "method",
               "signature": "(cls)",
               "summary": "Access to Python's internal logging module (aliased).",
-              "line": 1399,
+              "line": 1410,
               "deprecated": false
             },
             {
@@ -1675,7 +1675,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: int | str)",
               "summary": "Set log level for the class logger and its handlers.",
-              "line": 1404,
+              "line": 1415,
               "deprecated": false
             }
           ]
@@ -2870,30 +2870,12 @@
               "deprecated": false
             },
             {
-              "name": "batch_optimize_textures",
-              "qualname": "ImgUtils.batch_optimize_textures",
-              "kind": "classmethod",
-              "signature": "(cls, directory: str, **kwargs)",
-              "summary": "Batch optimizes all textures in a directory.",
-              "line": 1283,
-              "deprecated": false
-            },
-            {
-              "name": "optimize_texture",
-              "qualname": "ImgUtils.optimize_texture",
-              "kind": "classmethod",
-              "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str",
-              "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
-              "line": 1301,
-              "deprecated": false
-            },
-            {
               "name": "is_image_constant",
               "qualname": "ImgUtils.is_image_constant",
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 1496,
+              "line": 1283,
               "deprecated": false
             },
             {
@@ -2902,7 +2884,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 1537,
+              "line": 1324,
               "deprecated": false
             },
             {
@@ -2911,7 +2893,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 1616,
+              "line": 1403,
               "deprecated": false
             }
           ]
@@ -2955,7 +2937,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 94,
+              "line": 108,
               "deprecated": false
             },
             {
@@ -2964,7 +2946,7 @@
               "kind": "method",
               "signature": "(self, value: bool) -> None",
               "summary": "",
-              "line": 98,
+              "line": 112,
               "deprecated": false
             },
             {
@@ -2973,7 +2955,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Clear per-session state (masks, progress counters).",
-              "line": 101,
+              "line": 115,
               "deprecated": false
             },
             {
@@ -2982,7 +2964,7 @@
               "kind": "method",
               "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult",
               "summary": "Drive a full composite → retry-with-mask → re-composite cycle.",
-              "line": 112,
+              "line": 126,
               "deprecated": false
             },
             {
@@ -2991,7 +2973,7 @@
               "kind": "method",
               "signature": "(self, output_dir: str) -> List[str]",
               "summary": "Post-process composited output for a target workflow.",
-              "line": 140,
+              "line": 154,
               "deprecated": false
             },
             {
@@ -3000,7 +2982,7 @@
               "kind": "method",
               "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages",
               "summary": "Composite each map type and write the result.",
-              "line": 208,
+              "line": 222,
               "deprecated": false
             },
             {
@@ -3009,7 +2991,7 @@
               "kind": "method",
               "signature": "(self, failed: SortedImages, name: str) -> SortedImages",
               "summary": "Fill the masked area of each failed layer with the map-type's",
-              "line": 225,
+              "line": 239,
               "deprecated": false
             }
           ]
@@ -4285,6 +4267,75 @@
       ]
     },
     {
+      "relpath": "img_utils/texture_optimizer.py",
+      "summary": "Plan, assess, and apply texture optimizations.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Op",
+          "summary": "One operation in an optimization plan.",
+          "line": 69,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "TextureOptimizer",
+          "summary": "Plan, assess, and apply texture optimizations.",
+          "line": 82,
+          "bases": [
+            "HelpMixin"
+          ],
+          "members": [
+            {
+              "name": "plan",
+              "qualname": "TextureOptimizer.plan",
+              "kind": "classmethod",
+              "signature": "(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, generate_mipmaps: bool = False) -> List[Op]",
+              "summary": "Return the ordered list of operations :meth:`apply` would run.",
+              "line": 97,
+              "deprecated": false
+            },
+            {
+              "name": "apply",
+              "qualname": "TextureOptimizer.apply",
+              "kind": "classmethod",
+              "signature": "(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'",
+              "summary": "Execute ``plan`` against ``image``.",
+              "line": 281,
+              "deprecated": false
+            },
+            {
+              "name": "optimize_texture",
+              "qualname": "TextureOptimizer.optimize_texture",
+              "kind": "classmethod",
+              "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str",
+              "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
+              "line": 309,
+              "deprecated": false
+            },
+            {
+              "name": "batch_optimize_textures",
+              "qualname": "TextureOptimizer.batch_optimize_textures",
+              "kind": "classmethod",
+              "signature": "(cls, directory: str, **kwargs)",
+              "summary": "Batch optimizes all textures in a directory.",
+              "line": 431,
+              "deprecated": false
+            },
+            {
+              "name": "assess",
+              "qualname": "TextureOptimizer.assess",
+              "kind": "classmethod",
+              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, generate_mipmaps: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]",
+              "summary": "Predict whether :meth:`optimize_texture` would change ``texture_path``.",
+              "line": 447,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "iter_utils/_iter_utils.py",
       "summary": "",
       "functions": [],
@@ -5363,12 +5414,30 @@
               "deprecated": false
             },
             {
+              "name": "infer_affix_mode",
+              "qualname": "StrUtils.infer_affix_mode",
+              "kind": "staticmethod",
+              "signature": "(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str",
+              "summary": "Infer ``\"prefix\"`` or ``\"suffix\"`` from *delimiter* placement in *text*.",
+              "line": 962,
+              "deprecated": false
+            },
+            {
+              "name": "split_affix",
+              "qualname": "StrUtils.split_affix",
+              "kind": "staticmethod",
+              "signature": "(text: str, mode: str = 'auto', *, default: str = 'prefix', delimiter: str = '_') -> Tuple[str, str]",
+              "summary": "Split an affix string into a ``(prefix, suffix)`` pair per *mode*.",
+              "line": 1010,
+              "deprecated": false
+            },
+            {
               "name": "apply_affix",
               "qualname": "StrUtils.apply_affix",
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Idempotently apply a prefix and/or suffix to a string.",
-              "line": 962,
+              "line": 1059,
               "deprecated": false
             },
             {
@@ -5377,7 +5446,7 @@
               "kind": "staticmethod",
               "signature": "(index: int) -> str",
               "summary": "Excel-column-style alphabetic label for a 0-based index.",
-              "line": 996,
+              "line": 1093,
               "deprecated": false
             },
             {
@@ -5386,7 +5455,7 @@
               "kind": "staticmethod",
               "signature": "(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]",
               "summary": "Generate ``count`` sequential labels for naming sibling items.",
-              "line": 1024,
+              "line": 1121,
               "deprecated": false
             },
             {
@@ -5395,7 +5464,7 @@
               "kind": "staticmethod",
               "signature": "(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]",
               "summary": "Reduce a batch of names to a shared base form, then disambiguate",
-              "line": 1065,
+              "line": 1162,
               "deprecated": false
             },
             {
@@ -5404,7 +5473,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, stamp='%m-%d-%Y  %H:%M')",
               "summary": "Attach or detach a modified timestamp and date to/from a given file path.",
-              "line": 1168,
+              "line": 1265,
               "deprecated": false
             }
           ]
