@@ -804,7 +804,7 @@ class TestNormalOutputMode(unittest.TestCase, _LoggerCaptureMixin):
 
 
 class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
-    """When optimize_output is on, the save path runs TextureOptimizer.optimize_texture."""
+    """When optimize_output is on, the save path runs MapOptimizer.optimize_map."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mc_opt_")
@@ -816,9 +816,9 @@ class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
         import pythontk as ptk
 
         calls = []
-        original = ptk.TextureOptimizer.optimize_texture
+        original = ptk.MapOptimizer.optimize_map
         try:
-            ptk.TextureOptimizer.optimize_texture = classmethod(
+            ptk.MapOptimizer.optimize_map = classmethod(
                 lambda cls, path, **kw: calls.append((path, kw)) or path
             )
 
@@ -834,15 +834,15 @@ class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][1].get("map_type"), "Base_Color")
         finally:
-            ptk.TextureOptimizer.optimize_texture = original
+            ptk.MapOptimizer.optimize_map = original
 
     def test_optimize_not_called_when_disabled(self):
         import pythontk as ptk
 
         calls = []
-        original = ptk.TextureOptimizer.optimize_texture
+        original = ptk.MapOptimizer.optimize_map
         try:
-            ptk.TextureOptimizer.optimize_texture = classmethod(
+            ptk.MapOptimizer.optimize_map = classmethod(
                 lambda cls, path, **kw: calls.append(path) or path
             )
 
@@ -855,7 +855,7 @@ class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
             engine.composite_images({"Base_Color": [(p, _load(p))]}, self.tmp, name="t")
             self.assertEqual(calls, [])
         finally:
-            ptk.TextureOptimizer.optimize_texture = original
+            ptk.MapOptimizer.optimize_map = original
 
 
 class TestNormalModeConflictPrefilter(unittest.TestCase):

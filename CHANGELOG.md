@@ -2,6 +2,8 @@
 
 ## 2026
 
+- **`TextureOptimizer` → `MapOptimizer`** (breaking) — renamed `img_utils/texture_optimizer.py` → `img_utils/map_optimizer.py`, class `TextureOptimizer` → `MapOptimizer`, methods `optimize_texture` → `optimize_map`, `batch_optimize_textures` → `batch_optimize_maps`. Brings the module into line with its `map_*` siblings (`map_compositor`, `map_factory`, `map_registry`). No back-compat shim — downstream callers (`mayatk`, `extapps`, `uitk` docstrings) updated in lockstep.
+- **Removed `ImgUtils.map_modes` / `ImgUtils.map_types` / `ImgUtils.map_backgrounds`** (breaking) — these registry-derived class attrs invited a backwards `_img_utils → map_registry` module-load coupling. `MapRegistry` is the sole source of truth; access via `MapRegistry().get_map_modes()` etc. (singleton, cheap). `ImgUtils.set_bit_depth` and `ImgUtils.get_base_texture_name` use a deferred local import so generic `ImgUtils` consumers no longer pay the map-registry instantiation cost on import.
 - **MapCompositor engine** (`img_utils.map_compositor`) — multi-layer texture compositor with auto DirectX/OpenGL normal-map complement generation. Moved here from the standalone `map_compositor` repo; the UI panel now ships in `extapps`.
 - **FrameExtractor** (`vid_utils.frame_extractor`) — OpenCV-backed video → still-frame extraction. Carved out of the deprecated `metashape_workflow` repo as a generic helper.
 - **UI panels removed** (clean cut, no shims): `map_converter`, `map_packer`, `mesh_convert` Switchboard slot classes / `.ui` files have moved to `extapps`. Engine logic (`ImgUtils`, `MapFactory`, `MeshConvert`) stays here. `pythontk.MeshConvertSlots` and `pythontk.MeshConvertUi` no longer exist at the top level — import the panel from `extapps.mesh_convert` if needed.

@@ -245,6 +245,10 @@ class MapCompositor(ptk.LoggingMixin):
         assumed to apply to the n-th layer of any map type. This relies on
         all map types having the same per-layer ordering.
         """
+        registry = ptk.MapRegistry()
+        map_backgrounds = registry.get_map_backgrounds()
+        map_modes = registry.get_map_modes()
+
         out: SortedImages = {}
         for typ, layers in failed.items():
             for n, (filepath, image) in enumerate(layers):
@@ -257,13 +261,13 @@ class MapCompositor(ptk.LoggingMixin):
                     continue
 
                 key = ptk.MapFactory.resolve_map_type(typ)
-                bg = ptk.ImgUtils.map_backgrounds.get(key)
+                bg = map_backgrounds.get(key)
                 if bg is None:
                     bg = ptk.get_background(image, "RGBA", average=True)
                     im = ptk.fill_masked_area(image, bg, mask)
                 else:
                     im = ptk.fill_masked_area(image, bg, mask)
-                    target_mode = ptk.ImgUtils.map_modes.get(key)
+                    target_mode = map_modes.get(key)
                     if target_mode is not None:
                         im = im.convert(target_mode)
 
@@ -341,7 +345,10 @@ class MapCompositor(ptk.LoggingMixin):
         mode = first_image.mode
         ext = ptk.format_path(filepath0, "ext")
         key = ptk.MapFactory.resolve_map_type(typ)
-        bit_depth = ptk.ImgUtils.format_bit_depth(ptk.ImgUtils.map_modes[key])
+        registry = ptk.MapRegistry()
+        map_modes = registry.get_map_modes()
+        target_mode = map_modes[key]
+        bit_depth = ptk.ImgUtils.format_bit_depth(target_mode)
 
         # PIL mode "I" (32bit int) cannot be created directly; route via RGB.
         if mode == "I":
@@ -356,7 +363,7 @@ class MapCompositor(ptk.LoggingMixin):
             self.masks = self._seed_masks(sorted_images, typ, layers, bg)
 
         title = (
-            f"{typ.rstrip('_')} {ptk.ImgUtils.map_modes[key]} {bit_depth} "
+            f"{typ.rstrip('_')} {target_mode} {bit_depth} "
             f"{ext.upper()} {width}x{height}:"
         )
         self.logger.log_group(title, [ptk.format_path(fp, "file") for fp, _ in layers])
@@ -366,7 +373,7 @@ class MapCompositor(ptk.LoggingMixin):
         # back to the registered default; otherwise honour the artist's
         # opaque bg so we don't override a deliberate non-default choice.
         if bg[3] == 0:
-            fill_bg = ptk.ImgUtils.map_backgrounds.get(key, bg)
+            fill_bg = registry.get_map_backgrounds().get(key, bg)
         else:
             fill_bg = bg
 
@@ -404,7 +411,7 @@ class MapCompositor(ptk.LoggingMixin):
         return True
 
     def _maybe_optimize(self, out_path: str, map_type: str) -> None:
-        """Run TextureOptimizer.optimize_texture on the just-saved file when enabled.
+        """Run MapOptimizer.optimize_map on the just-saved file when enabled.
 
         Optimization rewrites the file in place with map-type-correct bit
         depth and (optionally) a tighter mode. No-op when disabled.
@@ -412,7 +419,7 @@ class MapCompositor(ptk.LoggingMixin):
         if not self.optimize_output:
             return
         try:
-            ptk.TextureOptimizer.optimize_texture(
+            ptk.MapOptimizer.optimize_map(
                 out_path,
                 map_type=map_type,
                 optimize_bit_depth=True,
@@ -420,7 +427,7 @@ class MapCompositor(ptk.LoggingMixin):
         except Exception as e:
             # Optimization is best-effort — never abort the batch.
             self.logger.warning(
-                f"optimize_texture failed for <b>{os.path.basename(out_path)}</b>: {e}"
+                f"optimize_map failed for <b>{os.path.basename(out_path)}</b>: {e}"
             )
 
     def _alpha_composite_layers(
@@ -515,8 +522,9 @@ class MapCompositor(ptk.LoggingMixin):
         if mode is NormalOutputMode.NONE:
             return
 
-        in_dx = typ in ptk.ImgUtils.map_types["Normal_DirectX"]
-        in_gl = typ in ptk.ImgUtils.map_types["Normal_OpenGL"]
+        map_types = ptk.MapRegistry().get_map_types()
+        in_dx = typ in map_types["Normal_DirectX"]
+        in_gl = typ in map_types["Normal_OpenGL"]
         if not (in_dx or in_gl):
             return  # not a normal map at all
 
@@ -627,11 +635,12 @@ class MapCompositor(ptk.LoggingMixin):
         name: str,
         info: _MapInfo,
     ) -> bool:
+        map_types = ptk.MapRegistry().get_map_types()
         try:
-            index = ptk.ImgUtils.map_types[src_set].index(typ)
+            index = map_types[src_set].index(typ)
         except ValueError:
             return False
-        new_type = ptk.ImgUtils.map_types[dst_set][index]
+        new_type = map_types[dst_set][index]
         inverted = ptk.invert_channels(result, "g")
         inverted.save(os.path.join(output_dir, f"{name}_{new_type}.{info.ext}"))
         title = (

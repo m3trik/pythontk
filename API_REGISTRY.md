@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-05-22_
+_Generated: 2026-05-23_
 
 ## Index
 
@@ -39,8 +39,8 @@ _Generated: 2026-05-22_
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
 - [`img_utils/map_compositor.py`](#img_utils--map_compositor) — Pure image-compositing engine — alpha-composite layered texture maps
 - [`img_utils/map_factory.py`](#img_utils--map_factory) — Texture Map Factory for PBR workflow preparation - Refactored.
+- [`img_utils/map_optimizer.py`](#img_utils--map_optimizer) — Plan, assess, and apply map (texture) optimizations.
 - [`img_utils/map_registry.py`](#img_utils--map_registry)
-- [`img_utils/texture_optimizer.py`](#img_utils--texture_optimizer) — Plan, assess, and apply texture optimizations.
 - [`iter_utils/_iter_utils.py`](#iter_utils--_iter_utils)
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
 - [`math_utils/progression.py`](#math_utils--progression)
@@ -453,7 +453,7 @@ Reusable module attribute resolver for package-style imports.
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L33)** — Helper methods for working with image file formats.
+- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L32)** — Helper methods for working with image file formats.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
   - `ImgUtils.allow_large_images(cls)` *(class)* — Context manager to safely load very large images.
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
@@ -636,6 +636,19 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapFactory.unpack_metallic_smoothness(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Metallic (RGB) and Smoothness (A) from a combined map.
   - `MapFactory.unpack_specular_gloss(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Specular (RGB) and Glossiness (A) from a combined map.
 
+<a id="img_utils--map_optimizer"></a>
+### `img_utils/map_optimizer.py`
+
+Plan, assess, and apply map (texture) optimizations.
+
+- **[`class Op`](pythontk/pythontk/img_utils/map_optimizer.py#L69)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/img_utils/map_optimizer.py#L82)** — Plan, assess, and apply map (texture) optimizations.
+  - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, generate_mipmaps: bool = False) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
+  - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
+  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
+  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, generate_mipmaps: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
+
 <a id="img_utils--map_registry"></a>
 ### `img_utils/map_registry.py`
 
@@ -645,7 +658,7 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
   - `MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]` — Generate the workflow presets dictionary.
-  - `MapRegistry.get_map_types(self) -> Dict[str, Tuple[str, ...]]` — Generate the dictionary format for ImgUtils.map_types.
+  - `MapRegistry.get_map_types(self) -> Dict[str, Tuple[str, ...]]` — Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.
   - `MapRegistry.get_fallbacks(self) -> Dict[str, Tuple[str, ...]]` — Generate the input fallback dictionary.
   - `MapRegistry.get_output_fallbacks(self) -> Dict[str, Tuple[str, ...]]` — Generate the output fallback dictionary.
   - `MapRegistry.get_precedence_rules(self) -> Dict[str, List[str]]` — Generate the precedence rules dictionary.
@@ -656,19 +669,6 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapRegistry.get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]` — Generate the map backgrounds dictionary.
   - `MapRegistry.get_map_modes(self) -> Dict[str, str]` — Generate the map modes dictionary.
   - `MapRegistry.resolve_config(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]` — Resolve configuration from presets, dicts, and kwargs.
-
-<a id="img_utils--texture_optimizer"></a>
-### `img_utils/texture_optimizer.py`
-
-Plan, assess, and apply texture optimizations.
-
-- **[`class Op`](pythontk/pythontk/img_utils/texture_optimizer.py#L69)** — One operation in an optimization plan.
-- **[`class TextureOptimizer(HelpMixin)`](pythontk/pythontk/img_utils/texture_optimizer.py#L82)** — Plan, assess, and apply texture optimizations.
-  - `TextureOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, generate_mipmaps: bool = False) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
-  - `TextureOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
-  - `TextureOptimizer.optimize_texture(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
-  - `TextureOptimizer.batch_optimize_textures(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all textures in a directory.
-  - `TextureOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, generate_mipmaps: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_texture` would change ``texture_path``.
 
 <a id="iter_utils--_iter_utils"></a>
 ### `iter_utils/_iter_utils.py`
