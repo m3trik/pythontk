@@ -1,16 +1,16 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Plan, assess, and apply texture optimizations.
+"""Plan, assess, and apply map (texture) optimizations.
 
 Split out of ``ImgUtils`` so the decision branches consumed by both
-:meth:`TextureOptimizer.optimize_texture` and :meth:`TextureOptimizer.assess`
+:meth:`MapOptimizer.optimize_map` and :meth:`MapOptimizer.assess`
 live in a single planner. Prevents drift between "would change" predictions
 and actual mutations.
 
 Architecture:
     plan(image, **opts) -> [Op, ...]   # pure decisions, no IO
     apply(image, plan, ...) -> Image   # executes ops via ImgUtils helpers
-    optimize_texture(path, ...) -> str # orchestrator: load + plan + apply + save
+    optimize_map(path, ...) -> str     # orchestrator: load + plan + apply + save
     assess(path, ...) -> dict          # wraps plan() with image read + reporting
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ from pythontk.img_utils.map_registry import MapRegistry
 
 
 # Map-type-driven mode coercion rules. Mirrors the tolerated-mode lists in
-# the original optimize_texture body — defined once here so both plan() and
+# the original optimize_map body — defined once here so both plan() and
 # apply() reference the same source.
 _MAP_TYPE_TOLERATED: Dict[str, Tuple[str, ...]] = {
     "RGB": ("RGB", "P", "L"),
@@ -48,7 +48,7 @@ _MAP_TYPE_TOLERATED: Dict[str, Tuple[str, ...]] = {
 }
 
 # Legacy map-type-key heuristics for keys without a MapRegistry entry. Kept
-# verbatim from optimize_texture's pre-extraction fallback so call-site
+# verbatim from optimize_map's pre-extraction fallback so call-site
 # behavior is preserved exactly.
 _LEGACY_MAP_KEY_RULES: Dict[Tuple[str, ...], Tuple[str, Tuple[str, ...]]] = {
     ("Normal", "Normal_OpenGL", "Normal_DirectX"): ("RGB", ("RGB",)),
@@ -79,17 +79,17 @@ class Op:
     params: Dict[str, Any] = field(default_factory=dict)
 
 
-class TextureOptimizer(HelpMixin):
-    """Plan, assess, and apply texture optimizations.
+class MapOptimizer(HelpMixin):
+    """Plan, assess, and apply map (texture) optimizations.
 
     All decision logic lives in :meth:`plan` — :meth:`apply` is a thin
     dispatcher that mutates the image according to the plan's ops, never
-    making its own mode/size choices. :meth:`optimize_texture` orchestrates
+    making its own mode/size choices. :meth:`optimize_map` orchestrates
     load + plan + apply + save; :meth:`assess` is the read-only twin.
 
     Single source of truth: ``apply`` does not call ``ImgUtils.set_bit_depth``
     so its idiosyncratic ``bit_depth_mapping`` middle step can't introduce
-    drift between predicted (``assess``) and actual (``optimize_texture``)
+    drift between predicted (``assess``) and actual (``optimize_map``)
     outputs. ``set_bit_depth`` remains available for direct callers.
     """
 
@@ -109,7 +109,7 @@ class TextureOptimizer(HelpMixin):
         Pure function: no file IO, no mutation. The planner tracks a
         ``logical`` mode/size as each op would change them, so downstream
         decisions (e.g. mode coercion before resize) see the post-prior-op
-        state — same as if optimize_texture were executing.
+        state — same as if optimize_map were executing.
 
         Parameters:
             image: Source image (only its size/mode/info are read).
@@ -243,7 +243,9 @@ class TextureOptimizer(HelpMixin):
         # bypassing it here makes plan the single source of truth.
         if optimize_bit_depth and (mode != "P" or not allow_palette):
             sb_target = (
-                ImgUtils.map_modes.get(map_type_key) if map_type_key else None
+                MapRegistry().get_map_modes().get(map_type_key)
+                if map_type_key
+                else None
             )
             sb_target_mode: Optional[str] = None
             sb_reason: Optional[str] = None
@@ -306,7 +308,7 @@ class TextureOptimizer(HelpMixin):
         return image
 
     @classmethod
-    def optimize_texture(
+    def optimize_map(
         cls,
         texture_path: str,
         output_dir: str = None,
@@ -428,20 +430,20 @@ class TextureOptimizer(HelpMixin):
         return final_output_path
 
     @classmethod
-    def batch_optimize_textures(cls, directory: str, **kwargs):
-        """Batch optimizes all textures in a directory.
+    def batch_optimize_maps(cls, directory: str, **kwargs):
+        """Batch optimizes all maps in a directory.
 
         Parameters:
-            directory (str): Directory containing the textures to optimize.
-            **kwargs: Forwarded to :meth:`optimize_texture`.
+            directory (str): Directory containing the maps to optimize.
+            **kwargs: Forwarded to :meth:`optimize_map`.
         """
         ImgUtils.assert_pathlike(directory, "directory")
 
         textures = ImgUtils.get_images(directory)
-        print(f"Optimizing textures in: {directory}")
+        print(f"Optimizing maps in: {directory}")
         for texture_path in textures.keys():
-            cls.optimize_texture(texture_path, **kwargs)
-        print(f"{len(textures)} textures optimized.")
+            cls.optimize_map(texture_path, **kwargs)
+        print(f"{len(textures)} maps optimized.")
 
     @classmethod
     def assess(
@@ -455,7 +457,7 @@ class TextureOptimizer(HelpMixin):
         generate_mipmaps: bool = False,
         image: "Image.Image" = None,
     ) -> Dict[str, Any]:
-        """Predict whether :meth:`optimize_texture` would change ``texture_path``.
+        """Predict whether :meth:`optimize_map` would change ``texture_path``.
 
         Read-only wrapper around :meth:`plan`. Returns a dict the UI / report
         callers can render without re-deriving decision strings.
@@ -463,7 +465,7 @@ class TextureOptimizer(HelpMixin):
         Parameters:
             texture_path: Path to the texture file.
             max_size, force_pot, optimize_bit_depth, map_type, allow_palette,
-            generate_mipmaps: Same semantics as :meth:`optimize_texture`.
+            generate_mipmaps: Same semantics as :meth:`optimize_map`.
             image: Optional pre-loaded ``PIL.Image.Image`` to skip the
                 redundant header read for callers that already have one open.
 

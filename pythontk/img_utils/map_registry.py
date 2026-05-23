@@ -629,7 +629,7 @@ class MapRegistry(SingletonMixin):
         return presets
 
     def get_map_types(self) -> Dict[str, Tuple[str, ...]]:
-        """Generate the dictionary format for ImgUtils.map_types."""
+        """Return ``{canonical_key: (canonical, *aliases)}`` for every registered map."""
         return {name: tuple([name] + m.aliases) for name, m in self._maps.items()}
 
     def get_fallbacks(self) -> Dict[str, Tuple[str, ...]]:

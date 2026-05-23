@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-05-22",
+  "generated_at": "2026-05-23",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -2558,7 +2558,7 @@
         {
           "name": "ImgUtils",
           "summary": "Helper methods for working with image file formats.",
-          "line": 33,
+          "line": 32,
           "bases": [
             "HelpMixin"
           ],
@@ -2569,7 +2569,7 @@
               "kind": "staticmethod",
               "signature": "(a=None)",
               "summary": "Get help documentation on a specific PIL image attribute",
-              "line": 73,
+              "line": 66,
               "deprecated": false
             },
             {
@@ -2578,7 +2578,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Context manager to safely load very large images.",
-              "line": 95,
+              "line": 88,
               "deprecated": false
             },
             {
@@ -2587,7 +2587,7 @@
               "kind": "classmethod",
               "signature": "(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image",
               "summary": "Ensures the input is a valid PIL Image.",
-              "line": 119,
+              "line": 112,
               "deprecated": false
             },
             {
@@ -2596,7 +2596,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image, target_mode: str, allow_compatible: bool = False) -> Image.Image",
               "summary": "Converts image to target_mode.",
-              "line": 187,
+              "line": 180,
               "deprecated": false
             },
             {
@@ -2605,7 +2605,7 @@
               "kind": "staticmethod",
               "signature": "(obj: object, name: str = 'argument') -> None",
               "summary": "Assert that the given object is a valid path-like object.",
-              "line": 233,
+              "line": 226,
               "deprecated": false
             },
             {
@@ -2614,7 +2614,7 @@
               "kind": "staticmethod",
               "signature": "(mode, size=(4096, 4096), color=None)",
               "summary": "Create a new image.",
-              "line": 249,
+              "line": 242,
               "deprecated": false
             },
             {
@@ -2623,7 +2623,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], name: str, mode: str = None, **kwargs)",
               "summary": "Saves an image to the specified path, with optional mode conversion.",
-              "line": 263,
+              "line": 256,
               "deprecated": false
             },
             {
@@ -2632,7 +2632,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath)",
               "summary": "Load an image from the given file path and return a copy of the image object.",
-              "line": 315,
+              "line": 308,
               "deprecated": false
             },
             {
@@ -2641,7 +2641,7 @@
               "kind": "classmethod",
               "signature": "(cls, directory, inc=None, exc='')",
               "summary": "Get bitmap images from a given directory as PIL images.",
-              "line": 331,
+              "line": 324,
               "deprecated": false
             },
             {
@@ -2650,7 +2650,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]",
               "summary": "Get information about image files.",
-              "line": 363,
+              "line": 356,
               "deprecated": false
             },
             {
@@ -2659,7 +2659,7 @@
               "kind": "classmethod",
               "signature": "(cls, imageA, imageB)",
               "summary": "Check if two images are the same.",
-              "line": 409,
+              "line": 402,
               "deprecated": false
             },
             {
@@ -2668,7 +2668,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, x, y)",
               "summary": "Returns a resized copy of an image.",
-              "line": 427,
+              "line": 420,
               "deprecated": false
             },
             {
@@ -2677,7 +2677,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Resizes an image to the nearest Power of Two dimensions.",
-              "line": 442,
+              "line": 435,
               "deprecated": false
             },
             {
@@ -2686,7 +2686,7 @@
               "kind": "classmethod",
               "signature": "(cls, mode_or_image) -> str",
               "summary": "Format bit depth as e.g.",
-              "line": 467,
+              "line": 460,
               "deprecated": false
             },
             {
@@ -2695,7 +2695,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, map_type: str, allow_palette: bool = False) -> object",
               "summary": "Sets the bit depth and image mode of an image according to the map type.",
-              "line": 479,
+              "line": 472,
               "deprecated": false
             },
             {
@@ -2704,7 +2704,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Inverts a grayscale image.",
-              "line": 521,
+              "line": 520,
               "deprecated": false
             },
             {
@@ -2713,7 +2713,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, channels='RGBA')",
               "summary": "Invert specified channels in an image.",
-              "line": 534,
+              "line": 533,
               "deprecated": false
             },
             {
@@ -2722,7 +2722,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))",
               "summary": "Create mask(s) from the given image(s).",
-              "line": 584,
+              "line": 583,
               "deprecated": false
             },
             {
@@ -2731,7 +2731,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color, mask)",
               "summary": "Parameters:",
-              "line": 631,
+              "line": 630,
               "deprecated": false
             },
             {
@@ -2740,7 +2740,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color=(0, 0, 0, 0))",
               "summary": "Parameters:",
-              "line": 650,
+              "line": 649,
               "deprecated": false
             },
             {
@@ -2749,7 +2749,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mode=None, average=False)",
               "summary": "Sample the pixel values of each corner of an image and if they are uniform, return the result.",
-              "line": 667,
+              "line": 666,
               "deprecated": false
             },
             {
@@ -2758,7 +2758,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None)",
               "summary": "Parameters:",
-              "line": 701,
+              "line": 700,
               "deprecated": false
             },
             {
@@ -2767,7 +2767,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, level=255)",
               "summary": "Parameters:",
-              "line": 739,
+              "line": 738,
               "deprecated": false
             },
             {
@@ -2776,7 +2776,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']",
               "summary": "Apply a Gaussian blur to an image or 2D/3D numpy array.",
-              "line": 759,
+              "line": 758,
               "deprecated": false
             },
             {
@@ -2785,7 +2785,7 @@
               "kind": "staticmethod",
               "signature": "(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'",
               "summary": "Generate a normalized radial gradient as a 2D numpy array.",
-              "line": 841,
+              "line": 840,
               "deprecated": false
             },
             {
@@ -2794,7 +2794,7 @@
               "kind": "staticmethod",
               "signature": "(data)",
               "summary": "Convert an RGB Image data array to grayscale.",
-              "line": 899,
+              "line": 898,
               "deprecated": false
             },
             {
@@ -2803,7 +2803,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Manually convert the image to a NumPy array, iterate over the pixels",
-              "line": 923,
+              "line": 922,
               "deprecated": false
             },
             {
@@ -2812,7 +2812,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert to 8 bit 'L' grayscale.",
-              "line": 951,
+              "line": 950,
               "deprecated": false
             },
             {
@@ -2821,7 +2821,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 967,
+              "line": 966,
               "deprecated": false
             },
             {
@@ -2830,7 +2830,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 1069,
+              "line": 1068,
               "deprecated": false
             },
             {
@@ -2839,7 +2839,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 1219,
+              "line": 1218,
               "deprecated": false
             },
             {
@@ -2848,7 +2848,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 1231,
+              "line": 1230,
               "deprecated": false
             },
             {
@@ -2857,7 +2857,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Generates mipmaps for an image.",
-              "line": 1242,
+              "line": 1241,
               "deprecated": false
             },
             {
@@ -2866,7 +2866,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 1263,
+              "line": 1262,
               "deprecated": false
             },
             {
@@ -2875,7 +2875,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 1283,
+              "line": 1282,
               "deprecated": false
             },
             {
@@ -2884,7 +2884,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 1324,
+              "line": 1323,
               "deprecated": false
             },
             {
@@ -2893,7 +2893,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 1403,
+              "line": 1404,
               "deprecated": false
             }
           ]
@@ -4110,6 +4110,75 @@
       ]
     },
     {
+      "relpath": "img_utils/map_optimizer.py",
+      "summary": "Plan, assess, and apply map (texture) optimizations.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Op",
+          "summary": "One operation in an optimization plan.",
+          "line": 69,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "MapOptimizer",
+          "summary": "Plan, assess, and apply map (texture) optimizations.",
+          "line": 82,
+          "bases": [
+            "HelpMixin"
+          ],
+          "members": [
+            {
+              "name": "plan",
+              "qualname": "MapOptimizer.plan",
+              "kind": "classmethod",
+              "signature": "(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, generate_mipmaps: bool = False) -> List[Op]",
+              "summary": "Return the ordered list of operations :meth:`apply` would run.",
+              "line": 97,
+              "deprecated": false
+            },
+            {
+              "name": "apply",
+              "qualname": "MapOptimizer.apply",
+              "kind": "classmethod",
+              "signature": "(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'",
+              "summary": "Execute ``plan`` against ``image``.",
+              "line": 283,
+              "deprecated": false
+            },
+            {
+              "name": "optimize_map",
+              "qualname": "MapOptimizer.optimize_map",
+              "kind": "classmethod",
+              "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str",
+              "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
+              "line": 311,
+              "deprecated": false
+            },
+            {
+              "name": "batch_optimize_maps",
+              "qualname": "MapOptimizer.batch_optimize_maps",
+              "kind": "classmethod",
+              "signature": "(cls, directory: str, **kwargs)",
+              "summary": "Batch optimizes all maps in a directory.",
+              "line": 433,
+              "deprecated": false
+            },
+            {
+              "name": "assess",
+              "qualname": "MapOptimizer.assess",
+              "kind": "classmethod",
+              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, generate_mipmaps: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]",
+              "summary": "Predict whether :meth:`optimize_map` would change ``texture_path``.",
+              "line": 449,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "img_utils/map_registry.py",
       "summary": "",
       "functions": [],
@@ -4168,7 +4237,7 @@
               "qualname": "MapRegistry.get_map_types",
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[str, ...]]",
-              "summary": "Generate the dictionary format for ImgUtils.map_types.",
+              "summary": "Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.",
               "line": 631,
               "deprecated": false
             },
@@ -4260,75 +4329,6 @@
               "signature": "(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]",
               "summary": "Resolve configuration from presets, dicts, and kwargs.",
               "line": 693,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/texture_optimizer.py",
-      "summary": "Plan, assess, and apply texture optimizations.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "Op",
-          "summary": "One operation in an optimization plan.",
-          "line": 69,
-          "bases": [],
-          "members": []
-        },
-        {
-          "name": "TextureOptimizer",
-          "summary": "Plan, assess, and apply texture optimizations.",
-          "line": 82,
-          "bases": [
-            "HelpMixin"
-          ],
-          "members": [
-            {
-              "name": "plan",
-              "qualname": "TextureOptimizer.plan",
-              "kind": "classmethod",
-              "signature": "(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, generate_mipmaps: bool = False) -> List[Op]",
-              "summary": "Return the ordered list of operations :meth:`apply` would run.",
-              "line": 97,
-              "deprecated": false
-            },
-            {
-              "name": "apply",
-              "qualname": "TextureOptimizer.apply",
-              "kind": "classmethod",
-              "signature": "(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'",
-              "summary": "Execute ``plan`` against ``image``.",
-              "line": 281,
-              "deprecated": false
-            },
-            {
-              "name": "optimize_texture",
-              "qualname": "TextureOptimizer.optimize_texture",
-              "kind": "classmethod",
-              "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str",
-              "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
-              "line": 309,
-              "deprecated": false
-            },
-            {
-              "name": "batch_optimize_textures",
-              "qualname": "TextureOptimizer.batch_optimize_textures",
-              "kind": "classmethod",
-              "signature": "(cls, directory: str, **kwargs)",
-              "summary": "Batch optimizes all textures in a directory.",
-              "line": 431,
-              "deprecated": false
-            },
-            {
-              "name": "assess",
-              "qualname": "TextureOptimizer.assess",
-              "kind": "classmethod",
-              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, generate_mipmaps: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]",
-              "summary": "Predict whether :meth:`optimize_texture` would change ``texture_path``.",
-              "line": 447,
               "deprecated": false
             }
           ]

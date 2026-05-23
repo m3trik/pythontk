@@ -27,17 +27,10 @@ from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.str_utils._str_utils import StrUtils
-from pythontk.img_utils.map_registry import MapRegistry
 
 
 class ImgUtils(HelpMixin):
     """Helper methods for working with image file formats."""
-
-    map_types: Dict[str, Tuple[str, ...]] = MapRegistry().get_map_types()
-    map_backgrounds: Dict[str, Tuple[int, int, int, int]] = (
-        MapRegistry().get_map_backgrounds()
-    )
-    map_modes: Dict[str, str] = MapRegistry().get_map_modes()
 
     texture_file_types = ["png", "jpg", "bmp", "tga", "tiff", "gif", "exr", "hdr"]
 
@@ -491,9 +484,15 @@ class ImgUtils(HelpMixin):
         Returns:
             PIL.Image.Image: The image with the specified or recommended bit depth and mode.
         """
-        # Determine the target mode based on map type
-        if map_type in cls.map_modes:
-            target_mode = cls.map_modes[map_type]
+        # Determine the target mode based on map type. MapRegistry is a
+        # SingletonMixin so the import + lookup are cheap; the deferred
+        # import keeps _img_utils.py free of module-load-time coupling to
+        # the map cluster.
+        from pythontk.img_utils.map_registry import MapRegistry
+
+        map_modes = MapRegistry().get_map_modes()
+        if map_type in map_modes:
+            target_mode = map_modes[map_type]
             image = cls.enforce_mode(image, target_mode, allow_compatible=allow_palette)
 
         # If the image is already in a standard mode, don't mess with it based on bit depth
@@ -1349,10 +1348,12 @@ class ImgUtils(HelpMixin):
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
 
+        from pythontk.img_utils.map_registry import MapRegistry
+
         short_suffixes = []
         long_suffixes = []
 
-        for type_aliases in cls.map_types.values():
+        for type_aliases in MapRegistry().get_map_types().values():
             for alias in type_aliases:
                 if len(alias) <= 3:
                     short_suffixes.append(alias)
