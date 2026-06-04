@@ -4984,9 +4984,54 @@
               "name": "lerp",
               "qualname": "MathUtils.lerp",
               "kind": "staticmethod",
-              "signature": "(start: float, end: float, t: float) -> float",
-              "summary": "Linear interpolation between two values.",
+              "signature": "(start, end, t: float)",
+              "summary": "Linear interpolation between two values or two equal-length points.",
               "line": 1171,
+              "deprecated": false
+            },
+            {
+              "name": "safe_normalize",
+              "qualname": "MathUtils.safe_normalize",
+              "kind": "classmethod",
+              "signature": "(cls, vector, fallback, amount: float = 1)",
+              "summary": ":meth:`normalize`, returning ``fallback`` for a ~zero-length vector.",
+              "line": 1191,
+              "deprecated": false
+            },
+            {
+              "name": "smoothstep",
+              "qualname": "MathUtils.smoothstep",
+              "kind": "staticmethod",
+              "signature": "(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float",
+              "summary": "Canonical clamped Hermite smoothstep (``3t² − 2t³``).",
+              "line": 1204,
+              "deprecated": false
+            },
+            {
+              "name": "ricker",
+              "qualname": "MathUtils.ricker",
+              "kind": "staticmethod",
+              "signature": "(x: float) -> float",
+              "summary": "Ricker (Mexican-hat) wavelet — a unit ridge flanked by two balanced",
+              "line": 1228,
+              "deprecated": false
+            },
+            {
+              "name": "catenary",
+              "qualname": "MathUtils.catenary",
+              "kind": "staticmethod",
+              "signature": "(t: float, tension: float) -> float",
+              "summary": "Normalized catenary (``cosh``) profile across a span.",
+              "line": 1247,
+              "deprecated": false
+            },
+            {
+              "name": "catenary_sag",
+              "qualname": "MathUtils.catenary_sag",
+              "kind": "classmethod",
+              "signature": "(cls, t: float, tension: float, round_amount: float = 0.0) -> float",
+              "summary": "Catenary sag profile, optionally rounded toward ``sin²`` at the supports.",
+              "line": 1272,
               "deprecated": false
             },
             {
@@ -4995,7 +5040,7 @@
               "kind": "staticmethod",
               "signature": "(time_value: float, sample_times: Sequence[float], progress: Sequence[float], tolerance: float = 1e-06) -> float",
               "summary": "Interpolate normalized progress from sampled time/progress pairs.",
-              "line": 1185,
+              "line": 1299,
               "deprecated": false
             },
             {
@@ -5004,7 +5049,7 @@
               "kind": "method",
               "signature": "(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]",
               "summary": "Generate a geometric sequence.",
-              "line": 1235,
+              "line": 1349,
               "deprecated": false
             },
             {
@@ -5013,7 +5058,7 @@
               "kind": "staticmethod",
               "signature": "(value: Union[float, List[Any], Tuple[Any, ...], 'np.ndarray'], old_range: Tuple[float, float], new_range: Tuple[float, float], clamp: bool = False) -> Union[float, List[Any], Tuple[Any, ...], 'np.ndarray']",
               "summary": "Remaps a value, list, or tuple of varying sizes from one range to another.",
-              "line": 1265,
+              "line": 1379,
               "deprecated": false
             },
             {
@@ -5022,7 +5067,7 @@
               "kind": "staticmethod",
               "signature": "(centerline_points: List[List[float]]) -> float",
               "summary": "Calculates the total length of the centerline path.",
-              "line": 1310,
+              "line": 1424,
               "deprecated": false
             },
             {
@@ -5031,7 +5076,7 @@
               "kind": "staticmethod",
               "signature": "(centerline_points: List[List[float]], param: float) -> List[float]",
               "summary": "Returns the interpolated point along the centerline.",
-              "line": 1327,
+              "line": 1441,
               "deprecated": false
             },
             {
@@ -5040,7 +5085,7 @@
               "kind": "classmethod",
               "signature": "(cls, centerline: List[List[float]], num_points: int, reverse: bool = False, interpolation: Callable[[List[List[float]], float], List[float]] = None, start_offset: float = 0.0, end_offset: float = 0.0) -> List[List[float]]",
               "summary": "Distributes points evenly along the centerline with optional offsets and custom interpolation.",
-              "line": 1356,
+              "line": 1470,
               "deprecated": false
             },
             {
@@ -5049,7 +5094,7 @@
               "kind": "staticmethod",
               "signature": "(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]",
               "summary": "Orders a list of points to form a continuous path.",
-              "line": 1394,
+              "line": 1508,
               "deprecated": false
             },
             {
@@ -5058,7 +5103,7 @@
               "kind": "staticmethod",
               "signature": "(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list",
               "summary": "Apply a moving average to smooth a sequence of 3D points.",
-              "line": 1439,
+              "line": 1553,
               "deprecated": false
             },
             {
@@ -5067,7 +5112,7 @@
               "kind": "staticmethod",
               "signature": "(value: int) -> int",
               "summary": "Finds the nearest power of two for a given integer without using the math module.",
-              "line": 1497,
+              "line": 1611,
               "deprecated": false
             },
             {
@@ -5076,7 +5121,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, tolerance: float = 0.0001) -> bool",
               "summary": "Check if a float value is close to a whole number within tolerance.",
-              "line": 1525,
+              "line": 1639,
               "deprecated": false
             },
             {
@@ -5085,7 +5130,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, mode: str = 'none', max_distance: float = 1.5) -> Union[int, float]",
               "summary": "General-purpose rounding function with multiple modes.",
-              "line": 1545,
+              "line": 1659,
               "deprecated": false
             },
             {
@@ -5094,7 +5139,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, max_distance: float = 1.5) -> int",
               "summary": "Round to aesthetically pleasing 'round' numbers (conservative approach).",
-              "line": 1602,
+              "line": 1716,
               "deprecated": false
             },
             {
@@ -5103,7 +5148,7 @@
               "kind": "staticmethod",
               "signature": "(value: float) -> int",
               "summary": "Round to aesthetically pleasing 'round' numbers (aggressive approach).",
-              "line": 1701,
+              "line": 1815,
               "deprecated": false
             },
             {
@@ -5112,7 +5157,7 @@
               "kind": "staticmethod",
               "signature": "(points, precision=4)",
               "summary": "Hash the given list of point values.",
-              "line": 1801,
+              "line": 1915,
               "deprecated": false
             },
             {
@@ -5121,7 +5166,31 @@
               "kind": "staticmethod",
               "signature": "(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float",
               "summary": "Calculate the effective rotation distance between two Euler rotations.",
-              "line": 1829,
+              "line": 1943,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "math_utils/noise.py",
+      "summary": "",
+      "functions": [],
+      "classes": [
+        {
+          "name": "BandLimitedNoise",
+          "summary": "Coherent, band-limited 2D noise built from summed sine octaves.",
+          "line": 8,
+          "bases": [],
+          "members": [
+            {
+              "name": "at",
+              "qualname": "BandLimitedNoise.at",
+              "kind": "method",
+              "signature": "(self, u: float, v: float) -> float",
+              "summary": "Noise value at ``(u, v)`` over the unit square (≈ ``[-1, 1]``).",
+              "line": 64,
               "deprecated": false
             }
           ]

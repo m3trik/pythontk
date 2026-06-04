@@ -50,6 +50,7 @@ _Generated: 2026-06-04_
 - [`img_utils/mask_generator.py`](#img_utils--mask_generator) — Background mask generation via rembg (optional dependency).
 - [`iter_utils/_iter_utils.py`](#iter_utils--_iter_utils)
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
+- [`math_utils/noise.py`](#math_utils--noise)
 - [`math_utils/progression.py`](#math_utils--progression)
 - [`net_utils/_net_utils.py`](#net_utils--_net_utils)
 - [`net_utils/credentials.py`](#net_utils--credentials)
@@ -797,7 +798,12 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.get_angle_from_three_points(a, b, c, degree=False)` *(static)* — Get the opposing angle from 3 given points.
   - `MathUtils.get_two_sides_of_asa_triangle(a1, a2, s, unit='degrees')` *(static)* — Get the length of two sides of a triangle, given two angles, and the length of the side in-between.
   - `MathUtils.xyz_rotation(cls, theta, axis, rotation=[], degree=False)` *(class)* — Get the rotation about the X,Y,Z axes (in rotation) given
-  - `MathUtils.lerp(start: float, end: float, t: float) -> float` *(static)* — Linear interpolation between two values.
+  - `MathUtils.lerp(start, end, t: float)` *(static)* — Linear interpolation between two values or two equal-length points.
+  - `MathUtils.safe_normalize(cls, vector, fallback, amount: float = 1)` *(class)* — :meth:`normalize`, returning ``fallback`` for a ~zero-length vector.
+  - `MathUtils.smoothstep(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float` *(static)* — Canonical clamped Hermite smoothstep (``3t² − 2t³``).
+  - `MathUtils.ricker(x: float) -> float` *(static)* — Ricker (Mexican-hat) wavelet — a unit ridge flanked by two balanced
+  - `MathUtils.catenary(t: float, tension: float) -> float` *(static)* — Normalized catenary (``cosh``) profile across a span.
+  - `MathUtils.catenary_sag(cls, t: float, tension: float, round_amount: float = 0.0) -> float` *(class)* — Catenary sag profile, optionally rounded toward ``sin²`` at the supports.
   - `MathUtils.evaluate_sampled_progress(time_value: float, sample_times: Sequence[float], progress: Sequence[float], tolerance: float = 1e-06) -> float` *(static)* — Interpolate normalized progress from sampled time/progress pairs.
   - `MathUtils.generate_geometric_sequence(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]` — Generate a geometric sequence.
   - `MathUtils.remap(value: Union[float, List[Any], Tuple[Any, ...], 'np.ndarray'], old_range: Tuple[float, float], new_range: Tuple[float, float], clamp: bool = False) -> Union[float, List[Any], Tuple[Any, ...], 'np.ndarray']` *(static)* — Remaps a value, list, or tuple of varying sizes from one range to another.
@@ -813,6 +819,12 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.round_to_aggressive_preferred(value: float) -> int` *(static)* — Round to aesthetically pleasing 'round' numbers (aggressive approach).
   - `MathUtils.hash_points(points, precision=4)` *(static)* — Hash the given list of point values.
   - `MathUtils.calculate_rotation_distance(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float` *(static)* — Calculate the effective rotation distance between two Euler rotations.
+
+<a id="math_utils--noise"></a>
+### `math_utils/noise.py`
+
+- **[`class BandLimitedNoise`](pythontk/pythontk/math_utils/noise.py#L8)** — Coherent, band-limited 2D noise built from summed sine octaves.
+  - `BandLimitedNoise.at(self, u: float, v: float) -> float` — Noise value at ``(u, v)`` over the unit square (≈ ``[-1, 1]``).
 
 <a id="math_utils--progression"></a>
 ### `math_utils/progression.py`

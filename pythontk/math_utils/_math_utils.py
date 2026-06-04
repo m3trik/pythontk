@@ -1168,18 +1168,132 @@ class MathUtils(HelpMixin):
         return tuple(rotation)
 
     @staticmethod
-    def lerp(start: float, end: float, t: float) -> float:
-        """Linear interpolation between two values.
+    def lerp(start, end, t: float):
+        """Linear interpolation between two values or two equal-length points.
+
+        Scalars interpolate to a scalar; equal-length point/vector sequences
+        interpolate component-wise to a tuple.
 
         Parameters:
-            start (float): Start value
-            end (float): End value
-            t (float): Interpolation factor (0.0 to 1.0)
+            start: Start value (scalar) or point/vector (sequence).
+            end: End value/point, matching ``start``.
+            t (float): Interpolation factor (0.0 to 1.0).
 
         Returns:
-            float: Interpolated value
+            float | tuple: Interpolated value, or component-wise tuple for
+            sequence inputs.
         """
+        if isinstance(start, (list, tuple)):
+            return tuple(a + t * (b - a) for a, b in zip(start, end))
         return start + t * (end - start)
+
+    @classmethod
+    def safe_normalize(cls, vector, fallback, amount: float = 1):
+        """:meth:`normalize`, returning ``fallback`` for a ~zero-length vector.
+
+        Guards the degenerate (coincident / zero) case so callers don't have to
+        repeat the magnitude check before normalizing.
+        """
+        return (
+            cls.normalize(vector, amount)
+            if cls.get_magnitude(vector) > 1e-9
+            else fallback
+        )
+
+    @staticmethod
+    def smoothstep(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float:
+        """Canonical clamped Hermite smoothstep (``3t² − 2t³``).
+
+        Eases ``x`` within ``[edge0, edge1]`` to a smooth ``0``..``1`` with zero
+        slope at both ends; ``x`` outside the range clamps to ``0``/``1`` (so a
+        raw ratio is safe to pass). Distinct from
+        :meth:`ProgressionCurves.smooth_step`, which applies a weight exponent
+        and does not clamp.
+
+        Parameters:
+            x (float): Input value.
+            edge0 (float): Lower edge (maps to 0).
+            edge1 (float): Upper edge (maps to 1).
+
+        Returns:
+            float: Smoothed value in ``0``..``1``.
+        """
+        if edge0 == edge1:
+            return 0.0 if x < edge0 else 1.0
+        t = (x - edge0) / (edge1 - edge0)
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        return t * t * (3.0 - 2.0 * t)
+
+    @staticmethod
+    def ricker(x: float) -> float:
+        """Ricker (Mexican-hat) wavelet — a unit ridge flanked by two balanced
+        troughs (the negated 2nd derivative of a gaussian).
+
+        It integrates to zero, so as a bump/crease/fold cross-section it
+        displaces *out* at the crest and *in* to either side — mean-preserving,
+        rather than one-sided. Peak is ``1`` at ``x == 0``; zero crossings at
+        ``x == ±1``.
+
+        Parameters:
+            x (float): Distance from the crest, in half-width units.
+
+        Returns:
+            float: Wavelet value.
+        """
+        xx = x * x
+        return (1.0 - xx) * math.exp(-0.5 * xx)
+
+    @staticmethod
+    def catenary(t: float, tension: float) -> float:
+        """Normalized catenary (``cosh``) profile across a span.
+
+        Returns ``1`` at the span center (``t == 0``) and ``0`` at the supports
+        (``|t| == 1``) — the true curve a chain/cable/cloth assumes hung between
+        two points. ``tension`` is the shape parameter: ``→0`` degenerates to a
+        parabola, larger values give the deeper, more V-shaped sag of a slack,
+        heavy line. The peak is always ``1`` so absolute depth is controlled by
+        the caller.
+
+        Parameters:
+            t (float): Centered span coordinate (``-1``..``1``; ``0`` = center).
+            tension (float): Catenary shape parameter (clamped to ``0``..``50``).
+
+        Returns:
+            float: Profile value in ``0``..``1``.
+        """
+        t = -1.0 if t < -1.0 else (1.0 if t > 1.0 else t)
+        tension = 0.0 if tension < 0.0 else (50.0 if tension > 50.0 else tension)
+        if tension <= 1e-6:
+            return 1.0 - t * t  # parabolic limit
+        ct = math.cosh(tension)
+        return (ct - math.cosh(tension * t)) / (ct - 1.0)
+
+    @classmethod
+    def catenary_sag(
+        cls, t: float, tension: float, round_amount: float = 0.0
+    ) -> float:
+        """Catenary sag profile, optionally rounded toward ``sin²`` at the supports.
+
+        A pure catenary meets each support with a non-zero slope, so adjacent
+        spans form a sharp cusp there. Blending toward ``sin²(πs)`` (zero slope
+        at both ends) rounds that cusp into a smooth dome. The center peak stays
+        ``1`` either way.
+
+        Parameters:
+            t (float): Centered span coordinate (``-1``..``1``; ``0`` = center).
+            tension (float): Catenary shape parameter (see :meth:`catenary`).
+            round_amount (float): ``0``..``1`` blend — ``0`` keeps the crisp
+                catenary, ``1`` is fully rounded.
+
+        Returns:
+            float: Profile value in ``0``..``1``.
+        """
+        cat = cls.catenary(t, tension)
+        if round_amount <= 0.0:
+            return cat
+        s = (t + 1.0) * 0.5  # back to 0..1 within the span
+        rounded = math.sin(math.pi * s) ** 2
+        return cat + (rounded - cat) * min(1.0, round_amount)
 
     @staticmethod
     def evaluate_sampled_progress(

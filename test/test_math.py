@@ -971,6 +971,83 @@ class MathTest(BaseTestCase):
         )
         self.assertEqual([p[0] for p in ordered], [0.0, 1.0, 3.0])
 
+    # ------------------------------------------------------------- lerp (vector)
+
+    def test_lerp_point_componentwise(self):
+        """Sequence inputs interpolate component-wise to a tuple."""
+        self.assertEqual(MathUtils.lerp((0, 0, 0), (2, 4, 6), 0.5), (1.0, 2.0, 3.0))
+
+    def test_lerp_scalar_still_scalar(self):
+        """Scalar inputs keep the original scalar behavior."""
+        self.assertEqual(MathUtils.lerp(0.0, 10.0, 0.25), 2.5)
+
+    # ----------------------------------------------------------- safe_normalize
+
+    def test_safe_normalize_returns_fallback_on_zero(self):
+        self.assertEqual(MathUtils.safe_normalize((0, 0, 0), (1, 0, 0)), (1, 0, 0))
+
+    def test_safe_normalize_normalizes_nonzero(self):
+        nx, ny, nz = MathUtils.safe_normalize((0, 3, 4), (1, 0, 0))
+        self.assertAlmostEqual((nx, ny, nz)[1], 0.6, places=6)
+        self.assertAlmostEqual((nx, ny, nz)[2], 0.8, places=6)
+
+    # ---------------------------------------------------------------- smoothstep
+
+    def test_smoothstep_clamps_and_eases(self):
+        self.assertEqual(MathUtils.smoothstep(-1.0), 0.0)
+        self.assertEqual(MathUtils.smoothstep(2.0), 1.0)
+        self.assertAlmostEqual(MathUtils.smoothstep(0.5), 0.5, places=9)
+
+    def test_smoothstep_edges(self):
+        # Maps within [edge0, edge1]; zero-slope endpoints (0 and 1 exactly).
+        self.assertEqual(MathUtils.smoothstep(2.0, 2.0, 4.0), 0.0)
+        self.assertEqual(MathUtils.smoothstep(4.0, 2.0, 4.0), 1.0)
+        self.assertAlmostEqual(MathUtils.smoothstep(3.0, 2.0, 4.0), 0.5, places=9)
+
+    # ------------------------------------------------------------------- ricker
+
+    def test_ricker_peak_and_zero_crossings(self):
+        self.assertAlmostEqual(MathUtils.ricker(0.0), 1.0, places=9)
+        self.assertAlmostEqual(MathUtils.ricker(1.0), 0.0, places=9)
+        self.assertAlmostEqual(MathUtils.ricker(-1.0), 0.0, places=9)
+
+    def test_ricker_has_negative_troughs(self):
+        # Mean-preserving: it dips below zero past the crossings.
+        self.assertLess(MathUtils.ricker(1.7), 0.0)
+
+    def test_ricker_integrates_to_zero(self):
+        # Riemann sum over a wide window is ~0 (the defining property).
+        s = sum(MathUtils.ricker(x * 0.01) for x in range(-800, 801)) * 0.01
+        self.assertAlmostEqual(s, 0.0, delta=1e-3)
+
+    # ----------------------------------------------------------------- catenary
+
+    def test_catenary_center_and_supports(self):
+        self.assertAlmostEqual(MathUtils.catenary(0.0, 1.5), 1.0, places=9)
+        self.assertAlmostEqual(MathUtils.catenary(1.0, 1.5), 0.0, places=9)
+        self.assertAlmostEqual(MathUtils.catenary(-1.0, 1.5), 0.0, places=9)
+
+    def test_catenary_parabolic_limit(self):
+        self.assertAlmostEqual(MathUtils.catenary(0.5, 0.0), 0.75, places=9)
+
+    def test_catenary_clamped_outside_span(self):
+        self.assertAlmostEqual(MathUtils.catenary(2.0, 1.5), 0.0, places=9)
+
+    def test_catenary_sag_no_round_matches_catenary(self):
+        for t in (-1.0, -0.3, 0.0, 0.4, 1.0):
+            self.assertAlmostEqual(
+                MathUtils.catenary_sag(t, 1.5, 0.0),
+                MathUtils.catenary(t, 1.5),
+                places=9,
+            )
+
+    def test_catenary_sag_rounding_lowers_near_support(self):
+        # The rounded profile rises with zero slope, so it sits below the crisp
+        # catenary just inside a support.
+        crisp = MathUtils.catenary(-1.0 + 1e-3, 3.0)
+        rounded = MathUtils.catenary_sag(-1.0 + 1e-3, 3.0, 1.0)
+        self.assertLess(rounded, crisp)
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)
