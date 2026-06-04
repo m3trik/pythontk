@@ -520,6 +520,10 @@ class ImageCuratorTest(BaseTestCase):
         self.assertNotIn("needle.jpg", k)
         self.assertEqual(len([f for f in k if f.startswith("sharp_")]), 8)
 
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
     def test_preview_reports_survivors_without_copying(self) -> None:
         """preview() dry-runs the curation sweep — reports survivors per
         threshold + the sharpness distribution, copies nothing, and its survivor
