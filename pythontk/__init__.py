@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.54"
+__version__ = "0.8.56"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -28,6 +28,7 @@ DEFAULT_INCLUDE = {
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
     "math_utils.progression": "ProgressionCurves",
+    "math_utils.noise": "BandLimitedNoise",
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
     "core_utils.package_manager": "PackageManager",
@@ -112,6 +113,7 @@ __all__ = [
     "IterUtils",
     "MathUtils",
     "ProgressionCurves",
+    "BandLimitedNoise",
     "StrUtils",
     "FuzzyMatcher",
     "AudioUtils",
