@@ -69,19 +69,25 @@ class AppLauncher:
             return None
 
     @staticmethod
-    def run(app_identifier, args=None, cwd=None, timeout=None):
+    def run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None):
         """Execute an application synchronously and return its result.
 
         Unlike :meth:`launch` (fire-and-forget), this method blocks until the
-        process finishes, captures stdout/stderr, and honours a *timeout*.
+        process finishes and honours a *timeout*.
 
         :param app_identifier: Name or path of the application.
         :param args: Arguments to pass (str, list, or tuple).
         :param cwd: Working directory for the process.
         :param timeout: Maximum seconds to wait before raising
                         ``subprocess.TimeoutExpired``.  *None* = no limit.
-        :return: A ``subprocess.CompletedProcess`` with *returncode*,
-                 *stdout*, and *stderr* (decoded text).
+        :param output_file: If given, stdout+stderr are redirected to this file
+                        (combined) instead of captured in memory — use for
+                        long-running tools whose logs are large (the returned
+                        ``stdout``/``stderr`` are then ``None``). Otherwise output
+                        is captured and returned as decoded text.
+        :param env: Optional environment mapping for the child (else inherits).
+        :return: A ``subprocess.CompletedProcess`` with *returncode* and, unless
+                 *output_file* is set, *stdout*/*stderr* (decoded text).
         :raises FileNotFoundError: If the application cannot be found.
         :raises subprocess.TimeoutExpired: If *timeout* is exceeded.
         """
@@ -97,6 +103,18 @@ class AppLauncher:
                 cmd.extend(args)
 
         logger.debug(f"Running (blocking): {cmd}")
+        if output_file:
+            with open(output_file, "w", encoding="utf-8", errors="replace") as fh:
+                return subprocess.run(
+                    cmd,
+                    cwd=cwd,
+                    stdout=fh,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout,
+                    shell=False,
+                    env=env,
+                )
         return subprocess.run(
             cmd,
             cwd=cwd,
@@ -104,7 +122,148 @@ class AppLauncher:
             text=True,
             timeout=timeout,
             shell=False,
+            env=env,
         )
+
+    # ------------------------------------------------------------------ sessions
+    @staticmethod
+    def current_session_id():
+        """Windows session id of the *current* process.
+
+        Session 0 is the non-interactive *services* session — no window station,
+        no display — so GUI / window-station-bound apps launched there often fail
+        or hang (e.g. an SSH or scheduled-task context). A non-zero id is an
+        interactive desktop session. Returns ``None`` off Windows or on failure.
+        """
+        if platform.system().lower() != "windows":
+            return None
+        try:
+            import ctypes
+
+            pid = ctypes.windll.kernel32.GetCurrentProcessId()
+            sid = ctypes.c_ulong()
+            if ctypes.windll.kernel32.ProcessIdToSessionId(pid, ctypes.byref(sid)):
+                return int(sid.value)
+        except Exception as e:
+            logger.debug(f"current_session_id failed: {e}")
+        return None
+
+    @staticmethod
+    def active_console_session_id():
+        """Session id of the physically logged-in console (interactive desktop).
+
+        This is the session a GUI app must run in to have a window station and be
+        visible. Returns ``None`` off Windows, or when no user is logged on
+        (``WTSGetActiveConsoleSessionId`` → ``0xFFFFFFFF``).
+        """
+        if platform.system().lower() != "windows":
+            return None
+        try:
+            import ctypes
+
+            sid = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId()
+            if sid == 0xFFFFFFFF:
+                return None
+            return int(sid)
+        except Exception as e:
+            logger.debug(f"active_console_session_id failed: {e}")
+        return None
+
+    @staticmethod
+    def is_interactive_session():
+        """True if the current process is in an interactive session (non-zero —
+        has a window station / can show GUIs). False for the services session 0
+        (e.g. a non-interactive SSH context on Windows). ``None``-safe: a missing
+        session id is treated as non-interactive only on Windows; off Windows
+        (where the concept doesn't apply) it returns True."""
+        if platform.system().lower() != "windows":
+            return True
+        sid = AppLauncher.current_session_id()
+        return sid is not None and sid != 0
+
+    @staticmethod
+    def find_session_launcher(explicit=None):
+        """Locate a helper able to launch a process into *another* interactive
+        session — Sysinternals PsExec. pythontk does not bundle it; this only
+        discovers it so :meth:`launch_in_session` can orchestrate it when present,
+        keeping PsExec a runtime-optional tool rather than a dependency.
+
+        Search order: *explicit* → ``$PSEXEC`` env → PATH (``PsExec64.exe`` /
+        ``PsExec.exe``) → common tool dirs. Returns the path or ``None``.
+        """
+        candidates = []
+        if explicit:
+            candidates.append(explicit)
+        if os.environ.get("PSEXEC"):
+            candidates.append(os.environ["PSEXEC"])
+        for name in ("PsExec64.exe", "PsExec.exe", "psexec64", "psexec"):
+            w = shutil.which(name)
+            if w:
+                candidates.append(w)
+        for d in (r"M:\tools", r"C:\tools", os.environ.get("ProgramFiles", "")):
+            if d:
+                candidates += [os.path.join(d, n) for n in ("PsExec64.exe", "PsExec.exe")]
+        for c in candidates:
+            if c and os.path.isfile(c):
+                return c
+        return None
+
+    @staticmethod
+    def launch_in_session(
+        app_identifier,
+        args=None,
+        session=None,
+        cwd=None,
+        launcher=None,
+        accept_eula=True,
+    ):
+        """Launch an application into a specific interactive Windows session.
+
+        Needed when the caller runs in the non-interactive services session 0
+        (e.g. over SSH) yet the target is a GUI / window-station-bound app that
+        must run on the logged-in desktop. Delegates to a session launcher
+        (PsExec ``-i <session> -d``). If the caller is *already* in the target
+        session, this skips PsExec and launches normally.
+
+        :param session: Target session id. ``None`` → the active console session.
+        :param launcher: Explicit PsExec path (else discovered, see
+                         :meth:`find_session_launcher`).
+        :return: ``subprocess.CompletedProcess`` of the launch (returncode 0 =
+                 started). The target runs detached in the other session, so
+                 monitor it out-of-band (process name / output files), not via
+                 this return value.
+        :raises RuntimeError: off Windows, when no interactive session exists, or
+                              when no session launcher is found.
+        """
+        if platform.system().lower() != "windows":
+            raise RuntimeError("launch_in_session is Windows-only.")
+        target = (
+            session if session is not None else AppLauncher.active_console_session_id()
+        )
+        if target is None:
+            raise RuntimeError("No interactive console session to launch into.")
+        if AppLauncher.current_session_id() == target:
+            proc = AppLauncher.launch(app_identifier, args=args, cwd=cwd, detached=True)
+            return subprocess.CompletedProcess(
+                args=[app_identifier], returncode=(0 if proc is not None else 1)
+            )
+        psexec = AppLauncher.find_session_launcher(launcher)
+        if not psexec:
+            raise RuntimeError(
+                "No session launcher (PsExec) found; set $PSEXEC or pass launcher=."
+            )
+        exe = AppLauncher.find_app(app_identifier) or app_identifier
+        cmd = [psexec]
+        if accept_eula:
+            cmd.append("-accepteula")
+        cmd += ["-i", str(target), "-d"]
+        if cwd:
+            cmd += ["-w", cwd]
+        cmd.append(exe)
+        if args:
+            cmd += list(args) if isinstance(args, (list, tuple)) else [args]
+        logger.debug(f"launch_in_session: {cmd}")
+        return subprocess.run(cmd, capture_output=True, text=True)
 
     @staticmethod
     def wait_for_ready(process, timeout=15, check_fn=None):

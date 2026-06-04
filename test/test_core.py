@@ -42,6 +42,28 @@ class CoreTest(BaseTestCase):
         self.assertIsInstance(IterUtils, type)
         self.assertIsInstance(make_iterable, types.FunctionType)
 
+    def test_all_names_resolve(self):
+        """Every name advertised in ``pythontk.__all__`` must actually resolve.
+
+        Guards against dead ``DEFAULT_INCLUDE`` entries -- e.g. an include key
+        pointing at a module that does not exist -- which fail silently: the
+        name stays in ``__all__`` but ``getattr(ptk, name)`` yields nothing.
+        (Regression: ``TableMixin`` was mapped to a non-existent
+        ``core_utils.table_mixin`` module.)
+        """
+        import pythontk as ptk
+
+        unresolved = []
+        for name in ptk.__all__:
+            try:
+                if getattr(ptk, name) is None:
+                    unresolved.append(name)
+            except AttributeError:
+                unresolved.append(name)
+        self.assertEqual(
+            unresolved, [], f"Unresolved pythontk.__all__ names: {unresolved}"
+        )
+
     # -------------------------------------------------------------------------
     # cached_property Tests
     # -------------------------------------------------------------------------

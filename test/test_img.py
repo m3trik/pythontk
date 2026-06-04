@@ -80,6 +80,30 @@ class ImgTest(BaseTestCase):
         img = ImgUtils.create_image("RGB", (1024, 1024), (0, 0, 0))
         self.assertEqual(img.tobytes(), self.im_h.tobytes())
 
+    def test_get_image_size_header_parse(self):
+        """get_image_size reads (width, height) from the JPEG/PNG header with the
+        stdlib alone (no PIL) — the path Metashape's bundled Python relies on.
+        Non-square sizes catch any width/height transpose."""
+        # Use a private temp dir — must not pollute the shared imgtk fixture dir
+        # (test_get_images_all globs "*" there and would choke on bad.bin).
+        with tempfile.TemporaryDirectory() as tmp:
+            png = os.path.join(tmp, "size_probe.png")
+            jpg = os.path.join(tmp, "size_probe.jpg")
+            ImgUtils.create_image("RGB", (800, 600), (10, 20, 30)).save(png, "PNG")
+            ImgUtils.create_image("RGB", (640, 480), (10, 20, 30)).save(jpg, "JPEG")
+            # stdlib-only header parse, right (width, height) order
+            self.assertEqual(ImgUtils._image_size_from_header(png), (800, 600))
+            self.assertEqual(ImgUtils._image_size_from_header(jpg), (640, 480))
+            # public API agrees
+            self.assertEqual(ImgUtils.get_image_size(png), (800, 600))
+            self.assertEqual(ImgUtils.get_image_size(jpg), (640, 480))
+            # garbage -> None, never raises
+            bad = os.path.join(tmp, "bad.bin")
+            with open(bad, "wb") as f:
+                f.write(b"not an image")
+            self.assertIsNone(ImgUtils._image_size_from_header(bad))
+            self.assertIsNone(ImgUtils.get_image_size(bad))
+
     def test_create_image_rgb(self):
         """Test create_image with RGB mode."""
         img = ImgUtils.create_image("RGB", (100, 100), (255, 0, 0))

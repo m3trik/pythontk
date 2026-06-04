@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.52"
+__version__ = "0.8.53"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -15,6 +15,10 @@ DEFAULT_INCLUDE = {
     "img_utils.map_registry": "MapRegistry",
     "img_utils.map_compositor": ["MapCompositor", "BatchResult", "NormalOutputMode"],
     "img_utils.map_optimizer": ["MapOptimizer", "Op"],
+    "img_utils.mask_generator": ["MaskGenerator"],
+    "img_utils.exposure_equalizer": ["ExposureEqualizer"],
+    "img_utils.image_curator": ["ImageCurator"],
+    "file_utils.mesh_cleaner": ["MeshCleaner"],
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
     "vid_utils.frame_extractor": ["FrameExtractor", "extract_frames"],
@@ -29,16 +33,18 @@ DEFAULT_INCLUDE = {
     "core_utils.package_manager": "PackageManager",
     "core_utils.git": "Git",
     "core_utils.class_property": "ClassProperty",
-    "core_utils.logging_mixin": "LoggingMixin",
-    "core_utils.table_mixin": "TableMixin",
+    "core_utils.logging_mixin": ["LoggingMixin", "TableMixin"],
     "core_utils.namespace_handler": "NamespaceHandler",
     "core_utils.namedtuple_container": "NamedTupleContainer",
-    "core_utils.hierarchy_diff": "HierarchyDiff",
+    "core_utils.hierarchy_utils.hierarchy_diff": "HierarchyDiff",
     "core_utils.singleton_mixin": "SingletonMixin",
     "core_utils.module_reloader": ["ModuleReloader", "reload_package"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
+    "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
     "core_utils.app_launcher": "AppLauncher",
     "core_utils.app_installer": "AppInstaller",
+    "core_utils.user_config": ["UserConfig", "user_config_root"],
+    "core_utils.preset_store": ["PresetStore", "sanitize_preset_name"],
     "core_utils.cli": "CLI",
     # Hierarchy utils
     "core_utils.hierarchy_utils.hierarchy_indexer": "HierarchyIndexer",
@@ -69,6 +75,10 @@ __all__ = [
     "CoreUtils",
     "AppLauncher",
     "AppInstaller",
+    "UserConfig",
+    "user_config_root",
+    "PresetStore",
+    "sanitize_preset_name",
     "HelpMixin",
     "LoggingMixin",
     "TableMixin",
@@ -93,6 +103,10 @@ __all__ = [
     "BatchResult",
     "NormalOutputMode",
     "MapOptimizer",
+    "MaskGenerator",
+    "ExposureEqualizer",
+    "ImageCurator",
+    "MeshCleaner",
     "FrameExtractor",
     "extract_frames",
     "IterUtils",
