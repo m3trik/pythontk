@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-06-01",
+  "generated_at": "2026-06-04",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -514,9 +514,54 @@
               "name": "run",
               "qualname": "AppLauncher.run",
               "kind": "staticmethod",
-              "signature": "(app_identifier, args=None, cwd=None, timeout=None)",
+              "signature": "(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None)",
               "summary": "Execute an application synchronously and return its result.",
               "line": 72,
+              "deprecated": false
+            },
+            {
+              "name": "current_session_id",
+              "qualname": "AppLauncher.current_session_id",
+              "kind": "staticmethod",
+              "signature": "()",
+              "summary": "Windows session id of the *current* process.",
+              "line": 130,
+              "deprecated": false
+            },
+            {
+              "name": "active_console_session_id",
+              "qualname": "AppLauncher.active_console_session_id",
+              "kind": "staticmethod",
+              "signature": "()",
+              "summary": "Session id of the physically logged-in console (interactive desktop).",
+              "line": 152,
+              "deprecated": false
+            },
+            {
+              "name": "is_interactive_session",
+              "qualname": "AppLauncher.is_interactive_session",
+              "kind": "staticmethod",
+              "signature": "()",
+              "summary": "True if the current process is in an interactive session (non-zero —",
+              "line": 173,
+              "deprecated": false
+            },
+            {
+              "name": "find_session_launcher",
+              "qualname": "AppLauncher.find_session_launcher",
+              "kind": "staticmethod",
+              "signature": "(explicit=None)",
+              "summary": "Locate a helper able to launch a process into *another* interactive",
+              "line": 185,
+              "deprecated": false
+            },
+            {
+              "name": "launch_in_session",
+              "qualname": "AppLauncher.launch_in_session",
+              "kind": "staticmethod",
+              "signature": "(app_identifier, args=None, session=None, cwd=None, launcher=None, accept_eula=True)",
+              "summary": "Launch an application into a specific interactive Windows session.",
+              "line": 212,
               "deprecated": false
             },
             {
@@ -525,7 +570,7 @@
               "kind": "staticmethod",
               "signature": "(process, timeout=15, check_fn=None)",
               "summary": "Waits until the application is ready.",
-              "line": 110,
+              "line": 269,
               "deprecated": false
             },
             {
@@ -534,7 +579,7 @@
               "kind": "staticmethod",
               "signature": "(pid)",
               "summary": "Returns a list of window titles owned by the given PID.",
-              "line": 190,
+              "line": 349,
               "deprecated": false
             },
             {
@@ -543,7 +588,7 @@
               "kind": "staticmethod",
               "signature": "(path, user_scope=True)",
               "summary": "Appends a directory to the system PATH.",
-              "line": 223,
+              "line": 382,
               "deprecated": false
             },
             {
@@ -552,7 +597,7 @@
               "kind": "staticmethod",
               "signature": "(root_paths, executable_name, depth=3)",
               "summary": "Scans directories for a specific executable.",
-              "line": 273,
+              "line": 432,
               "deprecated": false
             },
             {
@@ -561,7 +606,7 @@
               "kind": "staticmethod",
               "signature": "(path)",
               "summary": "Checks if the path is permanently stored in the system configuration (e.g.",
-              "line": 312,
+              "line": 471,
               "deprecated": false
             },
             {
@@ -570,7 +615,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier)",
               "summary": "Attempts to locate the executable for the given application identifier.",
-              "line": 365,
+              "line": 524,
               "deprecated": false
             },
             {
@@ -579,7 +624,7 @@
               "kind": "staticmethod",
               "signature": "(process_name)",
               "summary": "Returns a list of PIDs of running processes matching the given name.",
-              "line": 392,
+              "line": 551,
               "deprecated": false
             },
             {
@@ -588,7 +633,7 @@
               "kind": "staticmethod",
               "signature": "(pid, force=False)",
               "summary": "Terminates the process with the given PID.",
-              "line": 444,
+              "line": 603,
               "deprecated": false
             }
           ]
@@ -661,7 +706,7 @@
           "kind": "function",
           "signature": "(title: str, message: str, force_label: str | None = None)",
           "summary": "Display a dialog with custom buttons matching VS Code style.",
-          "line": 12,
+          "line": 14,
           "deprecated": false
         }
       ],
@@ -675,7 +720,7 @@
         {
           "name": "ExecutionMonitor",
           "summary": "Utilities for monitoring and handling long-running executions.",
-          "line": 14,
+          "line": 16,
           "bases": [],
           "members": [
             {
@@ -684,7 +729,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "Check if the Escape key is currently pressed (Windows & Linux).",
-              "line": 68,
+              "line": 70,
               "deprecated": false
             },
             {
@@ -693,7 +738,7 @@
               "kind": "classmethod",
               "signature": "(cls, path)",
               "summary": "Set a custom Python interpreter to use for subprocesses.",
-              "line": 129,
+              "line": 131,
               "deprecated": false
             },
             {
@@ -702,7 +747,7 @@
               "kind": "staticmethod",
               "signature": "(threshold, callback, interval=None, allow_escape_cancel=False, indicator=None)",
               "summary": "Decorator that triggers a callback if the decorated function",
-              "line": 242,
+              "line": 244,
               "deprecated": false
             },
             {
@@ -711,7 +756,7 @@
               "kind": "staticmethod",
               "signature": "(title, message, force_action=None)",
               "summary": "Show a dialog to ask the user how to proceed with a long operation.",
-              "line": 373,
+              "line": 375,
               "deprecated": false
             },
             {
@@ -720,7 +765,7 @@
               "kind": "staticmethod",
               "signature": "(threshold, message, logger=None, allow_escape_cancel=False, show_dialog: bool = True, force_action: str | None = None, watchdog_timeout: float | None = None, watchdog_heartbeat_interval: float = 1.0, watchdog_check_interval: float = 1.0, watchdog_kill_tree: bool = True, watchdog_heartbeat_path: str | None = None, indicator: bool | str | None = None)",
               "summary": "Decorator that monitors execution time and (optionally) prompts the user via a native",
-              "line": 536,
+              "line": 538,
               "deprecated": false
             },
             {
@@ -729,7 +774,7 @@
               "kind": "staticmethod",
               "signature": "(timeout: float, message: str = 'Operation appears to have stalled', heartbeat_interval: float = 1.0, check_interval: float = 1.0, kill_tree: bool = True, logger=None, heartbeat_path: str | None = None)",
               "summary": "Decorator that starts an OS-level watchdog for the current process.",
-              "line": 829,
+              "line": 831,
               "deprecated": false
             }
           ]
@@ -952,7 +997,101 @@
       ]
     },
     {
-      "relpath": "core_utils/hierarchy_diff.py",
+      "relpath": "core_utils/hierarchy_utils/hierarchy_analyzer.py",
+      "summary": "",
+      "functions": [],
+      "classes": [
+        {
+          "name": "DifferenceType",
+          "summary": "Types of differences that can be found between hierarchies.",
+          "line": 8,
+          "bases": [
+            "Enum"
+          ],
+          "members": []
+        },
+        {
+          "name": "HierarchyDifference",
+          "summary": "Represents a single difference between hierarchies.",
+          "line": 18,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "HierarchyAnalyzer",
+          "summary": "Analyzer for comparing hierarchical structures and identifying differences.",
+          "line": 30,
+          "bases": [],
+          "members": [
+            {
+              "name": "compare_path_sets",
+              "qualname": "HierarchyAnalyzer.compare_path_sets",
+              "kind": "staticmethod",
+              "signature": "(current_paths: Set[str], reference_paths: Set[str], path_separator: str = '|') -> Dict[str, Set[str]]",
+              "summary": "Compare two sets of hierarchical paths and categorize differences.",
+              "line": 39,
+              "deprecated": false
+            },
+            {
+              "name": "analyze_hierarchy_differences",
+              "qualname": "HierarchyAnalyzer.analyze_hierarchy_differences",
+              "kind": "staticmethod",
+              "signature": "(current_items: List[Any], reference_items: List[Any], path_extractor: Callable[[Any], str], attribute_extractors: Dict[str, Callable[[Any], Any]] = None, path_separator: str = '|') -> List[HierarchyDifference]",
+              "summary": "Perform comprehensive analysis of differences between hierarchies.",
+              "line": 60,
+              "deprecated": false
+            },
+            {
+              "name": "detect_moved_items",
+              "qualname": "HierarchyAnalyzer.detect_moved_items",
+              "kind": "staticmethod",
+              "signature": "(differences: List[HierarchyDifference], similarity_threshold: float = 0.8, path_separator: str = '|') -> List[HierarchyDifference]",
+              "summary": "Detect items that may have been moved rather than deleted/added.",
+              "line": 177,
+              "deprecated": false
+            },
+            {
+              "name": "categorize_differences",
+              "qualname": "HierarchyAnalyzer.categorize_differences",
+              "kind": "staticmethod",
+              "signature": "(differences: List[HierarchyDifference], path_separator: str = '|') -> Dict[str, Dict[str, List[HierarchyDifference]]]",
+              "summary": "Categorize differences by type and hierarchy level.",
+              "line": 242,
+              "deprecated": false
+            },
+            {
+              "name": "generate_diff_report",
+              "qualname": "HierarchyAnalyzer.generate_diff_report",
+              "kind": "staticmethod",
+              "signature": "(differences: List[HierarchyDifference], include_details: bool = True, max_items_per_category: int = 10) -> str",
+              "summary": "Generate a human-readable report of differences.",
+              "line": 281,
+              "deprecated": false
+            },
+            {
+              "name": "export_differences_to_dict",
+              "qualname": "HierarchyAnalyzer.export_differences_to_dict",
+              "kind": "staticmethod",
+              "signature": "(differences: List[HierarchyDifference]) -> Dict[str, Any]",
+              "summary": "Export differences to a dictionary format for serialization.",
+              "line": 345,
+              "deprecated": false
+            },
+            {
+              "name": "filter_differences",
+              "qualname": "HierarchyAnalyzer.filter_differences",
+              "kind": "staticmethod",
+              "signature": "(differences: List[HierarchyDifference], types: List[DifferenceType] = None, path_patterns: List[str] = None, exclude_patterns: List[str] = None) -> List[HierarchyDifference]",
+              "summary": "Filter differences based on type and path patterns.",
+              "line": 370,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/hierarchy_utils/hierarchy_diff.py",
       "summary": "",
       "functions": [],
       "classes": [
@@ -1068,305 +1207,6 @@
               "signature": "(self, key: str, value: Any) -> None",
               "summary": "Add metadata to the diff result.",
               "line": 166,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "core_utils/hierarchy_utils/backup/hierarchy_analyzer.py",
-      "summary": "",
-      "functions": [],
-      "classes": [
-        {
-          "name": "DifferenceType",
-          "summary": "Types of differences that can be found between hierarchies.",
-          "line": 8,
-          "bases": [
-            "Enum"
-          ],
-          "members": []
-        },
-        {
-          "name": "HierarchyDifference",
-          "summary": "Represents a single difference between hierarchies.",
-          "line": 18,
-          "bases": [],
-          "members": []
-        },
-        {
-          "name": "HierarchyAnalyzer",
-          "summary": "Analyzer for comparing hierarchical structures and identifying differences.",
-          "line": 30,
-          "bases": [],
-          "members": [
-            {
-              "name": "compare_path_sets",
-              "qualname": "HierarchyAnalyzer.compare_path_sets",
-              "kind": "staticmethod",
-              "signature": "(current_paths: Set[str], reference_paths: Set[str], path_separator: str = '|') -> Dict[str, Set[str]]",
-              "summary": "Compare two sets of hierarchical paths and categorize differences.",
-              "line": 39,
-              "deprecated": false
-            },
-            {
-              "name": "analyze_hierarchy_differences",
-              "qualname": "HierarchyAnalyzer.analyze_hierarchy_differences",
-              "kind": "staticmethod",
-              "signature": "(current_items: List[Any], reference_items: List[Any], path_extractor: Callable[[Any], str], attribute_extractors: Dict[str, Callable[[Any], Any]] = None, path_separator: str = '|') -> List[HierarchyDifference]",
-              "summary": "Perform comprehensive analysis of differences between hierarchies.",
-              "line": 60,
-              "deprecated": false
-            },
-            {
-              "name": "detect_moved_items",
-              "qualname": "HierarchyAnalyzer.detect_moved_items",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference], similarity_threshold: float = 0.8, path_separator: str = '|') -> List[HierarchyDifference]",
-              "summary": "Detect items that may have been moved rather than deleted/added.",
-              "line": 177,
-              "deprecated": false
-            },
-            {
-              "name": "categorize_differences",
-              "qualname": "HierarchyAnalyzer.categorize_differences",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference], path_separator: str = '|') -> Dict[str, Dict[str, List[HierarchyDifference]]]",
-              "summary": "Categorize differences by type and hierarchy level.",
-              "line": 242,
-              "deprecated": false
-            },
-            {
-              "name": "generate_diff_report",
-              "qualname": "HierarchyAnalyzer.generate_diff_report",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference], include_details: bool = True, max_items_per_category: int = 10) -> str",
-              "summary": "Generate a human-readable report of differences.",
-              "line": 281,
-              "deprecated": false
-            },
-            {
-              "name": "export_differences_to_dict",
-              "qualname": "HierarchyAnalyzer.export_differences_to_dict",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference]) -> Dict[str, Any]",
-              "summary": "Export differences to a dictionary format for serialization.",
-              "line": 345,
-              "deprecated": false
-            },
-            {
-              "name": "filter_differences",
-              "qualname": "HierarchyAnalyzer.filter_differences",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference], types: List[DifferenceType] = None, path_patterns: List[str] = None, exclude_patterns: List[str] = None) -> List[HierarchyDifference]",
-              "summary": "Filter differences based on type and path patterns.",
-              "line": 370,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "core_utils/hierarchy_utils/backup/hierarchy_indexer.py",
-      "summary": "",
-      "functions": [],
-      "classes": [
-        {
-          "name": "HierarchyIndexer",
-          "summary": "Generic utilities for building and querying tree indices.",
-          "line": 6,
-          "bases": [],
-          "members": [
-            {
-              "name": "build_path_index",
-              "qualname": "HierarchyIndexer.build_path_index",
-              "kind": "staticmethod",
-              "signature": "(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[str, List[Any]]",
-              "summary": "Build an index mapping cleaned paths to items.",
-              "line": 54,
-              "deprecated": false
-            },
-            {
-              "name": "find_by_path",
-              "qualname": "HierarchyIndexer.find_by_path",
-              "kind": "staticmethod",
-              "signature": "(index: Dict[str, List[Any]], target_path: str, clean_namespaces: bool = True, path_separator: str = '|', namespace_separator: str = ':') -> List[Any]",
-              "summary": "Find items in index by path.",
-              "line": 88,
-              "deprecated": false
-            },
-            {
-              "name": "find_by_tail_path",
-              "qualname": "HierarchyIndexer.find_by_tail_path",
-              "kind": "staticmethod",
-              "signature": "(index: Dict[str, List[Any]], target_tail: str, num_components: int = 2, path_separator: str = '|') -> List[Any]",
-              "summary": "Find items by matching the tail portion of their paths.",
-              "line": 113,
-              "deprecated": false
-            },
-            {
-              "name": "get_path_components_index",
-              "qualname": "HierarchyIndexer.get_path_components_index",
-              "kind": "staticmethod",
-              "signature": "(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|') -> Dict[str, List[Any]]",
-              "summary": "Build an index mapping individual path components to items.",
-              "line": 144,
-              "deprecated": false
-            },
-            {
-              "name": "get_depth_index",
-              "qualname": "HierarchyIndexer.get_depth_index",
-              "kind": "staticmethod",
-              "signature": "(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|') -> Dict[int, List[Any]]",
-              "summary": "Build an index mapping path depths to items.",
-              "line": 175,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "core_utils/hierarchy_utils/backup/hierarchy_matching.py",
-      "summary": "",
-      "functions": [],
-      "classes": [
-        {
-          "name": "HierarchyMatching",
-          "summary": "Generic matching strategies for hierarchical data.",
-          "line": 7,
-          "bases": [],
-          "members": [
-            {
-              "name": "exact_path_match",
-              "qualname": "HierarchyMatching.exact_path_match",
-              "kind": "staticmethod",
-              "signature": "(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[Any, List[Any]]",
-              "summary": "Find exact path matches between source and target items.",
-              "line": 36,
-              "deprecated": false
-            },
-            {
-              "name": "tail_path_match",
-              "qualname": "HierarchyMatching.tail_path_match",
-              "kind": "staticmethod",
-              "signature": "(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], num_components: int = 2, path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[Any, List[Any]]",
-              "summary": "Find matches by comparing tail portions of paths.",
-              "line": 83,
-              "deprecated": false
-            },
-            {
-              "name": "fuzzy_name_match",
-              "qualname": "HierarchyMatching.fuzzy_name_match",
-              "kind": "staticmethod",
-              "signature": "(source_items: List[Any], target_items: List[Any], get_name_func: Callable[[Any], str], similarity_threshold: float = 0.8) -> Dict[Any, List[Any]]",
-              "summary": "Find matches using fuzzy string matching on names.",
-              "line": 135,
-              "deprecated": false
-            },
-            {
-              "name": "multi_strategy_match",
-              "qualname": "HierarchyMatching.multi_strategy_match",
-              "kind": "staticmethod",
-              "signature": "(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], get_name_func: Optional[Callable[[Any], str]] = None, strategies: List[str] = None, path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':', fuzzy_threshold: float = 0.8) -> Dict[Any, List[Any]]",
-              "summary": "Apply multiple matching strategies in order of preference.",
-              "line": 215,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "core_utils/hierarchy_utils/hierarchy_analyzer.py",
-      "summary": "",
-      "functions": [],
-      "classes": [
-        {
-          "name": "DifferenceType",
-          "summary": "Types of differences that can be found between hierarchies.",
-          "line": 8,
-          "bases": [
-            "Enum"
-          ],
-          "members": []
-        },
-        {
-          "name": "HierarchyDifference",
-          "summary": "Represents a single difference between hierarchies.",
-          "line": 18,
-          "bases": [],
-          "members": []
-        },
-        {
-          "name": "HierarchyAnalyzer",
-          "summary": "Analyzer for comparing hierarchical structures and identifying differences.",
-          "line": 30,
-          "bases": [],
-          "members": [
-            {
-              "name": "compare_path_sets",
-              "qualname": "HierarchyAnalyzer.compare_path_sets",
-              "kind": "staticmethod",
-              "signature": "(current_paths: Set[str], reference_paths: Set[str], path_separator: str = '|') -> Dict[str, Set[str]]",
-              "summary": "Compare two sets of hierarchical paths and categorize differences.",
-              "line": 39,
-              "deprecated": false
-            },
-            {
-              "name": "analyze_hierarchy_differences",
-              "qualname": "HierarchyAnalyzer.analyze_hierarchy_differences",
-              "kind": "staticmethod",
-              "signature": "(current_items: List[Any], reference_items: List[Any], path_extractor: Callable[[Any], str], attribute_extractors: Dict[str, Callable[[Any], Any]] = None, path_separator: str = '|') -> List[HierarchyDifference]",
-              "summary": "Perform comprehensive analysis of differences between hierarchies.",
-              "line": 60,
-              "deprecated": false
-            },
-            {
-              "name": "detect_moved_items",
-              "qualname": "HierarchyAnalyzer.detect_moved_items",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference], similarity_threshold: float = 0.8, path_separator: str = '|') -> List[HierarchyDifference]",
-              "summary": "Detect items that may have been moved rather than deleted/added.",
-              "line": 177,
-              "deprecated": false
-            },
-            {
-              "name": "categorize_differences",
-              "qualname": "HierarchyAnalyzer.categorize_differences",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference], path_separator: str = '|') -> Dict[str, Dict[str, List[HierarchyDifference]]]",
-              "summary": "Categorize differences by type and hierarchy level.",
-              "line": 242,
-              "deprecated": false
-            },
-            {
-              "name": "generate_diff_report",
-              "qualname": "HierarchyAnalyzer.generate_diff_report",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference], include_details: bool = True, max_items_per_category: int = 10) -> str",
-              "summary": "Generate a human-readable report of differences.",
-              "line": 281,
-              "deprecated": false
-            },
-            {
-              "name": "export_differences_to_dict",
-              "qualname": "HierarchyAnalyzer.export_differences_to_dict",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference]) -> Dict[str, Any]",
-              "summary": "Export differences to a dictionary format for serialization.",
-              "line": 345,
-              "deprecated": false
-            },
-            {
-              "name": "filter_differences",
-              "qualname": "HierarchyAnalyzer.filter_differences",
-              "kind": "staticmethod",
-              "signature": "(differences: List[HierarchyDifference], types: List[DifferenceType] = None, path_patterns: List[str] = None, exclude_patterns: List[str] = None) -> List[HierarchyDifference]",
-              "summary": "Filter differences based on type and path patterns.",
-              "line": 370,
               "deprecated": false
             }
           ]
@@ -1492,7 +1332,7 @@
         {
           "name": "StripHtmlFormatter",
           "summary": "Formatter that strips HTML tags from the message.",
-          "line": 11,
+          "line": 13,
           "bases": [
             "internal_logging.Formatter"
           ],
@@ -1503,7 +1343,7 @@
               "kind": "method",
               "signature": "(self, record)",
               "summary": "",
-              "line": 14,
+              "line": 16,
               "deprecated": false
             }
           ]
@@ -1511,7 +1351,7 @@
         {
           "name": "LevelAwareFormatter",
           "summary": "Formatter that dynamically selects format per-record based on log level.",
-          "line": 33,
+          "line": 35,
           "bases": [
             "internal_logging.Formatter"
           ],
@@ -1522,7 +1362,7 @@
               "kind": "method",
               "signature": "(self, record)",
               "summary": "",
-              "line": 46,
+              "line": 48,
               "deprecated": false
             }
           ]
@@ -1530,7 +1370,7 @@
         {
           "name": "LoggerExt",
           "summary": "",
-          "line": 73,
+          "line": 75,
           "bases": [],
           "members": [
             {
@@ -1539,7 +1379,7 @@
               "kind": "classmethod",
               "signature": "(cls, logger: internal_logging.Logger) -> None",
               "summary": "Patch the logger with additional methods and setup.",
-              "line": 142,
+              "line": 144,
               "deprecated": false
             },
             {
@@ -1548,7 +1388,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: str) -> str",
               "summary": "Get the color code for a given log level.",
-              "line": 1114,
+              "line": 1116,
               "deprecated": false
             },
             {
@@ -1557,7 +1397,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, format_str: str) -> None",
               "summary": "Register a new HTML preset.",
-              "line": 1131,
+              "line": 1133,
               "deprecated": false
             },
             {
@@ -1566,7 +1406,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str) -> str",
               "summary": "Get an HTML preset by name.",
-              "line": 1136,
+              "line": 1138,
               "deprecated": false
             },
             {
@@ -1575,7 +1415,7 @@
               "kind": "classmethod",
               "signature": "(cls, message: str, level: str, preset: str = None) -> str",
               "summary": "Format a message using HTML presets.",
-              "line": 1141,
+              "line": 1143,
               "deprecated": false
             }
           ]
@@ -1583,7 +1423,7 @@
         {
           "name": "DefaultTextLogHandler",
           "summary": "A generic thread-safe logging handler that writes logs to any widget",
-          "line": 1156,
+          "line": 1158,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -1594,7 +1434,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1169,
+              "line": 1171,
               "deprecated": false
             },
             {
@@ -1603,7 +1443,7 @@
               "kind": "method",
               "signature": "(self, level: str) -> str",
               "summary": "",
-              "line": 1204,
+              "line": 1206,
               "deprecated": false
             }
           ]
@@ -1611,7 +1451,7 @@
         {
           "name": "TableMixin",
           "summary": "Mixin for formatting data as ASCII tables.",
-          "line": 1208,
+          "line": 1210,
           "bases": [],
           "members": [
             {
@@ -1620,7 +1460,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str",
               "summary": "Formats a list of lists as an ASCII table.",
-              "line": 1211,
+              "line": 1213,
               "deprecated": false
             },
             {
@@ -1629,7 +1469,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None",
               "summary": "Logs a formatted table.",
-              "line": 1309,
+              "line": 1311,
               "deprecated": false
             }
           ]
@@ -1637,7 +1477,7 @@
         {
           "name": "LoggingMixin",
           "summary": "Mixin class for logging utilities.",
-          "line": 1362,
+          "line": 1364,
           "bases": [
             "TableMixin"
           ],
@@ -1648,7 +1488,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1383,
+              "line": 1385,
               "deprecated": false
             },
             {
@@ -1657,7 +1497,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1399,
+              "line": 1401,
               "deprecated": false
             },
             {
@@ -1666,7 +1506,7 @@
               "kind": "method",
               "signature": "(cls)",
               "summary": "Access to Python's internal logging module (aliased).",
-              "line": 1410,
+              "line": 1412,
               "deprecated": false
             },
             {
@@ -1675,7 +1515,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: int | str)",
               "summary": "Set log level for the class logger and its handlers.",
-              "line": 1415,
+              "line": 1417,
               "deprecated": false
             }
           ]
@@ -2199,6 +2039,198 @@
       ]
     },
     {
+      "relpath": "core_utils/preset_store.py",
+      "summary": "Qt-free, zero-dependency named-preset *store* for the ecosystem.",
+      "functions": [
+        {
+          "name": "sanitize_preset_name",
+          "qualname": "sanitize_preset_name",
+          "kind": "function",
+          "signature": "(name: str) -> str",
+          "summary": "Filesystem-safe filename stem for a preset *name*.",
+          "line": 40,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "PresetStore",
+          "summary": "Named-preset collection with a read-only built-in tier and a writable",
+          "line": 50,
+          "bases": [],
+          "members": [
+            {
+              "name": "user_dir",
+              "qualname": "PresetStore.user_dir",
+              "kind": "property",
+              "signature": "(self) -> Path",
+              "summary": "Writable preset directory (created lazily on first :meth:`save`).",
+              "line": 83,
+              "deprecated": false
+            },
+            {
+              "name": "builtin_dir",
+              "qualname": "PresetStore.builtin_dir",
+              "kind": "property",
+              "signature": "(self) -> Optional[Path]",
+              "summary": "Read-only shipped preset directory, or ``None`` when not configured.",
+              "line": 91,
+              "deprecated": false
+            },
+            {
+              "name": "list",
+              "qualname": "PresetStore.list",
+              "kind": "method",
+              "signature": "(self, tier: Optional[str] = None) -> List[str]",
+              "summary": "Sorted preset names.",
+              "line": 102,
+              "deprecated": false
+            },
+            {
+              "name": "source",
+              "qualname": "PresetStore.source",
+              "kind": "method",
+              "signature": "(self, name: str) -> Optional[str]",
+              "summary": "Which tier *name* resolves from: ``\"user\"``, ``\"builtin\"``, or ``None``.",
+              "line": 119,
+              "deprecated": false
+            },
+            {
+              "name": "exists",
+              "qualname": "PresetStore.exists",
+              "kind": "method",
+              "signature": "(self, name: str) -> bool",
+              "summary": "",
+              "line": 127,
+              "deprecated": false
+            },
+            {
+              "name": "path",
+              "qualname": "PresetStore.path",
+              "kind": "method",
+              "signature": "(self, name: str, tier: str = 'user') -> Path",
+              "summary": "Sanitized file path for *name* in *tier* (``\"user\"`` or ``\"builtin\"``).",
+              "line": 130,
+              "deprecated": false
+            },
+            {
+              "name": "load",
+              "qualname": "PresetStore.load",
+              "kind": "method",
+              "signature": "(self, name: str) -> dict",
+              "summary": "Return the preset dict for *name* (user tier shadows built-in).",
+              "line": 143,
+              "deprecated": false
+            },
+            {
+              "name": "save",
+              "qualname": "PresetStore.save",
+              "kind": "method",
+              "signature": "(self, name: str, data: dict) -> Path",
+              "summary": "Write *data* as a user preset *name* (built-ins stay read-only).",
+              "line": 162,
+              "deprecated": false
+            },
+            {
+              "name": "delete",
+              "qualname": "PresetStore.delete",
+              "kind": "method",
+              "signature": "(self, name: str) -> bool",
+              "summary": "Delete the *user* preset *name*.",
+              "line": 174,
+              "deprecated": false
+            },
+            {
+              "name": "rename",
+              "qualname": "PresetStore.rename",
+              "kind": "method",
+              "signature": "(self, old: str, new: str) -> bool",
+              "summary": "Rename a *user* preset.",
+              "line": 187,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/qc_log.py",
+      "summary": "Structured run logs and threshold-based acceptance gates for pipeline",
+      "functions": [],
+      "classes": [
+        {
+          "name": "GateError",
+          "summary": "Raised by :meth:`QcGate.check` when a halt-mode gate fails.",
+          "line": 15,
+          "bases": [
+            "RuntimeError"
+          ],
+          "members": []
+        },
+        {
+          "name": "QcLog",
+          "summary": "Append-only structured run log.",
+          "line": 19,
+          "bases": [],
+          "members": [
+            {
+              "name": "stage",
+              "qualname": "QcLog.stage",
+              "kind": "method",
+              "signature": "(self, name: str)",
+              "summary": "",
+              "line": 41,
+              "deprecated": false
+            },
+            {
+              "name": "warn",
+              "qualname": "QcLog.warn",
+              "kind": "method",
+              "signature": "(self, message: str) -> None",
+              "summary": "",
+              "line": 50,
+              "deprecated": false
+            },
+            {
+              "name": "set",
+              "qualname": "QcLog.set",
+              "kind": "method",
+              "signature": "(self, key: str, value: Any) -> None",
+              "summary": "",
+              "line": 53,
+              "deprecated": false
+            },
+            {
+              "name": "finalize",
+              "qualname": "QcLog.finalize",
+              "kind": "method",
+              "signature": "(self, success: bool) -> None",
+              "summary": "",
+              "line": 56,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "QcGate",
+          "summary": "Threshold-based acceptance gate that logs into a bound :class:`QcLog`.",
+          "line": 65,
+          "bases": [],
+          "members": [
+            {
+              "name": "check",
+              "qualname": "QcGate.check",
+              "kind": "method",
+              "signature": "(self, gate_name: str, metrics: Dict[str, Any]) -> bool",
+              "summary": "Compare ``metrics`` against ``self.rules[gate_name]``.",
+              "line": 94,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "core_utils/singleton_mixin.py",
       "summary": "",
       "functions": [],
@@ -2234,6 +2266,76 @@
               "signature": "(cls, singleton_key: Optional[Any] = None) -> None",
               "summary": "",
               "line": 49,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/user_config.py",
+      "summary": "Qt-free, zero-dependency user-config resolution for the ecosystem.",
+      "functions": [
+        {
+          "name": "user_config_root",
+          "qualname": "user_config_root",
+          "kind": "function",
+          "signature": "() -> Path",
+          "summary": "The ecosystem per-user config directory, resolved **without Qt**.",
+          "line": 43,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "UserConfig",
+          "summary": "Resolve a JSON user-config doc with discovery + deep-merge over a default.",
+          "line": 74,
+          "bases": [],
+          "members": [
+            {
+              "name": "path_for",
+              "qualname": "UserConfig.path_for",
+              "kind": "staticmethod",
+              "signature": "(name: str, package: str) -> Path",
+              "summary": "Default on-disk location: ``<user_config_root>/<package>/<name>.json``.",
+              "line": 92,
+              "deprecated": false
+            },
+            {
+              "name": "load_file",
+              "qualname": "UserConfig.load_file",
+              "kind": "staticmethod",
+              "signature": "(path: Union[str, os.PathLike]) -> dict",
+              "summary": "Load a JSON object from *path*.",
+              "line": 97,
+              "deprecated": false
+            },
+            {
+              "name": "resolve",
+              "qualname": "UserConfig.resolve",
+              "kind": "classmethod",
+              "signature": "(cls, name: str, *, package: str, env: Optional[str] = None, default: Optional[Mapping[str, Any]] = None, path: Optional[Union[str, os.PathLike]] = None) -> dict",
+              "summary": "Resolve config *name* for *package*, deep-merged over *default*.",
+              "line": 118,
+              "deprecated": false
+            },
+            {
+              "name": "deep_merge",
+              "qualname": "UserConfig.deep_merge",
+              "kind": "staticmethod",
+              "signature": "(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict",
+              "summary": "Recursively merge *override* into a copy of *base* (override wins).",
+              "line": 156,
+              "deprecated": false
+            },
+            {
+              "name": "expand",
+              "qualname": "UserConfig.expand",
+              "kind": "staticmethod",
+              "signature": "(value: Any) -> Any",
+              "summary": "Expand ``~`` and ``${ENV}`` / ``%VAR%`` in string values.",
+              "line": 171,
               "deprecated": false
             }
           ]
@@ -2456,6 +2558,39 @@
       ]
     },
     {
+      "relpath": "file_utils/mesh_cleaner.py",
+      "summary": "Mesh repair / cleanup via PyMeshLab (optional dependency).",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MeshCleaner",
+          "summary": "Optional-dep mesh-repair pipeline.",
+          "line": 32,
+          "bases": [],
+          "members": [
+            {
+              "name": "is_available",
+              "qualname": "MeshCleaner.is_available",
+              "kind": "method",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 35,
+              "deprecated": false
+            },
+            {
+              "name": "clean",
+              "qualname": "MeshCleaner.clean",
+              "kind": "method",
+              "signature": "(self, input_path: str, output_path: Optional[str] = None, merge_distance: float = 1e-05, remove_isolated_pieces_diameter_percent: float = 5.0, fill_holes_max_edge_count: int = 500, decimate_target_faces: int = 0) -> Optional[str]",
+              "summary": "Repair / clean a mesh in place;",
+              "line": 38,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "file_utils/mesh_convert/_mesh_convert.py",
       "summary": "",
       "functions": [],
@@ -2558,7 +2693,7 @@
         {
           "name": "ImgUtils",
           "summary": "Helper methods for working with image file formats.",
-          "line": 32,
+          "line": 33,
           "bases": [
             "HelpMixin"
           ],
@@ -2569,7 +2704,7 @@
               "kind": "staticmethod",
               "signature": "(a=None)",
               "summary": "Get help documentation on a specific PIL image attribute",
-              "line": 66,
+              "line": 67,
               "deprecated": false
             },
             {
@@ -2578,7 +2713,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Context manager to safely load very large images.",
-              "line": 88,
+              "line": 89,
               "deprecated": false
             },
             {
@@ -2587,7 +2722,7 @@
               "kind": "classmethod",
               "signature": "(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image",
               "summary": "Ensures the input is a valid PIL Image.",
-              "line": 112,
+              "line": 113,
               "deprecated": false
             },
             {
@@ -2596,7 +2731,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image, target_mode: str, allow_compatible: bool = False) -> Image.Image",
               "summary": "Converts image to target_mode.",
-              "line": 180,
+              "line": 181,
               "deprecated": false
             },
             {
@@ -2605,7 +2740,7 @@
               "kind": "staticmethod",
               "signature": "(obj: object, name: str = 'argument') -> None",
               "summary": "Assert that the given object is a valid path-like object.",
-              "line": 226,
+              "line": 227,
               "deprecated": false
             },
             {
@@ -2614,7 +2749,7 @@
               "kind": "staticmethod",
               "signature": "(mode, size=(4096, 4096), color=None)",
               "summary": "Create a new image.",
-              "line": 242,
+              "line": 243,
               "deprecated": false
             },
             {
@@ -2623,7 +2758,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], name: str, mode: str = None, **kwargs)",
               "summary": "Saves an image to the specified path, with optional mode conversion.",
-              "line": 256,
+              "line": 257,
               "deprecated": false
             },
             {
@@ -2632,7 +2767,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath)",
               "summary": "Load an image from the given file path and return a copy of the image object.",
-              "line": 308,
+              "line": 309,
               "deprecated": false
             },
             {
@@ -2641,7 +2776,16 @@
               "kind": "classmethod",
               "signature": "(cls, directory, inc=None, exc='')",
               "summary": "Get bitmap images from a given directory as PIL images.",
-              "line": 324,
+              "line": 325,
+              "deprecated": false
+            },
+            {
+              "name": "get_image_size",
+              "qualname": "ImgUtils.get_image_size",
+              "kind": "staticmethod",
+              "signature": "(image_path: str) -> Optional[Tuple[int, int]]",
+              "summary": "``(width, height)`` of an image, read as cheaply as possible.",
+              "line": 408,
               "deprecated": false
             },
             {
@@ -2650,7 +2794,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]",
               "summary": "Get information about image files.",
-              "line": 356,
+              "line": 429,
               "deprecated": false
             },
             {
@@ -2659,7 +2803,7 @@
               "kind": "classmethod",
               "signature": "(cls, imageA, imageB)",
               "summary": "Check if two images are the same.",
-              "line": 402,
+              "line": 475,
               "deprecated": false
             },
             {
@@ -2668,7 +2812,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, x, y)",
               "summary": "Returns a resized copy of an image.",
-              "line": 420,
+              "line": 493,
               "deprecated": false
             },
             {
@@ -2677,7 +2821,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Resizes an image to the nearest Power of Two dimensions.",
-              "line": 435,
+              "line": 508,
               "deprecated": false
             },
             {
@@ -2686,7 +2830,7 @@
               "kind": "classmethod",
               "signature": "(cls, mode_or_image) -> str",
               "summary": "Format bit depth as e.g.",
-              "line": 460,
+              "line": 533,
               "deprecated": false
             },
             {
@@ -2695,7 +2839,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, map_type: str, allow_palette: bool = False) -> object",
               "summary": "Sets the bit depth and image mode of an image according to the map type.",
-              "line": 472,
+              "line": 545,
               "deprecated": false
             },
             {
@@ -2704,7 +2848,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Inverts a grayscale image.",
-              "line": 520,
+              "line": 593,
               "deprecated": false
             },
             {
@@ -2713,7 +2857,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, channels='RGBA')",
               "summary": "Invert specified channels in an image.",
-              "line": 533,
+              "line": 606,
               "deprecated": false
             },
             {
@@ -2722,7 +2866,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))",
               "summary": "Create mask(s) from the given image(s).",
-              "line": 583,
+              "line": 656,
               "deprecated": false
             },
             {
@@ -2731,7 +2875,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color, mask)",
               "summary": "Parameters:",
-              "line": 630,
+              "line": 703,
               "deprecated": false
             },
             {
@@ -2740,7 +2884,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color=(0, 0, 0, 0))",
               "summary": "Parameters:",
-              "line": 649,
+              "line": 722,
               "deprecated": false
             },
             {
@@ -2749,7 +2893,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mode=None, average=False)",
               "summary": "Sample the pixel values of each corner of an image and if they are uniform, return the result.",
-              "line": 666,
+              "line": 739,
               "deprecated": false
             },
             {
@@ -2758,7 +2902,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None)",
               "summary": "Parameters:",
-              "line": 700,
+              "line": 773,
               "deprecated": false
             },
             {
@@ -2767,7 +2911,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, level=255)",
               "summary": "Parameters:",
-              "line": 738,
+              "line": 811,
               "deprecated": false
             },
             {
@@ -2776,7 +2920,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']",
               "summary": "Apply a Gaussian blur to an image or 2D/3D numpy array.",
-              "line": 758,
+              "line": 831,
               "deprecated": false
             },
             {
@@ -2785,7 +2929,7 @@
               "kind": "staticmethod",
               "signature": "(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'",
               "summary": "Generate a normalized radial gradient as a 2D numpy array.",
-              "line": 840,
+              "line": 913,
               "deprecated": false
             },
             {
@@ -2794,7 +2938,7 @@
               "kind": "staticmethod",
               "signature": "(data)",
               "summary": "Convert an RGB Image data array to grayscale.",
-              "line": 898,
+              "line": 971,
               "deprecated": false
             },
             {
@@ -2803,7 +2947,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Manually convert the image to a NumPy array, iterate over the pixels",
-              "line": 922,
+              "line": 995,
               "deprecated": false
             },
             {
@@ -2812,7 +2956,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert to 8 bit 'L' grayscale.",
-              "line": 950,
+              "line": 1023,
               "deprecated": false
             },
             {
@@ -2821,7 +2965,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 966,
+              "line": 1039,
               "deprecated": false
             },
             {
@@ -2830,7 +2974,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 1068,
+              "line": 1141,
               "deprecated": false
             },
             {
@@ -2839,7 +2983,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 1218,
+              "line": 1291,
               "deprecated": false
             },
             {
@@ -2848,7 +2992,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 1230,
+              "line": 1303,
               "deprecated": false
             },
             {
@@ -2857,7 +3001,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Generates mipmaps for an image.",
-              "line": 1241,
+              "line": 1314,
               "deprecated": false
             },
             {
@@ -2866,7 +3010,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 1262,
+              "line": 1335,
               "deprecated": false
             },
             {
@@ -2875,7 +3019,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 1282,
+              "line": 1355,
               "deprecated": false
             },
             {
@@ -2884,7 +3028,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 1323,
+              "line": 1396,
               "deprecated": false
             },
             {
@@ -2893,7 +3037,109 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 1404,
+              "line": 1477,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "img_utils/exposure_equalizer.py",
+      "summary": "Cross-set exposure / white-balance equalization.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ExposureEqualizer",
+          "summary": "Equalize exposure / WB across a list of source directories.",
+          "line": 34,
+          "bases": [],
+          "members": [
+            {
+              "name": "is_available",
+              "qualname": "ExposureEqualizer.is_available",
+              "kind": "method",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 42,
+              "deprecated": false
+            },
+            {
+              "name": "equalize_directories",
+              "qualname": "ExposureEqualizer.equalize_directories",
+              "kind": "method",
+              "signature": "(self, source_dirs: Sequence[str], output_root: str, reference_dir: Optional[str] = None, suffix: str = '_eq', sample_count: int = 20, strength: float = 1.0, reference_strategy: str = 'first', quality: int = 100, preserve_exif: bool = True) -> List[str]",
+              "summary": "Equalize every image in ``source_dirs`` against the reference set.",
+              "line": 45,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "img_utils/image_curator.py",
+      "summary": "Perceptual-hash + sharpness curation for large image sets.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ImageCurator",
+          "summary": "Pre-SfM content-dedup + sharpness culling.",
+          "line": 41,
+          "bases": [],
+          "members": [
+            {
+              "name": "is_available",
+              "qualname": "ImageCurator.is_available",
+              "kind": "method",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 44,
+              "deprecated": false
+            },
+            {
+              "name": "dhash",
+              "qualname": "ImageCurator.dhash",
+              "kind": "staticmethod",
+              "signature": "(image, size: int = 8) -> int",
+              "summary": "Difference hash.",
+              "line": 48,
+              "deprecated": false
+            },
+            {
+              "name": "hamming",
+              "qualname": "ImageCurator.hamming",
+              "kind": "staticmethod",
+              "signature": "(a: int, b: int) -> int",
+              "summary": "",
+              "line": 65,
+              "deprecated": false
+            },
+            {
+              "name": "sharpness",
+              "qualname": "ImageCurator.sharpness",
+              "kind": "staticmethod",
+              "signature": "(image) -> float",
+              "summary": "Variance-of-Laplacian sharpness.",
+              "line": 69,
+              "deprecated": false
+            },
+            {
+              "name": "curate",
+              "qualname": "ImageCurator.curate",
+              "kind": "method",
+              "signature": "(self, source_dirs: Sequence[str], output_root: str, hash_threshold: int = 5, sharpness_floor: float = 0.0, sharpness_floor_percentile: Optional[float] = None, min_sharpness_fraction_of_median: float = 0.0, keep_per_cluster: int = 1, suffix: str = '_curated', progress: Optional[callable] = None, overwrite_output: bool = True) -> List[str]",
+              "summary": "Curate every image across ``source_dirs`` → write the kept set",
+              "line": 81,
+              "deprecated": false
+            },
+            {
+              "name": "preview",
+              "qualname": "ImageCurator.preview",
+              "kind": "method",
+              "signature": "(self, source_dirs, hash_thresholds=(5,), keep_per_cluster=1, sharpness_floor=0.0, sharpness_floor_percentile=None, min_sharpness_fraction_of_median=0.0, progress=None)",
+              "summary": "Dry-run curation report — scan **once**, evaluate one or more",
+              "line": 272,
               "deprecated": false
             }
           ]
@@ -2999,766 +3245,14 @@
       ]
     },
     {
-      "relpath": "img_utils/map_factory.py",
-      "summary": "Texture Map Factory for PBR workflow preparation - Refactored.",
+      "relpath": "img_utils/map_factory/_map_factory.py",
+      "summary": "``MapFactory`` -- the texture-map workflow orchestrator.",
       "functions": [],
       "classes": [
         {
-          "name": "MapConversion",
-          "summary": "Defines a single map conversion operation.",
-          "line": 58,
-          "bases": [],
-          "members": []
-        },
-        {
-          "name": "ConversionRegistry",
-          "summary": "Central registry for all map type conversions.",
-          "line": 67,
-          "bases": [],
-          "members": [
-            {
-              "name": "add_plugin",
-              "qualname": "ConversionRegistry.add_plugin",
-              "kind": "method",
-              "signature": "(self, cls)",
-              "summary": "Register a class to be scanned for conversions later.",
-              "line": 78,
-              "deprecated": false
-            },
-            {
-              "name": "register",
-              "qualname": "ConversionRegistry.register",
-              "kind": "method",
-              "signature": "(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)",
-              "summary": "Register a new conversion strategy.",
-              "line": 92,
-              "deprecated": false
-            },
-            {
-              "name": "register_from_class",
-              "qualname": "ConversionRegistry.register_from_class",
-              "kind": "method",
-              "signature": "(self, cls)",
-              "summary": "Register all decorated conversion methods from a class.",
-              "line": 136,
-              "deprecated": false
-            },
-            {
-              "name": "get_conversions_for",
-              "qualname": "ConversionRegistry.get_conversions_for",
-              "kind": "method",
-              "signature": "(self, target_type: str) -> List[MapConversion]",
-              "summary": "Get all conversions that can produce target type.",
-              "line": 156,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "TextureProcessor",
-          "summary": "Shared context and processor for all map operations.",
-          "line": 172,
-          "bases": [],
-          "members": [
-            {
-              "name": "get_cached_image",
-              "qualname": "TextureProcessor.get_cached_image",
-              "kind": "method",
-              "signature": "(self, path: str) -> 'Image.Image'",
-              "summary": "Load an image with caching to avoid redundant disk I/O.",
-              "line": 186,
-              "deprecated": false
-            },
-            {
-              "name": "save_map",
-              "qualname": "TextureProcessor.save_map",
-              "kind": "method",
-              "signature": "(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str",
-              "summary": "Saves and optimizes a map, enforcing mode and naming conventions.",
-              "line": 204,
-              "deprecated": false
-            },
-            {
-              "name": "resolve_map",
-              "qualname": "TextureProcessor.resolve_map",
-              "kind": "method",
-              "signature": "(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]",
-              "summary": "Intelligently resolve a map from inventory with fallback conversions.",
-              "line": 465,
-              "deprecated": false
-            },
-            {
-              "name": "mark_used",
-              "qualname": "TextureProcessor.mark_used",
-              "kind": "method",
-              "signature": "(self, *map_types: str)",
-              "summary": "Mark map types as consumed.",
-              "line": 524,
-              "deprecated": false
-            },
-            {
-              "name": "convert_specular_to_metallic",
-              "qualname": "TextureProcessor.convert_specular_to_metallic",
-              "kind": "method",
-              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 528,
-              "deprecated": false
-            },
-            {
-              "name": "convert_smoothness_to_roughness",
-              "qualname": "TextureProcessor.convert_smoothness_to_roughness",
-              "kind": "method",
-              "signature": "(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 542,
-              "deprecated": false
-            },
-            {
-              "name": "convert_roughness_to_smoothness",
-              "qualname": "TextureProcessor.convert_roughness_to_smoothness",
-              "kind": "method",
-              "signature": "(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 558,
-              "deprecated": false
-            },
-            {
-              "name": "convert_specular_to_roughness",
-              "qualname": "TextureProcessor.convert_specular_to_roughness",
-              "kind": "method",
-              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 574,
-              "deprecated": false
-            },
-            {
-              "name": "convert_dx_to_gl",
-              "qualname": "TextureProcessor.convert_dx_to_gl",
-              "kind": "method",
-              "signature": "(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 588,
-              "deprecated": false
-            },
-            {
-              "name": "convert_gl_to_dx",
-              "qualname": "TextureProcessor.convert_gl_to_dx",
-              "kind": "method",
-              "signature": "(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 602,
-              "deprecated": false
-            },
-            {
-              "name": "convert_bump_to_normal",
-              "qualname": "TextureProcessor.convert_bump_to_normal",
-              "kind": "method",
-              "signature": "(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 616,
-              "deprecated": false
-            },
-            {
-              "name": "extract_gloss_from_spec",
-              "qualname": "TextureProcessor.extract_gloss_from_spec",
-              "kind": "method",
-              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 632,
-              "deprecated": false
-            },
-            {
-              "name": "copy_map",
-              "qualname": "TextureProcessor.copy_map",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']",
-              "summary": "Simple copy/rename for compatible maps (e.g.",
-              "line": 649,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_metallic_smoothness",
-              "qualname": "TextureProcessor.unpack_metallic_smoothness",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack and cache results.",
-              "line": 659,
-              "deprecated": false
-            },
-            {
-              "name": "get_metallic_from_packed",
-              "qualname": "TextureProcessor.get_metallic_from_packed",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 679,
-              "deprecated": false
-            },
-            {
-              "name": "get_smoothness_from_packed",
-              "qualname": "TextureProcessor.get_smoothness_from_packed",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 685,
-              "deprecated": false
-            },
-            {
-              "name": "get_roughness_from_packed",
-              "qualname": "TextureProcessor.get_roughness_from_packed",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 691,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_msao",
-              "qualname": "TextureProcessor.unpack_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack MSAO and cache results.",
-              "line": 702,
-              "deprecated": false
-            },
-            {
-              "name": "get_metallic_from_msao",
-              "qualname": "TextureProcessor.get_metallic_from_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 725,
-              "deprecated": false
-            },
-            {
-              "name": "get_smoothness_from_msao",
-              "qualname": "TextureProcessor.get_smoothness_from_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 731,
-              "deprecated": false
-            },
-            {
-              "name": "get_roughness_from_msao",
-              "qualname": "TextureProcessor.get_roughness_from_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 737,
-              "deprecated": false
-            },
-            {
-              "name": "get_ao_from_msao",
-              "qualname": "TextureProcessor.get_ao_from_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 747,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_mrao",
-              "qualname": "TextureProcessor.unpack_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack MRAO and cache results.",
-              "line": 753,
-              "deprecated": false
-            },
-            {
-              "name": "get_metallic_from_mrao",
-              "qualname": "TextureProcessor.get_metallic_from_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 780,
-              "deprecated": false
-            },
-            {
-              "name": "get_roughness_from_mrao",
-              "qualname": "TextureProcessor.get_roughness_from_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 786,
-              "deprecated": false
-            },
-            {
-              "name": "get_smoothness_from_mrao",
-              "qualname": "TextureProcessor.get_smoothness_from_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 792,
-              "deprecated": false
-            },
-            {
-              "name": "get_ao_from_mrao",
-              "qualname": "TextureProcessor.get_ao_from_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 800,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_orm",
-              "qualname": "TextureProcessor.unpack_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack ORM and cache results.",
-              "line": 806,
-              "deprecated": false
-            },
-            {
-              "name": "get_ao_from_orm",
-              "qualname": "TextureProcessor.get_ao_from_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 829,
-              "deprecated": false
-            },
-            {
-              "name": "get_roughness_from_orm",
-              "qualname": "TextureProcessor.get_roughness_from_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 835,
-              "deprecated": false
-            },
-            {
-              "name": "get_smoothness_from_orm",
-              "qualname": "TextureProcessor.get_smoothness_from_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 841,
-              "deprecated": false
-            },
-            {
-              "name": "get_metallic_from_orm",
-              "qualname": "TextureProcessor.get_metallic_from_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 848,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_albedo_transparency",
-              "qualname": "TextureProcessor.unpack_albedo_transparency",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack Albedo+Transparency and cache results.",
-              "line": 854,
-              "deprecated": false
-            },
-            {
-              "name": "get_base_color_from_albedo_transparency",
-              "qualname": "TextureProcessor.get_base_color_from_albedo_transparency",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 873,
-              "deprecated": false
-            },
-            {
-              "name": "get_opacity_from_albedo_transparency",
-              "qualname": "TextureProcessor.get_opacity_from_albedo_transparency",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 879,
-              "deprecated": false
-            },
-            {
-              "name": "create_orm_map",
-              "qualname": "TextureProcessor.create_orm_map",
-              "kind": "method",
-              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
-              "summary": "Create ORM map from components.",
-              "line": 885,
-              "deprecated": false
-            },
-            {
-              "name": "create_mrao_map",
-              "qualname": "TextureProcessor.create_mrao_map",
-              "kind": "method",
-              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
-              "summary": "Create MRAO (Metallic R / Roughness G / AO B) map from components.",
-              "line": 910,
-              "deprecated": false
-            },
-            {
-              "name": "create_mask_map",
-              "qualname": "TextureProcessor.create_mask_map",
-              "kind": "method",
-              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
-              "summary": "Create Mask Map (MSAO) from components.",
-              "line": 963,
-              "deprecated": false
-            },
-            {
-              "name": "create_metallic_smoothness_map",
-              "qualname": "TextureProcessor.create_metallic_smoothness_map",
-              "kind": "method",
-              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
-              "summary": "Create Metallic-Smoothness map from components.",
-              "line": 1017,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "WorkflowHandler",
-          "summary": "Abstract base for workflow-specific map processing.",
-          "line": 1057,
-          "bases": [
-            "ABC"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "WorkflowHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "Check if this handler should process the workflow.",
-              "line": 1061,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "WorkflowHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "Process and return the output map path.",
-              "line": 1066,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "WorkflowHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "Return list of map types this handler consumes.",
-              "line": 1071,
-              "deprecated": false
-            },
-            {
-              "name": "is_explicitly_requested",
-              "qualname": "WorkflowHandler.is_explicitly_requested",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor, map_type: str) -> bool",
-              "summary": "Check if a map type is explicitly requested in the config.",
-              "line": 1075,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "ORMMapHandler",
-          "summary": "Handles Unreal Engine / glTF ORM packing.",
-          "line": 1088,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "ORMMapHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 1091,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "ORMMapHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 1108,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "ORMMapHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 1164,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "MRAOMapHandler",
-          "summary": "Handles MRAO packing (Metallic R, Roughness G, AO B by default).",
-          "line": 1177,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "MRAOMapHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 1185,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "MRAOMapHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 1200,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "MRAOMapHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 1272,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "MaskMapHandler",
-          "summary": "Handles Unity HDRP Mask Map (MSAO).",
-          "line": 1287,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "MaskMapHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 1290,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "MaskMapHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 1305,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "MaskMapHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 1382,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "MetallicSmoothnessHandler",
-          "summary": "Handles packed Metallic+Smoothness.",
-          "line": 1395,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "MetallicSmoothnessHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 1398,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "MetallicSmoothnessHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 1423,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "MetallicSmoothnessHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 1469,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "SeparateMetallicRoughnessHandler",
-          "summary": "Handles separate metallic and roughness maps.",
-          "line": 1480,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "SeparateMetallicRoughnessHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 1483,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "SeparateMetallicRoughnessHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> List[str]",
-              "summary": "Returns list since this produces multiple maps.",
-              "line": 1487,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "SeparateMetallicRoughnessHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 1517,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "BaseColorHandler",
-          "summary": "Handles base color / albedo with optional packing.",
-          "line": 1521,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "BaseColorHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 1524,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "BaseColorHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 1527,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "BaseColorHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 1651,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "NormalMapHandler",
-          "summary": "Handles normal map format conversion.",
-          "line": 1661,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "NormalMapHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 1664,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "NormalMapHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 1667,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "NormalMapHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 1820,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "OutputFallbackHandler",
-          "summary": "Handles outputting fallback maps for failed requests.",
-          "line": 1824,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "OutputFallbackHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 1827,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "OutputFallbackHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> List[str]",
-              "summary": "",
-              "line": 1830,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "OutputFallbackHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 1883,
-              "deprecated": false
-            }
-          ]
-        },
-        {
           "name": "MapFactory",
           "summary": "Refactored factory with pluggable workflow system.",
-          "line": 1892,
+          "line": 59,
           "bases": [
             "LoggingMixin"
           ],
@@ -3769,7 +3263,7 @@
               "kind": "classmethod",
               "signature": "(cls, registry: ConversionRegistry)",
               "summary": "Register all standard PBR conversions.",
-              "line": 1941,
+              "line": 108,
               "deprecated": false
             },
             {
@@ -3778,7 +3272,7 @@
               "kind": "classmethod",
               "signature": "(cls, file: str, key: bool = True, validate: str = None) -> str",
               "summary": "Resolves the map type from a filename or alias using `map_types`.",
-              "line": 2304,
+              "line": 471,
               "deprecated": false
             },
             {
@@ -3787,7 +3281,7 @@
               "kind": "classmethod",
               "signature": "(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str",
               "summary": "Generates a correctly formatted filename while preserving the original suffix and file extension.",
-              "line": 2360,
+              "line": 527,
               "deprecated": false
             },
             {
@@ -3796,7 +3290,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 2434,
+              "line": 601,
               "deprecated": false
             },
             {
@@ -3805,7 +3299,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]",
               "summary": "Groups texture maps into sets based on matching base names.",
-              "line": 2516,
+              "line": 683,
               "deprecated": false
             },
             {
@@ -3814,7 +3308,7 @@
               "kind": "classmethod",
               "signature": "(cls, files, types='')",
               "summary": "Parameters:",
-              "line": 2549,
+              "line": 716,
               "deprecated": false
             },
             {
@@ -3823,7 +3317,7 @@
               "kind": "classmethod",
               "signature": "(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]",
               "summary": "Sort image files by map type based on the input format.",
-              "line": 2564,
+              "line": 731,
               "deprecated": false
             },
             {
@@ -3832,7 +3326,7 @@
               "kind": "classmethod",
               "signature": "(cls, files, map_types)",
               "summary": "Check if the given images contain the given map types.",
-              "line": 2599,
+              "line": 766,
               "deprecated": false
             },
             {
@@ -3841,7 +3335,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Check the map type for one of the normal values in map_types.",
-              "line": 2626,
+              "line": 793,
               "deprecated": false
             },
             {
@@ -3850,7 +3344,7 @@
               "kind": "classmethod",
               "signature": "(cls, handler_class: Type[WorkflowHandler])",
               "summary": "Register a custom workflow handler (extensibility).",
-              "line": 2645,
+              "line": 812,
               "deprecated": false
             },
             {
@@ -3859,7 +3353,7 @@
               "kind": "classmethod",
               "signature": "(cls, conversion: MapConversion)",
               "summary": "Register a custom map conversion (extensibility).",
-              "line": 2650,
+              "line": 817,
               "deprecated": false
             },
             {
@@ -3868,7 +3362,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_type: str) -> Tuple[str, ...]",
               "summary": "Get fallback map types for a given map type.",
-              "line": 2655,
+              "line": 822,
               "deprecated": false
             },
             {
@@ -3877,7 +3371,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, List[str]]",
               "summary": "Returns a dictionary of map precedence rules.",
-              "line": 2667,
+              "line": 834,
               "deprecated": false
             },
             {
@@ -3886,7 +3380,7 @@
               "kind": "classmethod",
               "signature": "(cls, sorted_maps: Dict[str, List[str]]) -> None",
               "summary": "Filters out maps that are rendered redundant by other present maps (e.g.",
-              "line": 2675,
+              "line": 842,
               "deprecated": false
             },
             {
@@ -3895,7 +3389,7 @@
               "kind": "classmethod",
               "signature": "(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', **kwargs) -> Union[List[str], Dict[str, List[str]]]",
               "summary": "Main factory method.",
-              "line": 2696,
+              "line": 863,
               "deprecated": false
             },
             {
@@ -3904,7 +3398,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…",
-              "line": 3044,
+              "line": 1211,
               "deprecated": false
             },
             {
@@ -3913,7 +3407,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.",
-              "line": 3102,
+              "line": 1269,
               "deprecated": false
             },
             {
@@ -3922,7 +3416,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]",
               "summary": "Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.",
-              "line": 3156,
+              "line": 1323,
               "deprecated": false
             },
             {
@@ -3931,7 +3425,7 @@
               "kind": "classmethod",
               "signature": "(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.",
-              "line": 3224,
+              "line": 1391,
               "deprecated": false
             },
             {
@@ -3940,7 +3434,7 @@
               "kind": "classmethod",
               "signature": "(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a bump/height map to a tangent-space normal map.",
-              "line": 3298,
+              "line": 1465,
               "deprecated": false
             },
             {
@@ -3949,7 +3443,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]",
               "summary": "Extracts gloss from a specific channel in the specular map.",
-              "line": 3453,
+              "line": 1620,
               "deprecated": false
             },
             {
@@ -3958,7 +3452,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]",
               "summary": "Converts Specular/Glossiness maps to PBR Metal/Rough.",
-              "line": 3487,
+              "line": 1654,
               "deprecated": false
             },
             {
@@ -3967,7 +3461,7 @@
               "kind": "classmethod",
               "signature": "(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'",
               "summary": "Computes Base Color from Specular workflow with better metal handling.",
-              "line": 3579,
+              "line": 1746,
               "deprecated": false
             },
             {
@@ -3976,7 +3470,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'",
               "summary": "Creates a metallic map from a specular (and optional glossiness) map.",
-              "line": 3635,
+              "line": 1802,
               "deprecated": false
             },
             {
@@ -3985,7 +3479,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'",
               "summary": "Estimates roughness from a specular map.",
-              "line": 3680,
+              "line": 1847,
               "deprecated": false
             },
             {
@@ -3994,7 +3488,7 @@
               "kind": "classmethod",
               "signature": "(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'",
               "summary": "Converts a Base Color map to a true Albedo map by:",
-              "line": 3728,
+              "line": 1895,
               "deprecated": false
             },
             {
@@ -4003,7 +3497,7 @@
               "kind": "staticmethod",
               "signature": "(map_type: str, available: dict) -> Optional[Any]",
               "summary": "Get the converted map based on the given map type and available maps.",
-              "line": 3771,
+              "line": 1937,
               "deprecated": false
             },
             {
@@ -4012,7 +3506,7 @@
               "kind": "classmethod",
               "signature": "(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.",
-              "line": 3819,
+              "line": 1985,
               "deprecated": false
             },
             {
@@ -4021,7 +3515,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']",
               "summary": "Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.",
-              "line": 3891,
+              "line": 2057,
               "deprecated": false
             },
             {
@@ -4030,7 +3524,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']",
               "summary": "Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.",
-              "line": 3993,
+              "line": 2159,
               "deprecated": false
             },
             {
@@ -4039,7 +3533,7 @@
               "kind": "classmethod",
               "signature": "(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Smoothness map to a Roughness map by inverting the grayscale values.",
-              "line": 4095,
+              "line": 2261,
               "deprecated": false
             },
             {
@@ -4048,7 +3542,7 @@
               "kind": "classmethod",
               "signature": "(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Roughness map to a Smoothness map by inverting the grayscale values.",
-              "line": 4148,
+              "line": 2314,
               "deprecated": false
             },
             {
@@ -4057,7 +3551,7 @@
               "kind": "classmethod",
               "signature": "(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.",
-              "line": 4201,
+              "line": 2367,
               "deprecated": false
             },
             {
@@ -4066,7 +3560,7 @@
               "kind": "classmethod",
               "signature": "(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpack Metallic, AO, and Smoothness from a combined MSAO texture.",
-              "line": 4240,
+              "line": 2406,
               "deprecated": false
             },
             {
@@ -4075,7 +3569,7 @@
               "kind": "classmethod",
               "signature": "(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpack Metallic, Roughness, and AO from a combined MRAO texture.",
-              "line": 4295,
+              "line": 2461,
               "deprecated": false
             },
             {
@@ -4084,7 +3578,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.",
-              "line": 4350,
+              "line": 2516,
               "deprecated": false
             },
             {
@@ -4093,7 +3587,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Metallic (RGB) and Smoothness (A) from a combined map.",
-              "line": 4375,
+              "line": 2541,
               "deprecated": false
             },
             {
@@ -4102,7 +3596,780 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Specular (RGB) and Glossiness (A) from a combined map.",
-              "line": 4401,
+              "line": 2567,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "img_utils/map_factory/conversions.py",
+      "summary": "Map-conversion registry primitives for the texture MapFactory.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MapConversion",
+          "summary": "Defines a single map conversion operation.",
+          "line": 17,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "ConversionRegistry",
+          "summary": "Central registry for all map type conversions.",
+          "line": 26,
+          "bases": [],
+          "members": [
+            {
+              "name": "add_plugin",
+              "qualname": "ConversionRegistry.add_plugin",
+              "kind": "method",
+              "signature": "(self, cls)",
+              "summary": "Register a class to be scanned for conversions later.",
+              "line": 37,
+              "deprecated": false
+            },
+            {
+              "name": "register",
+              "qualname": "ConversionRegistry.register",
+              "kind": "method",
+              "signature": "(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)",
+              "summary": "Register a new conversion strategy.",
+              "line": 51,
+              "deprecated": false
+            },
+            {
+              "name": "register_from_class",
+              "qualname": "ConversionRegistry.register_from_class",
+              "kind": "method",
+              "signature": "(self, cls)",
+              "summary": "Register all decorated conversion methods from a class.",
+              "line": 95,
+              "deprecated": false
+            },
+            {
+              "name": "get_conversions_for",
+              "qualname": "ConversionRegistry.get_conversions_for",
+              "kind": "method",
+              "signature": "(self, target_type: str) -> List[MapConversion]",
+              "summary": "Get all conversions that can produce target type.",
+              "line": 115,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "img_utils/map_factory/handlers.py",
+      "summary": "Workflow handlers (Strategy pattern) for the texture MapFactory.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "WorkflowHandler",
+          "summary": "Abstract base for workflow-specific map processing.",
+          "line": 25,
+          "bases": [
+            "ABC"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "WorkflowHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "Check if this handler should process the workflow.",
+              "line": 29,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "WorkflowHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "Process and return the output map path.",
+              "line": 34,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "WorkflowHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "Return list of map types this handler consumes.",
+              "line": 39,
+              "deprecated": false
+            },
+            {
+              "name": "is_explicitly_requested",
+              "qualname": "WorkflowHandler.is_explicitly_requested",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor, map_type: str) -> bool",
+              "summary": "Check if a map type is explicitly requested in the config.",
+              "line": 43,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ORMMapHandler",
+          "summary": "Handles Unreal Engine / glTF ORM packing.",
+          "line": 56,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "ORMMapHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 59,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "ORMMapHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 76,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "ORMMapHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 132,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "MRAOMapHandler",
+          "summary": "Handles MRAO packing (Metallic R, Roughness G, AO B by default).",
+          "line": 145,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "MRAOMapHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 153,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "MRAOMapHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 168,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "MRAOMapHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 240,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "MaskMapHandler",
+          "summary": "Handles Unity HDRP Mask Map (MSAO).",
+          "line": 255,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "MaskMapHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 258,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "MaskMapHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 273,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "MaskMapHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 350,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "MetallicSmoothnessHandler",
+          "summary": "Handles packed Metallic+Smoothness.",
+          "line": 363,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "MetallicSmoothnessHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 366,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "MetallicSmoothnessHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 391,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "MetallicSmoothnessHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 437,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "SeparateMetallicRoughnessHandler",
+          "summary": "Handles separate metallic and roughness maps.",
+          "line": 448,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "SeparateMetallicRoughnessHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 451,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "SeparateMetallicRoughnessHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> List[str]",
+              "summary": "Returns list since this produces multiple maps.",
+              "line": 455,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "SeparateMetallicRoughnessHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 485,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "BaseColorHandler",
+          "summary": "Handles base color / albedo with optional packing.",
+          "line": 489,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "BaseColorHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 492,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "BaseColorHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 495,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "BaseColorHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 619,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "NormalMapHandler",
+          "summary": "Handles normal map format conversion.",
+          "line": 629,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "NormalMapHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 632,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "NormalMapHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 635,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "NormalMapHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 788,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "OutputFallbackHandler",
+          "summary": "Handles outputting fallback maps for failed requests.",
+          "line": 792,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "OutputFallbackHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 795,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "OutputFallbackHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> List[str]",
+              "summary": "",
+              "line": 798,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "OutputFallbackHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 851,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "img_utils/map_factory/processor.py",
+      "summary": "``TextureProcessor`` -- shared processing context for the MapFactory.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TextureProcessor",
+          "summary": "Shared context and processor for all map operations.",
+          "line": 42,
+          "bases": [],
+          "members": [
+            {
+              "name": "get_cached_image",
+              "qualname": "TextureProcessor.get_cached_image",
+              "kind": "method",
+              "signature": "(self, path: str) -> 'Image.Image'",
+              "summary": "Load an image with caching to avoid redundant disk I/O.",
+              "line": 56,
+              "deprecated": false
+            },
+            {
+              "name": "save_map",
+              "qualname": "TextureProcessor.save_map",
+              "kind": "method",
+              "signature": "(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str",
+              "summary": "Saves and optimizes a map, enforcing mode and naming conventions.",
+              "line": 74,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_map",
+              "qualname": "TextureProcessor.resolve_map",
+              "kind": "method",
+              "signature": "(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]",
+              "summary": "Intelligently resolve a map from inventory with fallback conversions.",
+              "line": 335,
+              "deprecated": false
+            },
+            {
+              "name": "mark_used",
+              "qualname": "TextureProcessor.mark_used",
+              "kind": "method",
+              "signature": "(self, *map_types: str)",
+              "summary": "Mark map types as consumed.",
+              "line": 394,
+              "deprecated": false
+            },
+            {
+              "name": "convert_specular_to_metallic",
+              "qualname": "TextureProcessor.convert_specular_to_metallic",
+              "kind": "method",
+              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 398,
+              "deprecated": false
+            },
+            {
+              "name": "convert_smoothness_to_roughness",
+              "qualname": "TextureProcessor.convert_smoothness_to_roughness",
+              "kind": "method",
+              "signature": "(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 412,
+              "deprecated": false
+            },
+            {
+              "name": "convert_roughness_to_smoothness",
+              "qualname": "TextureProcessor.convert_roughness_to_smoothness",
+              "kind": "method",
+              "signature": "(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 428,
+              "deprecated": false
+            },
+            {
+              "name": "convert_specular_to_roughness",
+              "qualname": "TextureProcessor.convert_specular_to_roughness",
+              "kind": "method",
+              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 444,
+              "deprecated": false
+            },
+            {
+              "name": "convert_dx_to_gl",
+              "qualname": "TextureProcessor.convert_dx_to_gl",
+              "kind": "method",
+              "signature": "(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 458,
+              "deprecated": false
+            },
+            {
+              "name": "convert_gl_to_dx",
+              "qualname": "TextureProcessor.convert_gl_to_dx",
+              "kind": "method",
+              "signature": "(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 472,
+              "deprecated": false
+            },
+            {
+              "name": "convert_bump_to_normal",
+              "qualname": "TextureProcessor.convert_bump_to_normal",
+              "kind": "method",
+              "signature": "(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 486,
+              "deprecated": false
+            },
+            {
+              "name": "extract_gloss_from_spec",
+              "qualname": "TextureProcessor.extract_gloss_from_spec",
+              "kind": "method",
+              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 502,
+              "deprecated": false
+            },
+            {
+              "name": "copy_map",
+              "qualname": "TextureProcessor.copy_map",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']",
+              "summary": "Simple copy/rename for compatible maps (e.g.",
+              "line": 519,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_metallic_smoothness",
+              "qualname": "TextureProcessor.unpack_metallic_smoothness",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack and cache results.",
+              "line": 529,
+              "deprecated": false
+            },
+            {
+              "name": "get_metallic_from_packed",
+              "qualname": "TextureProcessor.get_metallic_from_packed",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 549,
+              "deprecated": false
+            },
+            {
+              "name": "get_smoothness_from_packed",
+              "qualname": "TextureProcessor.get_smoothness_from_packed",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 555,
+              "deprecated": false
+            },
+            {
+              "name": "get_roughness_from_packed",
+              "qualname": "TextureProcessor.get_roughness_from_packed",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 561,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_msao",
+              "qualname": "TextureProcessor.unpack_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack MSAO and cache results.",
+              "line": 572,
+              "deprecated": false
+            },
+            {
+              "name": "get_metallic_from_msao",
+              "qualname": "TextureProcessor.get_metallic_from_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 595,
+              "deprecated": false
+            },
+            {
+              "name": "get_smoothness_from_msao",
+              "qualname": "TextureProcessor.get_smoothness_from_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 601,
+              "deprecated": false
+            },
+            {
+              "name": "get_roughness_from_msao",
+              "qualname": "TextureProcessor.get_roughness_from_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 607,
+              "deprecated": false
+            },
+            {
+              "name": "get_ao_from_msao",
+              "qualname": "TextureProcessor.get_ao_from_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 617,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_mrao",
+              "qualname": "TextureProcessor.unpack_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack MRAO and cache results.",
+              "line": 623,
+              "deprecated": false
+            },
+            {
+              "name": "get_metallic_from_mrao",
+              "qualname": "TextureProcessor.get_metallic_from_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 650,
+              "deprecated": false
+            },
+            {
+              "name": "get_roughness_from_mrao",
+              "qualname": "TextureProcessor.get_roughness_from_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 656,
+              "deprecated": false
+            },
+            {
+              "name": "get_smoothness_from_mrao",
+              "qualname": "TextureProcessor.get_smoothness_from_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 662,
+              "deprecated": false
+            },
+            {
+              "name": "get_ao_from_mrao",
+              "qualname": "TextureProcessor.get_ao_from_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 670,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_orm",
+              "qualname": "TextureProcessor.unpack_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack ORM and cache results.",
+              "line": 676,
+              "deprecated": false
+            },
+            {
+              "name": "get_ao_from_orm",
+              "qualname": "TextureProcessor.get_ao_from_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 699,
+              "deprecated": false
+            },
+            {
+              "name": "get_roughness_from_orm",
+              "qualname": "TextureProcessor.get_roughness_from_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 705,
+              "deprecated": false
+            },
+            {
+              "name": "get_smoothness_from_orm",
+              "qualname": "TextureProcessor.get_smoothness_from_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 711,
+              "deprecated": false
+            },
+            {
+              "name": "get_metallic_from_orm",
+              "qualname": "TextureProcessor.get_metallic_from_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 718,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_albedo_transparency",
+              "qualname": "TextureProcessor.unpack_albedo_transparency",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack Albedo+Transparency and cache results.",
+              "line": 724,
+              "deprecated": false
+            },
+            {
+              "name": "get_base_color_from_albedo_transparency",
+              "qualname": "TextureProcessor.get_base_color_from_albedo_transparency",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 743,
+              "deprecated": false
+            },
+            {
+              "name": "get_opacity_from_albedo_transparency",
+              "qualname": "TextureProcessor.get_opacity_from_albedo_transparency",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 749,
+              "deprecated": false
+            },
+            {
+              "name": "create_orm_map",
+              "qualname": "TextureProcessor.create_orm_map",
+              "kind": "method",
+              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
+              "summary": "Create ORM map from components.",
+              "line": 755,
+              "deprecated": false
+            },
+            {
+              "name": "create_mrao_map",
+              "qualname": "TextureProcessor.create_mrao_map",
+              "kind": "method",
+              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
+              "summary": "Create MRAO (Metallic R / Roughness G / AO B) map from components.",
+              "line": 780,
+              "deprecated": false
+            },
+            {
+              "name": "create_mask_map",
+              "qualname": "TextureProcessor.create_mask_map",
+              "kind": "method",
+              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
+              "summary": "Create Mask Map (MSAO) from components.",
+              "line": 833,
+              "deprecated": false
+            },
+            {
+              "name": "create_metallic_smoothness_map",
+              "qualname": "TextureProcessor.create_metallic_smoothness_map",
+              "kind": "method",
+              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
+              "summary": "Create Metallic-Smoothness map from components.",
+              "line": 887,
               "deprecated": false
             }
           ]
@@ -4329,6 +4596,39 @@
               "signature": "(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]",
               "summary": "Resolve configuration from presets, dicts, and kwargs.",
               "line": 693,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "img_utils/mask_generator.py",
+      "summary": "Background mask generation via rembg (optional dependency).",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MaskGenerator",
+          "summary": "Run rembg over a directory of images and write binary masks.",
+          "line": 41,
+          "bases": [],
+          "members": [
+            {
+              "name": "is_available",
+              "qualname": "MaskGenerator.is_available",
+              "kind": "method",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 50,
+              "deprecated": false
+            },
+            {
+              "name": "generate_masks",
+              "qualname": "MaskGenerator.generate_masks",
+              "kind": "method",
+              "signature": "(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]",
+              "summary": "Generate alpha-channel masks for every image in ``input_dir``.",
+              "line": 53,
               "deprecated": false
             }
           ]
@@ -5019,7 +5319,7 @@
         {
           "name": "Credentials",
           "summary": "Abstractions for OS-level secure credential storage.",
-          "line": 19,
+          "line": 21,
           "bases": [],
           "members": [
             {
@@ -5028,7 +5328,7 @@
               "kind": "staticmethod",
               "signature": "(target_name: str) -> str",
               "summary": "Retrieve a password from the OS secure store or environment.",
-              "line": 30,
+              "line": 32,
               "deprecated": false
             },
             {
@@ -5037,7 +5337,7 @@
               "kind": "staticmethod",
               "signature": "(target_name: str) -> dict | None",
               "summary": "Retrieve full credentials (username and password).",
-              "line": 44,
+              "line": 46,
               "deprecated": false
             },
             {
@@ -5046,7 +5346,7 @@
               "kind": "staticmethod",
               "signature": "(target_name: str, username: str, password: str, persist: str = 'local_machine') -> bool",
               "summary": "Save credentials to the OS secure store.",
-              "line": 73,
+              "line": 75,
               "deprecated": false
             }
           ]
@@ -5630,7 +5930,7 @@
           "kind": "function",
           "signature": "(video_path: str, output_folder: str, step: int = 5) -> List[str]",
           "summary": "Convenience wrapper around :meth:`FrameExtractor.extract_frames`.",
-          "line": 143,
+          "line": 250,
           "deprecated": false
         }
       ],
@@ -5642,12 +5942,30 @@
           "bases": [],
           "members": [
             {
+              "name": "score_sharpness",
+              "qualname": "FrameExtractor.score_sharpness",
+              "kind": "staticmethod",
+              "signature": "(frame) -> float",
+              "summary": "Variance-of-Laplacian sharpness score.",
+              "line": 39,
+              "deprecated": false
+            },
+            {
               "name": "extract_frames",
               "qualname": "FrameExtractor.extract_frames",
               "kind": "method",
               "signature": "(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]",
               "summary": "Save every ``step``-th frame from ``video_path`` to ``output_folder``.",
-              "line": 30,
+              "line": 49,
+              "deprecated": false
+            },
+            {
+              "name": "extract_frames_sharpest",
+              "qualname": "FrameExtractor.extract_frames_sharpest",
+              "kind": "method",
+              "signature": "(self, video_path: str, output_folder: str, window_sec: float = 1.0, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None, min_sharpness: float = 0.0) -> List[str]",
+              "summary": "Bucket frames by time window;",
+              "line": 124,
               "deprecated": false
             },
             {
@@ -5656,7 +5974,7 @@
               "kind": "method",
               "signature": "(self, video_path: str) -> dict",
               "summary": "Return metadata for ``video_path`` (filename, frame count, fps,",
-              "line": 105,
+              "line": 212,
               "deprecated": false
             }
           ]

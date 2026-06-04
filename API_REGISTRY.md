@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-01_
+_Generated: 2026-06-04_
 
 ## Index
 
@@ -19,11 +19,8 @@ _Generated: 2026-06-01_
 - [`core_utils/execution_monitor/_spinner.py`](#core_utils--execution_monitor--_spinner) — Lightweight canvas-based spinner for task-indicator overlay.
 - [`core_utils/git.py`](#core_utils--git)
 - [`core_utils/help_mixin.py`](#core_utils--help_mixin) — HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
-- [`core_utils/hierarchy_diff.py`](#core_utils--hierarchy_diff)
-- [`core_utils/hierarchy_utils/backup/hierarchy_analyzer.py`](#core_utils--hierarchy_utils--backup--hierarchy_analyzer)
-- [`core_utils/hierarchy_utils/backup/hierarchy_indexer.py`](#core_utils--hierarchy_utils--backup--hierarchy_indexer)
-- [`core_utils/hierarchy_utils/backup/hierarchy_matching.py`](#core_utils--hierarchy_utils--backup--hierarchy_matching)
 - [`core_utils/hierarchy_utils/hierarchy_analyzer.py`](#core_utils--hierarchy_utils--hierarchy_analyzer)
+- [`core_utils/hierarchy_utils/hierarchy_diff.py`](#core_utils--hierarchy_utils--hierarchy_diff)
 - [`core_utils/hierarchy_utils/hierarchy_indexer.py`](#core_utils--hierarchy_utils--hierarchy_indexer)
 - [`core_utils/hierarchy_utils/hierarchy_matching.py`](#core_utils--hierarchy_utils--hierarchy_matching)
 - [`core_utils/logging_mixin.py`](#core_utils--logging_mixin)
@@ -32,15 +29,25 @@ _Generated: 2026-06-01_
 - [`core_utils/namedtuple_container.py`](#core_utils--namedtuple_container)
 - [`core_utils/namespace_handler.py`](#core_utils--namespace_handler)
 - [`core_utils/package_manager.py`](#core_utils--package_manager)
+- [`core_utils/preset_store.py`](#core_utils--preset_store) — Qt-free, zero-dependency named-preset *store* for the ecosystem.
+- [`core_utils/qc_log.py`](#core_utils--qc_log) — Structured run logs and threshold-based acceptance gates for pipeline
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
+- [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
+- [`file_utils/mesh_cleaner.py`](#file_utils--mesh_cleaner) — Mesh repair / cleanup via PyMeshLab (optional dependency).
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
+- [`img_utils/exposure_equalizer.py`](#img_utils--exposure_equalizer) — Cross-set exposure / white-balance equalization.
+- [`img_utils/image_curator.py`](#img_utils--image_curator) — Perceptual-hash + sharpness curation for large image sets.
 - [`img_utils/map_compositor.py`](#img_utils--map_compositor) — Pure image-compositing engine — alpha-composite layered texture maps
-- [`img_utils/map_factory.py`](#img_utils--map_factory) — Texture Map Factory for PBR workflow preparation - Refactored.
+- [`img_utils/map_factory/_map_factory.py`](#img_utils--map_factory--_map_factory) — ``MapFactory`` -- the texture-map workflow orchestrator.
+- [`img_utils/map_factory/conversions.py`](#img_utils--map_factory--conversions) — Map-conversion registry primitives for the texture MapFactory.
+- [`img_utils/map_factory/handlers.py`](#img_utils--map_factory--handlers) — Workflow handlers (Strategy pattern) for the texture MapFactory.
+- [`img_utils/map_factory/processor.py`](#img_utils--map_factory--processor) — ``TextureProcessor`` -- shared processing context for the MapFactory.
 - [`img_utils/map_optimizer.py`](#img_utils--map_optimizer) — Plan, assess, and apply map (texture) optimizations.
 - [`img_utils/map_registry.py`](#img_utils--map_registry)
+- [`img_utils/mask_generator.py`](#img_utils--mask_generator) — Background mask generation via rembg (optional dependency).
 - [`iter_utils/_iter_utils.py`](#iter_utils--_iter_utils)
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
 - [`math_utils/progression.py`](#math_utils--progression)
@@ -131,7 +138,12 @@ Lightweight, DCC-agnostic color primitives.
 
 - **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L14)** — A utility class for launching applications on Windows and Linux.
   - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
-  - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None)` *(static)* — Execute an application synchronously and return its result.
+  - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None)` *(static)* — Execute an application synchronously and return its result.
+  - `AppLauncher.current_session_id()` *(static)* — Windows session id of the *current* process.
+  - `AppLauncher.active_console_session_id()` *(static)* — Session id of the physically logged-in console (interactive desktop).
+  - `AppLauncher.is_interactive_session()` *(static)* — True if the current process is in an interactive session (non-zero —
+  - `AppLauncher.find_session_launcher(explicit=None)` *(static)* — Locate a helper able to launch a process into *another* interactive
+  - `AppLauncher.launch_in_session(app_identifier, args=None, session=None, cwd=None, launcher=None, accept_eula=True)` *(static)* — Launch an application into a specific interactive Windows session.
   - `AppLauncher.wait_for_ready(process, timeout=15, check_fn=None)` *(static)* — Waits until the application is ready.
   - `AppLauncher.get_window_titles(pid)` *(static)* — Returns a list of window titles owned by the given PID.
   - `AppLauncher.append_to_path(path, user_scope=True)` *(static)* — Appends a directory to the system PATH.
@@ -159,12 +171,12 @@ Lightweight, DCC-agnostic color primitives.
 
 Subprocess-based dialog viewer for custom button labels.
 
-- [`run(title: str, message: str, force_label: str | None = None)`](pythontk/pythontk/core_utils/execution_monitor/_dialog_viewer.py#L12) — Display a dialog with custom buttons matching VS Code style.
+- [`run(title: str, message: str, force_label: str | None = None)`](pythontk/pythontk/core_utils/execution_monitor/_dialog_viewer.py#L14) — Display a dialog with custom buttons matching VS Code style.
 
 <a id="core_utils--execution_monitor--_execution_monitor"></a>
 ### `core_utils/execution_monitor/_execution_monitor.py`
 
-- **[`class ExecutionMonitor`](pythontk/pythontk/core_utils/execution_monitor/_execution_monitor.py#L14)** — Utilities for monitoring and handling long-running executions.
+- **[`class ExecutionMonitor`](pythontk/pythontk/core_utils/execution_monitor/_execution_monitor.py#L16)** — Utilities for monitoring and handling long-running executions.
   - `ExecutionMonitor.is_escape_pressed()` *(static)* — Check if the Escape key is currently pressed (Windows & Linux).
   - `ExecutionMonitor.set_interpreter(cls, path)` *(class)* — Set a custom Python interpreter to use for subprocesses.
   - `ExecutionMonitor.on_long_execution(threshold, callback, interval=None, allow_escape_cancel=False, indicator=None)` *(static)* — Decorator that triggers a callback if the decorated function
@@ -213,56 +225,6 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `HelpMixin.list_members(cls, members: Optional[str] = None, *, inherited: bool = True, private: bool = False, sort: bool = True, returns: bool = False) -> Optional[List[str]]` *(class)* — Get a list of member names.
   - `HelpMixin.about(target, name=None, *, brief=False, returns=False)` *(static)* — Get help for any Python object (class, function, module, method, etc.).
 
-<a id="core_utils--hierarchy_diff"></a>
-### `core_utils/hierarchy_diff.py`
-
-- **[`class HierarchyDiff`](pythontk/pythontk/core_utils/hierarchy_diff.py#L7)** — Generic data class to hold hierarchical difference results.
-  - `HierarchyDiff.is_valid(self) -> bool` — Check if hierarchy has no significant differences.
-  - `HierarchyDiff.has_differences(self) -> bool` — Check if any differences exist (including extra items).
-  - `HierarchyDiff.total_issues(self) -> int` — Get total count of all issues.
-  - `HierarchyDiff.as_dict(self) -> Dict[str, List[str]]` — Convert to dictionary representation.
-  - `HierarchyDiff.as_json(self, indent: Optional[int] = 2) -> str` — Convert to JSON string.
-  - `HierarchyDiff.save_to_file(self, filepath: str, indent: Optional[int] = 2) -> None` — Save diff result to JSON file.
-  - `HierarchyDiff.load_from_file(cls, filepath: str) -> 'HierarchyDiff'` *(class)* — Load diff result from JSON file.
-  - `HierarchyDiff.clear(self) -> None` — Clear all diff results.
-  - `HierarchyDiff.merge(self, other: 'HierarchyDiff') -> None` — Merge another diff result into this one.
-  - `HierarchyDiff.get_summary(self) -> Dict[str, int]` — Get summary counts of all difference types.
-  - `HierarchyDiff.filter_by_pattern(self, pattern: str, field: str = 'missing') -> List[str]` — Filter items by regex pattern.
-  - `HierarchyDiff.add_metadata(self, key: str, value: Any) -> None` — Add metadata to the diff result.
-
-<a id="core_utils--hierarchy_utils--backup--hierarchy_analyzer"></a>
-### `core_utils/hierarchy_utils/backup/hierarchy_analyzer.py`
-
-- **[`class DifferenceType(Enum)`](pythontk/pythontk/core_utils/hierarchy_utils/backup/hierarchy_analyzer.py#L8)** — Types of differences that can be found between hierarchies.
-- **[`class HierarchyDifference`](pythontk/pythontk/core_utils/hierarchy_utils/backup/hierarchy_analyzer.py#L18)** — Represents a single difference between hierarchies.
-- **[`class HierarchyAnalyzer`](pythontk/pythontk/core_utils/hierarchy_utils/backup/hierarchy_analyzer.py#L30)** — Analyzer for comparing hierarchical structures and identifying differences.
-  - `HierarchyAnalyzer.compare_path_sets(current_paths: Set[str], reference_paths: Set[str], path_separator: str = '|') -> Dict[str, Set[str]]` *(static)* — Compare two sets of hierarchical paths and categorize differences.
-  - `HierarchyAnalyzer.analyze_hierarchy_differences(current_items: List[Any], reference_items: List[Any], path_extractor: Callable[[Any], str], attribute_extractors: Dict[str, Callable[[Any], Any]] = None, path_separator: str = '|') -> List[HierarchyDifference]` *(static)* — Perform comprehensive analysis of differences between hierarchies.
-  - `HierarchyAnalyzer.detect_moved_items(differences: List[HierarchyDifference], similarity_threshold: float = 0.8, path_separator: str = '|') -> List[HierarchyDifference]` *(static)* — Detect items that may have been moved rather than deleted/added.
-  - `HierarchyAnalyzer.categorize_differences(differences: List[HierarchyDifference], path_separator: str = '|') -> Dict[str, Dict[str, List[HierarchyDifference]]]` *(static)* — Categorize differences by type and hierarchy level.
-  - `HierarchyAnalyzer.generate_diff_report(differences: List[HierarchyDifference], include_details: bool = True, max_items_per_category: int = 10) -> str` *(static)* — Generate a human-readable report of differences.
-  - `HierarchyAnalyzer.export_differences_to_dict(differences: List[HierarchyDifference]) -> Dict[str, Any]` *(static)* — Export differences to a dictionary format for serialization.
-  - `HierarchyAnalyzer.filter_differences(differences: List[HierarchyDifference], types: List[DifferenceType] = None, path_patterns: List[str] = None, exclude_patterns: List[str] = None) -> List[HierarchyDifference]` *(static)* — Filter differences based on type and path patterns.
-
-<a id="core_utils--hierarchy_utils--backup--hierarchy_indexer"></a>
-### `core_utils/hierarchy_utils/backup/hierarchy_indexer.py`
-
-- **[`class HierarchyIndexer`](pythontk/pythontk/core_utils/hierarchy_utils/backup/hierarchy_indexer.py#L6)** — Generic utilities for building and querying tree indices.
-  - `HierarchyIndexer.build_path_index(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[str, List[Any]]` *(static)* — Build an index mapping cleaned paths to items.
-  - `HierarchyIndexer.find_by_path(index: Dict[str, List[Any]], target_path: str, clean_namespaces: bool = True, path_separator: str = '|', namespace_separator: str = ':') -> List[Any]` *(static)* — Find items in index by path.
-  - `HierarchyIndexer.find_by_tail_path(index: Dict[str, List[Any]], target_tail: str, num_components: int = 2, path_separator: str = '|') -> List[Any]` *(static)* — Find items by matching the tail portion of their paths.
-  - `HierarchyIndexer.get_path_components_index(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|') -> Dict[str, List[Any]]` *(static)* — Build an index mapping individual path components to items.
-  - `HierarchyIndexer.get_depth_index(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|') -> Dict[int, List[Any]]` *(static)* — Build an index mapping path depths to items.
-
-<a id="core_utils--hierarchy_utils--backup--hierarchy_matching"></a>
-### `core_utils/hierarchy_utils/backup/hierarchy_matching.py`
-
-- **[`class HierarchyMatching`](pythontk/pythontk/core_utils/hierarchy_utils/backup/hierarchy_matching.py#L7)** — Generic matching strategies for hierarchical data.
-  - `HierarchyMatching.exact_path_match(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[Any, List[Any]]` *(static)* — Find exact path matches between source and target items.
-  - `HierarchyMatching.tail_path_match(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], num_components: int = 2, path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[Any, List[Any]]` *(static)* — Find matches by comparing tail portions of paths.
-  - `HierarchyMatching.fuzzy_name_match(source_items: List[Any], target_items: List[Any], get_name_func: Callable[[Any], str], similarity_threshold: float = 0.8) -> Dict[Any, List[Any]]` *(static)* — Find matches using fuzzy string matching on names.
-  - `HierarchyMatching.multi_strategy_match(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], get_name_func: Optional[Callable[[Any], str]] = None, strategies: List[str] = None, path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':', fuzzy_threshold: float = 0.8) -> Dict[Any, List[Any]]` *(static)* — Apply multiple matching strategies in order of preference.
-
 <a id="core_utils--hierarchy_utils--hierarchy_analyzer"></a>
 ### `core_utils/hierarchy_utils/hierarchy_analyzer.py`
 
@@ -276,6 +238,23 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `HierarchyAnalyzer.generate_diff_report(differences: List[HierarchyDifference], include_details: bool = True, max_items_per_category: int = 10) -> str` *(static)* — Generate a human-readable report of differences.
   - `HierarchyAnalyzer.export_differences_to_dict(differences: List[HierarchyDifference]) -> Dict[str, Any]` *(static)* — Export differences to a dictionary format for serialization.
   - `HierarchyAnalyzer.filter_differences(differences: List[HierarchyDifference], types: List[DifferenceType] = None, path_patterns: List[str] = None, exclude_patterns: List[str] = None) -> List[HierarchyDifference]` *(static)* — Filter differences based on type and path patterns.
+
+<a id="core_utils--hierarchy_utils--hierarchy_diff"></a>
+### `core_utils/hierarchy_utils/hierarchy_diff.py`
+
+- **[`class HierarchyDiff`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_diff.py#L7)** — Generic data class to hold hierarchical difference results.
+  - `HierarchyDiff.is_valid(self) -> bool` — Check if hierarchy has no significant differences.
+  - `HierarchyDiff.has_differences(self) -> bool` — Check if any differences exist (including extra items).
+  - `HierarchyDiff.total_issues(self) -> int` — Get total count of all issues.
+  - `HierarchyDiff.as_dict(self) -> Dict[str, List[str]]` — Convert to dictionary representation.
+  - `HierarchyDiff.as_json(self, indent: Optional[int] = 2) -> str` — Convert to JSON string.
+  - `HierarchyDiff.save_to_file(self, filepath: str, indent: Optional[int] = 2) -> None` — Save diff result to JSON file.
+  - `HierarchyDiff.load_from_file(cls, filepath: str) -> 'HierarchyDiff'` *(class)* — Load diff result from JSON file.
+  - `HierarchyDiff.clear(self) -> None` — Clear all diff results.
+  - `HierarchyDiff.merge(self, other: 'HierarchyDiff') -> None` — Merge another diff result into this one.
+  - `HierarchyDiff.get_summary(self) -> Dict[str, int]` — Get summary counts of all difference types.
+  - `HierarchyDiff.filter_by_pattern(self, pattern: str, field: str = 'missing') -> List[str]` — Filter items by regex pattern.
+  - `HierarchyDiff.add_metadata(self, key: str, value: Any) -> None` — Add metadata to the diff result.
 
 <a id="core_utils--hierarchy_utils--hierarchy_indexer"></a>
 ### `core_utils/hierarchy_utils/hierarchy_indexer.py`
@@ -299,23 +278,23 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
 <a id="core_utils--logging_mixin"></a>
 ### `core_utils/logging_mixin.py`
 
-- **[`class StripHtmlFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L11)** — Formatter that strips HTML tags from the message.
+- **[`class StripHtmlFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L13)** — Formatter that strips HTML tags from the message.
   - `StripHtmlFormatter.format(self, record)`
-- **[`class LevelAwareFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L33)** — Formatter that dynamically selects format per-record based on log level.
+- **[`class LevelAwareFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L35)** — Formatter that dynamically selects format per-record based on log level.
   - `LevelAwareFormatter.format(self, record)`
-- **[`class LoggerExt`](pythontk/pythontk/core_utils/logging_mixin.py#L73)**
+- **[`class LoggerExt`](pythontk/pythontk/core_utils/logging_mixin.py#L75)**
   - `LoggerExt.patch(cls, logger: internal_logging.Logger) -> None` *(class)* — Patch the logger with additional methods and setup.
   - `LoggerExt.get_color(cls, level: str) -> str` *(class)* — Get the color code for a given log level.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1156)** — A generic thread-safe logging handler that writes logs to any widget
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1158)** — A generic thread-safe logging handler that writes logs to any widget
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1208)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1210)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1362)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1364)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -398,6 +377,38 @@ Reusable module attribute resolver for package-style imports.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
 
+<a id="core_utils--preset_store"></a>
+### `core_utils/preset_store.py`
+
+Qt-free, zero-dependency named-preset *store* for the ecosystem.
+
+- [`sanitize_preset_name(name: str) -> str`](pythontk/pythontk/core_utils/preset_store.py#L40) — Filesystem-safe filename stem for a preset *name*.
+- **[`class PresetStore`](pythontk/pythontk/core_utils/preset_store.py#L50)** — Named-preset collection with a read-only built-in tier and a writable
+  - `PresetStore.user_dir(self) -> Path` *(property)* — Writable preset directory (created lazily on first :meth:`save`).
+  - `PresetStore.builtin_dir(self) -> Optional[Path]` *(property)* — Read-only shipped preset directory, or ``None`` when not configured.
+  - `PresetStore.list(self, tier: Optional[str] = None) -> List[str]` — Sorted preset names.
+  - `PresetStore.source(self, name: str) -> Optional[str]` — Which tier *name* resolves from: ``"user"``, ``"builtin"``, or ``None``.
+  - `PresetStore.exists(self, name: str) -> bool`
+  - `PresetStore.path(self, name: str, tier: str = 'user') -> Path` — Sanitized file path for *name* in *tier* (``"user"`` or ``"builtin"``).
+  - `PresetStore.load(self, name: str) -> dict` — Return the preset dict for *name* (user tier shadows built-in).
+  - `PresetStore.save(self, name: str, data: dict) -> Path` — Write *data* as a user preset *name* (built-ins stay read-only).
+  - `PresetStore.delete(self, name: str) -> bool` — Delete the *user* preset *name*.
+  - `PresetStore.rename(self, old: str, new: str) -> bool` — Rename a *user* preset.
+
+<a id="core_utils--qc_log"></a>
+### `core_utils/qc_log.py`
+
+Structured run logs and threshold-based acceptance gates for pipeline
+
+- **[`class GateError(RuntimeError)`](pythontk/pythontk/core_utils/qc_log.py#L15)** — Raised by :meth:`QcGate.check` when a halt-mode gate fails.
+- **[`class QcLog`](pythontk/pythontk/core_utils/qc_log.py#L19)** — Append-only structured run log.
+  - `QcLog.stage(self, name: str)`
+  - `QcLog.warn(self, message: str) -> None`
+  - `QcLog.set(self, key: str, value: Any) -> None`
+  - `QcLog.finalize(self, success: bool) -> None`
+- **[`class QcGate`](pythontk/pythontk/core_utils/qc_log.py#L65)** — Threshold-based acceptance gate that logs into a bound :class:`QcLog`.
+  - `QcGate.check(self, gate_name: str, metrics: Dict[str, Any]) -> bool` — Compare ``metrics`` against ``self.rules[gate_name]``.
+
 <a id="core_utils--singleton_mixin"></a>
 ### `core_utils/singleton_mixin.py`
 
@@ -405,6 +416,19 @@ Reusable module attribute resolver for package-style imports.
   - `SingletonMixin.instance(cls, *args: Any, **kwargs: Any) -> Any` *(class)*
   - `SingletonMixin.has_instance(cls, singleton_key: Optional[Any] = None) -> bool` *(class)*
   - `SingletonMixin.reset_instance(cls, singleton_key: Optional[Any] = None) -> None` *(class)*
+
+<a id="core_utils--user_config"></a>
+### `core_utils/user_config.py`
+
+Qt-free, zero-dependency user-config resolution for the ecosystem.
+
+- [`user_config_root() -> Path`](pythontk/pythontk/core_utils/user_config.py#L43) — The ecosystem per-user config directory, resolved **without Qt**.
+- **[`class UserConfig`](pythontk/pythontk/core_utils/user_config.py#L74)** — Resolve a JSON user-config doc with discovery + deep-merge over a default.
+  - `UserConfig.path_for(name: str, package: str) -> Path` *(static)* — Default on-disk location: ``<user_config_root>/<package>/<name>.json``.
+  - `UserConfig.load_file(path: Union[str, os.PathLike]) -> dict` *(static)* — Load a JSON object from *path*.
+  - `UserConfig.resolve(cls, name: str, *, package: str, env: Optional[str] = None, default: Optional[Mapping[str, Any]] = None, path: Optional[Union[str, os.PathLike]] = None) -> dict` *(class)* — Resolve config *name* for *package*, deep-merged over *default*.
+  - `UserConfig.deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict` *(static)* — Recursively merge *override* into a copy of *base* (override wins).
+  - `UserConfig.expand(value: Any) -> Any` *(static)* — Expand ``~`` and ``${ENV}`` / ``%VAR%`` in string values.
 
 <a id="file_utils--_file_utils"></a>
 ### `file_utils/_file_utils.py`
@@ -433,6 +457,15 @@ Reusable module attribute resolver for package-style imports.
   - `FileUtils.set_json(cls, key, value, file=None)` *(class)* — Parameters:
   - `FileUtils.get_json(cls, key, file=None)` *(class)* — Parameters:
 
+<a id="file_utils--mesh_cleaner"></a>
+### `file_utils/mesh_cleaner.py`
+
+Mesh repair / cleanup via PyMeshLab (optional dependency).
+
+- **[`class MeshCleaner`](pythontk/pythontk/file_utils/mesh_cleaner.py#L32)** — Optional-dep mesh-repair pipeline.
+  - `MeshCleaner.is_available(self) -> bool`
+  - `MeshCleaner.clean(self, input_path: str, output_path: Optional[str] = None, merge_distance: float = 1e-05, remove_isolated_pieces_diameter_percent: float = 5.0, fill_holes_max_edge_count: int = 500, decimate_target_faces: int = 0) -> Optional[str]` — Repair / clean a mesh in place;
+
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
@@ -453,7 +486,7 @@ Reusable module attribute resolver for package-style imports.
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L32)** — Helper methods for working with image file formats.
+- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L33)** — Helper methods for working with image file formats.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
   - `ImgUtils.allow_large_images(cls)` *(class)* — Context manager to safely load very large images.
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
@@ -463,6 +496,7 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, **kwargs)` *(class)* — Saves an image to the specified path, with optional mode conversion.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image from the given file path and return a copy of the image object.
   - `ImgUtils.get_images(cls, directory, inc=None, exc='')` *(class)* — Get bitmap images from a given directory as PIL images.
+  - `ImgUtils.get_image_size(image_path: str) -> Optional[Tuple[int, int]]` *(static)* — ``(width, height)`` of an image, read as cheaply as possible.
   - `ImgUtils.get_image_info(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]` *(class)* — Get information about image files.
   - `ImgUtils.are_identical(cls, imageA, imageB)` *(class)* — Check if two images are the same.
   - `ImgUtils.resize_image(cls, image, x, y)` *(class)* — Returns a resized copy of an image.
@@ -492,6 +526,28 @@ Reusable module attribute resolver for package-style imports.
   - `ImgUtils.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
   - `ImgUtils.extract_channels(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]` *(class)* — Generic channel extraction utility.
 
+<a id="img_utils--exposure_equalizer"></a>
+### `img_utils/exposure_equalizer.py`
+
+Cross-set exposure / white-balance equalization.
+
+- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L34)** — Equalize exposure / WB across a list of source directories.
+  - `ExposureEqualizer.is_available(self) -> bool`
+  - `ExposureEqualizer.equalize_directories(self, source_dirs: Sequence[str], output_root: str, reference_dir: Optional[str] = None, suffix: str = '_eq', sample_count: int = 20, strength: float = 1.0, reference_strategy: str = 'first', quality: int = 100, preserve_exif: bool = True) -> List[str]` — Equalize every image in ``source_dirs`` against the reference set.
+
+<a id="img_utils--image_curator"></a>
+### `img_utils/image_curator.py`
+
+Perceptual-hash + sharpness curation for large image sets.
+
+- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L41)** — Pre-SfM content-dedup + sharpness culling.
+  - `ImageCurator.is_available(self) -> bool`
+  - `ImageCurator.dhash(image, size: int = 8) -> int` *(static)* — Difference hash.
+  - `ImageCurator.hamming(a: int, b: int) -> int` *(static)*
+  - `ImageCurator.sharpness(image) -> float` *(static)* — Variance-of-Laplacian sharpness.
+  - `ImageCurator.curate(self, source_dirs: Sequence[str], output_root: str, hash_threshold: int = 5, sharpness_floor: float = 0.0, sharpness_floor_percentile: Optional[float] = None, min_sharpness_fraction_of_median: float = 0.0, keep_per_cluster: int = 1, suffix: str = '_curated', progress: Optional[callable] = None, overwrite_output: bool = True) -> List[str]` — Curate every image across ``source_dirs`` → write the kept set
+  - `ImageCurator.preview(self, source_dirs, hash_thresholds=(5,), keep_per_cluster=1, sharpness_floor=0.0, sharpness_floor_percentile=None, min_sharpness_fraction_of_median=0.0, progress=None)` — Dry-run curation report — scan **once**, evaluate one or more
+
 <a id="img_utils--map_compositor"></a>
 ### `img_utils/map_compositor.py`
 
@@ -508,95 +564,12 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapCompositor.composite_images(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages` — Composite each map type and write the result.
   - `MapCompositor.retry_failed(self, failed: SortedImages, name: str) -> SortedImages` — Fill the masked area of each failed layer with the map-type's
 
-<a id="img_utils--map_factory"></a>
-### `img_utils/map_factory.py`
+<a id="img_utils--map_factory--_map_factory"></a>
+### `img_utils/map_factory/_map_factory.py`
 
-Texture Map Factory for PBR workflow preparation - Refactored.
+``MapFactory`` -- the texture-map workflow orchestrator.
 
-- **[`class MapConversion`](pythontk/pythontk/img_utils/map_factory.py#L58)** — Defines a single map conversion operation.
-- **[`class ConversionRegistry`](pythontk/pythontk/img_utils/map_factory.py#L67)** — Central registry for all map type conversions.
-  - `ConversionRegistry.add_plugin(self, cls)` — Register a class to be scanned for conversions later.
-  - `ConversionRegistry.register(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)` — Register a new conversion strategy.
-  - `ConversionRegistry.register_from_class(self, cls)` — Register all decorated conversion methods from a class.
-  - `ConversionRegistry.get_conversions_for(self, target_type: str) -> List[MapConversion]` — Get all conversions that can produce target type.
-- **[`class TextureProcessor`](pythontk/pythontk/img_utils/map_factory.py#L172)** — Shared context and processor for all map operations.
-  - `TextureProcessor.get_cached_image(self, path: str) -> 'Image.Image'` — Load an image with caching to avoid redundant disk I/O.
-  - `TextureProcessor.save_map(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str` — Saves and optimizes a map, enforcing mode and naming conventions.
-  - `TextureProcessor.resolve_map(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]` — Intelligently resolve a map from inventory with fallback conversions.
-  - `TextureProcessor.mark_used(self, *map_types: str)` — Mark map types as consumed.
-  - `TextureProcessor.convert_specular_to_metallic(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
-  - `TextureProcessor.convert_smoothness_to_roughness(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
-  - `TextureProcessor.convert_roughness_to_smoothness(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
-  - `TextureProcessor.convert_specular_to_roughness(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
-  - `TextureProcessor.convert_dx_to_gl(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'`
-  - `TextureProcessor.convert_gl_to_dx(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'`
-  - `TextureProcessor.convert_bump_to_normal(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'`
-  - `TextureProcessor.extract_gloss_from_spec(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
-  - `TextureProcessor.copy_map(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']` — Simple copy/rename for compatible maps (e.g.
-  - `TextureProcessor.unpack_metallic_smoothness(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack and cache results.
-  - `TextureProcessor.get_metallic_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_smoothness_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_roughness_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.unpack_msao(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack MSAO and cache results.
-  - `TextureProcessor.get_metallic_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_smoothness_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_roughness_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_ao_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.unpack_mrao(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack MRAO and cache results.
-  - `TextureProcessor.get_metallic_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_roughness_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_smoothness_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_ao_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.unpack_orm(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack ORM and cache results.
-  - `TextureProcessor.get_ao_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_roughness_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_smoothness_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_metallic_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.unpack_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack Albedo+Transparency and cache results.
-  - `TextureProcessor.get_base_color_from_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.get_opacity_from_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
-  - `TextureProcessor.create_orm_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create ORM map from components.
-  - `TextureProcessor.create_mrao_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create MRAO (Metallic R / Roughness G / AO B) map from components.
-  - `TextureProcessor.create_mask_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create Mask Map (MSAO) from components.
-  - `TextureProcessor.create_metallic_smoothness_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create Metallic-Smoothness map from components.
-- **[`class WorkflowHandler(ABC)`](pythontk/pythontk/img_utils/map_factory.py#L1057)** — Abstract base for workflow-specific map processing.
-  - `WorkflowHandler.can_handle(self, context: TextureProcessor) -> bool` — Check if this handler should process the workflow.
-  - `WorkflowHandler.process(self, context: TextureProcessor) -> Optional[str]` — Process and return the output map path.
-  - `WorkflowHandler.get_consumed_types(self) -> List[str]` — Return list of map types this handler consumes.
-  - `WorkflowHandler.is_explicitly_requested(self, context: TextureProcessor, map_type: str) -> bool` — Check if a map type is explicitly requested in the config.
-- **[`class ORMMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1088)** — Handles Unreal Engine / glTF ORM packing.
-  - `ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
-  - `ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
-  - `ORMMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1177)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
-  - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
-  - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
-  - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1287)** — Handles Unity HDRP Mask Map (MSAO).
-  - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
-  - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
-  - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1395)** — Handles packed Metallic+Smoothness.
-  - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
-  - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
-  - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1480)** — Handles separate metallic and roughness maps.
-  - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
-  - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
-  - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1521)** — Handles base color / albedo with optional packing.
-  - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
-  - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
-  - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1661)** — Handles normal map format conversion.
-  - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
-  - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
-  - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory.py#L1824)** — Handles outputting fallback maps for failed requests.
-  - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
-  - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
-  - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/img_utils/map_factory.py#L1892)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/img_utils/map_factory/_map_factory.py#L59)** — Refactored factory with pluggable workflow system.
   - `MapFactory.register_conversions(cls, registry: ConversionRegistry)` *(class)* — Register all standard PBR conversions.
   - `MapFactory.resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str` *(class)* — Resolves the map type from a filename or alias using `map_types`.
   - `MapFactory.resolve_texture_filename(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str` *(class)* — Generates a correctly formatted filename while preserving the original suffix and file extension.
@@ -636,6 +609,107 @@ Texture Map Factory for PBR workflow preparation - Refactored.
   - `MapFactory.unpack_metallic_smoothness(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Metallic (RGB) and Smoothness (A) from a combined map.
   - `MapFactory.unpack_specular_gloss(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]` *(class)* — Unpacks Specular (RGB) and Glossiness (A) from a combined map.
 
+<a id="img_utils--map_factory--conversions"></a>
+### `img_utils/map_factory/conversions.py`
+
+Map-conversion registry primitives for the texture MapFactory.
+
+- **[`class MapConversion`](pythontk/pythontk/img_utils/map_factory/conversions.py#L17)** — Defines a single map conversion operation.
+- **[`class ConversionRegistry`](pythontk/pythontk/img_utils/map_factory/conversions.py#L26)** — Central registry for all map type conversions.
+  - `ConversionRegistry.add_plugin(self, cls)` — Register a class to be scanned for conversions later.
+  - `ConversionRegistry.register(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)` — Register a new conversion strategy.
+  - `ConversionRegistry.register_from_class(self, cls)` — Register all decorated conversion methods from a class.
+  - `ConversionRegistry.get_conversions_for(self, target_type: str) -> List[MapConversion]` — Get all conversions that can produce target type.
+
+<a id="img_utils--map_factory--handlers"></a>
+### `img_utils/map_factory/handlers.py`
+
+Workflow handlers (Strategy pattern) for the texture MapFactory.
+
+- **[`class WorkflowHandler(ABC)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L25)** — Abstract base for workflow-specific map processing.
+  - `WorkflowHandler.can_handle(self, context: TextureProcessor) -> bool` — Check if this handler should process the workflow.
+  - `WorkflowHandler.process(self, context: TextureProcessor) -> Optional[str]` — Process and return the output map path.
+  - `WorkflowHandler.get_consumed_types(self) -> List[str]` — Return list of map types this handler consumes.
+  - `WorkflowHandler.is_explicitly_requested(self, context: TextureProcessor, map_type: str) -> bool` — Check if a map type is explicitly requested in the config.
+- **[`class ORMMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L56)** — Handles Unreal Engine / glTF ORM packing.
+  - `ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+  - `ORMMapHandler.get_consumed_types(self) -> List[str]`
+- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L145)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
+  - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+  - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
+- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L255)** — Handles Unity HDRP Mask Map (MSAO).
+  - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+  - `MaskMapHandler.get_consumed_types(self) -> List[str]`
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L363)** — Handles packed Metallic+Smoothness.
+  - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
+  - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L448)** — Handles separate metallic and roughness maps.
+  - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
+  - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
+- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L489)** — Handles base color / albedo with optional packing.
+  - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
+  - `BaseColorHandler.get_consumed_types(self) -> List[str]`
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L629)** — Handles normal map format conversion.
+  - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+  - `NormalMapHandler.get_consumed_types(self) -> List[str]`
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L792)** — Handles outputting fallback maps for failed requests.
+  - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
+  - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
+  - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
+
+<a id="img_utils--map_factory--processor"></a>
+### `img_utils/map_factory/processor.py`
+
+``TextureProcessor`` -- shared processing context for the MapFactory.
+
+- **[`class TextureProcessor`](pythontk/pythontk/img_utils/map_factory/processor.py#L42)** — Shared context and processor for all map operations.
+  - `TextureProcessor.get_cached_image(self, path: str) -> 'Image.Image'` — Load an image with caching to avoid redundant disk I/O.
+  - `TextureProcessor.save_map(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str` — Saves and optimizes a map, enforcing mode and naming conventions.
+  - `TextureProcessor.resolve_map(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]` — Intelligently resolve a map from inventory with fallback conversions.
+  - `TextureProcessor.mark_used(self, *map_types: str)` — Mark map types as consumed.
+  - `TextureProcessor.convert_specular_to_metallic(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+  - `TextureProcessor.convert_smoothness_to_roughness(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+  - `TextureProcessor.convert_roughness_to_smoothness(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+  - `TextureProcessor.convert_specular_to_roughness(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+  - `TextureProcessor.convert_dx_to_gl(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+  - `TextureProcessor.convert_gl_to_dx(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+  - `TextureProcessor.convert_bump_to_normal(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+  - `TextureProcessor.extract_gloss_from_spec(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+  - `TextureProcessor.copy_map(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']` — Simple copy/rename for compatible maps (e.g.
+  - `TextureProcessor.unpack_metallic_smoothness(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack and cache results.
+  - `TextureProcessor.get_metallic_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_smoothness_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_roughness_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.unpack_msao(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack MSAO and cache results.
+  - `TextureProcessor.get_metallic_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_smoothness_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_roughness_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_ao_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.unpack_mrao(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack MRAO and cache results.
+  - `TextureProcessor.get_metallic_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_roughness_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_smoothness_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_ao_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.unpack_orm(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack ORM and cache results.
+  - `TextureProcessor.get_ao_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_roughness_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_smoothness_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_metallic_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.unpack_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> None` — Helper to unpack Albedo+Transparency and cache results.
+  - `TextureProcessor.get_base_color_from_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.get_opacity_from_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+  - `TextureProcessor.create_orm_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create ORM map from components.
+  - `TextureProcessor.create_mrao_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create MRAO (Metallic R / Roughness G / AO B) map from components.
+  - `TextureProcessor.create_mask_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create Mask Map (MSAO) from components.
+  - `TextureProcessor.create_metallic_smoothness_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'` — Create Metallic-Smoothness map from components.
+
 <a id="img_utils--map_optimizer"></a>
 ### `img_utils/map_optimizer.py`
 
@@ -669,6 +743,15 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapRegistry.get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]` — Generate the map backgrounds dictionary.
   - `MapRegistry.get_map_modes(self) -> Dict[str, str]` — Generate the map modes dictionary.
   - `MapRegistry.resolve_config(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]` — Resolve configuration from presets, dicts, and kwargs.
+
+<a id="img_utils--mask_generator"></a>
+### `img_utils/mask_generator.py`
+
+Background mask generation via rembg (optional dependency).
+
+- **[`class MaskGenerator`](pythontk/pythontk/img_utils/mask_generator.py#L41)** — Run rembg over a directory of images and write binary masks.
+  - `MaskGenerator.is_available(self) -> bool`
+  - `MaskGenerator.generate_masks(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]` — Generate alpha-channel masks for every image in ``input_dir``.
 
 <a id="iter_utils--_iter_utils"></a>
 ### `iter_utils/_iter_utils.py`
@@ -761,7 +844,7 @@ Plan, assess, and apply map (texture) optimizations.
 <a id="net_utils--credentials"></a>
 ### `net_utils/credentials.py`
 
-- **[`class Credentials`](pythontk/pythontk/net_utils/credentials.py#L19)** — Abstractions for OS-level secure credential storage.
+- **[`class Credentials`](pythontk/pythontk/net_utils/credentials.py#L21)** — Abstractions for OS-level secure credential storage.
   - `Credentials.get_password(target_name: str) -> str` *(static)* — Retrieve a password from the OS secure store or environment.
   - `Credentials.get_credential(target_name: str) -> dict | None` *(static)* — Retrieve full credentials (username and password).
   - `Credentials.set_credential(target_name: str, username: str, password: str, persist: str = 'local_machine') -> bool` *(static)* — Save credentials to the OS secure store.
@@ -863,7 +946,9 @@ One-shot batch pipeline over :class:`RpcClient`.
 
 Extract still frames from a video file via OpenCV.
 
-- [`extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]`](pythontk/pythontk/vid_utils/frame_extractor.py#L143) — Convenience wrapper around :meth:`FrameExtractor.extract_frames`.
+- [`extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]`](pythontk/pythontk/vid_utils/frame_extractor.py#L250) — Convenience wrapper around :meth:`FrameExtractor.extract_frames`.
 - **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L25)** — Extract frames from a video file at a configurable step interval.
+  - `FrameExtractor.score_sharpness(frame) -> float` *(static)* — Variance-of-Laplacian sharpness score.
   - `FrameExtractor.extract_frames(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]` — Save every ``step``-th frame from ``video_path`` to ``output_folder``.
+  - `FrameExtractor.extract_frames_sharpest(self, video_path: str, output_folder: str, window_sec: float = 1.0, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None, min_sharpness: float = 0.0) -> List[str]` — Bucket frames by time window;
   - `FrameExtractor.get_video_info(self, video_path: str) -> dict` — Return metadata for ``video_path`` (filename, frame count, fps,

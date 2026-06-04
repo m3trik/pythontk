@@ -200,5 +200,48 @@ class TestAppLauncher(unittest.TestCase):
                 self.assertEqual(found, exe_path)
 
 
+class TestAppLauncherSessions(unittest.TestCase):
+    """Interactive-session detection + launch (added for headless DCC/SDK driving)."""
+
+    def test_session_id_types(self):
+        sid = AppLauncher.current_session_id()
+        self.assertTrue(sid is None or isinstance(sid, int))
+        acsid = AppLauncher.active_console_session_id()
+        self.assertTrue(acsid is None or isinstance(acsid, int))
+        self.assertIsInstance(AppLauncher.is_interactive_session(), bool)
+
+    def test_find_session_launcher_explicit(self):
+        import tempfile
+
+        fd, p = tempfile.mkstemp(suffix="PsExec64.exe")
+        os.close(fd)
+        try:
+            self.assertEqual(AppLauncher.find_session_launcher(explicit=p), p)
+        finally:
+            os.remove(p)
+
+    def test_find_session_launcher_missing_is_none_or_real(self):
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"PSEXEC": ""}, clear=False):
+            res = AppLauncher.find_session_launcher(explicit="Z:/nope/PsExec64.exe")
+            # Either nothing found, or a genuine PsExec present on this host.
+            self.assertTrue(res is None or os.path.isfile(res))
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows-only API")
+    def test_launch_in_session_no_launcher_raises(self):
+        from unittest.mock import patch
+
+        with patch.object(AppLauncher, "find_session_launcher", return_value=None):
+            # Target a session that is not the current one to force the PsExec path.
+            with self.assertRaises(RuntimeError):
+                AppLauncher.launch_in_session("notepad", session=99999)
+
+    @unittest.skipIf(sys.platform == "win32", "non-Windows guard path")
+    def test_launch_in_session_non_windows_raises(self):
+        with self.assertRaises(RuntimeError):
+            AppLauncher.launch_in_session("ls", session=1)
+
+
 if __name__ == "__main__":
     unittest.main()

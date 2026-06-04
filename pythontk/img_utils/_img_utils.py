@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import math
 import re
+import struct
 
 from contextlib import contextmanager
 from typing import List, Tuple, Dict, Union, Any, Optional, TYPE_CHECKING
@@ -351,6 +352,78 @@ class ImgUtils(HelpMixin):
             images[f] = im
 
         return images
+
+    @staticmethod
+    def _image_size_from_header(image_path: str) -> Optional[Tuple[int, int]]:
+        """``(width, height)`` from a JPEG/PNG header using only the stdlib.
+
+        Reads the dimensions out of the file header — no PIL, numpy, or cv2 — so
+        it works in dependency-light interpreters (e.g. Metashape's bundled
+        Python). ``None`` for an unrecognized or truncated file.
+        """
+        try:
+            with open(image_path, "rb") as f:
+                head = f.read(24)
+                # PNG: 8-byte signature, then IHDR chunk (width,height big-endian u32).
+                if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+                    w, h = struct.unpack(">II", head[16:24])
+                    return int(w), int(h)
+                # JPEG: SOI 0xFFD8, then scan segments for a Start-Of-Frame marker.
+                if head[:2] == b"\xff\xd8":
+                    f.seek(2)
+                    while True:
+                        b = f.read(1)
+                        if not b:
+                            return None
+                        if b != b"\xff":
+                            continue
+                        marker = f.read(1)
+                        while marker == b"\xff":          # skip fill bytes
+                            marker = f.read(1)
+                        if not marker:
+                            return None
+                        m = marker[0]
+                        if 0xD0 <= m <= 0xD9:             # RSTn / SOI / EOI: no length
+                            continue
+                        lb = f.read(2)
+                        if len(lb) < 2:
+                            return None
+                        seglen = struct.unpack(">H", lb)[0]
+                        if seglen < 2:  # invalid: length includes its own 2 bytes
+                            return None  # guards against a backward-seek infinite loop
+                        # SOF0..SOF15 carry the frame size (excl. DHT/JPG/DAC: C4/C8/CC).
+                        if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
+                            f.read(1)                     # sample precision
+                            hw = f.read(4)
+                            if len(hw) < 4:
+                                return None
+                            h, w = struct.unpack(">HH", hw)
+                            return int(w), int(h)
+                        f.seek(seglen - 2, 1)             # skip to next segment
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def get_image_size(image_path: str) -> Optional[Tuple[int, int]]:
+        """``(width, height)`` of an image, read as cheaply as possible.
+
+        Parses the JPEG/PNG header with the **stdlib only** (no PIL/numpy/cv2),
+        so it works in dependency-light interpreters such as Metashape's bundled
+        Python; falls back to PIL for other formats when available. ``None`` if
+        the size can't be determined. Use this (not :meth:`get_image_info`) when
+        you need only the dimensions and can't assume PIL is installed.
+        """
+        size = ImgUtils._image_size_from_header(image_path)
+        if size:
+            return size
+        if Image is not None:
+            try:
+                with Image.open(image_path) as im:
+                    return int(im.size[0]), int(im.size[1])
+            except Exception:
+                pass
+        return None
 
     @classmethod
     def get_image_info(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]:

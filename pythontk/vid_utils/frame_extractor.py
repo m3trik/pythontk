@@ -23,9 +23,28 @@ logger = logging.getLogger(__name__)
 
 
 class FrameExtractor:
-    """Extract frames from a video file at a configurable step interval."""
+    """Extract frames from a video file at a configurable step interval.
+
+    Also exposes quality-aware extraction:
+
+    * :meth:`extract_frames_sharpest` — bucket frames by time window and
+      save only the sharpest per bucket (variance-of-Laplacian).
+    * :meth:`score_sharpness` — module helper for callers that want to
+      score arbitrary images.
+    """
 
     SUPPORTED_FORMATS = (".mp4", ".avi", ".mov", ".mkv", ".wmv", ".m4v")
+
+    @staticmethod
+    def score_sharpness(frame) -> float:
+        """Variance-of-Laplacian sharpness score. Higher == sharper.
+
+        Returns 0.0 when cv2 is unavailable. Accepts a BGR ndarray.
+        """
+        if not CV2_AVAILABLE:
+            return 0.0
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
     def extract_frames(
         self,
@@ -101,6 +120,94 @@ class FrameExtractor:
 
         logger.info(f"Extracted {len(saved_frames)} frames from {video_path}")
         return saved_frames
+
+    def extract_frames_sharpest(
+        self,
+        video_path: str,
+        output_folder: str,
+        window_sec: float = 1.0,
+        quality: int = 95,
+        prefix: str = "frame",
+        max_frames: Optional[int] = None,
+        min_sharpness: float = 0.0,
+    ) -> List[str]:
+        """Bucket frames by time window; save the sharpest per bucket.
+
+        Tuned for handheld video — fixed-step extraction is wasteful when
+        the camera is still and starves overlap when it moves quickly.
+        Sharpest-of-window picks a useful frame from every part of the
+        timeline regardless of pacing.
+
+        Parameters:
+            window_sec: Bucket size in seconds. 1.0 means "one frame per
+                second of source video, but pick the sharpest of each
+                second's worth of frames."
+            min_sharpness: Reject windows whose best score is below this
+                floor (0 = accept all). Use to skip blank-wall / sky
+                segments.
+        """
+        if not CV2_AVAILABLE:
+            logger.error("OpenCV not available; cannot extract frames.")
+            return []
+        if not os.path.exists(video_path):
+            logger.error(f"Video file does not exist: {video_path}")
+            return []
+
+        os.makedirs(output_folder, exist_ok=True)
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            logger.error(f"Failed to open video: {video_path}")
+            return []
+
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        window_frames = max(1, int(round(window_sec * fps)))
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        logger.info(
+            f"Sharpest-of-window: window={window_sec}s ({window_frames} frames), "
+            f"source={total} frames @ {fps:.2f} fps"
+        )
+
+        saved: List[str] = []
+        best_score = -1.0
+        best_frame = None
+        best_index = 0
+        bucket_start = 0
+        idx = 0
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                score = FrameExtractor.score_sharpness(frame)
+                if score > best_score:
+                    best_score = score
+                    best_frame = frame.copy()
+                    best_index = idx
+                idx += 1
+                if idx - bucket_start >= window_frames:
+                    if best_frame is not None and best_score >= min_sharpness:
+                        out = os.path.join(
+                            output_folder, f"{prefix}_{best_index:06d}.jpg"
+                        )
+                        if cv2.imwrite(out, best_frame,
+                                       [cv2.IMWRITE_JPEG_QUALITY, quality]):
+                            saved.append(out)
+                            if max_frames and len(saved) >= max_frames:
+                                break
+                    bucket_start = idx
+                    best_score = -1.0
+                    best_frame = None
+            # flush the trailing partial bucket
+            if (best_frame is not None and best_score >= min_sharpness
+                    and (not max_frames or len(saved) < max_frames)):
+                out = os.path.join(output_folder, f"{prefix}_{best_index:06d}.jpg")
+                if cv2.imwrite(out, best_frame, [cv2.IMWRITE_JPEG_QUALITY, quality]):
+                    saved.append(out)
+        finally:
+            cap.release()
+
+        logger.info(f"Sharpest-of-window kept {len(saved)} frames from {video_path}")
+        return saved
 
     def get_video_info(self, video_path: str) -> dict:
         """Return metadata for ``video_path`` (filename, frame count, fps,

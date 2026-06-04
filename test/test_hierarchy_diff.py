@@ -12,7 +12,7 @@ import os
 import tempfile
 import unittest
 
-from pythontk.core_utils.hierarchy_diff import HierarchyDiff
+from pythontk.core_utils.hierarchy_utils.hierarchy_diff import HierarchyDiff
 
 from conftest import BaseTestCase
 

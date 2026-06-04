@@ -4,6 +4,8 @@
 Subprocess-based dialog viewer for custom button labels.
 This runs in a separate process to avoid blocking issues with the main application.
 """
+from __future__ import annotations
+
 import sys
 import tkinter as tk
 from tkinter import ttk

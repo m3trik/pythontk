@@ -22,6 +22,8 @@ Refresh manually: `python m3trik/scripts/generate_api_registry.py pythontk` — 
 
 - `AudioUtils` — ffmpeg-backed audio conversion and WAV compositing (shared by mayatk audio events).
 - `AppLauncher` — subprocess launcher (used by mayatk's MayaConnection; do not bypass with raw subprocess).
+- `MapFactory` — PBR texture-map orchestrator. Now a package (`img_utils/map_factory/`): `conversions` (registry) → `processor` (`TextureProcessor` context) → `handlers` (workflow strategies) → `_map_factory` (orchestrator). Public path unchanged.
+- **Photogrammetry/SfM ingest cluster** — general-purpose media primitives that compose (in `extapps`' metashape/realityscan workflows) into a capture pipeline; placed by data type, not domain, so each stays reusable on its own: `FrameExtractor` (vid_utils), `ExposureEqualizer`/`ImageCurator`/`MaskGenerator` (img_utils), `QcLog`/`QcGate` (core_utils).
 
 ## Run tests
 
