@@ -1048,6 +1048,65 @@ class MathTest(BaseTestCase):
         rounded = MathUtils.catenary_sag(-1.0 + 1e-3, 3.0, 1.0)
         self.assertLess(rounded, crisp)
 
+    # -------------------------------------------------------------------------
+    # Point/segment distance + Ramer-Douglas-Peucker simplification
+    # -------------------------------------------------------------------------
+    def test_point_segment_distance_perpendicular_and_clamped(self):
+        a, b = (0, 0, 0), (10, 0, 0)
+        # straight above the middle -> perpendicular distance
+        self.assertAlmostEqual(MathUtils.point_segment_distance((5, 3, 0), a, b), 3.0)
+        # past the end -> clamps to the endpoint b (not the infinite line)
+        self.assertAlmostEqual(MathUtils.point_segment_distance((13, 4, 0), a, b), 5.0)
+        # on the segment -> zero
+        self.assertAlmostEqual(MathUtils.point_segment_distance((7, 0, 0), a, b), 0.0)
+
+    def test_point_segment_distance_degenerate(self):
+        # zero-length segment -> distance to the single point
+        self.assertAlmostEqual(
+            MathUtils.point_segment_distance((3, 4, 0), (0, 0, 0), (0, 0, 0)), 5.0
+        )
+
+    def test_simplify_rdp_collapses_straight_run(self):
+        # collinear points collapse to just the two endpoints
+        pts = [(x, 0, 0) for x in range(11)]
+        self.assertEqual(MathUtils.simplify_rdp(pts, 0.01), [0, 10])
+
+    def test_simplify_rdp_keeps_corner(self):
+        # an L: the corner must survive (it's the max-deviation point)
+        pts = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (2, 1, 0), (2, 2, 0)]
+        kept = MathUtils.simplify_rdp(pts, 0.1)
+        self.assertEqual(kept[0], 0)
+        self.assertEqual(kept[-1], len(pts) - 1)
+        self.assertIn(2, kept)  # the corner vertex
+
+    def test_simplify_rdp_concentrates_on_bends(self):
+        # straight ends with a sharp middle bend: kept points cluster at the
+        # bend, the straight runs contribute (almost) nothing.
+        pts = (
+            [(x, 0.0, 0.0) for x in range(0, 10)]
+            + [(10, 0, 0), (10.5, 1.5, 0), (11, 0, 0)]
+            + [(x, 0.0, 0.0) for x in range(12, 21)]
+        )
+        kept = MathUtils.simplify_rdp(pts, 0.2)
+        bend_lo, bend_hi = 9, 13  # index window around the bend
+        in_bend = sum(1 for i in kept if bend_lo <= i <= bend_hi)
+        on_straight = sum(1 for i in kept if i < bend_lo or i > bend_hi)
+        self.assertGreater(in_bend, on_straight)
+        # tighter tolerance -> at least as many points kept (monotone refinement)
+        self.assertGreaterEqual(len(MathUtils.simplify_rdp(pts, 0.05)), len(kept))
+
+    def test_simplify_rdp_edge_cases(self):
+        self.assertEqual(MathUtils.simplify_rdp([], 0.1), [])
+        self.assertEqual(MathUtils.simplify_rdp([(0, 0, 0)], 0.1), [0])
+        self.assertEqual(MathUtils.simplify_rdp([(0, 0, 0), (1, 1, 1)], 0.1), [0, 1])
+        # tolerance <= 0 keeps everything
+        pts = [(0, 0, 0), (1, 0.01, 0), (2, 0, 0)]
+        self.assertEqual(MathUtils.simplify_rdp(pts, 0.0), [0, 1, 2])
+
+    def test_simplify_rdp_works_in_2d(self):
+        pts = [(0, 0), (1, 0), (2, 0), (2, 2)]
+        self.assertEqual(MathUtils.simplify_rdp(pts, 0.1), [0, 2, 3])
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)
