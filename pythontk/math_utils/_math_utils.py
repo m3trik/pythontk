@@ -1608,6 +1608,86 @@ class MathUtils(HelpMixin):
         return smoothed_points
 
     @staticmethod
+    def point_segment_distance(
+        p: Sequence[float], a: Sequence[float], b: Sequence[float]
+    ) -> float:
+        """Perpendicular distance from point ``p`` to the segment ``a``-``b``.
+
+        Works in any dimension (uses the shortest common length of the inputs);
+        clamps to the segment endpoints, so a point past an end measures to that
+        end rather than the infinite line.
+
+        Parameters:
+            p (Sequence[float]): The query point.
+            a (Sequence[float]): Segment start.
+            b (Sequence[float]): Segment end.
+
+        Returns:
+            float: The Euclidean distance from ``p`` to the closest point on the
+            segment.
+        """
+        n = min(len(p), len(a), len(b))
+        ab = [b[i] - a[i] for i in range(n)]
+        ap = [p[i] - a[i] for i in range(n)]
+        denom = sum(c * c for c in ab)
+        if denom < 1e-24:  # degenerate segment -> distance to the point ``a``
+            return sum(c * c for c in ap) ** 0.5
+        t = sum(ap[i] * ab[i] for i in range(n)) / denom
+        t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
+        return sum((ap[i] - t * ab[i]) ** 2 for i in range(n)) ** 0.5
+
+    @classmethod
+    def simplify_rdp(
+        cls, points: Sequence[Sequence[float]], tolerance: float
+    ) -> List[int]:
+        """Ramer-Douglas-Peucker indices: which points to keep to stay within
+        ``tolerance`` of the original polyline.
+
+        The classic curve-simplification / flattening algorithm. It keeps the
+        endpoints, then recursively keeps the point of greatest deviation from
+        the current chord while that deviation exceeds ``tolerance`` — so the
+        retained points **concentrate where the polyline bends** (corners, tight
+        arcs) and near-collinear runs collapse to their endpoints. Ideal for
+        deciding *where to spend* samples/divisions along a curve.
+
+        Iterative (explicit stack) so it is safe on very dense polylines. Points
+        may be any fixed dimension (2D, 3D, …).
+
+        Parameters:
+            points (Sequence[Sequence[float]]): The ordered polyline vertices.
+            tolerance (float): Max allowed deviation (same units as ``points``).
+                Smaller keeps more points; ``<= 0`` keeps every point.
+
+        Returns:
+            (list) Sorted indices into ``points`` to keep (always includes the
+            first and last). For ``< 3`` points, all indices are returned.
+        """
+        n = len(points)
+        if n < 3:
+            return list(range(n))
+        if tolerance <= 0:
+            return list(range(n))
+
+        keep = [False] * n
+        keep[0] = keep[n - 1] = True
+        stack = [(0, n - 1)]
+        while stack:
+            i, j = stack.pop()
+            if j <= i + 1:
+                continue
+            a, b = points[i], points[j]
+            d_max, idx = -1.0, -1
+            for k in range(i + 1, j):
+                d = cls.point_segment_distance(points[k], a, b)
+                if d > d_max:
+                    d_max, idx = d, k
+            if d_max > tolerance:
+                keep[idx] = True
+                stack.append((i, idx))
+                stack.append((idx, j))
+        return [i for i in range(n) if keep[i]]
+
+    @staticmethod
     def nearest_power_of_two(value: int) -> int:
         """Finds the nearest power of two for a given integer without using the math module.
 
