@@ -1270,30 +1270,48 @@ class MathUtils(HelpMixin):
 
     @classmethod
     def catenary_sag(
-        cls, t: float, tension: float, round_amount: float = 0.0
+        cls,
+        t: float,
+        tension: float,
+        round_amount: float = 0.0,
+        gather: float = 0.0,
     ) -> float:
-        """Catenary sag profile, optionally rounded toward ``sin²`` at the supports.
+        """Catenary sag profile, optionally rounded / gathered at the supports.
 
         A pure catenary meets each support with a non-zero slope, so adjacent
         spans form a sharp cusp there. Blending toward ``sin²(πs)`` (zero slope
         at both ends) rounds that cusp into a smooth dome. The center peak stays
         ``1`` either way.
 
+        ``gather`` adds an orthogonal *push-pull* lobe at each support — the
+        ``ring²·(2.4 − 3.4·ring)`` shape (``ring = cos²(πs)``): the profile
+        lifts **above** the baseline right at the support (a gathered-header
+        pucker rising above the rail — the *push*) and **dips** just inside it
+        as the slack falls off (the *pull*), easing back to ``0`` by mid-span so
+        the center sag is untouched. Independent of ``round_amount``.
+
         Parameters:
             t (float): Centered span coordinate (``-1``..``1``; ``0`` = center).
             tension (float): Catenary shape parameter (see :meth:`catenary`).
             round_amount (float): ``0``..``1`` blend — ``0`` keeps the crisp
                 catenary, ``1`` is fully rounded.
+            gather (float): ``≥0`` push-pull overshoot at the supports (``0`` =
+                none). At ``1`` the support lifts a full sag-unit above the
+                baseline with a ``~0.18`` sag dip just inside.
 
         Returns:
-            float: Profile value in ``0``..``1``.
+            float: Profile value (``0``..``1`` for ``gather == 0``; dips below
+                ``0`` near the supports when ``gather > 0``).
         """
         cat = cls.catenary(t, tension)
-        if round_amount <= 0.0:
-            return cat
-        s = (t + 1.0) * 0.5  # back to 0..1 within the span
-        rounded = math.sin(math.pi * s) ** 2
-        return cat + (rounded - cat) * min(1.0, round_amount)
+        if round_amount > 0.0:
+            s = (t + 1.0) * 0.5  # back to 0..1 within the span
+            rounded = math.sin(math.pi * s) ** 2
+            cat += (rounded - cat) * min(1.0, round_amount)
+        if gather > 0.0:
+            ring = math.cos(math.pi * (t + 1.0) * 0.5) ** 2  # 1 at supports, 0 center
+            cat += gather * ring * ring * (2.4 - 3.4 * ring)
+        return cat
 
     @staticmethod
     def evaluate_sampled_progress(

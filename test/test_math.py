@@ -1048,6 +1048,29 @@ class MathTest(BaseTestCase):
         rounded = MathUtils.catenary_sag(-1.0 + 1e-3, 3.0, 1.0)
         self.assertLess(rounded, crisp)
 
+    def test_catenary_sag_gather_pushes_at_support_and_pulls_inside(self):
+        # gather lifts the profile above the baseline AT the support (a gathered
+        # pucker rising above the rail = negative sag) and adds extra sag just
+        # inside it as the slack falls off; the center sag stays untouched.
+        self.assertLess(MathUtils.catenary_sag(-1.0, 1.5, 0.0, gather=1.0), 0.0)
+        self.assertGreater(
+            MathUtils.catenary_sag(-0.5, 1.5, 0.0, gather=1.0),
+            MathUtils.catenary(-0.5, 1.5),
+        )
+        self.assertAlmostEqual(
+            MathUtils.catenary_sag(0.0, 1.5, 0.0, gather=1.0),
+            MathUtils.catenary(0.0, 1.5),
+            places=9,
+        )
+
+    def test_catenary_sag_gather_off_matches_catenary(self):
+        for t in (-1.0, -0.3, 0.0, 0.4, 1.0):
+            self.assertAlmostEqual(
+                MathUtils.catenary_sag(t, 1.5, 0.0, gather=0.0),
+                MathUtils.catenary(t, 1.5),
+                places=9,
+            )
+
     # -------------------------------------------------------------------------
     # Point/segment distance + Ramer-Douglas-Peucker simplification
     # -------------------------------------------------------------------------
