@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-05_
+_Generated: 2026-06-07_
 
 ## Index
 
@@ -803,7 +803,7 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.smoothstep(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float` *(static)* — Canonical clamped Hermite smoothstep (``3t² − 2t³``).
   - `MathUtils.ricker(x: float) -> float` *(static)* — Ricker (Mexican-hat) wavelet — a unit ridge flanked by two balanced
   - `MathUtils.catenary(t: float, tension: float) -> float` *(static)* — Normalized catenary (``cosh``) profile across a span.
-  - `MathUtils.catenary_sag(cls, t: float, tension: float, round_amount: float = 0.0) -> float` *(class)* — Catenary sag profile, optionally rounded toward ``sin²`` at the supports.
+  - `MathUtils.catenary_sag(cls, t: float, tension: float, round_amount: float = 0.0, gather: float = 0.0) -> float` *(class)* — Catenary sag profile, optionally rounded / gathered at the supports.
   - `MathUtils.evaluate_sampled_progress(time_value: float, sample_times: Sequence[float], progress: Sequence[float], tolerance: float = 1e-06) -> float` *(static)* — Interpolate normalized progress from sampled time/progress pairs.
   - `MathUtils.generate_geometric_sequence(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]` — Generate a geometric sequence.
   - `MathUtils.remap(value: Union[float, List[Any], Tuple[Any, ...], 'np.ndarray'], old_range: Tuple[float, float], new_range: Tuple[float, float], clamp: bool = False) -> Union[float, List[Any], Tuple[Any, ...], 'np.ndarray']` *(static)* — Remaps a value, list, or tuple of varying sizes from one range to another.
