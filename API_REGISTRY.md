@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-04_
+_Generated: 2026-06-08_
 
 ## Index
 
@@ -803,7 +803,7 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.smoothstep(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float` *(static)* — Canonical clamped Hermite smoothstep (``3t² − 2t³``).
   - `MathUtils.ricker(x: float) -> float` *(static)* — Ricker (Mexican-hat) wavelet — a unit ridge flanked by two balanced
   - `MathUtils.catenary(t: float, tension: float) -> float` *(static)* — Normalized catenary (``cosh``) profile across a span.
-  - `MathUtils.catenary_sag(cls, t: float, tension: float, round_amount: float = 0.0) -> float` *(class)* — Catenary sag profile, optionally rounded toward ``sin²`` at the supports.
+  - `MathUtils.catenary_sag(cls, t: float, tension: float, round_amount: float = 0.0, gather: float = 0.0) -> float` *(class)* — Catenary sag profile, optionally rounded / gathered at the supports.
   - `MathUtils.evaluate_sampled_progress(time_value: float, sample_times: Sequence[float], progress: Sequence[float], tolerance: float = 1e-06) -> float` *(static)* — Interpolate normalized progress from sampled time/progress pairs.
   - `MathUtils.generate_geometric_sequence(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]` — Generate a geometric sequence.
   - `MathUtils.remap(value: Union[float, List[Any], Tuple[Any, ...], 'np.ndarray'], old_range: Tuple[float, float], new_range: Tuple[float, float], clamp: bool = False) -> Union[float, List[Any], Tuple[Any, ...], 'np.ndarray']` *(static)* — Remaps a value, list, or tuple of varying sizes from one range to another.
@@ -812,6 +812,8 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.dist_points_along_centerline(cls, centerline: List[List[float]], num_points: int, reverse: bool = False, interpolation: Callable[[List[List[float]], float], List[float]] = None, start_offset: float = 0.0, end_offset: float = 0.0) -> List[List[float]]` *(class)* — Distributes points evenly along the centerline with optional offsets and custom interpolation.
   - `MathUtils.arrange_points_as_path(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]` *(static)* — Orders a list of points to form a continuous path.
   - `MathUtils.smooth_points(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list` *(static)* — Apply a moving average to smooth a sequence of 3D points.
+  - `MathUtils.point_segment_distance(p: Sequence[float], a: Sequence[float], b: Sequence[float]) -> float` *(static)* — Perpendicular distance from point ``p`` to the segment ``a``-``b``.
+  - `MathUtils.simplify_rdp(cls, points: Sequence[Sequence[float]], tolerance: float) -> List[int]` *(class)* — Ramer-Douglas-Peucker indices: which points to keep to stay within
   - `MathUtils.nearest_power_of_two(value: int) -> int` *(static)* — Finds the nearest power of two for a given integer without using the math module.
   - `MathUtils.is_close_to_whole(value: float, tolerance: float = 0.0001) -> bool` *(static)* — Check if a float value is close to a whole number within tolerance.
   - `MathUtils.round_value(value: float, mode: str = 'none', max_distance: float = 1.5) -> Union[int, float]` *(static)* — General-purpose rounding function with multiple modes.
