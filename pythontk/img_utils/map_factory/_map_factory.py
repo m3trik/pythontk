@@ -69,6 +69,9 @@ class MapFactory(LoggingMixin):
         "rename": False,
         "mask_map_scale": 1.0,
         "output_extension": None,
+        # When set (a WF profile key), per-map output format is resolved from the
+        # profile's output template instead of the single global output_extension.
+        "output_profile": None,
         "use_input_fallbacks": True,
         "use_output_fallbacks": True,
         # Workflow flags
@@ -1074,6 +1077,7 @@ class MapFactory(LoggingMixin):
             output_dir=output_dir or os.path.dirname(reference_path),
             base_name=MapFactory.get_base_texture_name(reference_path),
             ext=workflow_config.get("output_extension", "png"),
+            output_profile=workflow_config.get("output_profile"),
             conversion_registry=MapFactory._conversion_registry,
             logger=logger or MapFactory.logger,
         )
@@ -1458,7 +1462,7 @@ class MapFactory(LoggingMixin):
             output_path = f"{output_dir}/{name}{new_suffix}.{ext}"
 
         output_path = os.path.abspath(output_path)
-        inverted_image.save(output_path, **kwargs)
+        ImgUtils.save_image(inverted_image, output_path, **kwargs)
         return output_path
 
     @classmethod
@@ -1612,7 +1616,7 @@ class MapFactory(LoggingMixin):
             )
 
         # Save the normal map
-        normal_image.save(output_path, **kwargs)
+        ImgUtils.save_image(normal_image, output_path, **kwargs)
 
         return output_path
 
@@ -1733,9 +1737,9 @@ class MapFactory(LoggingMixin):
             specular_map, "Roughness", ext=output_type
         )
 
-        base_color.save(base_color_file)
-        metallic.save(metallic_file)
-        roughness.save(roughness_file)
+        ImgUtils.save_image(base_color, base_color_file)
+        ImgUtils.save_image(metallic, metallic_file)
+        ImgUtils.save_image(roughness, roughness_file)
 
         print(
             f"PBR Conversion complete. Files saved:\n- {base_color_file}\n- {metallic_file}\n- {roughness_file}"
@@ -2306,7 +2310,7 @@ class MapFactory(LoggingMixin):
         output_path = os.path.join(output_dir, f"{base_name}_Roughness{original_ext}")
 
         # Save the roughness map
-        roughness_image.save(output_path, **kwargs)
+        ImgUtils.save_image(roughness_image, output_path, **kwargs)
 
         return output_path
 
@@ -2359,7 +2363,7 @@ class MapFactory(LoggingMixin):
         output_path = os.path.join(output_dir, f"{base_name}_Smoothness{original_ext}")
 
         # Save the smoothness map
-        smoothness_image.save(output_path, **kwargs)
+        ImgUtils.save_image(smoothness_image, output_path, **kwargs)
 
         return output_path
 

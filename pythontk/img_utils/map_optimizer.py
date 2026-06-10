@@ -36,6 +36,7 @@ from pythontk.file_utils._file_utils import FileUtils
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.img_utils.map_factory import MapFactory
 from pythontk.img_utils.map_registry import MapRegistry
+from pythontk.img_utils.output_template import OutputTemplates
 
 
 # Map-type-driven mode coercion rules. Mirrors the tolerated-mode lists in
@@ -323,6 +324,7 @@ class MapOptimizer(HelpMixin):
         check_existing: bool = False,
         map_type: str = None,
         allow_palette: bool = False,
+        output_profile: str = None,
     ) -> str:
         """Optimizes a texture by resizing, setting bit depth, and adjusting image type.
 
@@ -359,6 +361,18 @@ class MapOptimizer(HelpMixin):
         map_type_key = map_type or MapFactory.resolve_map_type(
             texture_path, key=True
         )
+
+        # When a profile is active, its template drives the output format unless an
+        # explicit output_type override was passed.
+        spec = (
+            OutputTemplates.resolve(map_type_key, output_profile)
+            if output_profile
+            else None
+        )
+        if spec and not output_type:
+            output_type = spec.ext
+        target_bit_depth = spec.bit_depth if spec else None
+        target_compression = spec.compression if spec else None
 
         # Calculate output path early to check for existence
         temp_path = MapFactory.resolve_texture_filename(
@@ -418,9 +432,16 @@ class MapOptimizer(HelpMixin):
                 ),
             )
 
-        save_kwargs = {"optimize": True}
-        image.save(
-            final_output_path, format=output_type or image.format, **save_kwargs
+        # Route through the capability-aware writer (single save SSoT) so the
+        # correct backend handles each format (PIL for most, cv2 for EXR/HDR).
+        # The extension on final_output_path drives format dispatch; the profile
+        # template (if any) supplies bit depth / compression.
+        ImgUtils.save_image(
+            image,
+            final_output_path,
+            optimize=True,
+            bit_depth=target_bit_depth,
+            compression=target_compression,
         )
 
         print(

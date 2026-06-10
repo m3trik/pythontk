@@ -7,8 +7,15 @@ import math
 import re
 import struct
 
+# OpenCV reads this once, when its EXR codec first initializes (often at the
+# first cv2 import). Set it here — pythontk is the ecosystem's EXR/HDR IO entry
+# point and imports cv2 only lazily — so EXR/HDR IO works regardless of when a
+# consumer first touches cv2. ``setdefault`` respects an explicit opt-out.
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+
+from collections import namedtuple
 from contextlib import contextmanager
-from typing import List, Tuple, Dict, Union, Any, Optional, TYPE_CHECKING
+from typing import List, Tuple, Dict, Union, Any, Optional, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from PIL import Image as PILImage
@@ -30,10 +37,48 @@ from pythontk.file_utils._file_utils import FileUtils
 from pythontk.str_utils._str_utils import StrUtils
 
 
+# Per-format IO capability. ``backend`` selects the library used to read/write:
+#   "pil" — Pillow (the default).
+#   "cv2" — OpenCV, for float formats Pillow cannot handle (EXR, HDR).
+ImageFormat = namedtuple("ImageFormat", "read write backend")
+
+
 class ImgUtils(HelpMixin):
     """Helper methods for working with image file formats."""
 
-    texture_file_types = ["png", "jpg", "bmp", "tga", "tiff", "gif", "exr", "hdr"]
+    # ------------------------------------------------------------------
+    # Image-format capability table — single source of truth for which
+    # extensions are textures, whether each can be read/written, and which
+    # backend handles it. The ``recognized`` / ``readable`` / ``writable``
+    # sets below are *derived* from this table so they cannot drift.
+    # ------------------------------------------------------------------
+    image_formats: Dict[str, ImageFormat] = {
+        "png": ImageFormat(True, True, "pil"),
+        "jpg": ImageFormat(True, True, "pil"),
+        "jpeg": ImageFormat(True, True, "pil"),
+        "bmp": ImageFormat(True, True, "pil"),
+        "tga": ImageFormat(True, True, "pil"),
+        "tiff": ImageFormat(True, True, "pil"),
+        "gif": ImageFormat(True, True, "pil"),
+        "dds": ImageFormat(True, True, "pil"),  # DXT-tier; BC7/BC6H unsupported by PIL's writer
+        "exr": ImageFormat(True, True, "cv2"),
+        "hdr": ImageFormat(True, True, "cv2"),
+    }
+
+    recognized = tuple(image_formats)  # discovery / file dialogs
+    readable = tuple(e for e, f in image_formats.items() if f.read)  # load / scan
+    writable = tuple(e for e, f in image_formats.items() if f.write)  # convert / output menus
+
+    # Backward-compatible alias for the historical flat list (discovery surfaces).
+    texture_file_types = list(recognized)
+
+    # DDS block-compression formats Pillow's writer handles directly (no external
+    # tool). BC7 / BC6H are not in this set — they need a registered codec.
+    PIL_DDS_PIXEL_FORMATS = ("DXT1", "DXT3", "DXT5", "BC5")
+
+    # Optional external DDS codec for block formats Pillow can't write (BC7, BC6H).
+    # Registered via :meth:`register_dds_codec`; ``None`` until an extension installs one.
+    _dds_codec = None
 
     bit_depth = {  # Get bit depth from mode.
         "1": 1,
@@ -254,61 +299,175 @@ class ImgUtils(HelpMixin):
         return Image.new(mode, size, color)
 
     @classmethod
-    def save_image(
-        cls, image: Union[str, Image.Image], name: str, mode: str = None, **kwargs
-    ):
+    def register_dds_codec(cls, codec) -> None:
+        """Register an external DDS codec for block formats Pillow can't write.
+
+        Pillow handles :attr:`PIL_DDS_PIXEL_FORMATS` (DXT/BC5) natively; BC7/BC6H
+        need an external tool (e.g. texconv/nvtt). An extension installs one here.
+
+        Parameters:
+            codec: ``callable(im: PIL.Image, name: str, compression: str) -> None``
+                that writes *im* to *name* using the *compression* block format.
         """
-        Saves an image to the specified path, with optional mode conversion.
+        cls._dds_codec = codec
+
+    @classmethod
+    def save_image(
+        cls,
+        image: Union[str, Image.Image],
+        name: str,
+        mode: str = None,
+        bit_depth: int = None,
+        compression: str = None,
+        **kwargs,
+    ):
+        """Save an image to ``name``, dispatching on the file extension.
+
+        Routing follows :attr:`image_formats`: most formats use Pillow; float
+        formats (EXR, HDR) use OpenCV via :meth:`_save_via_cv2`. A recognized but
+        read-only format raises ``ValueError``.
 
         Parameters:
             image (str | PIL.Image.Image): Image object or file path.
             name (str): Output path including filename and extension (e.g., "output.png").
             mode (str, optional): Converts the image to the specified mode before saving (e.g., "RGB", "L").
-            **kwargs: Additional arguments passed to PIL.Image.save (e.g., optimize=True, compress_level=9).
+            bit_depth (int, optional): Target per-channel bit depth. 16 writes a
+                16-bit PNG/TIFF (8-bit sources are promoted); other containers fall
+                back to 8-bit with a warning. 32-bit float is the EXR/HDR path.
+            compression (str, optional): DDS block format (e.g. "DXT5", "BC7").
+                Only honored for ``.dds`` — see :meth:`_save_dds_compressed`.
+            **kwargs: Additional arguments forwarded to PIL.Image.save (e.g.,
+                optimize=True, compress_level=9). Ignored for OpenCV-backed formats.
         """
         im = cls.ensure_image(image, mode)  # Now allows optional mode conversion
 
+        ext = os.path.splitext(name)[1].lstrip(".").lower()
+        fmt = cls.image_formats.get(ext)
+
+        if fmt is not None and not fmt.write:
+            raise ValueError(
+                f"Cannot save {name!r}: {ext!r} is a read-only format in ImgUtils."
+            )
+
+        # GPU block-compressed DDS (DXT/BC5 via Pillow; BC7/BC6H via registered codec).
+        if ext == "dds" and compression:
+            cls._save_dds_compressed(im, name, compression)
+            return
+
+        # Route float formats (EXR, HDR) through OpenCV — Pillow cannot write them.
+        if fmt is not None and fmt.backend == "cv2":
+            cls._save_via_cv2(im, name)
+            return
+
+        # 16-bit precision for PIL container formats (PNG/TIFF). Returns False when
+        # the container can't hold it → fall through to the 8-bit path.
+        if bit_depth and int(bit_depth) >= 16 and cls._save_high_bit_depth(
+            im, name, int(bit_depth)
+        ):
+            return
+
         # Auto-convert RGBA to RGB if saving as JPEG to prevent OSError
-        if name.lower().endswith((".jpg", ".jpeg")) and im.mode == "RGBA":
+        if ext in ("jpg", "jpeg") and im.mode == "RGBA":
             im = im.convert("RGB")
-
-        # Handle EXR using OpenCV if available
-        if name.lower().endswith(".exr"):
-            try:
-                # Enable OpenEXR in OpenCV (disabled by default in newer versions)
-                os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
-                import cv2
-
-                # Convert PIL to Numpy
-                img_np = np.array(im)
-
-                # Handle Color Space (PIL is RGB/RGBA, OpenCV expects BGR/BGRA)
-                if im.mode == "RGB":
-                    img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-                elif im.mode == "RGBA":
-                    img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGRA)
-                elif im.mode == "L":
-                    pass  # Grayscale is fine
-
-                # EXR requires float32
-                img_np = img_np.astype(np.float32) / 255.0
-
-                # Save
-                cv2.imwrite(name, img_np)
-                return
-            except ImportError:
-                print(
-                    "Warning: OpenCV (cv2) not found. Cannot save EXR. Falling back to PIL (likely to fail)."
-                )
-            except Exception as e:
-                print(f"Error saving EXR with OpenCV: {e}. Falling back to PIL.")
 
         im.save(name, **kwargs)
 
     @classmethod
-    def load_image(cls, filepath):
+    def _save_dds_compressed(cls, im: "Image.Image", name: str, compression: str) -> None:
+        """Write *im* to a block-compressed ``.dds``.
+
+        DXT/BC5 use Pillow's ``pixel_format``; BC7/BC6H route to a codec registered
+        via :meth:`register_dds_codec`, raising a clear error if none is installed.
         """
-        Load an image from the given file path and return a copy of the image object.
+        comp = compression.upper()
+        if comp in cls.PIL_DDS_PIXEL_FORMATS:
+            # BC5 is a two-channel format and only accepts RGB; DXT* want RGB(A).
+            if comp == "BC5":
+                im = im.convert("RGB") if im.mode != "RGB" else im
+            elif im.mode not in ("RGB", "RGBA"):
+                im = im.convert("RGBA")
+            im.save(name, pixel_format=comp)
+            return
+
+        if cls._dds_codec is not None:
+            cls._dds_codec(im, name, comp)
+            return
+
+        raise ValueError(
+            f"DDS compression {comp!r} requires an external codec. Pillow writes "
+            f"{cls.PIL_DDS_PIXEL_FORMATS}; for BC7/BC6H install the DDS codec "
+            f"extension and register it via ImgUtils.register_dds_codec()."
+        )
+
+    @staticmethod
+    def _save_high_bit_depth(im: "Image.Image", name: str, bit_depth: int) -> bool:
+        """Write *im* at 16-bit. Returns True when handled, False when the request
+        can't be honored (unsupported depth or container) — the caller then falls
+        back to an 8-bit save. Either way the degrade is announced, never silent.
+
+        Grayscale uses Pillow's ``I;16``; RGB(A) routes through OpenCV ``uint16``.
+        8-bit sources are promoted (value*257); existing 16-bit data is preserved.
+        """
+        if bit_depth != 16:  # only 16 is supported here; 32-bit float = EXR/HDR.
+            print(f"# ImgUtils: {bit_depth}-bit unsupported for {name}; saving as 8-bit.")
+            return False
+
+        ext = os.path.splitext(name)[1].lstrip(".").lower()
+        if ext not in ("png", "tiff", "tif"):
+            print(f"# ImgUtils: '{ext}' cannot store 16-bit; saving {name} as 8-bit.")
+            return False
+
+        if im.mode in ("L", "P", "1", "I", "I;16"):
+            arr = np.asarray(im.convert("I"), dtype=np.int64)
+            if im.mode in ("L", "P", "1"):  # promote 8-bit range to 16-bit
+                arr = arr * 257
+            arr = np.clip(arr, 0, 65535).astype(np.uint16)
+            Image.fromarray(arr).save(name)  # uint16 array → "I;16" natively
+            return True
+
+        # RGB / RGBA — Pillow has no 16-bit colour mode, so use OpenCV uint16.
+        try:
+            import cv2
+        except ImportError:
+            return False
+        rgb = im.convert("RGBA") if im.mode == "RGBA" else im.convert("RGB")
+        arr = np.asarray(rgb, dtype=np.uint16) * 257
+        code = cv2.COLOR_RGBA2BGRA if rgb.mode == "RGBA" else cv2.COLOR_RGB2BGR
+        cv2.imwrite(name, cv2.cvtColor(arr, code))
+        return True
+
+    @staticmethod
+    def _save_via_cv2(im: "Image.Image", name: str) -> None:
+        """Write a PIL image to a float format (EXR, HDR) via OpenCV.
+
+        Pillow cannot encode these. The source PIL image is 8-bit, so values
+        are normalized to 0-1 float32 (the inverse of :meth:`_load_via_cv2`).
+        OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``).
+        """
+        try:
+            import cv2
+        except ImportError as e:
+            raise ImportError(
+                f"OpenCV (cv2) is required to save '{os.path.splitext(name)[1]}' files."
+            ) from e
+
+        img_np = np.array(im)
+        if im.mode == "RGB":
+            img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        elif im.mode == "RGBA":
+            img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGRA)
+        # "L" (grayscale) passes through unchanged.
+
+        img_np = img_np.astype(np.float32) / 255.0
+        cv2.imwrite(name, img_np)
+
+    @classmethod
+    def load_image(cls, filepath):
+        """Load an image and return a PIL copy, dispatching on the file extension.
+
+        Float formats (EXR, HDR) are read via OpenCV (:meth:`_load_via_cv2`) and
+        returned as an 8-bit PIL image (lossy — preview-grade); all others use
+        Pillow directly.
 
         Parameters:
             filepath (str): The full path to the image file.
@@ -318,8 +477,43 @@ class ImgUtils(HelpMixin):
         """
         cls.assert_pathlike(filepath, "filepath")
 
+        ext = os.path.splitext(str(filepath))[1].lstrip(".").lower()
+        fmt = cls.image_formats.get(ext)
+        if fmt is not None and fmt.backend == "cv2":
+            return cls._load_via_cv2(str(filepath))
+
         with Image.open(filepath) as im:
             return im.copy()
+
+    @staticmethod
+    def _load_via_cv2(filepath: str) -> "Image.Image":
+        """Read a float format (EXR, HDR) via OpenCV and return an 8-bit PIL image.
+
+        Values are clipped to 0-1 and scaled to 8-bit, so the result is
+        preview-grade — lossy for true HDR data. Consumers needing float
+        precision (e.g. lightmap baking) should read via cv2 directly.
+        OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``).
+        """
+        try:
+            import cv2
+        except ImportError as e:
+            raise ImportError(
+                f"OpenCV (cv2) is required to read '{os.path.splitext(filepath)[1]}' files."
+            ) from e
+
+        img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        if img is None:
+            raise OSError(f"OpenCV could not read image: {filepath}")
+
+        # Float HDR data → clip to 0-1 and scale to 8-bit for the PIL contract.
+        if img.dtype != np.uint8:
+            img = (np.clip(img, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+
+        if img.ndim == 2:
+            return Image.fromarray(img, mode="L")
+        if img.shape[2] == 4:
+            return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA), mode="RGBA")
+        return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), mode="RGB")
 
     @classmethod
     def get_images(
@@ -340,7 +534,7 @@ class ImgUtils(HelpMixin):
             (dict) {<full file path>:<image object>}
         """
         if inc is None:
-            inc = [f"*.{ext}" for ext in cls.texture_file_types]
+            inc = [f"*.{ext}" for ext in cls.readable]
 
         cls.assert_pathlike(directory, "directory")
 
@@ -910,6 +1104,243 @@ class ImgUtils(HelpMixin):
         raise ValueError(f"Unsupported array shape: {arr.shape}")
 
     @staticmethod
+    def dilate_image(
+        image: "np.ndarray",
+        mask: Optional["np.ndarray"] = None,
+        iterations: int = -1,
+        connectivity: int = 8,
+    ) -> "np.ndarray":
+        """Extend valid pixels outward into empty (background) regions.
+
+        Texture "edge padding" / "dilation": fills the gutter around UV
+        islands so bilinear filtering and mip generation never pull
+        background color across an island seam. Pure numpy (works on HDR
+        float data); no PIL/cv2 dependency.
+
+        Each pass assigns every still-empty pixel adjacent to filled pixels
+        the average of its filled neighbors, then marks it filled.
+        ``iterations=-1`` repeats until fully filled.
+
+        Parameters:
+            image: HxW or HxWxC numpy array. Not modified -- a copy is returned.
+            mask: HxW bool/numeric "valid" mask (truthy = keep & spread from).
+                Defaults to "any channel > 0". For baked maps pass the explicit
+                coverage/alpha mask -- a luminance heuristic wrongly treats
+                dark-but-valid texels (shadowed contact, near-black albedo) as
+                empty and overwrites them.
+            iterations: Max passes (≈ gutter width in px). -1 = until filled.
+            connectivity: 4 or 8 neighbor connectivity.
+
+        Returns:
+            Image with empty regions filled; same shape and dtype as input.
+        """
+        arr = np.asarray(image)
+        out = arr.astype(np.float32, copy=True)
+        squeeze = out.ndim == 2
+        if squeeze:
+            out = out[..., None]
+        h, w, _ = out.shape
+
+        if mask is None:
+            valid = (out > 0).any(axis=2)
+        else:
+            valid = np.asarray(mask).astype(bool)
+            if valid.shape != (h, w):
+                raise ValueError(f"mask shape {valid.shape} != image {(h, w)}")
+        out[~valid] = 0.0  # empties must not contribute color until filled
+
+        if connectivity == 8:
+            offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1),
+                       (0, 1), (1, -1), (1, 0), (1, 1)]
+        elif connectivity == 4:
+            offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        else:
+            raise ValueError("connectivity must be 4 or 8")
+
+        def shift(a: "np.ndarray", dy: int, dx: int) -> "np.ndarray":
+            s = np.zeros_like(a)
+            ys, yd = slice(max(dy, 0), h + min(dy, 0)), slice(max(-dy, 0), h + min(-dy, 0))
+            xs, xd = slice(max(dx, 0), w + min(dx, 0)), slice(max(-dx, 0), w + min(-dx, 0))
+            s[yd, xd] = a[ys, xs]
+            return s
+
+        it = 0
+        while not valid.all() and (iterations < 0 or it < iterations):
+            color_acc = np.zeros_like(out)
+            count_acc = np.zeros((h, w), dtype=np.float32)
+            vf = valid.astype(np.float32)
+            # `out` is already zero at every invalid pixel (and stays so until
+            # the pass that fills it also flips it valid), so out == out*vf --
+            # accumulate `out` directly; only the count needs the validity mask.
+            for dy, dx in offsets:
+                color_acc += shift(out, dy, dx)
+                count_acc += shift(vf, dy, dx)
+            fillable = (~valid) & (count_acc > 0)
+            if not fillable.any():
+                break  # remaining empties are unreachable from any valid pixel
+            out[fillable] = color_acc[fillable] / count_acc[fillable][..., None]
+            valid[fillable] = True
+            it += 1
+
+        if squeeze:
+            out = out[..., 0]
+        return out.astype(arr.dtype, copy=False)
+
+    @staticmethod
+    def compute_atlas_layout(
+        weights: Sequence[float],
+        *,
+        rows: Optional[int] = None,
+    ) -> List[Tuple[float, float, float, float]]:
+        """Lay out N weighted items as non-overlapping rects tiling the unit square.
+
+        Turns per-item importance *weights* into ``(scaleX, scaleY, offsetX,
+        offsetY)`` rects in normalized [0, 1] texture space -- exactly the form a
+        texture atlas needs, and exactly Unity's ``Renderer.lightmapScaleOffset``
+        convention: ``uv' = uv * (scaleX, scaleY) + (offsetX, offsetY)`` places
+        an item's 0-1 UVs into its sub-rect. Each item's rect *area* is
+        proportional to its weight, so a large object can be given more atlas
+        texels than a small one.
+
+        Shelf packing: items are balanced into ``rows`` shelves (longest-
+        processing-time, to keep aspect ratios sane); each shelf's height is its
+        share of the total weight, and within a shelf each item's width is its
+        share of that shelf's weight. Rows cover the full height and items cover
+        each row's full width, so the rects tile [0, 1]^2 with no gaps or
+        overlaps. Pure Python -- no numpy/PIL.
+
+        Parameters:
+            weights: One non-negative importance value per item, in caller order.
+                All-zero (or empty-after-clamp) weights fall back to equal
+                shares; negative values are clamped to 0.
+            rows: Number of shelves. Defaults to ``round(sqrt(n))`` for roughly
+                square cells. Clamped to ``1..n``.
+
+        Returns:
+            One ``(scaleX, scaleY, offsetX, offsetY)`` tuple per input weight, in
+            the same order. ``[]`` for no items; ``[(1, 1, 0, 0)]`` for one.
+        """
+        n = len(weights)
+        if n == 0:
+            return []
+        if n == 1:
+            return [(1.0, 1.0, 0.0, 0.0)]
+
+        w = [max(float(x), 0.0) for x in weights]
+        total = sum(w)
+        if total <= 0.0:  # no information -> equal shares
+            w = [1.0] * n
+            total = float(n)
+
+        r = round(math.sqrt(n)) if rows is None else int(rows)
+        r = max(1, min(r, n))
+
+        # Balance items across `r` shelves by weight (LPT): assign the heaviest
+        # remaining item to the currently-lightest shelf. Keeps shelf weight-sums
+        # (and thus heights) even, which keeps rect aspect ratios reasonable.
+        # With r <= n and zero-weight shelves being "lightest", the first r items
+        # seed distinct shelves, so no shelf is ever left empty.
+        shelves: List[List[int]] = [[] for _ in range(r)]
+        shelf_w = [0.0] * r
+        for i in sorted(range(n), key=lambda k: w[k], reverse=True):
+            j = min(range(r), key=lambda k: shelf_w[k])
+            shelves[j].append(i)
+            shelf_w[j] += w[i]
+
+        rects: List[Tuple[float, float, float, float]] = [(1.0, 1.0, 0.0, 0.0)] * n
+        oy = 0.0
+        for j, shelf in enumerate(shelves):
+            sh = shelf_w[j] / total  # shelf height == its weight share
+            ox = 0.0
+            for i in sorted(shelf):  # input order within the row, for stable output
+                sw = w[i] / shelf_w[j] if shelf_w[j] > 0 else 1.0 / len(shelf)
+                rects[i] = (sw, sh, ox, oy)
+                ox += sw
+            oy += sh
+        return rects
+
+    @classmethod
+    def assemble_atlas(
+        cls,
+        images: Sequence["np.ndarray"],
+        rects: Sequence[Tuple[float, float, float, float]],
+        size: Union[int, Tuple[int, int]],
+        *,
+        background: float = 0.0,
+    ) -> "np.ndarray":
+        """Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
+
+        Pairs each image with its ``(scaleX, scaleY, offsetX, offsetY)`` rect (from
+        :meth:`compute_atlas_layout`) and resizes it into that sub-rectangle of a
+        single atlas canvas. The rect is in UV space (origin bottom-left -- the
+        convention :meth:`compute_atlas_layout` and Unity's ``lightmapScaleOffset``
+        use), so placement applies the standard vertical flip into image-row space
+        (row 0 == top == v 1): an item later bound with the *same* scaleOffset
+        samples exactly the pixels written here.
+
+        HDR-safe (works in float32, returns the input dtype). Requires cv2 for the
+        resize -- guard call sites / tests with ``cv2`` availability.
+
+        Parameters:
+            images: One HxW or HxWxC array per item; all must share channel count.
+                The atlas inherits the first image's channels and dtype.
+            rects: One ``(sx, sy, ox, oy)`` per image -- same order and length.
+            size: Atlas pixel size -- ``int`` for square, or ``(width, height)``.
+            background: Fill for any uncovered atlas texels (default 0).
+
+        Returns:
+            The atlas as an HxWxC (or HxW) array, dtype matching ``images[0]``.
+        """
+        if len(images) != len(rects):
+            raise ValueError(
+                f"images ({len(images)}) and rects ({len(rects)}) length differ"
+            )
+        if not images:
+            raise ValueError("assemble_atlas requires at least one image")
+
+        import cv2
+
+        w_px, h_px = (size, size) if isinstance(size, int) else size
+        first = np.asarray(images[0])
+        dtype = first.dtype
+        squeeze = first.ndim == 2
+        channels = 1 if squeeze else first.shape[2]
+        canvas = np.full((h_px, w_px, channels), background, dtype=np.float32)
+
+        for img, (sx, sy, ox, oy) in zip(images, rects):
+            col0 = int(round(ox * w_px))
+            col1 = int(round((ox + sx) * w_px))
+            # UV v is bottom-up; image rows are top-down -> flip vertically.
+            row0 = int(round((1.0 - (oy + sy)) * h_px))
+            row1 = int(round((1.0 - oy) * h_px))
+            tw, th = col1 - col0, row1 - row0
+            if tw <= 0 or th <= 0:
+                continue  # degenerate (e.g. zero-weight) rect -- nothing to place
+
+            a = np.asarray(img, dtype=np.float32)
+            if a.ndim == 2:
+                a = a[..., None]
+            if a.shape[2] != channels:
+                raise ValueError(
+                    f"image channel count {a.shape[2]} != atlas {channels}"
+                )
+            # INTER_AREA is the correct downscale kernel (the common atlas case);
+            # use bilinear only when a rect happens to be larger than its source.
+            interp = (
+                cv2.INTER_AREA
+                if th <= a.shape[0] and tw <= a.shape[1]
+                else cv2.INTER_LINEAR
+            )
+            resized = cv2.resize(a, (tw, th), interpolation=interp)
+            if resized.ndim == 2:
+                resized = resized[..., None]
+            canvas[row0:row1, col0:col1, :] = resized
+
+        if squeeze:
+            canvas = canvas[..., 0]
+        return canvas.astype(dtype, copy=False)
+
+    @staticmethod
     def radial_gradient(
         size: Tuple[int, int],
         center: Tuple[float, float] = (0.5, 0.5),
@@ -1133,7 +1564,7 @@ class ImgUtils(HelpMixin):
         img = Image.merge(out_mode, bands)
 
         if output_path:
-            img.save(output_path, format=output_format, **kwargs)
+            cls.save_image(img, output_path, format=output_format, **kwargs)
             return output_path
         return img
 
@@ -1581,7 +2012,7 @@ class ImgUtils(HelpMixin):
 
             # Save
             out_path = os.path.join(output_dir, f"{base_name}{suffix}{ext}")
-            extracted.save(out_path, format=output_format, **kwargs)
+            cls.save_image(extracted, out_path, format=output_format, **kwargs)
             results[src_chan] = out_path
 
         return results
