@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-09_
+_Generated: 2026-06-10_
 
 ## Index
 
@@ -48,6 +48,7 @@ _Generated: 2026-06-09_
 - [`img_utils/map_optimizer.py`](#img_utils--map_optimizer) — Plan, assess, and apply map (texture) optimizations.
 - [`img_utils/map_registry.py`](#img_utils--map_registry)
 - [`img_utils/mask_generator.py`](#img_utils--mask_generator) — Background mask generation via rembg (optional dependency).
+- [`img_utils/output_template.py`](#img_utils--output_template) — Per-map output-format templates — the "export preset" layer.
 - [`iter_utils/_iter_utils.py`](#iter_utils--_iter_utils)
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
 - [`math_utils/noise.py`](#math_utils--noise)
@@ -487,15 +488,16 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L33)** — Helper methods for working with image file formats.
+- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L46)** — Helper methods for working with image file formats.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
   - `ImgUtils.allow_large_images(cls)` *(class)* — Context manager to safely load very large images.
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
   - `ImgUtils.enforce_mode(cls, image: Image.Image, target_mode: str, allow_compatible: bool = False) -> Image.Image` *(class)* — Converts image to target_mode.
   - `ImgUtils.assert_pathlike(obj: object, name: str = 'argument') -> None` *(static)* — Assert that the given object is a valid path-like object.
   - `ImgUtils.create_image(mode, size=(4096, 4096), color=None)` *(static)* — Create a new image.
-  - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, **kwargs)` *(class)* — Saves an image to the specified path, with optional mode conversion.
-  - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image from the given file path and return a copy of the image object.
+  - `ImgUtils.register_dds_codec(cls, codec) -> None` *(class)* — Register an external DDS codec for block formats Pillow can't write.
+  - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
+  - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
   - `ImgUtils.get_images(cls, directory, inc=None, exc='')` *(class)* — Get bitmap images from a given directory as PIL images.
   - `ImgUtils.get_image_size(image_path: str) -> Optional[Tuple[int, int]]` *(static)* — ``(width, height)`` of an image, read as cheaply as possible.
   - `ImgUtils.get_image_info(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]` *(class)* — Get information about image files.
@@ -513,6 +515,9 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `ImgUtils.replace_color(cls, image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None)` *(class)* — Parameters:
   - `ImgUtils.set_contrast(cls, image, level=255)` *(class)* — Parameters:
   - `ImgUtils.gaussian_blur(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']` *(class)* — Apply a Gaussian blur to an image or 2D/3D numpy array.
+  - `ImgUtils.dilate_image(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8) -> 'np.ndarray'` *(static)* — Extend valid pixels outward into empty (background) regions.
+  - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
+  - `ImgUtils.assemble_atlas(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'` *(class)* — Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
   - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
   - `ImgUtils.convert_rgb_to_gray(data)` *(static)* — Convert an RGB Image data array to grayscale.
   - `ImgUtils.convert_rgb_to_hsv(cls, image)` *(class)* — Manually convert the image to a NumPy array, iterate over the pixels
@@ -670,7 +675,7 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 ``TextureProcessor`` -- shared processing context for the MapFactory.
 
-- **[`class TextureProcessor`](pythontk/pythontk/img_utils/map_factory/processor.py#L42)** — Shared context and processor for all map operations.
+- **[`class TextureProcessor`](pythontk/pythontk/img_utils/map_factory/processor.py#L43)** — Shared context and processor for all map operations.
   - `TextureProcessor.get_cached_image(self, path: str) -> 'Image.Image'` — Load an image with caching to avoid redundant disk I/O.
   - `TextureProcessor.save_map(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str` — Saves and optimizes a map, enforcing mode and naming conventions.
   - `TextureProcessor.resolve_map(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]` — Intelligently resolve a map from inventory with fallback conversions.
@@ -716,11 +721,11 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 Plan, assess, and apply map (texture) optimizations.
 
-- **[`class Op`](pythontk/pythontk/img_utils/map_optimizer.py#L69)** — One operation in an optimization plan.
-- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/img_utils/map_optimizer.py#L82)** — Plan, assess, and apply map (texture) optimizations.
+- **[`class Op`](pythontk/pythontk/img_utils/map_optimizer.py#L70)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/img_utils/map_optimizer.py#L83)** — Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, generate_mipmaps: bool = False) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
-  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
   - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
   - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, generate_mipmaps: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
 
@@ -753,6 +758,22 @@ Background mask generation via rembg (optional dependency).
 - **[`class MaskGenerator`](pythontk/pythontk/img_utils/mask_generator.py#L41)** — Run rembg over a directory of images and write binary masks.
   - `MaskGenerator.is_available(self) -> bool`
   - `MaskGenerator.generate_masks(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]` — Generate alpha-channel masks for every image in ``input_dir``.
+
+<a id="img_utils--output_template"></a>
+### `img_utils/output_template.py`
+
+Per-map output-format templates — the "export preset" layer.
+
+- **[`class OutputSpec`](pythontk/pythontk/img_utils/output_template.py#L26)** — How a single map is written to disk.
+  - `OutputSpec.to_dict(self) -> dict`
+  - `OutputSpec.from_dict(cls, d: dict) -> 'OutputSpec'` *(class)*
+- **[`class OutputTemplate`](pythontk/pythontk/img_utils/output_template.py#L54)** — A profile's per-map output formats: a default spec + per-map-type overrides.
+  - `OutputTemplate.resolve(self, map_type: Optional[str]) -> OutputSpec` — Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).
+  - `OutputTemplate.to_dict(self) -> dict`
+  - `OutputTemplate.from_dict(cls, d: dict) -> 'OutputTemplate'` *(class)*
+- **[`class OutputTemplates`](pythontk/pythontk/img_utils/output_template.py#L82)** — Registry of the built-in per-profile output templates and their resolution.
+  - `OutputTemplates.get(cls, profile: Optional[str]) -> OutputTemplate` *(class)* — Return the built-in template for *profile* (a ``WF`` key), or the default.
+  - `OutputTemplates.resolve(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec` *(class)* — Resolve the :class:`OutputSpec` for *map_type* under *profile*.
 
 <a id="iter_utils--_iter_utils"></a>
 ### `iter_utils/_iter_utils.py`

@@ -13,6 +13,10 @@ import re
 import unittest
 from pathlib import Path
 
+# Enable OpenCV's EXR codec before any test module imports cv2 (OpenCV caches
+# this flag at first codec init). Mirrors the production setting in ImgUtils.
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+
 
 # =============================================================================
 # Test Utilities & Base Classes

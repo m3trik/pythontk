@@ -24,8 +24,17 @@ import numpy as np
 from PIL import Image
 
 from pythontk import FileUtils, ImgUtils, MapFactory as TextureMapFactory
+from pythontk.img_utils._img_utils import ImageFormat
+from pythontk.img_utils.map_optimizer import MapOptimizer
 
 from conftest import BaseTestCase
+
+try:
+    import cv2  # noqa: F401
+
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 
 
 class ImgTest(BaseTestCase):
@@ -838,8 +847,367 @@ class TestImgUtilsMemory(unittest.TestCase):
         self.assertEqual(smooth.getpixel((0, 0)), 150)
 
 
-if __name__ == "__main__":
-    unittest.main(exit=False)
+class DilateImageTest(unittest.TestCase):
+    """ImgUtils.dilate_image -- texture edge-padding / gutter fill."""
+
+    def test_fills_all_background_from_single_pixel(self):
+        img = np.zeros((5, 5, 3), dtype=np.float32)
+        img[2, 2] = (1.0, 0.5, 0.25)
+        mask = np.zeros((5, 5), dtype=bool)
+        mask[2, 2] = True
+        out = ImgUtils.dilate_image(img, mask)
+        # Every pixel is filled with the single source color.
+        self.assertTrue(np.allclose(out, (1.0, 0.5, 0.25)))
+
+    def test_explicit_mask_keeps_dark_valid_pixel_as_source(self):
+        # Row: [bright-valid, dark-valid, background]. The dark pixel is a
+        # legitimate baked texel (e.g. shadow contact) -- it must spread, not
+        # be treated as empty. With the default luminance mask it would be
+        # background; the explicit coverage mask is the whole point.
+        img = np.array([[[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
+                       dtype=np.float32)
+        mask = np.array([[True, True, False]])
+        out = ImgUtils.dilate_image(img, mask)
+        np.testing.assert_allclose(out[0, 0], (1, 1, 1))  # untouched
+        np.testing.assert_allclose(out[0, 1], (0, 0, 0))  # dark valid preserved
+        np.testing.assert_allclose(out[0, 2], (0, 0, 0))  # filled from dark valid
+
+        # Default (luminance) mask instead treats the dark pixel as empty and
+        # fills it from the bright neighbor -- demonstrating why callers must
+        # pass coverage for baked maps.
+        out_default = ImgUtils.dilate_image(img)
+        np.testing.assert_allclose(out_default[0, 1], (1, 1, 1))
+
+    def test_iterations_limit_bounds_growth(self):
+        img = np.zeros((1, 5, 1), dtype=np.float32)
+        img[0, 0, 0] = 1.0
+        mask = np.zeros((1, 5), dtype=bool)
+        mask[0, 0] = True
+        out = ImgUtils.dilate_image(img, mask, iterations=1)
+        # One pass fills only the immediate neighbor; the rest stay empty.
+        self.assertAlmostEqual(float(out[0, 1, 0]), 1.0)
+        self.assertAlmostEqual(float(out[0, 2, 0]), 0.0)
+
+    def test_preserves_shape_dtype_and_2d_input(self):
+        img = np.zeros((4, 4), dtype=np.float32)
+        img[0, 0] = 0.7
+        mask = np.zeros((4, 4), dtype=bool)
+        mask[0, 0] = True
+        out = ImgUtils.dilate_image(img, mask)
+        self.assertEqual(out.shape, (4, 4))
+        self.assertEqual(out.dtype, np.float32)
+        self.assertTrue(np.allclose(out, 0.7))
+
+    def test_all_background_is_noop_not_infinite_loop(self):
+        img = np.zeros((3, 3, 3), dtype=np.float32)
+        mask = np.zeros((3, 3), dtype=bool)
+        out = ImgUtils.dilate_image(img, mask)  # must terminate
+        self.assertTrue(np.all(out == 0))
+
+    def test_mask_shape_mismatch_raises(self):
+        img = np.zeros((3, 3, 3), dtype=np.float32)
+        with self.assertRaises(ValueError):
+            ImgUtils.dilate_image(img, np.zeros((2, 2), dtype=bool))
+
+
+class ImageFormatCapabilityTest(unittest.TestCase):
+    """The per-format capability table is the SSoT for IO routing (read/write/backend)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.img = ImgUtils.create_image("RGB", (8, 8), (128, 64, 32))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    # --- table integrity -------------------------------------------------
+    def test_derived_sets_match_table(self):
+        fmts = ImgUtils.image_formats
+        self.assertEqual(ImgUtils.recognized, tuple(fmts))
+        self.assertEqual(ImgUtils.readable, tuple(e for e, f in fmts.items() if f.read))
+        self.assertEqual(ImgUtils.writable, tuple(e for e, f in fmts.items() if f.write))
+
+    def test_texture_file_types_alias_preserved(self):
+        # Public back-compat name still exists and mirrors the recognized set.
+        self.assertIsInstance(ImgUtils.texture_file_types, list)
+        self.assertEqual(ImgUtils.texture_file_types, list(ImgUtils.recognized))
+
+    def test_dds_recognized_and_writable_via_pil(self):
+        self.assertIn("dds", ImgUtils.recognized)
+        self.assertIn("dds", ImgUtils.writable)
+        self.assertEqual(ImgUtils.image_formats["dds"].backend, "pil")
+
+    def test_exr_hdr_use_cv2_backend(self):
+        self.assertEqual(ImgUtils.image_formats["exr"].backend, "cv2")
+        self.assertEqual(ImgUtils.image_formats["hdr"].backend, "cv2")
+
+    # --- write guard -----------------------------------------------------
+    def test_save_image_rejects_readonly_format(self):
+        """A write=False format must raise a clear ValueError, not a cryptic KeyError."""
+        import unittest.mock as mock
+
+        patched = dict(ImgUtils.image_formats)
+        patched["rok"] = ImageFormat(True, False, "pil")
+        with mock.patch.object(ImgUtils, "image_formats", patched):
+            with self.assertRaises(ValueError):
+                ImgUtils.save_image(self.img, os.path.join(self.tmp, "x.rok"))
+
+    # --- round trips -----------------------------------------------------
+    def test_pil_roundtrip_png(self):
+        p = os.path.join(self.tmp, "t.png")
+        ImgUtils.save_image(self.img, p)
+        self.assertEqual(ImgUtils.load_image(p).size, (8, 8))
+
+    def test_dds_roundtrip(self):
+        p = os.path.join(self.tmp, "t.dds")
+        ImgUtils.save_image(self.img, p)
+        self.assertEqual(ImgUtils.load_image(p).size, (8, 8))
+
+    def test_dds_save_accepts_optimize_kwarg(self):
+        # optimize_map forwards optimize=True through save_image; DDS must tolerate it.
+        p = os.path.join(self.tmp, "opt.dds")
+        ImgUtils.save_image(self.img, p, optimize=True)
+        self.assertTrue(os.path.isfile(p))
+
+    @unittest.skipUnless(HAS_CV2, "cv2 required for EXR")
+    def test_exr_roundtrip_via_cv2(self):
+        p = os.path.join(self.tmp, "t.exr")
+        ImgUtils.save_image(self.img, p)
+        back = ImgUtils.load_image(p)
+        self.assertEqual((back.size, back.mode), ((8, 8), "RGB"))
+
+    @unittest.skipUnless(HAS_CV2, "cv2 required for HDR")
+    def test_hdr_roundtrip_via_cv2(self):
+        p = os.path.join(self.tmp, "t.hdr")
+        ImgUtils.save_image(self.img, p)
+        self.assertEqual(ImgUtils.load_image(p).size, (8, 8))
+
+    @unittest.skipUnless(HAS_CV2, "cv2 required for EXR")
+    def test_get_images_handles_cv2_format_without_crashing(self):
+        """Regression: get_images scans `readable` and an EXR in the dir must
+        load via cv2 (pre-fix, load_image used pure PIL and crashed)."""
+        ImgUtils.save_image(self.img, os.path.join(self.tmp, "a.png"))
+        ImgUtils.save_image(self.img, os.path.join(self.tmp, "b.exr"))
+        images = ImgUtils.get_images(self.tmp)
+        self.assertEqual(len(images), 2)
+        self.assertTrue(all(im.size == (8, 8) for im in images.values()))
+
+    # --- unified save path (optimize_map → save_image) -------------------
+    def test_optimize_map_routes_to_dds(self):
+        """optimize_map must reach DDS through the unified save_image path."""
+        src = os.path.join(self.tmp, "wood_Base_color.png")
+        ImgUtils.save_image(self.img, src)
+        out = MapOptimizer.optimize_map(src, output_type="dds")
+        self.assertTrue(out.lower().endswith(".dds"))
+        self.assertEqual(ImgUtils.load_image(out).size, (8, 8))
+
+    @unittest.skipUnless(HAS_CV2, "cv2 required for EXR")
+    def test_optimize_map_routes_to_exr_via_cv2(self):
+        """optimize_map → EXR previously failed (direct PIL save); now backend-routed."""
+        src = os.path.join(self.tmp, "wood_Base_color.png")
+        ImgUtils.save_image(self.img, src)
+        out = MapOptimizer.optimize_map(src, output_type="exr")
+        self.assertTrue(out.lower().endswith(".exr"))
+        self.assertTrue(os.path.isfile(out))
+
+    # --- bit depth ------------------------------------------------------
+    def test_save_16bit_grayscale_png(self):
+        gray = ImgUtils.create_image("L", (8, 8), 128)
+        p = os.path.join(self.tmp, "h16.png")
+        ImgUtils.save_image(gray, p, bit_depth=16)
+        back = Image.open(p)
+        self.assertEqual(back.mode, "I;16")
+        self.assertEqual(back.getpixel((0, 0)), 128 * 257)  # promoted 8→16
+
+    @unittest.skipUnless(HAS_CV2, "cv2 required for 16-bit RGB")
+    def test_save_16bit_rgb_png(self):
+        import cv2
+
+        p = os.path.join(self.tmp, "c16.png")
+        ImgUtils.save_image(self.img, p, bit_depth=16)
+        arr = cv2.imread(p, cv2.IMREAD_UNCHANGED)
+        self.assertEqual(arr.dtype.name, "uint16")
+        self.assertEqual(arr.shape[2], 3)
+
+    def test_16bit_unsupported_container_falls_back_to_8bit(self):
+        """A 16-bit request on a container that can't hold it must not raise —
+        it degrades to 8-bit (with a warning)."""
+        gray = ImgUtils.create_image("L", (8, 8), 100)
+        p = os.path.join(self.tmp, "x.tga")
+        ImgUtils.save_image(gray, p, bit_depth=16)
+        self.assertTrue(os.path.isfile(p))
+        self.assertEqual(Image.open(p).mode, "L")
+
+    # --- compression ----------------------------------------------------
+    def test_dds_dxt5_compression(self):
+        p = os.path.join(self.tmp, "c.dds")
+        ImgUtils.save_image(self.img, p, compression="DXT5")
+        self.assertEqual(ImgUtils.load_image(p).size, (8, 8))
+
+    def test_dds_bc7_without_codec_raises_clearly(self):
+        with self.assertRaises(ValueError) as ctx:
+            ImgUtils.save_image(self.img, os.path.join(self.tmp, "x.dds"), compression="BC7")
+        self.assertIn("codec", str(ctx.exception).lower())
+
+    def test_register_dds_codec_is_used_for_block_formats(self):
+        calls = {}
+
+        def fake_codec(im, name, compression):
+            calls["args"] = (im.size, os.path.basename(name), compression)
+            open(name, "wb").close()  # stand in for a real encoder
+
+        original = ImgUtils._dds_codec
+        try:
+            ImgUtils.register_dds_codec(fake_codec)
+            ImgUtils.save_image(self.img, os.path.join(self.tmp, "bc7.dds"), compression="BC7")
+            self.assertEqual(calls["args"], ((8, 8), "bc7.dds", "BC7"))
+        finally:
+            ImgUtils._dds_codec = original
+
+
+class AtlasLayoutTest(unittest.TestCase):
+    """ImgUtils.compute_atlas_layout — pure-geometry rect packer for atlasing."""
+
+    @staticmethod
+    def _area(rect):
+        sx, sy, _, _ = rect
+        return sx * sy
+
+    @staticmethod
+    def _overlap(a, b):
+        ax, ay, aox, aoy = a
+        bx, by, box, boy = b
+        # rects: [ox, ox+sx) x [oy, oy+sy); overlap iff they intersect on both axes
+        eps = 1e-9
+        sep_x = aox + ax <= box + eps or box + bx <= aox + eps
+        sep_y = aoy + ay <= boy + eps or boy + by <= aoy + eps
+        return not (sep_x or sep_y)
+
+    def _assert_tiles_unit_square(self, rects):
+        # areas sum to 1 (full coverage) and no two rects overlap
+        self.assertAlmostEqual(sum(self._area(r) for r in rects), 1.0, places=6)
+        for i in range(len(rects)):
+            for j in range(i + 1, len(rects)):
+                self.assertFalse(
+                    self._overlap(rects[i], rects[j]),
+                    f"rects {i} {rects[i]} and {j} {rects[j]} overlap",
+                )
+        # every rect stays inside [0, 1]^2
+        for sx, sy, ox, oy in rects:
+            self.assertGreaterEqual(ox, -1e-9)
+            self.assertGreaterEqual(oy, -1e-9)
+            self.assertLessEqual(ox + sx, 1.0 + 1e-9)
+            self.assertLessEqual(oy + sy, 1.0 + 1e-9)
+
+    def test_empty(self):
+        self.assertEqual(ImgUtils.compute_atlas_layout([]), [])
+
+    def test_single_is_identity(self):
+        self.assertEqual(
+            ImgUtils.compute_atlas_layout([5.0]), [(1.0, 1.0, 0.0, 0.0)]
+        )
+
+    def test_equal_weights_tile_and_are_equal_area(self):
+        rects = ImgUtils.compute_atlas_layout([1.0] * 4)
+        self._assert_tiles_unit_square(rects)
+        for r in rects:
+            self.assertAlmostEqual(self._area(r), 0.25, places=6)
+
+    def test_area_is_proportional_to_weight(self):
+        weights = [4.0, 2.0, 1.0, 1.0]
+        rects = ImgUtils.compute_atlas_layout(weights)
+        self._assert_tiles_unit_square(rects)
+        total = sum(weights)
+        for w, r in zip(weights, rects):
+            self.assertAlmostEqual(self._area(r), w / total, places=6)
+
+    def test_all_zero_falls_back_to_equal(self):
+        rects = ImgUtils.compute_atlas_layout([0.0, 0.0, 0.0])
+        self._assert_tiles_unit_square(rects)
+        for r in rects:
+            self.assertAlmostEqual(self._area(r), 1.0 / 3.0, places=6)
+
+    def test_negative_weights_clamped(self):
+        # a negative weight contributes 0 area but still gets a (degenerate) rect
+        rects = ImgUtils.compute_atlas_layout([-5.0, 1.0, 1.0])
+        self._assert_tiles_unit_square(rects)
+        self.assertAlmostEqual(self._area(rects[0]), 0.0, places=6)
+
+    def test_output_order_matches_input(self):
+        # ordering is preserved even though packing sorts internally by weight
+        rects = ImgUtils.compute_atlas_layout([1.0, 9.0])
+        total = 10.0
+        self.assertAlmostEqual(self._area(rects[0]), 1.0 / total, places=6)
+        self.assertAlmostEqual(self._area(rects[1]), 9.0 / total, places=6)
+
+    def test_zero_weight_shelf_still_tiles(self):
+        # fewer positive weights than shelves -> a non-empty shelf with total
+        # weight 0 (exercises the divide-by-zero guard). rows=2 forces it.
+        rects = ImgUtils.compute_atlas_layout([10.0, 0.0, 0.0], rows=2)
+        self._assert_tiles_unit_square(rects)
+        self.assertAlmostEqual(self._area(rects[0]), 1.0, places=6)
+        self.assertAlmostEqual(self._area(rects[1]), 0.0, places=6)
+        self.assertAlmostEqual(self._area(rects[2]), 0.0, places=6)
+
+    def test_single_row_override_tiles(self):
+        rects = ImgUtils.compute_atlas_layout([1.0, 2.0, 3.0], rows=1)
+        self._assert_tiles_unit_square(rects)
+        # one shelf -> every rect is full height
+        for sx, sy, ox, oy in rects:
+            self.assertAlmostEqual(sy, 1.0, places=6)
+            self.assertAlmostEqual(oy, 0.0, places=6)
+
+    def test_many_items_tile_cleanly(self):
+        for n in (2, 3, 5, 7, 16, 37):
+            with self.subTest(n=n):
+                rects = ImgUtils.compute_atlas_layout(list(range(1, n + 1)))
+                self.assertEqual(len(rects), n)
+                self._assert_tiles_unit_square(rects)
+
+
+@unittest.skipUnless(HAS_CV2, "cv2 required for assemble_atlas resize")
+class AtlasAssembleTest(unittest.TestCase):
+    """ImgUtils.assemble_atlas — pack per-item images into one atlas at rects."""
+
+    def test_two_stacked_rects_place_with_uv_flip(self):
+        # layout([1,1], rows=2): rect[0] oy=0 (UV bottom), rect[1] oy=0.5 (UV top).
+        # The UV-bottom rect must land in the BOTTOM image rows (the vertical flip).
+        rects = ImgUtils.compute_atlas_layout([1.0, 1.0], rows=2)
+        red = np.zeros((4, 4, 3), np.float32)
+        red[..., 0] = 1.0
+        green = np.zeros((4, 4, 3), np.float32)
+        green[..., 1] = 1.0
+        atlas = ImgUtils.assemble_atlas([red, green], rects, 8)
+        self.assertEqual(atlas.shape, (8, 8, 3))
+        self.assertAlmostEqual(float(atlas[7, 0, 0]), 1.0)  # bottom rows == red
+        self.assertAlmostEqual(float(atlas[0, 0, 1]), 1.0)  # top rows == green
+        self.assertAlmostEqual(float(atlas[7, 0, 1]), 0.0)  # no green at bottom
+
+    def test_size_tuple_and_dtype_preserved(self):
+        rects = ImgUtils.compute_atlas_layout([1.0])
+        img = (np.ones((2, 2, 3)) * 0.5).astype(np.float32)
+        atlas = ImgUtils.assemble_atlas([img], rects, (6, 4))
+        self.assertEqual(atlas.shape, (4, 6, 3))  # (H, W, C) from (width, height)
+        self.assertEqual(atlas.dtype, np.float32)
+
+    def test_zero_weight_rect_is_skipped(self):
+        # The heavy item fills the whole atlas; the degenerate zero-area rects
+        # place nothing, so the background fill is fully overwritten.
+        rects = ImgUtils.compute_atlas_layout([10.0, 0.0, 0.0], rows=2)
+        imgs = [np.full((2, 2, 3), float(c), np.float32) for c in (1, 2, 3)]
+        atlas = ImgUtils.assemble_atlas(imgs, rects, 8, background=-1.0)
+        self.assertTrue((atlas == 1.0).all())  # all img0, no background, no img1/2
+
+    def test_length_mismatch_raises(self):
+        with self.assertRaises(ValueError):
+            ImgUtils.assemble_atlas([np.zeros((2, 2, 3), np.float32)], [], 4)
+
+    def test_grayscale_round_trips_2d(self):
+        rects = ImgUtils.compute_atlas_layout([1.0])
+        img = np.full((2, 2), 0.25, np.float32)
+        atlas = ImgUtils.assemble_atlas([img], rects, 4)
+        self.assertEqual(atlas.ndim, 2)  # 2D in -> 2D out
+        self.assertTrue((atlas == 0.25).all())
 
 
 if __name__ == "__main__":

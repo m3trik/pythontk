@@ -209,6 +209,7 @@ class MapCompositor(ptk.LoggingMixin):
                 output_dir=output_dir,
                 logger=self.logger,
                 progress_callback=_progress,
+                output_profile=self.output_template,
                 **workflow_config,
             )
         except Exception as e:

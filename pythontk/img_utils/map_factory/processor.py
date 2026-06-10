@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.str_utils._str_utils import StrUtils
 from pythontk.img_utils.map_registry import MapRegistry
+from pythontk.img_utils.output_template import OutputTemplates
 from .conversions import ConversionRegistry
 
 # Constants -- single source of truth for the package (imported by _map_factory).
@@ -48,6 +49,9 @@ class TextureProcessor:
     base_name: str
     ext: Optional[str]
     conversion_registry: ConversionRegistry
+    # When set (a WF profile key), per-map output format/bit-depth/compression is
+    # resolved from the profile's template instead of the single global ``ext``.
+    output_profile: Optional[str] = None
     logger: Any = None
     used_maps: set = field(default_factory=set)
     created_files: set = field(default_factory=set)
@@ -101,8 +105,19 @@ class TextureProcessor:
         suffix = suffix or map_type
         suffix = f"_{suffix.lstrip('_')}"
 
+        # Resolve per-map output format. When a profile is active, its template is
+        # authoritative for ext / bit depth / compression; otherwise behave exactly
+        # as before (single global ``self.ext``).
+        spec = (
+            OutputTemplates.resolve(map_type, self.output_profile)
+            if self.output_profile
+            else None
+        )
+        target_bit_depth = spec.bit_depth if spec else None
+        target_compression = spec.compression if spec else None
+
         # Determine extension
-        ext = self.ext
+        ext = spec.ext if spec else self.ext
         if not ext:
             if isinstance(image, str):
                 ext = os.path.splitext(image)[1].lstrip(".")
@@ -213,8 +228,14 @@ class TextureProcessor:
             scale = self.config.get("mask_map_scale", 1.0)
             max_size = int(max_size * scale)
 
+        # A profile demanding 16-bit or block compression can't be byte-copied from
+        # an 8-bit/uncompressed source — force the re-encode path.
+        needs_reencode = bool(target_compression) or bool(
+            target_bit_depth and target_bit_depth >= 16
+        )
+
         # Smart Copy: If input is a file and no optimization is needed, just copy
-        if isinstance(image, str) and os.path.exists(image):
+        if isinstance(image, str) and os.path.exists(image) and not needs_reencode:
             # Check if format conversion is needed
             _, src_ext = os.path.splitext(image)
             _, dst_ext = os.path.splitext(output_path)
@@ -307,10 +328,21 @@ class TextureProcessor:
                 img_obj = ImgUtils.depalettize_image(img_obj)
 
             # 2. Enforce Mode (skipped when the map type has no fixed mode,
-            # e.g. MRAO which supports both 3- and 4-channel layouts)
+            # e.g. MRAO which supports both 3- and 4-channel layouts).
+            # When 16-bit output is requested for a grayscale map, don't downcast
+            # an already-single-channel high-bit source ("I"/"I;16") to 8-bit "L":
+            # that quantizes away the precision the profile asked for. It is already
+            # single-channel and save_image's 16-bit path consumes it directly.
             map_def = MapRegistry().get(map_type)
             if map_def and map_def.mode:
-                img_obj = ImgUtils.enforce_mode(img_obj, map_def.mode)
+                keep_high_bit_gray = (
+                    target_bit_depth
+                    and target_bit_depth >= 16
+                    and map_def.mode == "L"
+                    and img_obj.mode in ("I", "I;16")
+                )
+                if not keep_high_bit_gray:
+                    img_obj = ImgUtils.enforce_mode(img_obj, map_def.mode)
 
             # 3. Resize
             if will_resize:
@@ -319,7 +351,13 @@ class TextureProcessor:
                 img_obj.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 
             # 4. Save with optimization
-            ImgUtils.save_image(img_obj, output_path, optimize=True)
+            ImgUtils.save_image(
+                img_obj,
+                output_path,
+                optimize=True,
+                bit_depth=target_bit_depth,
+                compression=target_compression,
+            )
 
         else:
             # Re-encode needed (e.g. PIL Image input or extension mismatch)
@@ -327,7 +365,13 @@ class TextureProcessor:
                 img_obj = self.get_cached_image(image)
             else:
                 img_obj = ImgUtils.ensure_image(image)
-            ImgUtils.save_image(img_obj, output_path, optimize=True)
+            ImgUtils.save_image(
+                img_obj,
+                output_path,
+                optimize=True,
+                bit_depth=target_bit_depth,
+                compression=target_compression,
+            )
 
         self.created_files.add(output_path)
         return output_path

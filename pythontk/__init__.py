@@ -13,6 +13,11 @@ DEFAULT_INCLUDE = {
     "img_utils._img_utils": "*",
     "img_utils.map_factory": ["MapFactory"],
     "img_utils.map_registry": "MapRegistry",
+    "img_utils.output_template": [
+        "OutputSpec",
+        "OutputTemplate",
+        "OutputTemplates",
+    ],
     "img_utils.map_compositor": ["MapCompositor", "BatchResult", "NormalOutputMode"],
     "img_utils.map_optimizer": ["MapOptimizer", "Op"],
     "img_utils.mask_generator": ["MaskGenerator"],
