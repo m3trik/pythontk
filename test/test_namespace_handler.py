@@ -265,9 +265,45 @@ class NamespaceHandlerTest(BaseTestCase):
         raw_value = handler.get("my_list", resolve_placeholders=False)
         self.assertIsInstance(raw_value, Placeholder)
 
-        # Check via getattr returns the placeholder object
+        # getattr resolves the placeholder (same contract as item access);
+        # raw()/get_placeholder() are the unresolved-inspection paths.
         attr_value = handler.my_list
-        self.assertIsInstance(attr_value, Placeholder)
+        self.assertEqual(attr_value, [])
+        self.assertFalse(handler.has_placeholder("my_list"))
+
+    def test_placeholder_item_access_resolves_first_time(self):
+        """Regression: first __getitem__/get() of a placeholder must resolve.
+
+        _resolve_placeholder used to double-delete the placeholder entry
+        (__setitem__ already pops it), so the FIRST item access raised
+        KeyError — and get() silently returned the default — while the
+        second access returned the cached value. A works-the-second-time
+        heisenbug.
+        """
+        handler = NamespaceHandler(owner=self.owner)
+        handler.set_placeholder(
+            "lazy", Placeholder(dict, factory=lambda: {"made": True})
+        )
+
+        # First item access must resolve, not raise.
+        self.assertEqual(handler["lazy"], {"made": True})
+
+        # get() on a fresh placeholder must return the value, not the default.
+        handler2 = NamespaceHandler(owner=self.owner)
+        handler2.set_placeholder(
+            "lazy", Placeholder(dict, factory=lambda: {"made": 2})
+        )
+        self.assertEqual(handler2.get("lazy", "DEFAULT"), {"made": 2})
+
+        # resolve_all_placeholders must not raise.
+        handler3 = NamespaceHandler(owner=self.owner)
+        handler3.set_placeholder("a", Placeholder(list))
+        handler3.set_placeholder("b", Placeholder(dict))
+        handler3.resolve_all_placeholders()
+        self.assertEqual(handler3["a"], [])
+        self.assertEqual(handler3["b"], {})
+        self.assertFalse(handler3.has_placeholder("a"))
+        self.assertFalse(handler3.has_placeholder("b"))
 
     def test_set_placeholder_method(self):
         """Test set_placeholder method."""

@@ -534,6 +534,22 @@ class ImgTest(BaseTestCase):
         )
         self.assertEqual(mask.mode, "L")
 
+    def test_create_mask_non_square(self):
+        """create_mask must handle non-square images (regression: corner
+        indexing transposed numpy's row/column axes and raised IndexError)."""
+        im = Image.new("RGB", (32, 8), (10, 20, 30))
+        mask = ImgUtils.create_mask(im, (10, 20, 30))
+        self.assertEqual(mask.mode, "L")
+        self.assertEqual(mask.size, (32, 8))
+
+    def test_create_mask_foreground_background(self):
+        """Matched (mask-color) pixels go to background; the rest to foreground."""
+        im = Image.new("RGB", (4, 4), (10, 20, 30))
+        im.putpixel((2, 2), (200, 200, 200))
+        mask = ImgUtils.create_mask(im, (10, 20, 30))
+        self.assertEqual(mask.getpixel((1, 1)), 0)  # matched -> background (black)
+        self.assertEqual(mask.getpixel((2, 2)), 255)  # unmatched -> foreground
+
     # -------------------------------------------------------------------------
     # Fill Tests
     # -------------------------------------------------------------------------
@@ -653,6 +669,38 @@ class ImgTest(BaseTestCase):
         im_i = ImgUtils.create_image("I", (32, 32))
         result = ImgUtils.convert_i_to_l(im_i)
         self.assertEqual(result.mode, "L")
+
+    def test_convert_i_to_l_scales_16bit(self):
+        """16-bit values must be scaled to 8-bit, not truncated modulo 256."""
+        arr = np.full((4, 4), 65535, dtype=np.uint16)  # pure white in 16-bit
+        result = ImgUtils.convert_i_to_l(Image.fromarray(arr))
+        self.assertEqual(result.mode, "L")
+        self.assertEqual(result.getpixel((0, 0)), 255)
+
+    def test_convert_rgb_to_hsv_high_hue(self):
+        """Hues above 255 degrees (blues/violets) must not crash or wrap.
+
+        Regression: the old per-pixel implementation stored 0-360 hues in a
+        uint8 array (OverflowError on numpy >= 2)."""
+        violet = Image.new("RGB", (2, 2), (127, 0, 255))  # hue ~270 degrees
+        result = ImgUtils.convert_rgb_to_hsv(violet)
+        self.assertEqual(result.mode, "HSV")
+        # PIL scales hue to 0-255: 270 degrees -> ~191.
+        h = result.getpixel((0, 0))[0]
+        self.assertAlmostEqual(h, 270 / 360 * 255, delta=2)
+
+    def test_generate_mipmaps_returns_chain(self):
+        """generate_mipmaps returns the full chain down to 1px (regression:
+        it used to discard the chain and return only the base level)."""
+        chain = ImgUtils.generate_mipmaps(Image.new("RGB", (16, 4)))
+        self.assertEqual([im.size for im in chain], [(16, 4), (8, 2), (4, 1)])
+
+    def test_pack_channels_grayscale_to_rgb(self):
+        """grayscale_to_rgb replicates a lone R input into G and B (regression:
+        the replication branch was unreachable behind the empty-fill branches)."""
+        r = Image.new("L", (8, 8), 200)
+        out = ImgUtils.pack_channels({"R": r}, grayscale_to_rgb=True)
+        self.assertEqual(out.getpixel((0, 0)), (200, 200, 200))
 
     # -------------------------------------------------------------------------
     # Image Comparison Tests

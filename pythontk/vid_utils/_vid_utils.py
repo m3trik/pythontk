@@ -42,6 +42,10 @@ class VidUtils(HelpMixin):
 
         Returns:
             float | str: The converted value.
+
+        Raises:
+            ValueError: If a string can't be resolved to a frame rate —
+                a silent default would be indistinguishable from real 24fps.
         """
         # Handle number -> name
         if isinstance(value, (int, float)):
@@ -52,8 +56,6 @@ class VidUtils(HelpMixin):
 
         # Handle string -> float
         if isinstance(value, str):
-            if not value:
-                return 24.0
             if value in cls.FRAME_RATES:
                 return cls.FRAME_RATES[value]
             if "fps" in value:
@@ -62,7 +64,7 @@ class VidUtils(HelpMixin):
                 except ValueError:
                     pass
 
-        return 24.0
+        raise ValueError(f"Unrecognized frame rate: {value!r}")
 
     @classmethod
     def resolve_ffmpeg(
@@ -176,9 +178,21 @@ class VidUtils(HelpMixin):
         Raises:
             FileNotFoundError: If FFmpeg is not found.
         """
-        ffmpeg_path = cls.resolve_ffmpeg()
         if output_filepath is None:
-            output_filepath = input_filepath.replace(".avi", ".mp4")
+            output_filepath = os.path.splitext(input_filepath)[0] + ".mp4"
+
+        # ffmpeg -y would truncate the source before reading it. normcase:
+        # Windows paths are case-insensitive, abspath alone won't catch
+        # 'take1.MP4' vs 'take1.mp4'.
+        if os.path.normcase(os.path.abspath(output_filepath)) == os.path.normcase(
+            os.path.abspath(input_filepath)
+        ):
+            raise ValueError(
+                f"Output path equals input path ('{input_filepath}'); "
+                "pass a different output_filepath."
+            )
+
+        ffmpeg_path = cls.resolve_ffmpeg()
 
         if frame_rate is None:
             try:

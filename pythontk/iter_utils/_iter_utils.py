@@ -25,7 +25,7 @@ class IterUtils(HelpMixin):
         if x is None:
             return ()
 
-        if hasattr(x, "__apimfn__") or isinstance(x, (str, bytes, bytearray)):
+        if isinstance(x, (str, bytes, bytearray)):
             return (x,)
 
         if isinstance(x, (map, filter, zip)):
@@ -51,7 +51,7 @@ class IterUtils(HelpMixin):
         d = -1
         for i in lst:
             if isinstance(i, typ):
-                d = max(cls.nested_depth(i), d)
+                d = max(cls.nested_depth(i, typ), d)
         return d + 1
 
     @classmethod
@@ -267,6 +267,7 @@ class IterUtils(HelpMixin):
 
             return result
 
+    @staticmethod
     def filter_results(func: Callable) -> Callable:
         """Decorator to filter the results of a function that returns a list or dictionary.
 

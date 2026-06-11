@@ -264,40 +264,50 @@ class HelpMixinTest(BaseTestCase):
         self.assertIn("test_help_mixin.py", captured.getvalue())
 
     # =========================================================================
-    # Tests for mro() method
+    # Tests for show_mro() method
     # =========================================================================
 
-    def test_mro_returns_inheritance_chain(self):
-        """Test mro() returns the inheritance chain."""
-        result = ChildClass.mro(returns=True)
+    def test_show_mro_returns_inheritance_chain(self):
+        """Test show_mro() returns the inheritance chain."""
+        result = ChildClass.show_mro(returns=True)
         self.assertIn("ChildClass", result)
         self.assertIn("SampleClass", result)
         self.assertIn("HelpMixin", result)
         self.assertIn("object", result)
 
-    def test_mro_brief_mode(self):
-        """Test mro() with brief=True shows only class names."""
-        result = ChildClass.mro(brief=True, returns=True)
+    def test_show_mro_brief_mode(self):
+        """Test show_mro() with brief=True shows only class names."""
+        result = ChildClass.show_mro(brief=True, returns=True)
         self.assertIn("ChildClass", result)
         # Brief mode shouldn't include module paths
         self.assertNotIn("__main__.", result)
 
-    def test_mro_full_mode(self):
-        """Test mro() with brief=False shows module paths."""
-        result = ChildClass.mro(brief=False, returns=True)
+    def test_show_mro_full_mode(self):
+        """Test show_mro() with brief=False shows module paths."""
+        result = ChildClass.show_mro(brief=False, returns=True)
         # Full mode should include module for builtins
         self.assertIn("builtins.object", result)
 
-    def test_mro_prints_when_returns_false(self):
-        """Test mro() prints when returns=False."""
+    def test_show_mro_prints_when_returns_false(self):
+        """Test show_mro() prints when returns=False."""
         captured = StringIO()
         sys.stdout = captured
         try:
-            result = SampleClass.mro()
+            result = SampleClass.show_mro()
         finally:
             sys.stdout = sys.__stdout__
         self.assertIsNone(result)
         self.assertIn("SampleClass", captured.getvalue())
+
+    def test_builtin_mro_not_shadowed(self):
+        """HelpMixin must not shadow Python's built-in ``type.mro()``.
+
+        Regression: a classmethod named ``mro`` broke ``SomeClass.mro()`` for
+        every class in the ecosystem that inherits HelpMixin."""
+        result = ChildClass.mro()
+        self.assertIsInstance(result, list)
+        self.assertIn(ChildClass, result)
+        self.assertIn(object, result)
 
     # =========================================================================
     # Tests for signature() method

@@ -247,36 +247,23 @@ class LoggerExt:
 
     @staticmethod
     def _log_custom(logger, level_int, msg, *args, **kwargs):
-        """Log with optional custom formatting (preset/color)."""
+        """Log with optional custom formatting via explicit ``preset=`` /
+        ``color=`` kwargs.
+
+        Positional args are always treated as stdlib ``%``-format arguments —
+        no styling heuristic. (The old heuristic silently swallowed ``%s``
+        substitution whenever an argument happened to match a preset or
+        color name like ``"default"`` or ``"error"``.)
+        """
         preset = kwargs.pop("preset", None)
         color_level = kwargs.pop("color", None)
-
-        # Heuristic for positional args: (color, preset) or (preset)
-        if isinstance(msg, str) and not preset and not color_level:
-            if len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], str):
-                # Check if args[1] is a known preset
-                if args[1] in LoggerExt.HTML_PRESETS:
-                    color_level = args[0]
-                    preset = args[1]
-                    args = ()
-            elif len(args) == 1 and isinstance(args[0], str):
-                if args[0] in LoggerExt.HTML_PRESETS:
-                    preset = args[0]
-                    args = ()
-                elif args[0].upper() in LoggerExt.LOG_COLORS:
-                    color_level = args[0]
-                    args = ()
 
         if preset or color_level:
             if not color_level:
                 color_level = internal_logging.getLevelName(level_int)
+            msg = LoggerExt.format_message_as_html(msg, color_level, preset)
 
-            formatted_msg = LoggerExt.format_message_as_html(msg, color_level, preset)
-            internal_logging.Logger.log(
-                logger, level_int, formatted_msg, *args, **kwargs
-            )
-        else:
-            internal_logging.Logger.log(logger, level_int, msg, *args, **kwargs)
+        internal_logging.Logger.log(logger, level_int, msg, *args, **kwargs)
 
     @staticmethod
     def _info(logger, msg, *args, **kwargs):

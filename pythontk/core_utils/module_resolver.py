@@ -594,10 +594,7 @@ class PackageResolverHandle:
             missing_classes = []
 
             # Build the full module name
-            if "." in module_key:
-                full_module_name = f"{self.resolver.package_name}.{module_key}"
-            else:
-                full_module_name = f"{self.resolver.package_name}.{module_key}"
+            full_module_name = f"{self.resolver.package_name}.{module_key}"
 
             # Handle wildcard "*" - expand to all classes in the module/package
             if class_names == ("*",):

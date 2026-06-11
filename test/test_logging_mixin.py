@@ -64,6 +64,27 @@ class LoggerExtTest(BaseTestCase):
         self.assertEqual(logging.getLevelName(LoggerExt.RESULT), "RESULT")
         self.assertEqual(logging.getLevelName(LoggerExt.NOTICE), "NOTICE")
 
+    def test_percent_format_args_always_substituted(self):
+        """Positional args are %-format args — never styling.
+
+        Regression: a heuristic treated args matching a preset/color name
+        ("default", "bold", "error", …) as styling and silently skipped the
+        ``%s`` substitution."""
+        LoggerExt.patch(self.logger)
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        self.logger.addHandler(handler)
+        self.logger.setLevel("INFO")
+
+        self.logger.info("mode was %s", "default")
+        self.logger.info("level was %s", "error")
+        handler.flush()
+        output = stream.getvalue()
+
+        self.assertIn("mode was default", output)
+        self.assertIn("level was error", output)
+        self.assertNotIn("%s", output)
+
     def test_set_level_with_string(self):
         """Test setting log level with string."""
         LoggerExt.patch(self.logger)

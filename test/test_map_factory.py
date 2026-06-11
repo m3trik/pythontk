@@ -749,6 +749,76 @@ class TestTextureProcessorLogic(unittest.TestCase):
         self.assertEqual(result, "d_converted.png")
         mock_converter.assert_called()
 
+    def test_normal_map_orientation_convention(self):
+        """Regression: convert_bump_to_normal produced DirectX orientation
+        under the 'opengl' label (green = -row-derivative instead of +),
+        and detect_normal_map_format had its correlation sign flipped to
+        match. Pin the convention: OpenGL = green bright on TOP edges of
+        raised detail; detector agrees with the generator AND with a
+        labeled real-world map."""
+        import numpy as np
+        from PIL import Image as PILImage
+
+        # Hemisphere bump: top flank faces up -> OpenGL green > 128 on top.
+        n = 256
+        yy, xx = np.mgrid[0:n, 0:n]
+        r = np.sqrt((xx - n / 2) ** 2 + (yy - n / 2) ** 2) / (n / 2)
+        h = np.clip(1 - r**2, 0, 1)
+        bump = PILImage.fromarray((h * 255).astype(np.uint8), "L")
+
+        nm = MapFactory.convert_bump_to_normal(
+            bump, output_format="opengl", save=False,
+            smooth_filter=False, intensity=30.0,
+        )
+        arr = np.array(nm).astype(float)
+        g_top = arr[: n // 2 - 10, :, 1].mean()
+        g_bottom = arr[n // 2 + 10 :, :, 1].mean()
+        self.assertGreater(g_top, g_bottom, "OpenGL green must face up")
+
+        # Generator and detector must agree.
+        self.assertEqual(MapFactory.detect_normal_map_format(nm), "OpenGL")
+        nm_dx = MapFactory.convert_bump_to_normal(
+            bump, output_format="directx", save=False,
+            smooth_filter=False, intensity=30.0,
+        )
+        self.assertEqual(MapFactory.detect_normal_map_format(nm_dx), "DirectX")
+
+        # Real-world labeled asset. The detector's internal 512px thumbnail
+        # dilutes this map's correlation to ~-0.09 (full-res it is -0.19),
+        # so probe with a low threshold — the assertion is about the SIGN
+        # (the bug was a sign flip that read every real OpenGL map as
+        # DirectX-leaning).
+        asset = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "test_assets", "imgtk_test", "im_Normal_OpenGL.png",
+        )
+        if os.path.exists(asset):
+            self.assertEqual(
+                MapFactory.detect_normal_map_format(asset, threshold=0.05),
+                "OpenGL",
+            )
+
+    def test_bump_to_normal_conversion_reads_registered_source(self):
+        """Regression: the Bump/Height->Normal registration loop late-bound
+        its loop variable, so the converter registered for 'Bump' read
+        inv['Height'] — KeyError when only a Bump map exists."""
+        registry = ConversionRegistry()
+        MapFactory.register_conversions(registry)
+
+        bump_only = [
+            c
+            for c in registry._conversions["Normal_OpenGL"]
+            if c.source_types == ["Bump"]
+        ]
+        self.assertEqual(len(bump_only), 1)
+
+        ctx = MagicMock()
+        ctx.convert_bump_to_normal.return_value = "normal.png"
+        # Inventory contains ONLY Bump — must not require 'Height'.
+        result = bump_only[0].converter({"Bump": "bump.png"}, ctx)
+        self.assertEqual(result, "normal.png")
+        ctx.convert_bump_to_normal.assert_called_once_with("bump.png")
+
 
 if __name__ == "__main__":
     unittest.main()

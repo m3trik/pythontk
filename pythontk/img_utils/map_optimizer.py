@@ -103,7 +103,6 @@ class MapOptimizer(HelpMixin):
         optimize_bit_depth: bool = True,
         map_type_key: Optional[str] = None,
         allow_palette: bool = False,
-        generate_mipmaps: bool = False,
     ) -> List[Op]:
         """Return the ordered list of operations :meth:`apply` would run.
 
@@ -122,7 +121,6 @@ class MapOptimizer(HelpMixin):
                 ``MapFactory.resolve_map_type(..., key=True)``. Drives the
                 map-type mode coercion step.
             allow_palette: Preserve paletted images instead of upcasting.
-            generate_mipmaps: Append the mipmap-generation step.
 
         Returns:
             list[Op]: Ordered ops; empty when no changes would be applied.
@@ -272,12 +270,6 @@ class MapOptimizer(HelpMixin):
                 )
                 mode = sb_target_mode
 
-        # --- 6. Mipmaps
-        if generate_mipmaps:
-            ops.append(
-                Op(kind="mipmaps", description="Generate mipmaps")
-            )
-
         return ops
 
     @classmethod
@@ -304,8 +296,6 @@ class MapOptimizer(HelpMixin):
                 image = ImgUtils.resize_image(image, s, s)
             elif op.kind == "force_pot":
                 image = ImgUtils.ensure_pot(image)
-            elif op.kind == "mipmaps":
-                image = ImgUtils.generate_mipmaps(image)
         return image
 
     @classmethod
@@ -319,7 +309,6 @@ class MapOptimizer(HelpMixin):
         suffix_old: str = None,
         suffix_opt: str = None,
         old_files_folder: str = None,
-        generate_mipmaps: bool = False,
         optimize_bit_depth: bool = True,
         check_existing: bool = False,
         map_type: str = None,
@@ -337,7 +326,6 @@ class MapOptimizer(HelpMixin):
             suffix_old (str, optional): Suffix to rename the original file before optimization.
             suffix_opt (str, optional): Suffix to append to the optimized file (None = overwrite).
             old_files_folder (str, optional): Name of the folder to store old files.
-            generate_mipmaps (bool): Generates mipmaps if enabled.
             optimize_bit_depth (bool): Adjusts bit depth to match the map type.
             check_existing (bool): If True, returns existing optimized file if it exists and is newer.
             map_type (str, optional): The type of map (e.g., "Normal", "MaskMap") to enforce specific modes.
@@ -400,7 +388,6 @@ class MapOptimizer(HelpMixin):
             optimize_bit_depth=optimize_bit_depth,
             map_type_key=map_type_key,
             allow_palette=allow_palette,
-            generate_mipmaps=generate_mipmaps,
         )
 
         if any(op.kind == "resize" for op in plan):
@@ -475,7 +462,6 @@ class MapOptimizer(HelpMixin):
         optimize_bit_depth: bool = True,
         map_type: str = None,
         allow_palette: bool = False,
-        generate_mipmaps: bool = False,
         image: "Image.Image" = None,
     ) -> Dict[str, Any]:
         """Predict whether :meth:`optimize_map` would change ``texture_path``.
@@ -485,8 +471,8 @@ class MapOptimizer(HelpMixin):
 
         Parameters:
             texture_path: Path to the texture file.
-            max_size, force_pot, optimize_bit_depth, map_type, allow_palette,
-            generate_mipmaps: Same semantics as :meth:`optimize_map`.
+            max_size, force_pot, optimize_bit_depth, map_type, allow_palette:
+                Same semantics as :meth:`optimize_map`.
             image: Optional pre-loaded ``PIL.Image.Image`` to skip the
                 redundant header read for callers that already have one open.
 
@@ -549,7 +535,6 @@ class MapOptimizer(HelpMixin):
             optimize_bit_depth=optimize_bit_depth,
             map_type_key=map_type_key,
             allow_palette=allow_palette,
-            generate_mipmaps=generate_mipmaps,
         )
 
         # Surface the target mode the planner picked (first mode_coerce op),

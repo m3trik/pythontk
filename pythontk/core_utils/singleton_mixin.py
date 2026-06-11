@@ -1,12 +1,15 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Dict, Optional, Any
+from typing import Any, Dict, Optional
 
 
 class SingletonMixin:
     """Reusable singleton mixin that supports optional key-based instances.
 
-    Automatically handles initialization suppression for existing instances.
+    Instances are stored per ``(class, singleton_key)`` pair, so two different
+    subclasses using the same ``singleton_key`` never collide. The
+    ``singleton_key`` kwarg is consumed before reaching the subclass
+    ``__init__``, and re-initialization of an existing instance is suppressed.
     """
 
     _instances: Dict[Any, Any] = {}
@@ -16,11 +19,9 @@ class SingletonMixin:
         pass
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Any:
-        key: Any = kwargs.pop("singleton_key", cls)
+        key = (cls, kwargs.pop("singleton_key", None))
         if key not in cls._instances:
-            instance = super().__new__(cls)
-            cls._instances[key] = instance
-            return instance
+            cls._instances[key] = super().__new__(cls)
         return cls._instances[key]
 
     def __init_subclass__(cls, **kwargs):
@@ -29,6 +30,8 @@ class SingletonMixin:
         original_init = cls.__init__
 
         def new_init(self, *args, **kwargs):
+            # ``singleton_key`` is routing data for __new__, not an init arg.
+            kwargs.pop("singleton_key", None)
             if not getattr(self, "_initialized", False):
                 original_init(self, *args, **kwargs)
                 self._initialized = True
@@ -41,12 +44,8 @@ class SingletonMixin:
 
     @classmethod
     def has_instance(cls, singleton_key: Optional[Any] = None) -> bool:
-        return (
-            singleton_key in cls._instances if singleton_key else cls in cls._instances
-        )
+        return (cls, singleton_key) in cls._instances
 
     @classmethod
     def reset_instance(cls, singleton_key: Optional[Any] = None) -> None:
-        cls._instances.pop(singleton_key or cls, None)
-
-
+        cls._instances.pop((cls, singleton_key), None)

@@ -159,7 +159,7 @@ class StrUtils(CoreUtils):
         Parameters:
             string (str/list): The string(s) to format.
             case (str): The desired return case. Accepts all python case operators.
-                    valid: 'upper', 'lower', 'capitalize' (default), 'swapcase', 'title', 'pascal', 'camel', None.
+                    valid: 'upper', 'lower', 'capitalize', 'swapcase', 'title' (default), 'pascal', 'camel', None.
         Returns:
             (str/list) List if 'string' given as list.
         """
@@ -585,7 +585,7 @@ class StrUtils(CoreUtils):
         m = re.findall(r"\d+\s*$", string)
         result = int(m[0]) + inc if m else None
 
-        if as_string:
+        if as_string and result is not None:
             return str(result)
         return result
 
@@ -1260,10 +1260,19 @@ class StrUtils(CoreUtils):
 
         return result
 
+    # Matches the prefix produced by the default ``time_stamp`` format:
+    # "MM-DD-YYYY  HH:MM  <path>". The path is captured whole so paths
+    # containing spaces survive the detach.
+    _TIME_STAMP_RE = None  # compiled lazily below
+
     @staticmethod
     @CoreUtils.listify(threading=True)
     def time_stamp(filepath, stamp="%m-%d-%Y  %H:%M"):
         """Attach or detach a modified timestamp and date to/from a given file path.
+
+        A path that already carries a default-format stamp prefix is returned
+        with the stamp removed; otherwise the file's mtime is prepended using
+        ``stamp``. Detach only recognizes the default format.
 
         Parameters:
             filepath (str): The full path to a file. ie. 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
@@ -1271,30 +1280,32 @@ class StrUtils(CoreUtils):
 
         Returns:
             str: Filepath with attached or detached timestamp, depending on whether it initially had a timestamp.
-            ie. '16:46  11-09-2021  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb' from 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
+            ie. '11-09-2021  16:46  C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb' from 'C:/Windows/Temp/__AUTO-SAVE__untitled.0001.mb'
         """
         from datetime import datetime
         import os.path
         import re
         from pythontk.file_utils._file_utils import FileUtils
 
+        if StrUtils._TIME_STAMP_RE is None:
+            StrUtils._TIME_STAMP_RE = re.compile(
+                r"^\d{2}-\d{2}-\d{4}  \d{2}:\d{2}  (.+)$"
+            )
+
         filepath = FileUtils.format_path(filepath)
 
-        # Check if the file path has a timestamp using regular expression
-        match = re.match(r"\d{2}:\d{2}  \d{2}-\d{2}-\d{4}", filepath)
-        if match:
-            # If it does, return the file path without the timestamp
-            return "".join(filepath.split()[2:])
-        else:
-            # If it doesn't, attach a timestamp
-            try:
-                return "{}  {}".format(
-                    datetime.fromtimestamp(os.path.getmtime(filepath)).strftime(stamp),
-                    filepath,
-                )
-            except (FileNotFoundError, OSError) as error:
-                print(f"Error: {error}")
-                return filepath
+        match = StrUtils._TIME_STAMP_RE.match(filepath)
+        if match:  # already stamped: return the bare path (spaces preserved).
+            return match.group(1)
+
+        try:
+            return "{}  {}".format(
+                datetime.fromtimestamp(os.path.getmtime(filepath)).strftime(stamp),
+                filepath,
+            )
+        except (FileNotFoundError, OSError) as error:
+            print(f"Error: {error}")
+            return filepath
 
 
 # -----------------------------------------------------------------------------

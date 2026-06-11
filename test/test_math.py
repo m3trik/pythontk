@@ -470,11 +470,11 @@ class MathTest(BaseTestCase):
     # -------------------------------------------------------------------------
 
     def test_get_two_sides_of_asa_triangle_equilateral(self):
-        """Test get_two_sides_of_asa_triangle with equilateral."""
-        self.assertEqual(
-            MathUtils.get_two_sides_of_asa_triangle(60, 60, 100),
-            (100.00015320566493, 100.00015320566493),
-        )
+        """Equilateral sides must be exact — regression for the hardcoded
+        3.14159 that put ~0.00015 of error in every result."""
+        a, b = MathUtils.get_two_sides_of_asa_triangle(60, 60, 100)
+        self.assertAlmostEqual(a, 100.0, places=9)
+        self.assertAlmostEqual(b, 100.0, places=9)
 
     def test_get_two_sides_of_asa_triangle_isoceles(self):
         """Test get_two_sides_of_asa_triangle with isoceles."""
@@ -487,16 +487,17 @@ class MathTest(BaseTestCase):
     # -------------------------------------------------------------------------
 
     def test_xyz_rotation_radians(self):
-        """Test xyz_rotation applies rotations in radians."""
-        self.assertEqual(
-            MathUtils.xyz_rotation(2, (0, 1, 0)),
-            (3.589792907376932e-09, 1.9999999964102069, 3.589792907376932e-09),
-        )
+        """xyz_rotation about Y must return (0, theta, 0) — the old
+        hardcoded 3.14159265 put ~3.6e-09 of noise in every component."""
+        x, y, z = MathUtils.xyz_rotation(2, (0, 1, 0))
+        self.assertAlmostEqual(x, 0.0, places=12)
+        self.assertAlmostEqual(y, 2.0, places=12)
+        self.assertAlmostEqual(z, 0.0, places=12)
 
     def test_xyz_rotation_degrees(self):
         """Test xyz_rotation with degrees."""
         self.assertEqual(
-            MathUtils.xyz_rotation(2, (0, 1, 0), [], True),
+            MathUtils.xyz_rotation(2, (0, 1, 0), degree=True),
             (0.0, 114.59, 0.0),
         )
 
@@ -970,6 +971,42 @@ class MathTest(BaseTestCase):
             distance_metric=lambda a, b: abs(a[0] - b[0]),
         )
         self.assertEqual([p[0] for p in ordered], [0.0, 1.0, 3.0])
+
+    def test_arrange_points_as_path_does_not_mutate_input(self):
+        """Regression: the path walk used pop/remove on the caller's list,
+        silently emptying it as a side effect."""
+        points = [[0.0, 0, 0], [5.0, 0, 0], [1.0, 0, 0]]
+        MathUtils.arrange_points_as_path(points)
+        self.assertEqual(points, [[0.0, 0, 0], [5.0, 0, 0], [1.0, 0, 0]])
+
+    # ------------------------------------------------------------- misc fixes
+
+    def test_generate_geometric_sequence_instance_call(self):
+        """Regression: missing @staticmethod made instance calls consume
+        self as base_value and raise TypeError."""
+        self.assertEqual(
+            MathUtils().generate_geometric_sequence(2, 5), [2, 4, 8, 16, 32]
+        )
+        self.assertEqual(
+            MathUtils.generate_geometric_sequence(3, 4, 3.0), [3, 9, 27, 81]
+        )
+
+    def test_kmeans_clustering_zero_iterations_clamped(self):
+        """Regression: max_iterations=0 left labels/groups unbuilt
+        (numpy path: all-empty result; fallback path: NameError)."""
+        points = [(0, 0, 0), (0.1, 0, 0), (10, 0, 0), (10.1, 0, 0)]
+        groups = MathUtils.kmeans_clustering(points, k=2, max_iterations=0)
+        self.assertEqual(sorted(len(g) for g in groups), [2, 2])
+
+    def test_round_to_aggressive_preferred_delegates(self):
+        """aggressive == round_to_preferred with max_distance=10."""
+        for v in (48.5, 73.2, 88.9, 23.4, 7.8, 100.0, 3.2):
+            self.assertEqual(
+                MathUtils.round_to_aggressive_preferred(v),
+                MathUtils.round_to_preferred(v, max_distance=10),
+            )
+        self.assertEqual(MathUtils.round_to_aggressive_preferred(48.5), 50)
+        self.assertEqual(MathUtils.round_to_aggressive_preferred(7.8), 10)
 
     # ------------------------------------------------------------- lerp (vector)
 

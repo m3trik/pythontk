@@ -180,6 +180,37 @@ class VidTest(BaseTestCase):
             # Expected for invalid output path
             pass
 
+    def test_get_frame_rate_fail_fast(self):
+        """Regression: unrecognized strings used to silently return 24.0 —
+        indistinguishable from real 24fps. They must raise."""
+        self.assertEqual(VidUtils.get_frame_rate("film"), 24.0)
+        self.assertEqual(VidUtils.get_frame_rate("29.97fps"), 29.97)
+        self.assertEqual(VidUtils.get_frame_rate(24.0), "film")
+        self.assertEqual(VidUtils.get_frame_rate(17.0), "17fps")
+        for bad in ("garbage", "", "fpsfps", None):
+            with self.assertRaises(ValueError, msg=f"input: {bad!r}"):
+                VidUtils.get_frame_rate(bad)
+
+    def test_compress_video_default_output_never_overwrites_source(self):
+        """Regression: default output used input.replace('.avi', '.mp4'),
+        so any non-.avi input derived output == input and ffmpeg -y
+        truncated the source file. The guard must trip BEFORE ffmpeg is
+        resolved or invoked.
+        """
+        # .mp4 input with no explicit output -> derived output equals the
+        # input -> must raise, not overwrite.
+        src = os.path.join(self.temp_dir, "take1.mp4")
+        with open(src, "w") as f:
+            f.write("source bytes")
+        with self.assertRaises(ValueError):
+            VidUtils.compress_video(src)
+        with open(src) as f:
+            self.assertEqual(f.read(), "source bytes")
+
+        # Explicit output equal to input must also raise.
+        with self.assertRaises(ValueError):
+            VidUtils.compress_video(src, src)
+
     # -------------------------------------------------------------------------
     # Edge Case Tests
     # -------------------------------------------------------------------------

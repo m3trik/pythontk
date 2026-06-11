@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-10_
+_Generated: 2026-06-11_
 
 ## Index
 
@@ -69,7 +69,7 @@ _Generated: 2026-06-10_
 <a id="audio_utils--_audio_utils"></a>
 ### `audio_utils/_audio_utils.py`
 
-- **[`class AudioUtils(HelpMixin)`](pythontk/pythontk/audio_utils/_audio_utils.py#L17)** — Utility helpers for portable audio-file preparation.
+- **[`class AudioUtils(HelpMixin)`](pythontk/pythontk/audio_utils/_audio_utils.py#L15)** — Utility helpers for portable audio-file preparation.
   - `AudioUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Resolve ffmpeg executable from PATH or managed installs.
   - `AudioUtils.is_playable_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is already timeline-playable.
   - `AudioUtils.is_supported_source_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is accepted as conversion source.
@@ -126,7 +126,7 @@ Lightweight, DCC-agnostic color primitives.
   - `CoreUtils.cycle(cls, sequence, name=None, query=False)` *(class)* — Toggle between numbers in a given sequence.
   - `CoreUtils.are_similar(cls, a, b, tolerance=0.0)` *(class)* — Check if the two numberical values are within a given tolerance.
   - `CoreUtils.randomize(lst, ratio=1.0)` *(static)* — Random elements from the given list will be returned with a quantity determined by the given ratio.
-  - `CoreUtils.parse_method_args(args: Tuple) -> Tuple[Union[Any, None], Tuple]` — Parse method arguments to determine if the function is an instance method or static method.
+  - `CoreUtils.parse_method_args(args: Tuple) -> Tuple[Union[Any, None], Tuple]` *(static)* — Parse method arguments to determine if the function is an instance method or static method.
 
 <a id="core_utils--app_installer"></a>
 ### `core_utils/app_installer.py`
@@ -221,7 +221,7 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `HelpMixin.help(cls, name: Optional[str] = None, *, members: Optional[str] = None, inherited: bool = True, brief: bool = False, sort: bool = False, private: bool = False, returns: bool = False) -> Optional[str]` *(class)* — Display or return help information for this class or a specific member.
   - `HelpMixin.source(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]` *(class)* — Get source code for the class or a specific member.
   - `HelpMixin.where(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]` *(class)* — Get the file and line number where the class or member is defined.
-  - `HelpMixin.mro(cls, *, brief: bool = False, returns: bool = False) -> Optional[str]` *(class)* — Show the method resolution order (inheritance chain) for this class.
+  - `HelpMixin.show_mro(cls, *, brief: bool = False, returns: bool = False) -> Optional[str]` *(class)* — Show the method resolution order (inheritance chain) for this class.
   - `HelpMixin.signature(cls, name: str, *, returns: bool = False) -> Optional[str]` *(class)* — Get detailed signature information for a method.
   - `HelpMixin.classify(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]` *(class)* — Classify a member or list all members with their classifications.
   - `HelpMixin.list_members(cls, members: Optional[str] = None, *, inherited: bool = True, private: bool = False, sort: bool = True, returns: bool = False) -> Optional[List[str]]` *(class)* — Get a list of member names.
@@ -290,13 +290,13 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1158)** — A generic thread-safe logging handler that writes logs to any widget
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1145)** — A generic thread-safe logging handler that writes logs to any widget
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1210)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1197)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1364)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1351)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -316,8 +316,8 @@ Helpers for hot-reloading packages and their submodules.
 
 Reusable module attribute resolver for package-style imports.
 
-- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L745) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
-- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L824) — Create multi-inheritance namespace classes from groups of related classes.
+- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L742) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
+- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L821) — Create multi-inheritance namespace classes from groups of related classes.
 - **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L34)** — Discover and resolve attributes exposed from package submodules lazily.
   - `ModuleAttributeResolver.build(self) -> 'ModuleAttributeResolver'` — Populate resolver dictionaries based on current include spec.
   - `ModuleAttributeResolver.rebuild(self, include: Optional[Mapping[str, Union[Sequence[str], str]]] = None) -> 'ModuleAttributeResolver'` — Reset include spec (optional) and rebuild dictionaries.
@@ -441,7 +441,6 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str` *(static)* — Return the next available versioned path for `filepath`.
   - `FileUtils.get_dir_contents(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)` *(static)* — Get the contents of a directory and any of its children.
   - `FileUtils.open_explorer(path: str, create_dir: bool = False, logger=None) -> bool` *(static)* — Open the file explorer at the given path.
-  - `FileUtils.get_file(filepath, mode='a+')` *(static)* — Return a file object with the given mode.
   - `FileUtils.get_file_contents(filepath: str, as_list=False, encoding='utf-8') -> None` *(static)* — Get each line of a text file as indices of a list.
   - `FileUtils.write_to_file(filepath, lines)` *(static)* — Write the given list contents to the given file.
   - `FileUtils.atomic_write_text(filepath: str, content: str, encoding: str = 'utf-8') -> None` *(static)* — Write text to a file atomically.
@@ -519,14 +518,14 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
   - `ImgUtils.assemble_atlas(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'` *(class)* — Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
   - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
-  - `ImgUtils.convert_rgb_to_gray(data)` *(static)* — Convert an RGB Image data array to grayscale.
-  - `ImgUtils.convert_rgb_to_hsv(cls, image)` *(class)* — Manually convert the image to a NumPy array, iterate over the pixels
-  - `ImgUtils.convert_i_to_l(cls, image)` *(class)* — Convert to 8 bit 'L' grayscale.
+  - `ImgUtils.convert_rgb_to_gray(cls, data)` *(class)* — Convert an RGB Image data array to grayscale (luma weights).
+  - `ImgUtils.convert_rgb_to_hsv(cls, image)` *(class)* — Convert an RGB image to HSV mode.
+  - `ImgUtils.convert_i_to_l(cls, image)` *(class)* — Convert a high-bit-depth grayscale image to 8-bit 'L'.
   - `ImgUtils.pack_channels(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image` *(class)* — Packs up to 4 grayscale images into R, G, B, A channels of a single image.
   - `ImgUtils.pack_channel_into_alpha(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image` *(class)* — Packs a channel from the alpha source image into the alpha channel of the base image.
   - `ImgUtils.srgb_to_linear(cls, data)` *(class)* — Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
   - `ImgUtils.linear_to_srgb(cls, data)` *(class)* — Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
-  - `ImgUtils.generate_mipmaps(cls, image: Image.Image) -> Image.Image` *(class)* — Generates mipmaps for an image.
+  - `ImgUtils.generate_mipmaps(cls, image: Union[str, Image.Image]) -> List[Image.Image]` *(class)* — Generate a mipmap chain for an image.
   - `ImgUtils.depalettize_image(cls, image: Image.Image) -> Image.Image` *(class)* — Converts a paletted image (Mode P) to RGB or RGBA.
   - `ImgUtils.is_image_constant(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]` *(class)* — Check if an image is constant color.
   - `ImgUtils.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
@@ -723,11 +722,11 @@ Plan, assess, and apply map (texture) optimizations.
 
 - **[`class Op`](pythontk/pythontk/img_utils/map_optimizer.py#L70)** — One operation in an optimization plan.
 - **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/img_utils/map_optimizer.py#L83)** — Plan, assess, and apply map (texture) optimizations.
-  - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, generate_mipmaps: bool = False) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
+  - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
-  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, generate_mipmaps: bool = False, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
   - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
-  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, generate_mipmaps: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
+  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
 
 <a id="img_utils--map_registry"></a>
 ### `img_utils/map_registry.py`
@@ -788,7 +787,7 @@ Per-map output-format templates — the "export preset" layer.
   - `IterUtils.rindex(itr, item)` *(static)* — Get the index of the first item to match the given item
   - `IterUtils.indices(itr, value)` *(static)* — Get the index of each element of a list matching the given value.
   - `IterUtils.remove_duplicates(lst, trailing=True)` *(static)* — Removes duplicate entries from a list while maintaining the original order of the remaining items.
-  - `IterUtils.filter_results(func: Callable) -> Callable` — Decorator to filter the results of a function that returns a list or dictionary.
+  - `IterUtils.filter_results(func: Callable) -> Callable` *(static)* — Decorator to filter the results of a function that returns a list or dictionary.
   - `IterUtils.filter_list(cls, lst: List, inc: Optional[Union[str, List]] = None, exc: Optional[Union[str, List]] = None, map_func: Optional[Callable] = None, check_unmapped: bool = False, nested_as_unit: bool = False, basename_only: bool = False, ignore_case: bool = False, delimiter: str = ',', match_all: bool = False) -> List` *(class)* — Filters the given list based on inclusion/exclusion criteria using shell-style wildcards.
   - `IterUtils.filter_dict(cls, dct: Dict, keys: bool = False, values: bool = False, **kwargs) -> Dict` *(class)* — Filter the given dictionary.
   - `IterUtils.split_list(lst, into)` *(static)* — Split a list into parts.
@@ -818,7 +817,7 @@ Per-map output-format templates — the "export preset" layer.
   - `MathUtils.get_angle_from_two_vectors(cls, v1, v2, degree=False)` *(class)* — Get an angle from two given vectors.
   - `MathUtils.get_angle_from_three_points(a, b, c, degree=False)` *(static)* — Get the opposing angle from 3 given points.
   - `MathUtils.get_two_sides_of_asa_triangle(a1, a2, s, unit='degrees')` *(static)* — Get the length of two sides of a triangle, given two angles, and the length of the side in-between.
-  - `MathUtils.xyz_rotation(cls, theta, axis, rotation=[], degree=False)` *(class)* — Get the rotation about the X,Y,Z axes (in rotation) given
+  - `MathUtils.xyz_rotation(cls, theta, axis, degree=False)` *(class)* — Get the rotation about the X,Y,Z axes given an angle for rotation
   - `MathUtils.lerp(start, end, t: float)` *(static)* — Linear interpolation between two values or two equal-length points.
   - `MathUtils.safe_normalize(cls, vector, fallback, amount: float = 1)` *(class)* — :meth:`normalize`, returning ``fallback`` for a ~zero-length vector.
   - `MathUtils.smoothstep(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float` *(static)* — Canonical clamped Hermite smoothstep (``3t² − 2t³``).
@@ -826,7 +825,7 @@ Per-map output-format templates — the "export preset" layer.
   - `MathUtils.catenary(t: float, tension: float) -> float` *(static)* — Normalized catenary (``cosh``) profile across a span.
   - `MathUtils.catenary_sag(cls, t: float, tension: float, round_amount: float = 0.0, gather: float = 0.0) -> float` *(class)* — Catenary sag profile, optionally rounded / gathered at the supports.
   - `MathUtils.evaluate_sampled_progress(time_value: float, sample_times: Sequence[float], progress: Sequence[float], tolerance: float = 1e-06) -> float` *(static)* — Interpolate normalized progress from sampled time/progress pairs.
-  - `MathUtils.generate_geometric_sequence(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]` — Generate a geometric sequence.
+  - `MathUtils.generate_geometric_sequence(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]` *(static)* — Generate a geometric sequence.
   - `MathUtils.remap(value: Union[float, List[Any], Tuple[Any, ...], 'np.ndarray'], old_range: Tuple[float, float], new_range: Tuple[float, float], clamp: bool = False) -> Union[float, List[Any], Tuple[Any, ...], 'np.ndarray']` *(static)* — Remaps a value, list, or tuple of varying sizes from one range to another.
   - `MathUtils.calculate_curve_length(centerline_points: List[List[float]]) -> float` *(static)* — Calculates the total length of the centerline path.
   - `MathUtils.get_point_on_centerline(centerline_points: List[List[float]], param: float) -> List[float]` *(static)* — Returns the interpolated point along the centerline.
@@ -839,7 +838,7 @@ Per-map output-format templates — the "export preset" layer.
   - `MathUtils.is_close_to_whole(value: float, tolerance: float = 0.0001) -> bool` *(static)* — Check if a float value is close to a whole number within tolerance.
   - `MathUtils.round_value(value: float, mode: str = 'none', max_distance: float = 1.5) -> Union[int, float]` *(static)* — General-purpose rounding function with multiple modes.
   - `MathUtils.round_to_preferred(value: float, max_distance: float = 1.5) -> int` *(static)* — Round to aesthetically pleasing 'round' numbers (conservative approach).
-  - `MathUtils.round_to_aggressive_preferred(value: float) -> int` *(static)* — Round to aesthetically pleasing 'round' numbers (aggressive approach).
+  - `MathUtils.round_to_aggressive_preferred(cls, value: float) -> int` *(class)* — Round to aesthetically pleasing 'round' numbers (aggressive approach).
   - `MathUtils.hash_points(points, precision=4)` *(static)* — Hash the given list of point values.
   - `MathUtils.calculate_rotation_distance(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float` *(static)* — Calculate the effective rotation distance between two Euler rotations.
 

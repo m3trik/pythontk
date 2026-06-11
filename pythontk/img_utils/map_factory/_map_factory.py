@@ -182,13 +182,15 @@ class MapFactory(LoggingMixin):
             priority=10,
         )
 
-        # Bump/Height to Normal conversions
+        # Bump/Height to Normal conversions. Bind the loop var as a default
+        # arg — a plain closure late-binds, leaving every registration
+        # reading inv["Height"] (KeyError when only a Bump map exists).
         for target in ["Normal_OpenGL", "Normal_DirectX", "Normal"]:
             for source in ["Bump", "Height"]:
                 registry.register(
                     target,
                     source,
-                    lambda inv, ctx: ctx.convert_bump_to_normal(inv[source]),
+                    lambda inv, ctx, s=source: ctx.convert_bump_to_normal(inv[s]),
                     priority=5,
                 )
         registry.register(
@@ -1333,13 +1335,18 @@ class MapFactory(LoggingMixin):
         """Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
 
         Theory:
-        If a normal map represents a continuous height field H(x,y):
-        Red channel R ~ dH/dx
-        Green channel G ~ dH/dy (OpenGL) or -dH/dy (DirectX)
+        If a normal map represents a continuous height field H over image
+        coordinates (x = column, y = row, row increasing DOWNWARD):
+        Red channel   R ~ -dH/dx              (both formats)
+        Green channel G ~ +dH/dy (OpenGL)     (image top = V max, so the
+                      Y-up green component equals the row-down derivative)
+                      G ~ -dH/dy (DirectX)
 
-        The cross derivatives must be equal: d(dH/dx)/dy = d(dH/dy)/dx
-        Therefore: dR/dy = dG/dx (OpenGL)
-        Or:        dR/dy = -dG/dx (DirectX)
+        Cross derivatives of a real height field are equal
+        (d²H/dxdy = d²H/dydx), therefore:
+        corr(dR/dy, dG/dx) < 0  -> OpenGL
+        corr(dR/dy, dG/dx) > 0  -> DirectX
+        (Verified against a labeled real-world OpenGL map: r = -0.19.)
 
         Parameters:
             image (str | PIL.Image.Image): Input normal map.
@@ -1381,14 +1388,14 @@ class MapFactory(LoggingMixin):
             if not np.isfinite(correlation):
                 return None
 
-            if correlation > threshold:
-                return "OpenGL"
             if correlation < -threshold:
+                return "OpenGL"
+            if correlation > threshold:
                 return "DirectX"
             return None
 
         except Exception as e:
-            print(f"Error detecting normal map format: {e}")
+            cls.logger.warning(f"Error detecting normal map format: {e}")
             return None
 
     @classmethod
@@ -1556,11 +1563,15 @@ class MapFactory(LoggingMixin):
         grad_x *= intensity
         grad_y *= intensity
 
-        # Calculate normal vectors
-        # The cross product of tangent (1,0,grad_x) and bitangent (0,1,grad_y)
-        # gives us the surface normal (-grad_x, -grad_y, 1)
+        # Calculate normal vectors. The surface normal of z=H is
+        # (-dH/dx, -dH/dy_up, 1). grad_y is the IMAGE-ROW derivative
+        # (row increases downward), and textures display right side up
+        # (image top = V max), so dH/dy_up = -grad_y and the green (Y-up)
+        # component is +grad_y. The old `-grad_y` silently produced
+        # DirectX orientation under an OpenGL label (verified against a
+        # labeled real-world map via the integrability correlation).
         normal_x = -grad_x
-        normal_y = -grad_y
+        normal_y = grad_y
         normal_z = np.ones_like(grad_x)
 
         # Normalize the normal vectors (with epsilon to avoid division by zero)
