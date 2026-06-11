@@ -136,15 +136,15 @@ class CoreUtils(HelpMixin):
     def set_attributes(obj, **attributes):
         """Set attributes for a given object.
 
+        Every given attribute is set, including falsy values (``False``, ``0``,
+        ``""``, ``None``) — the caller passed them explicitly.
+
         Parameters:
             obj (obj): The object to set attributes for.
-            attributes (kwargs) = Attributes and their correponding values as keyword args.
+            attributes (kwargs) = Attributes and their corresponding values as keyword args.
         """
-        [
+        for attr, value in attributes.items():
             setattr(obj, attr, value)
-            for attr, value in attributes.items()
-            if attr and value
-        ]
 
     @staticmethod
     def get_attributes(obj, inc=[], exc=[]):
@@ -252,26 +252,22 @@ class CoreUtils(HelpMixin):
         Parameters:
             sequence (list): sequence to cycle through. ie. [1,2,3].
             name (str): identifier. used as a key to get the sequence value from the dict.
+            query (bool): Return the last-returned value without advancing the
+                cycle. ``None`` if the cycle has never been advanced.
 
         Example:
             cycle([0,1,2,3,4], 'componentID')
         """
-        try:
-            if query:  # return the value without changing it.
-                return cls.CYCLEDICT[name][-1]  # get the current value ie. 0
+        seq = cls.CYCLEDICT.get(name)
+        if query:  # read-only: never create or advance state.
+            # The last-returned value sits at the end after each advance.
+            return seq[-1] if seq else None
+        if seq is None:
+            cls.CYCLEDICT[name] = seq = list(sequence)
 
-            value = cls.CYCLEDICT[
-                name
-            ]  # check if key exists. if so return the value. ie. value = [1,2,3]
-
-        except KeyError:  # else create sequence list for the given key
-            cls.CYCLEDICT[name] = [i for i in sequence]  # ie. {name:[1,2,3]}
-
-        value = cls.CYCLEDICT[name][0]  # get the current value. ie. 1
-        cls.CYCLEDICT[name] = cls.CYCLEDICT[name][1:] + [
-            value
-        ]  # move the current value to the end of the list. ie. [2,3,1]
-        return value  # return current value. ie. 1
+        value = seq[0]
+        cls.CYCLEDICT[name] = seq[1:] + [value]
+        return value
 
     @classmethod
     def are_similar(cls, a, b, tolerance=0.0):
@@ -290,17 +286,19 @@ class CoreUtils(HelpMixin):
             are_similar(1, 10, 9)" #returns: True
             are_similar(1, 10, 8)" #returns: False
         """
-        func = lambda a, b: (
-            abs(a - b) <= tolerance
-            if isinstance(a, (int, float))
-            else (
-                True
-                if isinstance(a, (list, set, tuple))
-                and cls.are_similar(a, b, tolerance)
-                else a == b
-            )
-        )
-        return all(map(func, IterUtils.make_iterable(a), IterUtils.make_iterable(b)))
+
+        def similar(x, y):
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                return abs(x - y) <= tolerance
+            if isinstance(x, (list, set, tuple)):
+                return cls.are_similar(x, y, tolerance)
+            return x == y
+
+        a_items = list(IterUtils.make_iterable(a))
+        b_items = list(IterUtils.make_iterable(b))
+        if len(a_items) != len(b_items):
+            return False
+        return all(map(similar, a_items, b_items))
 
     @staticmethod
     def randomize(lst, ratio=1.0):
@@ -326,6 +324,7 @@ class CoreUtils(HelpMixin):
 
         return randomized
 
+    @staticmethod
     def parse_method_args(args: Tuple) -> Tuple[Union[Any, None], Tuple]:
         """Parse method arguments to determine if the function is an instance method or static method.
 

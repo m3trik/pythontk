@@ -405,6 +405,10 @@ class MathUtils(HelpMixin):
         if k <= 1:
             return [list(range(n))]
         k = min(k, n)
+        # At least one assignment pass must run: with zero iterations the
+        # numpy path's labels stay None and the fallback path never builds
+        # its groups (NameError).
+        max_iterations = max(1, max_iterations)
 
         if np is not None:
             pts = np.asarray(points, dtype=float)
@@ -1074,39 +1078,37 @@ class MathUtils(HelpMixin):
             (tuple)
 
         Example:
-            get_two_sides_of_asa_triangle(60, 60, 100) #returns: (100.00015320566493, 100.00015320566493)
+            get_two_sides_of_asa_triangle(60, 60, 100) #returns: (100.0, 100.0)
         """
-        from math import sin, radians
+        from math import sin, radians, pi
 
         if unit == "degrees":
             a1, a2 = radians(a1), radians(a2)
 
-        a3 = 3.14159 - a1 - a2
+        a3 = pi - a1 - a2
 
         result = ((s / sin(a3)) * sin(a1), (s / sin(a3)) * sin(a2))
 
         return result
 
     @classmethod
-    def xyz_rotation(cls, theta, axis, rotation=[], degree=False):
-        """Get the rotation about the X,Y,Z axes (in rotation) given
-        an angle for rotation (in radians) and an axis about which to
-        do the rotation.
+    def xyz_rotation(cls, theta, axis, degree=False):
+        """Get the rotation about the X,Y,Z axes given an angle for rotation
+        (in radians) and an axis about which to do the rotation.
 
         Parameters:
             theta (float):The angular position of a vector in radians.
             axis (tuple): The rotation axis given as float values (x,y,z).
-            rotation (list):
             degree (bool): Convert the radian result to degrees.
 
         Returns:
             (tuple) 3 point rotation.
 
         Example:
-            xyz_rotation(2, (0, 1, 0)) #returns: [3.589792907376932e-09, 1.9999999964102069, 3.589792907376932e-09]
-            xyz_rotation(2, (0, 1, 0), [], True) #returns: [0.0, 114.59, 0.0]
+            xyz_rotation(2, (0, 1, 0)) #returns: (3.589792907376932e-09, 1.9999999964102069, 3.589792907376932e-09)
+            xyz_rotation(2, (0, 1, 0), True) #returns: (0.0, 114.59, 0.0)
         """
-        from math import cos, sin, sqrt, atan2, degrees
+        from math import cos, sin, sqrt, atan2, degrees, pi
 
         # set up the xyzw quaternion values
         theta *= 0.5
@@ -1139,8 +1141,6 @@ class MathUtils(HelpMixin):
         # get x,y,z values for rotation
         cosB = sqrt(matrix[0] * matrix[0] + matrix[1] * matrix[1])
         if cosB > 1.0e-10:
-            pi = 3.14159265
-
             a, b, c = solution1 = [
                 atan2(matrix[6], matrix[10]),
                 atan2(-matrix[2], cosB),
@@ -1364,6 +1364,7 @@ class MathUtils(HelpMixin):
         ratio = (time_value - t0) / (t1 - t0)
         return float(p0 + (p1 - p0) * ratio)
 
+    @staticmethod
     def generate_geometric_sequence(
         base_value: int, terms: int, common_ratio: float = 2.0
     ) -> List[int]:
@@ -1540,10 +1541,11 @@ class MathUtils(HelpMixin):
 
         Returns:
             List: Ordered list of points (same type as input) forming a
-            continuous path.
+            continuous path. The input sequence is not modified.
         """
         if not points:
             return []
+        points = list(points)  # work on a copy; also accepts tuples
 
         if distance_metric is None:
             def distance_metric(p1, p2):
@@ -1837,92 +1839,41 @@ class MathUtils(HelpMixin):
             round_to_preferred(99.5) #returns: 100
             round_to_preferred(48.5) #returns: 49 (not 50, too far away with default max_distance)
         """
-        import math
-
         # Handle exact integers
         rounded = round(value)
         if value == rounded:
             return int(rounded)
 
-        # Define preferred numbers and their intervals
-        candidates = []
-
-        # Generate candidates based on scale
+        # Candidate preferred numbers: the bracketing multiples of each tier.
         floor_val = math.floor(value)
-        ceil_val = math.ceil(value)
+        candidates = set()
+        for step in (100, 50, 25, 20, 10, 5):
+            candidates.add((floor_val // step) * step)
+            candidates.add((floor_val // step + 1) * step)
 
-        # Add multiples of 100
-        hundred_floor = (floor_val // 100) * 100
-        hundred_ceil = ((floor_val // 100) + 1) * 100
-        candidates.extend([hundred_floor, hundred_ceil])
-
-        # Add multiples of 50
-        fifty_floor = (floor_val // 50) * 50
-        fifty_ceil = ((floor_val // 50) + 1) * 50
-        candidates.extend([fifty_floor, fifty_ceil])
-
-        # Add multiples of 25
-        twentyfive_floor = (floor_val // 25) * 25
-        twentyfive_ceil = ((floor_val // 25) + 1) * 25
-        candidates.extend([twentyfive_floor, twentyfive_ceil])
-
-        # Add multiples of 20
-        twenty_floor = (floor_val // 20) * 20
-        twenty_ceil = ((floor_val // 20) + 1) * 20
-        candidates.extend([twenty_floor, twenty_ceil])
-
-        # Add multiples of 10
-        ten_floor = (floor_val // 10) * 10
-        ten_ceil = ((floor_val // 10) + 1) * 10
-        candidates.extend([ten_floor, ten_ceil])
-
-        # Add multiples of 5
-        five_floor = (floor_val // 5) * 5
-        five_ceil = ((floor_val // 5) + 1) * 5
-        candidates.extend([five_floor, five_ceil])
-
-        # Remove duplicates and filter to conservative range
-        candidates = list(set(candidates))
         candidates = [c for c in candidates if abs(c - value) <= max_distance]
-
         if not candidates:
-            # Fallback to simple rounding
-            return int(round(value))
+            return int(round(value))  # no preferred number close enough
 
-        # Find the closest candidate
-        closest = min(candidates, key=lambda x: abs(x - value))
-
-        # If there's a tie, prefer the higher number for round numbers
-        distances = [(c, abs(c - value)) for c in candidates]
-        min_distance = min(d[1] for d in distances)
-        tied = [c for c, d in distances if d == min_distance]
-
+        # Closest candidate; ties prefer the "rounder" number
+        # (100 > 50 > 25 > 20 > 10 > 5), then the higher value.
+        min_distance = min(abs(c - value) for c in candidates)
+        tied = [c for c in candidates if abs(c - value) == min_distance]
         if len(tied) > 1:
-            # Prefer rounder numbers in ties
-            # Priority: 100 > 50 > 25 > 20 > 10 > 5
-            for multiple in [100, 50, 25, 20, 10, 5]:
+            for multiple in (100, 50, 25, 20, 10, 5):
                 for t in tied:
                     if t % multiple == 0:
                         return int(t)
-            # If still tied, prefer the higher number
             return int(max(tied))
+        return int(tied[0])
 
-        return int(closest)
-
-    @staticmethod
-    def round_to_aggressive_preferred(value: float) -> int:
+    @classmethod
+    def round_to_aggressive_preferred(cls, value: float) -> int:
         """Round to aesthetically pleasing 'round' numbers (aggressive approach).
 
-        Rounds to preferred numbers even when farther away (within ~10 frames).
+        :meth:`round_to_preferred` with a wide search radius (10) — rounds to
+        preferred numbers even when farther away.
         Examples: 48.x→50, 73.x→75, 88.x→90, 23.x→25, 7.x→10
-
-        Preferred numbers in order of priority:
-        - Multiples of 100 (0, 100, 200, ...)
-        - Multiples of 50 (50, 150, 250, ...)
-        - Multiples of 25 (25, 75, 125, ...)
-        - Multiples of 20 (20, 40, 60, 80, ...)
-        - Multiples of 10 (10, 30, 70, 90, ...)
-        - Multiples of 5 (5, 15, 35, 45, ...)
 
         Parameters:
             value (float): The value to round
@@ -1937,77 +1888,7 @@ class MathUtils(HelpMixin):
             round_to_aggressive_preferred(23.4) #returns: 25
             round_to_aggressive_preferred(7.8) #returns: 10
         """
-        import math
-
-        # Handle exact integers
-        rounded = round(value)
-        if value == rounded:
-            return int(rounded)
-
-        # Define preferred numbers and their intervals
-        candidates = []
-
-        # Generate candidates based on scale
-        floor_val = math.floor(value)
-        ceil_val = math.ceil(value)
-
-        # Add multiples of 100
-        hundred_floor = (floor_val // 100) * 100
-        hundred_ceil = ((floor_val // 100) + 1) * 100
-        candidates.extend([hundred_floor, hundred_ceil])
-
-        # Add multiples of 50
-        fifty_floor = (floor_val // 50) * 50
-        fifty_ceil = ((floor_val // 50) + 1) * 50
-        candidates.extend([fifty_floor, fifty_ceil])
-
-        # Add multiples of 25
-        twentyfive_floor = (floor_val // 25) * 25
-        twentyfive_ceil = ((floor_val // 25) + 1) * 25
-        candidates.extend([twentyfive_floor, twentyfive_ceil])
-
-        # Add multiples of 20
-        twenty_floor = (floor_val // 20) * 20
-        twenty_ceil = ((floor_val // 20) + 1) * 20
-        candidates.extend([twenty_floor, twenty_ceil])
-
-        # Add multiples of 10
-        ten_floor = (floor_val // 10) * 10
-        ten_ceil = ((floor_val // 10) + 1) * 10
-        candidates.extend([ten_floor, ten_ceil])
-
-        # Add multiples of 5
-        five_floor = (floor_val // 5) * 5
-        five_ceil = ((floor_val // 5) + 1) * 5
-        candidates.extend([five_floor, five_ceil])
-
-        # Remove duplicates and filter to aggressive range (within 10 frames)
-        candidates = list(set(candidates))
-        candidates = [c for c in candidates if abs(c - value) <= 10]
-
-        if not candidates:
-            # Fallback to simple rounding
-            return int(round(value))
-
-        # Find the closest candidate
-        closest = min(candidates, key=lambda x: abs(x - value))
-
-        # If there's a tie, prefer the higher number for round numbers
-        distances = [(c, abs(c - value)) for c in candidates]
-        min_distance = min(d[1] for d in distances)
-        tied = [c for c, d in distances if d == min_distance]
-
-        if len(tied) > 1:
-            # Prefer rounder numbers in ties
-            # Priority: 100 > 50 > 25 > 20 > 10 > 5
-            for multiple in [100, 50, 25, 20, 10, 5]:
-                for t in tied:
-                    if t % multiple == 0:
-                        return int(t)
-            # If still tied, prefer the higher number
-            return int(max(tied))
-
-        return int(closest)
+        return cls.round_to_preferred(value, max_distance=10)
 
     @staticmethod
     def hash_points(points, precision=4):

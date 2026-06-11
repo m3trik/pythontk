@@ -50,6 +50,38 @@ class SingletonMixinTest(BaseTestCase):
         self.assertIsNot(instance_a, instance_b)
         self.assertIs(instance_a, instance_a2)
 
+    def test_singleton_key_isolated_per_class(self):
+        """The same singleton_key on two different classes must not collide.
+
+        Regression: instances were keyed by ``singleton_key`` alone, so
+        ``B(singleton_key="x")`` could return an instance of ``A``."""
+
+        class FirstKeyed(SingletonMixin):
+            pass
+
+        class SecondKeyed(SingletonMixin):
+            pass
+
+        a = FirstKeyed(singleton_key="shared")
+        b = SecondKeyed(singleton_key="shared")
+
+        self.assertIsNot(a, b)
+        self.assertIsInstance(a, FirstKeyed)
+        self.assertIsInstance(b, SecondKeyed)
+
+    def test_singleton_key_not_passed_to_init(self):
+        """singleton_key must be consumed before reaching a typed __init__.
+
+        Regression: the kwarg leaked through and raised TypeError for any
+        subclass whose __init__ doesn't accept **kwargs."""
+
+        class TypedInit(SingletonMixin):
+            def __init__(self, x=1):
+                self.x = x
+
+        instance = TypedInit(singleton_key="k", x=5)  # must not raise
+        self.assertEqual(instance.x, 5)
+
     def test_singleton_init_called_once(self):
         """Test that __init__ is only called once per singleton."""
 

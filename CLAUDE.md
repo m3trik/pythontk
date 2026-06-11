@@ -28,7 +28,7 @@ Refresh manually: `python m3trik/scripts/generate_api_registry.py pythontk` — 
 ## Run tests
 
 ```powershell
-& python o:\Cloud\Code\_scripts\pythontk\test\run_all_tests.py
+& python o:\Cloud\Code\_scripts\pythontk\test\run_tests.py
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for history.

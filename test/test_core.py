@@ -441,13 +441,14 @@ class CoreTest(BaseTestCase):
         self.assertEqual(obj.b, 2)
         self.assertEqual(obj.c, 3)
 
-    def test_set_attributes_skips_falsy_values(self):
-        """Test set_attributes skips falsy attribute names and values."""
+    def test_set_attributes_sets_falsy_values(self):
+        """set_attributes must set explicitly-passed falsy values (False/0/None)."""
         obj = type("TestObj", (), {})()
-        # Empty string attr name or None value should be skipped
-        CoreUtils.set_attributes(obj, valid="ok", empty_val=None)
+        CoreUtils.set_attributes(obj, valid="ok", enabled=False, count=0, empty=None)
         self.assertEqual(obj.valid, "ok")
-        self.assertFalse(hasattr(obj, "empty_val"))
+        self.assertIs(obj.enabled, False)
+        self.assertEqual(obj.count, 0)
+        self.assertIsNone(obj.empty)
 
     def test_get_attributes_basic(self):
         """Test get_attributes retrieves object attributes."""
@@ -557,6 +558,15 @@ class CoreTest(BaseTestCase):
         result = CoreUtils.cycle([1, 2, 3], "test", query=True)
         self.assertEqual(result, 1)  # Last returned value
 
+    def test_cycle_query_unknown_key_is_readonly(self):
+        """query=True on an unknown key returns None and creates no state."""
+        CoreUtils.CYCLEDICT.clear()
+
+        self.assertIsNone(CoreUtils.cycle([1, 2, 3], "fresh", query=True))
+        self.assertNotIn("fresh", CoreUtils.CYCLEDICT)
+        # The first real call still starts at the beginning of the sequence.
+        self.assertEqual(CoreUtils.cycle([1, 2, 3], "fresh"), 1)
+
     def test_cycle_single_element(self):
         """Test cycle with single element list."""
         CoreUtils.CYCLEDICT.clear()
@@ -576,6 +586,11 @@ class CoreTest(BaseTestCase):
     # -------------------------------------------------------------------------
     # are_similar Tests
     # -------------------------------------------------------------------------
+
+    def test_are_similar_length_mismatch_is_false(self):
+        """Sequences of different lengths are never similar (no zip-truncation)."""
+        self.assertFalse(CoreUtils.are_similar([1, 2, 3], [1, 2]))
+        self.assertFalse(CoreUtils.are_similar([1, 2], [1, 2, 3], tolerance=100))
 
     def test_are_similar_within_tolerance(self):
         """Test are_similar returns True within tolerance."""

@@ -53,30 +53,8 @@ class HelpMixin:
         MyClass.where("my_method")
 
         # Show inheritance chain
-        MyClass.mro()
+        MyClass.show_mro()
     """
-
-    # Lazy-loaded module references (class-level cache)
-    _inspect = None
-    _pydoc = None
-
-    @classmethod
-    def _get_inspect(cls):
-        """Lazily import and cache the inspect module."""
-        if cls._inspect is None:
-            import inspect
-
-            HelpMixin._inspect = inspect
-        return cls._inspect
-
-    @classmethod
-    def _get_pydoc(cls):
-        """Lazily import and cache the pydoc module."""
-        if cls._pydoc is None:
-            import pydoc
-
-            HelpMixin._pydoc = pydoc
-        return cls._pydoc
 
     @classmethod
     def help(
@@ -482,13 +460,16 @@ class HelpMixin:
         return None
 
     @classmethod
-    def mro(
+    def show_mro(
         cls,
         *,
         brief: bool = False,
         returns: bool = False,
     ) -> Optional[str]:
         """Show the method resolution order (inheritance chain) for this class.
+
+        Named ``show_mro`` (not ``mro``) deliberately: defining ``mro`` on a
+        mixin shadows Python's built-in ``type.mro()`` for every subclass.
 
         Parameters:
             brief: If True, show only class names.
@@ -499,8 +480,8 @@ class HelpMixin:
             MRO string if returns=True, otherwise None.
 
         Examples:
-            >>> MyClass.mro()                # Full MRO with modules
-            >>> MyClass.mro(brief=True)      # Just class names
+            >>> MyClass.show_mro()                # Full MRO with modules
+            >>> MyClass.show_mro(brief=True)      # Just class names
         """
         mro_classes = inspect.getmro(cls)
         lines = [f"Method Resolution Order for {cls.__name__}:", ""]
@@ -839,8 +820,6 @@ class HelpMixin:
             >>> HelpMixin.about(SomeClass, "method")     # Help for a method
             >>> HelpMixin.about(some_module)             # Help for a module
         """
-        inspect = HelpMixin._get_inspect()
-
         # If name provided, get that attribute from target
         if name is not None:
             member = getattr(target, name, None)
@@ -959,7 +938,7 @@ if __name__ == "__main__":
     ExampleClass.where("process")
 
     print("\n=== MRO ===")
-    ExampleClass.mro()
+    ExampleClass.show_mro()
 
     print("\n=== Signature details ===")
     ExampleClass.signature("process")

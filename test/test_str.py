@@ -443,9 +443,40 @@ class StrTest(BaseTestCase):
         result = StrUtils.get_trailing_integers("Cube")
         self.assertIsNone(result)
 
+    def test_get_trailing_integers_as_string_no_numbers(self):
+        """as_string=True must return None (not the string 'None') on no match."""
+        self.assertIsNone(StrUtils.get_trailing_integers("Cube", as_string=True))
+
     def test_get_trailing_integers_multi_digit(self):
         """Test get_trailing_integers with multi-digit number."""
         self.assertEqual(StrUtils.get_trailing_integers("object123"), 123)
+
+    # -------------------------------------------------------------------------
+    # time_stamp Tests
+    # -------------------------------------------------------------------------
+
+    def test_time_stamp_round_trip(self):
+        """Attaching then detaching a timestamp must return the original path,
+        including paths that contain spaces."""
+        import tempfile
+        import os
+
+        tmpdir = tempfile.mkdtemp(prefix="time stamp ")  # space in dir name
+        path = os.path.join(tmpdir, "auto save.0001.mb")
+        try:
+            with open(path, "w") as f:
+                f.write("x")
+            normalized = path.replace("\\", "/")
+
+            stamped = StrUtils.time_stamp(path)
+            self.assertNotEqual(stamped, normalized)
+            self.assertTrue(stamped.endswith(normalized))
+
+            detached = StrUtils.time_stamp(stamped)
+            self.assertEqual(detached, normalized)
+        finally:
+            os.remove(path)
+            os.rmdir(tmpdir)
 
     def test_get_trailing_integers_zero(self):
         """Test get_trailing_integers with trailing zero."""

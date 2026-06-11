@@ -132,9 +132,10 @@ class NamespaceHandler(LoggingMixin):
         if name in self._attributes:
             return self._attributes[name]
 
-        # Check placeholders
+        # Resolve placeholders — same contract as item access. Use
+        # raw()/get_placeholder() to inspect a placeholder without resolving.
         if name in self._placeholders:
-            return self._placeholders[name]
+            return self._resolve_placeholder(name)
 
         try:
             return self._resolve_and_cache(name)
@@ -271,8 +272,9 @@ class NamespaceHandler(LoggingMixin):
         placeholder = self._placeholders[key]
         self.logger.debug(f"[{self._identifier}] Resolving placeholder: {key}")
         value = placeholder.create()
+        # __setitem__ pops the placeholder entry itself when caching a
+        # non-placeholder value, so no explicit delete is needed here.
         self[key] = value
-        del self._placeholders[key]
         return value
 
     def _resolve_and_cache(self, key: str) -> Any:

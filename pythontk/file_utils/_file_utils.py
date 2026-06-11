@@ -342,29 +342,6 @@ class FileUtils(HelpMixin):
             return False
 
     @staticmethod
-    def get_file(filepath, mode="a+"):
-        """Return a file object with the given mode.
-
-        Parameters:
-            filepath (str): The path to an existing file or the desired location for one to be created.
-            mode (str): 'r' - Read - Default value. Opens a file for reading, error if the file does not exist.
-                        'a' - Append - Opens a file for appending, creates the file if it does not exist.
-                        'a+' - Read+Write - Creates a new file or opens an existing file, the file pointer position at the end of the file.
-                        'w' - Write - Opens a file for writing, creates the file if it does not exist.
-                        'w+' - Read+Write - Opens a file for reading and writing, creates the file if it does not exist.
-                        'x' - Create - Creates a new file, returns an error if the file exists.
-                        't' - Text - Default value. Text mode
-                        'b' - Binary - Binary mode (e.g. images)
-        Returns:
-            (obj) file
-        """
-        try:
-            with open(filepath, mode) as f:
-                return f
-        except OSError:
-            traceback.print_exc()
-
-    @staticmethod
     def get_file_contents(filepath: str, as_list=False, encoding="utf-8") -> None:
         """Get each line of a text file as indices of a list.
         Will create a file if one doesn't exist.
@@ -677,6 +654,8 @@ class FileUtils(HelpMixin):
             r"(?<!\\)\\(?!\\)", "/", p
         )  # Replace single backslashes, not followed by another backslash, with forward slashes.
         p = p.rstrip("/")  # strip trailing forward slashes.
+        if re.fullmatch(r"[A-Za-z]:", p):  # preserve drive roots: "C:/" != "C:"
+            p += "/"
 
         fullpath = p if "/" in p else ""
         fn = p.split("/")[-1]
@@ -1127,7 +1106,9 @@ class FileUtils(HelpMixin):
             file (str): The filepath to a json file. If a file doesn't exist, it will be created.
         """
         cls._jsonFile = file
-        cls.get_file(cls._jsonFile)  # will create the file if it does not exist.
+        if not os.path.exists(file):
+            with open(file, "a", encoding="utf-8"):
+                pass
 
     @classmethod
     def get_json_file(cls):

@@ -166,6 +166,15 @@ class IterTest(BaseTestCase):
         self.assertEqual(IterUtils.nested_depth([42]), 0)
         self.assertEqual(IterUtils.nested_depth([[42]]), 1)
 
+    def test_nested_depth_custom_typ_applies_at_all_levels(self):
+        """A custom ``typ`` must constrain recursion too (regression: the
+        recursive call dropped ``typ`` and reverted to the default types)."""
+        # Tuples nested inside lists: with typ=(list,), tuple nesting below
+        # the first level must not be counted.
+        self.assertEqual(IterUtils.nested_depth([[(1, (2,))]], typ=(list,)), 1)
+        # Sanity: default typ still counts the tuple levels.
+        self.assertEqual(IterUtils.nested_depth([[(1, (2,))]]), 3)
+
     # -------------------------------------------------------------------------
     # flatten Tests
     # -------------------------------------------------------------------------

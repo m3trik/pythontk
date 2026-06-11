@@ -9,8 +9,6 @@ import subprocess
 import wave as _wave
 from typing import Dict, List, Optional, Set
 
-import numpy as np
-
 from pythontk.core_utils.help_mixin import HelpMixin
 
 
@@ -236,6 +234,9 @@ class AudioUtils(HelpMixin):
 
         if not clips or sample_rate is None:
             return None
+
+        # Optional dep — only the mixing path needs numpy.
+        import numpy as np
 
         total_samples = max(pos + len(s) for pos, s in clips)
         if total_samples <= 0:

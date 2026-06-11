@@ -866,32 +866,30 @@ class ImgUtils(HelpMixin):
             mask = cls.get_background(mask)
 
         im = cls.ensure_image(image)
-        # mode = im.mode
         im = im.convert("RGBA")
         width, height = im.size
-        data = np.array(im)
+        data = np.array(im)  # shape (height, width, 4) — rows first.
 
-        r1, g1, b1, a1 = mask if len(mask) == 4 else mask + (None,)
+        r1, g1, b1, a1 = mask if len(mask) == 4 else tuple(mask) + (None,)
 
         r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
 
-        bool_list = (
+        matched = (
             ((r == r1) & (g == g1) & (b == b1) & (a == a1))
             if len(mask) == 4
             else ((r == r1) & (g == g1) & (b == b1))
         )
 
-        data[:, :, :4][bool_list.any()] = foreground
-        data[:, :, :4][bool_list] = background
+        data[~matched] = foreground
+        data[matched] = background
 
-        # Set the border to background color:
-        data[0, 0] = background  # Get the pixel value at top left coordinate.
-        data[width - 1, 0] = background  # Top right coordinate.
-        data[0, height - 1] = background  # Bottom right coordinate.
-        data[width - 1, height - 1] = background  # Bottom left coordinate.
+        # Force the corners to background color:
+        data[0, 0] = background  # top left
+        data[0, width - 1] = background  # top right
+        data[height - 1, 0] = background  # bottom left
+        data[height - 1, width - 1] = background  # bottom right
 
-        mask = Image.fromarray(data).convert("L")
-        return mask
+        return Image.fromarray(data).convert("L")
 
     @classmethod
     def fill_masked_area(cls, image, color, mask):
@@ -1398,73 +1396,59 @@ class ImgUtils(HelpMixin):
             return (result * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
         return result.astype(dtype, copy=False)
 
-    @staticmethod
-    def convert_rgb_to_gray(data):
-        """Convert an RGB Image data array to grayscale.
+    @classmethod
+    def convert_rgb_to_gray(cls, data):
+        """Convert an RGB Image data array to grayscale (luma weights).
 
-        :Paramters:
-            data (str/obj)(array) = An image, path to an image, or
-                    image data as numpy array.
+        Parameters:
+            data (str/PIL.Image.Image/np.ndarray): An image, path to an image,
+                or image data as a numpy array.
+
         Returns:
-            (array)
-
-        # gray_data = np.average(data, weights=[0.299, 0.587, 0.114], axis=2)
-        # gray_data = (data[:,:,:3] * [0.2989, 0.5870, 0.1140]).sum(axis=2)
+            (np.ndarray) 2D float array of luma values.
         """
         if not isinstance(data, np.ndarray):
-            im = data.open(data) if (isinstance(data, str)) else data
-            data = np.array(im)
+            data = np.array(cls.ensure_image(data))
 
-        gray_data = np.dot(data[..., :3], [0.2989, 0.5870, 0.1140])
-
-        # array = gray_data.reshape(gray_data.shape[0], gray_data.shape[1], 1)
-        # print (array.shape)
-
-        return gray_data
+        return np.dot(data[..., :3], [0.2989, 0.5870, 0.1140])
 
     @classmethod
     def convert_rgb_to_hsv(cls, image):
-        """Manually convert the image to a NumPy array, iterate over the pixels
-        and use the colorsys module to convert the colors from RGB to HSV.
-        PIL images can be converted usin: image.convert("HSV")
-        PNG files cannot be saved as HSV.
+        """Convert an RGB image to HSV mode.
+
+        Uses PIL's native conversion (H/S/V each 0-255, with H scaled from
+        0-360°). Note: PNG files cannot be saved as HSV.
 
         Parameters:
             image (str/obj): An image or path to an image.
 
         Returns:
-            (obj) image.
+            (PIL.Image.Image) image in "HSV" mode.
         """
-        import colorsys
-
-        im = cls.ensure_image(image)
-        data = np.array(im)
-
-        # Convert the colors from RGB to HSV
-        hsv = np.empty_like(data)
-        for i in range(data.shape[0]):
-            for ii in range(data.shape[1]):
-                r, g, b = data[i, ii]
-                h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-                hsv[i, ii] = (int(h * 360), int(s * 100), int(v * 100))
-
-        return Image.fromarray(hsv, mode="HSV")
+        return cls.ensure_image(image, mode="RGB").convert("HSV")
 
     @classmethod
     def convert_i_to_l(cls, image):
-        """Convert to 8 bit 'L' grayscale.
+        """Convert a high-bit-depth grayscale image to 8-bit 'L'.
+
+        Values above the 8-bit range are treated as 16-bit (0-65535) and
+        scaled down (÷257), not truncated.
 
         Parameters:
             image (str/obj): An image or path to an image.
 
         Returns:
-            (obj) image.
+            (PIL.Image.Image) image in "L" mode.
         """
         im = cls.ensure_image(image)
-        data = np.array(im)
+        data = np.asarray(im)
 
-        data = np.asarray(data, np.uint8)  # np.uint8(data / 256)
-        return Image.fromarray(data)
+        if data.dtype != np.uint8:
+            if data.max(initial=0) > 255:  # 16-bit range -> scale, don't truncate
+                data = np.clip(data, 0, 65535) / 257.0
+            data = np.clip(np.round(data), 0, 255).astype(np.uint8)
+
+        return Image.fromarray(data, mode="L")
 
     @classmethod
     def pack_channels(
@@ -1544,12 +1528,6 @@ class ImgUtils(HelpMixin):
                     band = cls.create_image("L", size, color=gray_val)
                 else:
                     band = img_obj.convert("L").resize(size)
-            elif ch == "G" and not channel_files.get("G"):
-                # Ensure the green channel stays empty
-                band = cls.create_image("L", size, color=fill_values.get("G", 0))
-            elif ch == "B" and not channel_files.get("B"):
-                # Ensure the blue channel stays empty
-                band = cls.create_image("L", size, color=fill_values.get("B", 0))
             elif ch in "GB" and allow_duplicate and r_img is not None:
                 # Duplicate R into G/B if only R is used
                 band = r_img
@@ -1742,25 +1720,31 @@ class ImgUtils(HelpMixin):
         return cls._linear_to_srgb_np(data)
 
     @classmethod
-    def generate_mipmaps(cls, image: Image.Image) -> Image.Image:
-        """Generates mipmaps for an image.
+    def generate_mipmaps(cls, image: Union[str, Image.Image]) -> List[Image.Image]:
+        """Generate a mipmap chain for an image.
+
+        Note: PIL's writers (including DDS) cannot embed mip chains in a file;
+        this returns the chain for callers that hand the levels to an external
+        codec (see :meth:`register_dds_codec`).
 
         Parameters:
-            image (PIL.Image.Image): The input image.
+            image (str | PIL.Image.Image): The input image.
 
         Returns:
-            PIL.Image.Image: The image with mipmaps applied.
+            list[PIL.Image.Image]: ``[base, half, quarter, …]`` down to 1px on
+            the shorter side. The base level is a copy of the input.
         """
-        base = image.copy()
-        mipmaps = [base]
+        base = cls.ensure_image(image).copy()
+        chain = [base]
 
         while min(base.size) > 1:
             base = base.resize(
-                (base.size[0] // 2, base.size[1] // 2), Image.Resampling.LANCZOS
+                (max(base.size[0] // 2, 1), max(base.size[1] // 2, 1)),
+                Image.Resampling.LANCZOS,
             )
-            mipmaps.append(base)
+            chain.append(base)
 
-        return mipmaps[0]  # Return the highest-resolution mipmap
+        return chain
 
     @classmethod
     def depalettize_image(cls, image: Image.Image) -> Image.Image:

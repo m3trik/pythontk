@@ -71,6 +71,11 @@ class FileTest(BaseTestCase):
             FileUtils.format_path(r"X:\n/dir1/dir3", "path"), "X:/n/dir1/dir3"
         )
 
+    def test_format_path_preserves_drive_root(self):
+        """A bare drive root must keep its trailing slash ("C:" means CWD-relative)."""
+        self.assertEqual(FileUtils.format_path("C:/"), "C:/")
+        self.assertEqual(FileUtils.format_path("C:\\"), "C:/")
+
     def test_format_path_vscode_directory(self):
         """Test format_path with .vscode directory."""
         self.assertEqual(
@@ -588,16 +593,6 @@ class FileTest(BaseTestCase):
     def test_get_object_path_none(self):
         """Test get_object_path with None."""
         self.assertEqual(FileUtils.get_object_path(None), "")
-
-    # -------------------------------------------------------------------------
-    # get_file Tests
-    # -------------------------------------------------------------------------
-
-    def test_get_file_opens_handle(self):
-        """Test get_file opens file handle."""
-        file_handle = FileUtils.get_file(str(self.file1_path))
-        self.assertIn("TextIOWrapper", str(type(file_handle)))
-        file_handle.close()
 
     # -------------------------------------------------------------------------
     # get_classes_from_path Tests
