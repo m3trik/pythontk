@@ -459,7 +459,10 @@ class ExecutionMonitor:
                 return True
 
         elif sys.platform.startswith("linux"):
-            import subprocess
+            # NOTE: do not re-import subprocess here — a local import would
+            # shadow the module-level one for the WHOLE function, making the
+            # win32 branch above raise UnboundLocalError (silently caught, so
+            # the custom dialog never showed on Windows).
             import shutil
 
             # Try Zenity (GNOME/Standard)

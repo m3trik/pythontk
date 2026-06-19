@@ -285,6 +285,122 @@ class ImgUtils(HelpMixin):
             )
 
     @staticmethod
+    def validate_image_integrity(filepath: str) -> Tuple[bool, str]:
+        """Cheaply check that an image file is complete and decodable.
+
+        Targets the files that crash native texture loaders: empty or
+        truncated downloads (a partially-synced cloud file, an interrupted
+        export) and stubs whose declared dimensions far exceed the bytes
+        actually present. Pure-Python and zero-dependency — it does not fully
+        decode pixels, so a clean result is a strong but not absolute
+        guarantee, and an unrecognized structure is treated as ok (never a
+        false reject).
+
+        Coverage:
+            * Radiance HDR (``.hdr`` / ``.pic``) — parses the resolution line
+              and walks the RLE/flat scanlines; reports truncation precisely.
+            * OpenEXR (``.exr``) — verifies the magic number and a sane
+              minimum size (catches empty stubs / wrong-format files).
+            * Other formats — only checks the file exists and is non-empty.
+
+        Returns:
+            (ok, detail): ``ok`` is False only when the file is provably bad;
+            ``detail`` is a short reason ("" when ok).
+        """
+        fp = os.path.expandvars(filepath)
+        try:
+            size = os.path.getsize(fp)
+        except OSError:
+            return False, "file not found"
+        if size == 0:
+            return False, "file is empty"
+
+        ext = os.path.splitext(fp)[1].lower().lstrip(".")
+        try:
+            if ext in ("hdr", "pic"):
+                return ImgUtils._validate_radiance_hdr(fp)
+            if ext == "exr":
+                return ImgUtils._validate_exr(fp, size)
+        except Exception as e:  # validation must never raise on the caller
+            return True, f"unvalidated ({e})"
+        return True, ""
+
+    @staticmethod
+    def _validate_radiance_hdr(fp: str) -> Tuple[bool, str]:
+        """Walk a Radiance HDR's scanlines to detect truncation."""
+        with open(fp, "rb") as f:
+            data = f.read()
+        if not data.startswith(b"#?"):  # #?RADIANCE / #?RGBE
+            return True, ""  # not the expected format; don't block
+        nl = data.find(b"\n\n")  # header ends at the first blank line
+        if nl < 0:
+            return False, "incomplete header"
+        p = nl + 2
+        eol = data.find(b"\n", p)
+        if eol < 0:
+            return False, "missing resolution line"
+        res = data[p:eol].split()  # e.g. b"-Y 4096 +X 8192"
+        if len(res) != 4:
+            return True, ""  # nonstandard orientation; skip the strict check
+        try:
+            height, width = int(res[1]), int(res[3])
+        except ValueError:
+            return True, ""
+        off, n = eol + 1, len(data)
+
+        # New-style adaptive RLE: each scanline is 0x02 0x02 <hi> <lo> then four
+        # run-length-encoded channels. Old/flat RGBE has no markers.
+        if 8 <= width <= 0x7FFF and off + 4 <= n and data[off] == 2 and data[off + 1] == 2:
+            rows = 0
+            while rows < height and off + 4 <= n:
+                if data[off] != 2 or data[off + 1] != 2:
+                    break
+                if ((data[off + 2] << 8) | data[off + 3]) != width:
+                    break
+                off += 4
+                truncated = False
+                for _channel in range(4):
+                    x = 0
+                    while x < width:
+                        if off >= n:
+                            truncated = True
+                            break
+                        run = data[off]
+                        off += 1
+                        if run > 128:  # a run of (run-128) identical bytes
+                            off += 1
+                            x += run - 128
+                        else:  # (run) literal bytes
+                            off += run
+                            x += run
+                    if truncated or off > n:
+                        truncated = True
+                        break
+                if truncated:
+                    break
+                rows += 1
+            if rows < height:
+                return False, f"truncated: {rows}/{height} scanlines"
+            return True, ""
+
+        # Flat RGBE fallback: 4 bytes/pixel, no length markers.
+        expected = width * height * 4
+        if (n - off) < expected:
+            return False, f"truncated: {n - off}/{expected} pixel bytes"
+        return True, ""
+
+    @staticmethod
+    def _validate_exr(fp: str, size: int) -> Tuple[bool, str]:
+        """Check an OpenEXR magic number + a sane minimum size."""
+        with open(fp, "rb") as f:
+            magic = f.read(4)
+        if magic != b"\x76\x2f\x31\x01":
+            return False, "not an OpenEXR file (bad magic)"
+        if size < 64:  # header alone is larger than this
+            return False, "EXR too small to be valid"
+        return True, ""
+
+    @staticmethod
     def create_image(mode, size=(4096, 4096), color=None):
         """Create a new image.
 
@@ -846,6 +962,71 @@ class ImgUtils(HelpMixin):
             )
 
     @classmethod
+    def swizzle_channels(cls, image, mapping):
+        """Reorder, duplicate, or constant-fill an image's channels.
+
+        A general channel-remap primitive: each destination channel pulls from
+        a chosen source channel (or a constant), so it covers swaps (R↔B),
+        broadcasts (red → grayscale), and alpha fills. Pairs with
+        :meth:`invert_channels` for full per-channel control.
+
+        Parameters:
+            image (str/PIL.Image.Image): An image or path to an image.
+            mapping (str/dict): The channel remap.
+                - **str**: destination channels in ``RGBA`` order, each
+                  character naming the *source* to pull into that slot — e.g.
+                  ``"BGRA"`` swaps red and blue, ``"RRR"`` broadcasts red. The
+                  length (1-4) sets the number of output channels
+                  (1→``L``, 2→``LA``, 3→``RGB``, 4→``RGBA``).
+                - **dict** ``{dest: source}``: only the listed destinations are
+                  remapped; the rest keep their original channel. Output is
+                  ``RGB``, gaining an ``A`` channel when the input already has
+                  one *or* the mapping names an ``A`` destination — so a dict
+                  can add alpha to an RGB image (a grayscale input is promoted
+                  to ``RGB``).
+                Sources are case-insensitive ``R``/``G``/``B``/``A`` or the
+                constants ``"0"`` (black) / ``"1"`` (white). A source the input
+                lacks (e.g. ``A`` on an RGB image) resolves to white.
+
+        Returns:
+            PIL.Image.Image: The remapped image.
+        """
+        im = cls.ensure_image(image)
+        rgba = im.convert("RGBA")
+        bands = dict(zip("RGBA", rgba.split()))
+
+        def resolve(token):
+            token = str(token).strip().upper()
+            if token in ("0", "1"):
+                return Image.new("L", rgba.size, 0 if token == "0" else 255)
+            if token in bands:
+                return bands[token]
+            raise ValueError(
+                f"swizzle_channels: invalid source '{token}'; expected one of "
+                "R, G, B, A, 0, 1."
+            )
+
+        if isinstance(mapping, str):
+            order = mapping.strip()
+            if not 1 <= len(order) <= 4:
+                raise ValueError(
+                    "swizzle_channels: string mapping must be 1-4 characters."
+                )
+            out_bands = [resolve(c) for c in order]
+            if len(out_bands) == 1:
+                return out_bands[0]
+            out_mode = {2: "LA", 3: "RGB", 4: "RGBA"}[len(out_bands)]
+            return Image.merge(out_mode, tuple(out_bands))
+
+        # dict mapping — output RGB, gaining alpha when the input already has
+        # one or the mapping explicitly addresses the ``A`` destination.
+        remap = {str(k).strip().upper(): v for k, v in mapping.items()}
+        has_alpha = "A" in remap or "A" in im.getbands()
+        dest_order = "RGBA" if has_alpha else "RGB"
+        out_bands = [resolve(remap.get(dest, dest)) for dest in dest_order]
+        return Image.merge(dest_order, tuple(out_bands))
+
+    @classmethod
     @CoreUtils.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
@@ -1068,7 +1249,11 @@ class ImgUtils(HelpMixin):
     def _gaussian_blur_array(
         arr: "np.ndarray", radius: float, channel: Optional[str]
     ) -> "np.ndarray":
-        """Numpy-array blur via PIL (avoids pulling in scipy/cv2)."""
+        """Numpy-array blur. Uses PIL when present (avoids pulling in scipy/cv2); falls back to a
+        pure-numpy separable Gaussian when PIL is unavailable, so dependency-light callers (e.g.
+        ``rasterize_silhouette`` under Blender's PIL-less Python) keep working."""
+        if Image is None:
+            return ImgUtils._gaussian_blur_array_numpy(arr, radius, channel)
         # 2D grayscale
         if arr.ndim == 2:
             src = Image.fromarray(arr if arr.dtype == np.uint8 else arr.astype(np.uint8))
@@ -1099,6 +1284,47 @@ class ImgUtils(HelpMixin):
             out = np.asarray(blurred)
             return out.astype(arr.dtype, copy=False)
 
+        raise ValueError(f"Unsupported array shape: {arr.shape}")
+
+    @staticmethod
+    def _gaussian_blur_array_numpy(
+        arr: "np.ndarray", radius: float, channel: Optional[str]
+    ) -> "np.ndarray":
+        """Pure-numpy separable Gaussian blur (PIL-free fallback for :meth:`_gaussian_blur_array`).
+
+        Treats ``radius`` as the kernel std-dev (sigma), matching PIL's ``GaussianBlur(radius=…)``,
+        and pads with reflection so edges don't darken. Returns the input dtype (uint8 inputs are
+        rounded). For a 3D RGBA/LA array, ``channel`` (``"R"``/``"G"``/``"B"``/``"A"``) restricts the
+        blur to one channel, mirroring the PIL path."""
+        sigma = max(float(radius), 1e-6)
+        rad = max(1, int(round(3.0 * sigma)))
+        x = np.arange(-rad, rad + 1, dtype=np.float64)
+        k = np.exp(-(x * x) / (2.0 * sigma * sigma))
+        k /= k.sum()
+
+        def blur2d(a2d: "np.ndarray") -> "np.ndarray":
+            a2d = a2d.astype(np.float64, copy=False)
+            pad = len(k) // 2
+            ap = np.pad(a2d, ((0, 0), (pad, pad)), mode="reflect")
+            a2d = np.apply_along_axis(lambda m: np.convolve(m, k, mode="valid"), 1, ap)
+            ap = np.pad(a2d, ((pad, pad), (0, 0)), mode="reflect")
+            return np.apply_along_axis(lambda m: np.convolve(m, k, mode="valid"), 0, ap)
+
+        def cast(out: "np.ndarray") -> "np.ndarray":
+            if arr.dtype == np.uint8:
+                return (out + 0.5).clip(0, 255).astype(np.uint8)
+            return out.astype(arr.dtype, copy=False)
+
+        if arr.ndim == 2:
+            return cast(blur2d(arr))
+        if arr.ndim == 3:
+            chans = arr.shape[2]
+            idx = {"R": 0, "G": 1, "B": 2, "A": 3}.get(channel.upper()) if channel else None
+            targets = [idx] if (idx is not None and idx < chans) else range(chans)
+            out = arr.astype(np.float64, copy=True)
+            for c in targets:
+                out[:, :, c] = blur2d(arr[:, :, c])
+            return cast(out)
         raise ValueError(f"Unsupported array shape: {arr.shape}")
 
     @staticmethod
@@ -1395,6 +1621,117 @@ class ImgUtils(HelpMixin):
         if dtype == np.uint8:
             return (result * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
         return result.astype(dtype, copy=False)
+
+    @staticmethod
+    def _fill_triangle(mask, tri):
+        """Fill a 2D triangle (3x2 int pixel coords) into ``mask`` with 255 (numpy edge test)."""
+        xs, ys = tri[:, 0], tri[:, 1]
+        x0, x1 = int(xs.min()), int(xs.max())
+        y0, y1 = int(ys.min()), int(ys.max())
+        if x1 < x0 or y1 < y0:
+            return
+        ax, ay = float(tri[0][0]), float(tri[0][1])
+        bx, by = float(tri[1][0]), float(tri[1][1])
+        cx, cy = float(tri[2][0]), float(tri[2][1])
+        denom = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+        if abs(denom) < 1e-9:
+            return  # degenerate
+        yy, xx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+        l1 = ((by - cy) * (xx - cx) + (cx - bx) * (yy - cy)) / denom
+        l2 = ((cy - ay) * (xx - cx) + (ax - cx) * (yy - cy)) / denom
+        l3 = 1.0 - l1 - l2
+        inside = (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
+        sub = mask[y0:y1 + 1, x0:x1 + 1]
+        sub[inside] = 255
+
+    @classmethod
+    def _contact_falloff(cls, mask, falloff_source, falloff_power, vertical_weight):
+        """Radial + vertical contact-falloff weight (0..1) for a silhouette mask (pre-flip coords)."""
+        h, w = mask.shape
+        rows = np.where(mask.max(axis=1) > 0)[0]
+        cols = np.where(mask.max(axis=0) > 0)[0]
+        if not (len(rows) and len(cols)):
+            return np.ones((h, w), dtype=np.float32)
+        top_row, bottom_row = rows[0], rows[-1]
+        center_col = (cols[0] + cols[-1]) // 2
+        if falloff_source is not None:  # saved-PNG coords -> pre-flip (v mirrored)
+            src = (float(falloff_source[0]), 1.0 - float(falloff_source[1]))
+        else:
+            src = (center_col / max(w - 1, 1), bottom_row / max(h - 1, 1))
+        radial_w = max(1.0 - vertical_weight, 0.0)
+        vertical_w = max(min(vertical_weight, 1.0), 0.0)
+        radial = cls.radial_gradient(
+            (w, h), center=src, max_radius=max(bottom_row - top_row, 1), falloff_power=falloff_power
+        )
+        vertical = np.zeros((h, w), dtype=np.float32)
+        span = max(bottom_row - top_row, 1)
+        t = np.clip((np.arange(h) - top_row) / span, 0.0, 1.0) ** 0.6
+        vertical[:, :] = t[:, None]
+        vertical[np.arange(h) < top_row, :] = 0.0
+        vertical[np.arange(h) > bottom_row, :] = 1.0
+        return radial * radial_w + vertical * vertical_w
+
+    @classmethod
+    def rasterize_silhouette(
+        cls, meshes, size=512, axis="auto", *, uniform_alpha=False,
+        falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5,
+    ):
+        """Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.
+
+        DCC-agnostic core of the projected-shadow tools (mayatk / blendertk ``ShadowRig``): the DCC
+        supplies world geometry, this projects → fills → composes the contact-falloff alpha. Reuses
+        :meth:`gaussian_blur` and :meth:`radial_gradient`; pure numpy triangle fill (no OpenCV/PIL),
+        and returns the array rather than writing a file — the caller persists it via its own image
+        API (Blender's python ships no PIL, Maya uses cv2), keeping this layer dependency-clean.
+
+        Parameters:
+            meshes: iterable of ``(points, tris)`` — ``points`` an ``(N,3)`` world-space float array,
+                ``tris`` an ``(M,3)`` int array of vertex indices into it.
+            size: square texture resolution.
+            axis: projection axis ``'x'`` / ``'y'`` / ``'z'`` / ``'auto'`` (perpendicular to the
+                widest XZ span — matches mayatk's auto rule).
+            uniform_alpha: flat silhouette (no contact falloff).
+            falloff_source: override contact origin in saved-PNG coords ((0,0)=top-left); else auto.
+            falloff_power / vertical_weight: contact-falloff shaping. blur_amount: edge Gaussian blur.
+
+        Returns:
+            ``(size, size, 4)`` uint8 RGBA array (silhouette in alpha; V flipped for bottom-left UV).
+        """
+        meshes = [
+            (np.asarray(p, dtype=float).reshape(-1, 3), np.asarray(t, dtype=np.int64).reshape(-1, 3))
+            for p, t in meshes if len(p) and len(t)
+        ]
+        if not meshes:
+            raise ValueError("rasterize_silhouette: no geometry provided.")
+
+        all_pts = np.concatenate([p for p, _ in meshes], axis=0)
+        mn, mx = all_pts.min(axis=0), all_pts.max(axis=0)
+        a = axis.lower()
+        if a == "auto":
+            a = "x" if (mx[2] - mn[2]) > (mx[0] - mn[0]) else "z"
+        u_idx, v_idx = {"y": (0, 2), "x": (2, 1)}.get(a, (0, 1))
+        # 1.1 = 10% padding; `or 1.0` guards a zero-extent (single-point/degenerate) mesh against /0.
+        extent = max(mx[u_idx] - mn[u_idx], mx[v_idx] - mn[v_idx]) * 1.1 or 1.0
+        u_c, v_c = (mn[u_idx] + mx[u_idx]) / 2.0, (mn[v_idx] + mx[v_idx]) / 2.0
+
+        mask = np.zeros((size, size), dtype=np.uint8)
+        for pts, tris in meshes:
+            pu = np.clip(((pts[:, u_idx] - u_c) / extent + 0.5) * size, 0, size - 1).astype(np.int32)
+            pv = np.clip((1.0 - ((pts[:, v_idx] - v_c) / extent + 0.5)) * size, 0, size - 1).astype(np.int32)
+            proj = np.stack([pu, pv], axis=1)
+            for tri in tris:
+                cls._fill_triangle(mask, proj[tri])
+
+        if blur_amount and blur_amount > 0:
+            mask = cls.gaussian_blur(mask, radius=blur_amount)
+        combined = (
+            np.ones(mask.shape, dtype=np.float32) if uniform_alpha
+            else cls._contact_falloff(mask, falloff_source, falloff_power, vertical_weight)
+        )
+        alpha = np.flipud((mask.astype(np.float32) / 255.0 * combined * 255).astype(np.uint8))
+        result = np.zeros((size, size, 4), dtype=np.uint8)
+        result[:, :, 3] = alpha
+        return result
 
     @classmethod
     def convert_rgb_to_gray(cls, data):

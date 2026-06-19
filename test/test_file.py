@@ -725,6 +725,39 @@ class FileTest(BaseTestCase):
         result = FileUtils.get_json("nonexistent_key_xyz")
         self.assertIsNone(result)
 
+    def test_reveal_in_file_manager(self):
+        """reveal_in_file_manager builds the right platform command and selects files vs folders."""
+        import sys
+
+        captured = []
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "scene.blend")
+            with open(f, "w", encoding="utf-8") as fh:
+                fh.write("x")
+
+            # A real file → the args include the file path (selected on Win/mac).
+            args_file = FileUtils.reveal_in_file_manager(f, _runner=captured.append)
+            self.assertIn(f, [os.path.normpath(a) for a in args_file if isinstance(a, str)])
+            self.assertEqual(captured[-1], args_file)  # the runner received exactly the args
+
+            # A directory → opens the folder (no file-select token).
+            args_dir = FileUtils.reveal_in_file_manager(d, _runner=captured.append)
+            self.assertNotIn("/select,", args_dir)
+            self.assertEqual(os.path.normpath(args_dir[-1]), os.path.normpath(d))
+
+            # Platform sanity: the launcher executable matches the OS.
+            launcher = {"win": "explorer", "darwin": "open"}.get(
+                "win" if sys.platform.startswith("win") else sys.platform, "xdg-open"
+            )
+            self.assertEqual(args_file[0], launcher)
+
+        # A path whose containing directory is gone → FileNotFoundError (caller can message).
+        with self.assertRaises(FileNotFoundError):
+            FileUtils.reveal_in_file_manager(
+                os.path.join(tempfile.gettempdir(), "no_such_dir_xyz", "f.blend"),
+                _runner=captured.append,
+            )
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

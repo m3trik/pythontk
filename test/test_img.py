@@ -493,6 +493,58 @@ class ImgTest(BaseTestCase):
         self.assertIn(result.mode, ["RGB", "RGBA"])
 
     # -------------------------------------------------------------------------
+    # Channel Swizzle Tests
+    # -------------------------------------------------------------------------
+
+    def test_swizzle_channels_dict_swaps(self):
+        """A dict mapping swaps the named channels and preserves channel count."""
+        im = ImgUtils.create_image("RGB", (4, 4), (10, 20, 30))
+        result = ImgUtils.swizzle_channels(im, {"R": "B", "B": "R"})
+        self.assertEqual(result.mode, "RGB")
+        self.assertEqual(result.getpixel((0, 0)), (30, 20, 10))
+
+    def test_swizzle_channels_string_sets_output_count(self):
+        """A string mapping's length drives the output mode; chars name sources."""
+        im = ImgUtils.create_image("RGBA", (4, 4), (10, 20, 30, 40))
+        # 'BGR' -> 3-channel output with red/blue swapped, alpha dropped.
+        result = ImgUtils.swizzle_channels(im, "BGR")
+        self.assertEqual(result.mode, "RGB")
+        self.assertEqual(result.getpixel((0, 0)), (30, 20, 10))
+
+    def test_swizzle_channels_constant_fill(self):
+        """Constants '0'/'1' fill a destination with black/white."""
+        im = ImgUtils.create_image("RGBA", (4, 4), (10, 20, 30, 40))
+        result = ImgUtils.swizzle_channels(im, {"A": "1"})
+        self.assertEqual(result.mode, "RGBA")
+        self.assertEqual(result.getpixel((0, 0)), (10, 20, 30, 255))
+
+    def test_swizzle_channels_missing_source_resolves_white(self):
+        """Pulling alpha from an RGB input (no alpha) resolves to white."""
+        im = ImgUtils.create_image("RGB", (4, 4), (10, 20, 30))
+        result = ImgUtils.swizzle_channels(im, "RGBA")
+        self.assertEqual(result.mode, "RGBA")
+        self.assertEqual(result.getpixel((0, 0)), (10, 20, 30, 255))
+
+    def test_swizzle_channels_dict_adds_alpha_to_rgb(self):
+        """A dict naming an 'A' destination promotes an RGB input to RGBA."""
+        im = ImgUtils.create_image("RGB", (4, 4), (10, 20, 30))
+        result = ImgUtils.swizzle_channels(im, {"A": "R"})
+        self.assertEqual(result.mode, "RGBA")
+        self.assertEqual(result.getpixel((0, 0)), (10, 20, 30, 10))
+
+    def test_swizzle_channels_dict_rgb_untouched_alpha_stays_rgb(self):
+        """A dict that doesn't name 'A' leaves an RGB input as RGB."""
+        im = ImgUtils.create_image("RGB", (4, 4), (10, 20, 30))
+        result = ImgUtils.swizzle_channels(im, {"R": "G"})
+        self.assertEqual(result.mode, "RGB")
+
+    def test_swizzle_channels_invalid_source_raises(self):
+        """An unknown source token is rejected."""
+        im = ImgUtils.create_image("RGB", (4, 4), (10, 20, 30))
+        with self.assertRaises(ValueError):
+            ImgUtils.swizzle_channels(im, {"R": "Z"})
+
+    # -------------------------------------------------------------------------
     # Normal Map Conversion Tests
     # -------------------------------------------------------------------------
 
@@ -1256,6 +1308,147 @@ class AtlasAssembleTest(unittest.TestCase):
         atlas = ImgUtils.assemble_atlas([img], rects, 4)
         self.assertEqual(atlas.ndim, 2)  # 2D in -> 2D out
         self.assertTrue((atlas == 0.25).all())
+
+
+class RasterizeSilhouetteTest(unittest.TestCase):
+    """ImgUtils.rasterize_silhouette — DCC-agnostic shadow-silhouette rasterizer (numpy only)."""
+
+    # A unit quad on the XY plane (z const) -> two triangles.
+    QUAD = np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], dtype=float)
+    TRIS = np.array([[0, 1, 2], [0, 2, 3]], dtype=int)
+
+    def test_returns_rgba_uint8(self):
+        img = ImgUtils.rasterize_silhouette([(self.QUAD, self.TRIS)], size=64, axis="z")
+        self.assertEqual(img.shape, (64, 64, 4))
+        self.assertEqual(img.dtype, np.uint8)
+
+    def test_uniform_sharp_coverage(self):
+        # blur=0 -> sharp; quad [-1,1] with extent=2.2 maps to ~px 3..60 of 64 (~0.79 coverage).
+        a = ImgUtils.rasterize_silhouette(
+            [(self.QUAD, self.TRIS)], size=64, axis="z", uniform_alpha=True, blur_amount=0
+        )[:, :, 3]
+        self.assertGreater((a > 0).mean(), 0.6)
+        self.assertLess((a > 0).mean(), 0.95)
+        self.assertGreater(a[32, 32], 0)   # centre filled
+        self.assertEqual(a[0, 0], 0)       # corner empty (quad < frame)
+
+    def test_contact_falloff_is_a_gradient(self):
+        a = ImgUtils.rasterize_silhouette(
+            [(self.QUAD, self.TRIS)], size=64, axis="z", blur_amount=0
+        )[:, :, 3].astype(float)
+        self.assertGreater(a[a > 0].std(), 5.0)  # non-uniform alpha under the silhouette
+
+    def test_auto_axis_nonempty(self):
+        img = ImgUtils.rasterize_silhouette([(self.QUAD, self.TRIS)], size=32, axis="auto")
+        self.assertTrue((img[:, :, 3] > 0).any())
+
+    def test_empty_geometry_raises(self):
+        with self.assertRaises(ValueError):
+            ImgUtils.rasterize_silhouette([], size=16)
+
+    def test_degenerate_triangle_no_crash(self):
+        deg = np.zeros((3, 3), dtype=float)
+        img = ImgUtils.rasterize_silhouette(
+            [(deg, np.array([[0, 1, 2]]))], size=16, uniform_alpha=True
+        )
+        self.assertEqual(img.shape, (16, 16, 4))
+
+    def test_pil_free_blur_path(self):
+        """The default (blurred) path must work without PIL — blendertk's ShadowRig runs under
+        Blender's PIL-less Python. Force ``Image=None`` so the numpy Gaussian fallback is exercised
+        end-to-end through rasterize_silhouette."""
+        import pythontk.img_utils._img_utils as iu
+
+        saved = iu.Image
+        iu.Image = None
+        try:
+            img = ImgUtils.rasterize_silhouette(
+                [(self.QUAD, self.TRIS)], size=64, axis="z", blur_amount=1.5
+            )
+        finally:
+            iu.Image = saved
+        self.assertEqual(img.shape, (64, 64, 4))
+        self.assertTrue((img[:, :, 3] > 0).any())
+
+
+class GaussianBlurNumpyFallbackTest(unittest.TestCase):
+    """ImgUtils._gaussian_blur_array_numpy — pure-numpy PIL-free blur (the Blender/no-PIL path)."""
+
+    def test_2d_blur_smooths_and_preserves_shape_dtype(self):
+        a = np.zeros((32, 32), dtype=np.uint8)
+        a[16, 16] = 255  # impulse
+        out = ImgUtils._gaussian_blur_array_numpy(a, 2.0, None)
+        self.assertEqual(out.shape, (32, 32))
+        self.assertEqual(out.dtype, np.uint8)
+        self.assertLess(int(out[16, 16]), 255)          # spread the impulse
+        self.assertGreater(int(out[16, 17]), 0)          # energy bled to neighbours
+
+    def test_rgba_channel_restricted(self):
+        rgba = (np.random.RandomState(0).rand(16, 16, 4) * 255).astype(np.uint8)
+        out = ImgUtils._gaussian_blur_array_numpy(rgba, 2.0, "A")
+        self.assertTrue(np.array_equal(out[:, :, :3], rgba[:, :, :3]))   # RGB untouched
+        self.assertFalse(np.array_equal(out[:, :, 3], rgba[:, :, 3]))     # alpha blurred
+
+    def test_matches_pil_path_closely(self):
+        a = (np.random.RandomState(1).rand(32, 32) * 255).astype(np.uint8)
+        pil = ImgUtils._gaussian_blur_array(a, 1.5, None)            # PIL (present in this env)
+        npy = ImgUtils._gaussian_blur_array_numpy(a, 1.5, None)
+        self.assertLess(float(np.abs(pil.astype(float) - npy.astype(float)).mean()), 6.0)
+
+
+class ValidateImageIntegrityTest(unittest.TestCase):
+    """ImgUtils.validate_image_integrity — pure-Python completeness check.
+
+    Motivation: a truncated/partially-synced HDR loads as a null texture in
+    Maya's Viewport 2.0 and crashes the IBL path; this gate refuses such files
+    before they reach a native loader.
+    """
+
+    HDR_HEADER = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 16 +X 16\n"
+
+    def _write(self, suffix, blob):
+        f = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        f.write(blob)
+        f.close()
+        self.addCleanup(lambda: os.path.exists(f.name) and os.remove(f.name))
+        return f.name
+
+    def test_missing_file(self):
+        ok, why = ImgUtils.validate_image_integrity(r"C:/no/such/file_xyz.hdr")
+        self.assertFalse(ok)
+        self.assertIn("not found", why)
+
+    def test_empty_file(self):
+        ok, why = ImgUtils.validate_image_integrity(self._write(".hdr", b""))
+        self.assertFalse(ok)
+        self.assertIn("empty", why)
+
+    def test_truncated_hdr(self):
+        # Declares 16x16 RLE but provides only the scanline marker, no data.
+        path = self._write(".hdr", self.HDR_HEADER + b"\x02\x02\x00\x10")
+        ok, why = ImgUtils.validate_image_integrity(path)
+        self.assertFalse(ok)
+        self.assertIn("truncated", why)
+
+    def test_complete_flat_rgbe_hdr(self):
+        # Old/flat RGBE: 16*16*4 bytes of pixel data, no run markers (width<8
+        # marker path is skipped, so this exercises the flat fallback).
+        blob = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 4 +X 4\n" + b"\x10" * (4 * 4 * 4)
+        ok, why = ImgUtils.validate_image_integrity(self._write(".hdr", blob))
+        self.assertTrue(ok, why)
+
+    def test_exr_bad_magic(self):
+        ok, why = ImgUtils.validate_image_integrity(self._write(".exr", b"XXXX" + b"0" * 100))
+        self.assertFalse(ok)
+
+    def test_exr_valid_magic(self):
+        blob = b"\x76\x2f\x31\x01" + b"\x00" * 200
+        ok, _ = ImgUtils.validate_image_integrity(self._write(".exr", blob))
+        self.assertTrue(ok)
+
+    def test_unknown_extension_is_not_rejected(self):
+        ok, _ = ImgUtils.validate_image_integrity(self._write(".png", b"\x89PNG" + b"0" * 50))
+        self.assertTrue(ok)
 
 
 if __name__ == "__main__":

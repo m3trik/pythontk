@@ -2,13 +2,14 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-11_
+_Generated: 2026-06-19_
 
 ## Index
 
 - [`audio_utils/_audio_utils.py`](#audio_utils--_audio_utils)
 - [`color_utils/_color_utils.py`](#color_utils--_color_utils) — Lightweight, DCC-agnostic color primitives.
 - [`core_utils/_core_utils.py`](#core_utils--_core_utils)
+- [`core_utils/app_handoff.py`](#core_utils--app_handoff) — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 - [`core_utils/app_installer.py`](#core_utils--app_installer)
 - [`core_utils/app_launcher.py`](#core_utils--app_launcher)
 - [`core_utils/class_property.py`](#core_utils--class_property)
@@ -31,12 +32,16 @@ _Generated: 2026-06-11_
 - [`core_utils/package_manager.py`](#core_utils--package_manager)
 - [`core_utils/preset_store.py`](#core_utils--preset_store) — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - [`core_utils/qc_log.py`](#core_utils--qc_log) — Structured run logs and threshold-based acceptance gates for pipeline
+- [`core_utils/script_template.py`](#core_utils--script_template) — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
 - [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
 - [`file_utils/mesh_cleaner.py`](#file_utils--mesh_cleaner) — Mesh repair / cleanup via PyMeshLab (optional dependency).
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
 - [`file_utils/metadata.py`](#file_utils--metadata)
+- [`geo_utils/drape.py`](#geo_utils--drape) — Procedural draped-cloth (curtain) generator — pure geometry, no DCC.
+- [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
+- [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
 - [`img_utils/exposure_equalizer.py`](#img_utils--exposure_equalizer) — Cross-set exposure / white-balance equalization.
 - [`img_utils/image_curator.py`](#img_utils--image_curator) — Perceptual-hash + sharpness curation for large image sets.
@@ -48,6 +53,7 @@ _Generated: 2026-06-11_
 - [`img_utils/map_optimizer.py`](#img_utils--map_optimizer) — Plan, assess, and apply map (texture) optimizations.
 - [`img_utils/map_registry.py`](#img_utils--map_registry)
 - [`img_utils/mask_generator.py`](#img_utils--mask_generator) — Background mask generation via rembg (optional dependency).
+- [`img_utils/mat_report.py`](#img_utils--mat_report) — DCC-agnostic formatters for material / texture info reports.
 - [`img_utils/output_template.py`](#img_utils--output_template) — Per-map output-format templates — the "export preset" layer.
 - [`iter_utils/_iter_utils.py`](#iter_utils--_iter_utils)
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
@@ -128,6 +134,37 @@ Lightweight, DCC-agnostic color primitives.
   - `CoreUtils.randomize(lst, ratio=1.0)` *(static)* — Random elements from the given list will be returned with a quantity determined by the given ratio.
   - `CoreUtils.parse_method_args(args: Tuple) -> Tuple[Union[Any, None], Tuple]` *(static)* — Parse method arguments to determine if the function is an instance method or static method.
 
+<a id="core_utils--app_handoff"></a>
+### `core_utils/app_handoff.py`
+
+Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
+
+- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L44)** — Declarative target-application executable-discovery config (data, not code).
+  - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
+  - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L75)** — The unit of work threaded through the skeleton.
+  - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
+- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L95)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L110)** — Strategy: hand a produced :class:`Payload` to the target app.
+  - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
+  - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L131)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+  - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
+  - `HandoffBridge.app_path(self, value: Optional[str]) -> None`
+  - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
+  - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
+  - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L268)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L284)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+  - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
+  - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
+  - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L377)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+  - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context (subclass hook).
+  - `ScriptLaunchBridge.render_template(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]` — Render *template*'s body with *payload_path* + *params* (no launch).
+  - `ScriptLaunchBridge.list_template_modes(self) -> List[Tuple[str, str]]` — ``[(stem, mode), ...]`` for the bridge's template directory.
+  - `ScriptLaunchBridge.list_templates(self) -> List[Path]` — User-visible template paths for the bridge.
+
 <a id="core_utils--app_installer"></a>
 ### `core_utils/app_installer.py`
 
@@ -138,7 +175,7 @@ Lightweight, DCC-agnostic color primitives.
 <a id="core_utils--app_launcher"></a>
 ### `core_utils/app_launcher.py`
 
-- **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L14)** — A utility class for launching applications on Windows and Linux.
+- **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L13)** — A utility class for launching applications on Windows and Linux.
   - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
   - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None)` *(static)* — Execute an application synchronously and return its result.
   - `AppLauncher.current_session_id()` *(static)* — Windows session id of the *current* process.
@@ -151,6 +188,8 @@ Lightweight, DCC-agnostic color primitives.
   - `AppLauncher.append_to_path(path, user_scope=True)` *(static)* — Appends a directory to the system PATH.
   - `AppLauncher.scan_for_executables(root_paths, executable_name, depth=3)` *(static)* — Scans directories for a specific executable.
   - `AppLauncher.is_path_persisted(path)` *(static)* — Checks if the path is permanently stored in the system configuration (e.g.
+  - `AppLauncher.scan_install_dirs(scan_globs)` *(static)* — Yield existing files matching *scan_globs*, newest (reverse-sorted) first.
+  - `AppLauncher.resolve_app_path(*, env_vars=(), location_env_vars=(), app_names=(), scan_globs=())` *(static)* — Resolve a target application executable;
   - `AppLauncher.find_app(app_identifier)` *(static)* — Attempts to locate the executable for the given application identifier.
   - `AppLauncher.get_running_processes(process_name)` *(static)* — Returns a list of PIDs of running processes matching the given name.
   - `AppLauncher.close_process(pid, force=False)` *(static)* — Terminates the process with the given PID.
@@ -384,10 +423,12 @@ Reusable module attribute resolver for package-style imports.
 
 Qt-free, zero-dependency named-preset *store* for the ecosystem.
 
-- [`sanitize_preset_name(name: str) -> str`](pythontk/pythontk/core_utils/preset_store.py#L40) — Filesystem-safe filename stem for a preset *name*.
-- **[`class PresetStore`](pythontk/pythontk/core_utils/preset_store.py#L50)** — Named-preset collection with a read-only built-in tier and a writable
+- [`sanitize_preset_name(name: str) -> str`](pythontk/pythontk/core_utils/preset_store.py#L46) — Filesystem-safe filename stem for a preset *name*.
+- **[`class PresetStore`](pythontk/pythontk/core_utils/preset_store.py#L56)** — Named-preset collection with a read-only built-in tier and a writable
   - `PresetStore.user_dir(self) -> Path` *(property)* — Writable preset directory (created lazily on first :meth:`save`).
   - `PresetStore.builtin_dir(self) -> Optional[Path]` *(property)* — Read-only shipped preset directory, or ``None`` when not configured.
+  - `PresetStore.active(self) -> Optional[str]` *(property)* — The last-selected preset name, or ``None`` when unset/unreadable.
+  - `PresetStore.active(self, name: Optional[str]) -> None` — Set (or clear, with ``None``) the active-preset pointer.
   - `PresetStore.list(self, tier: Optional[str] = None) -> List[str]` — Sorted preset names.
   - `PresetStore.source(self, name: str) -> Optional[str]` — Which tier *name* resolves from: ``"user"``, ``"builtin"``, or ``None``.
   - `PresetStore.exists(self, name: str) -> bool`
@@ -410,6 +451,16 @@ Structured run logs and threshold-based acceptance gates for pipeline
   - `QcLog.finalize(self, success: bool) -> None`
 - **[`class QcGate`](pythontk/pythontk/core_utils/qc_log.py#L65)** — Threshold-based acceptance gate that logs into a bound :class:`QcLog`.
   - `QcGate.check(self, gate_name: str, metrics: Dict[str, Any]) -> bool` — Compare ``metrics`` against ``self.rules[gate_name]``.
+
+<a id="core_utils--script_template"></a>
+### `core_utils/script_template.py`
+
+Generic on-disk script-template discovery + ``__KEY__`` rendering.
+
+- [`list_templates(template_dir, extension: str = '.py') -> List[Path]`](pythontk/pythontk/core_utils/script_template.py#L47) — Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).
+- [`template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]`](pythontk/pythontk/core_utils/script_template.py#L56) — Return the modes a template declares via its ``<field> = (...)`` tuple.
+- [`list_template_modes(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]`](pythontk/pythontk/core_utils/script_template.py#L81) — Return ``[(stem, mode), ...]`` for every (template, mode) pairing.
+- [`render_template(template_path, context: Dict[str, str]) -> str`](pythontk/pythontk/core_utils/script_template.py#L95) — Substitute ``__KEY__`` placeholders in *template_path* using *context*.
 
 <a id="core_utils--singleton_mixin"></a>
 ### `core_utils/singleton_mixin.py`
@@ -446,6 +497,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.atomic_write_text(filepath: str, content: str, encoding: str = 'utf-8') -> None` *(static)* — Write text to a file atomically.
   - `FileUtils.copy_file(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str` *(static)* — Copies a file to a specified folder, ensuring the folder exists.
   - `FileUtils.move_file(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]` *(class)* — Moves one or more files to a specified folder.
+  - `FileUtils.reveal_in_file_manager(cls, path, _runner=None)` *(class)* — Open the OS file manager showing ``path`` (selecting the file when supported, else
   - `FileUtils.get_file_info(cls, paths, info, hash_algo=None, force_tuples=False)` *(class)* — Returns file and directory information for a list of file strings based on specified parameters.
   - `FileUtils.format_path(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]` *(static)* — Format a given filepath(s).
   - `FileUtils.convert_to_relative_path(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str` *(static)* — Convert an absolute file path to a relative path based on the given base directory.
@@ -484,6 +536,42 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `Metadata.get(cls, file_path: Any, *keys: str, mode: str = 'metadata') -> Any` *(class)* — Unified get method for metadata and tags.
   - `Metadata.set(cls, file_path: Any, mode: str = 'metadata', **kwargs) -> None` *(class)* — Unified set method for metadata and tags.
 
+<a id="geo_utils--drape"></a>
+### `geo_utils/drape.py`
+
+Procedural draped-cloth (curtain) generator — pure geometry, no DCC.
+
+- **[`class CurtainDrape(LoggingMixin)`](pythontk/pythontk/geo_utils/drape.py#L63)** — Drape a grid into a pleated, gravity-sagged curtain — pure math.
+  - `CurtainDrape.prepare(self) -> Tuple[int, int, List[Tuple[Vec, Vec, Vec]]]` — Precompute the per-build state and return ``(u_segs, v_segs, frames)``.
+  - `CurtainDrape.grid_points(self) -> Tuple[int, int, List[Vec]]` — The full draped grid: ``(u_segs, v_segs, points)``.
+  - `CurtainDrape.drape(self, u, v, pos, tan, normal) -> Vec` — Place one cloth vertex.
+
+<a id="geo_utils--pointcloud"></a>
+### `geo_utils/pointcloud.py`
+
+Point-cloud geometry — analyze and group unordered sets of points.
+
+- **[`class PointCloud`](pythontk/pythontk/geo_utils/pointcloud.py#L23)** — Stateless point-cloud geometry (alignment / clustering / hashing).
+  - `PointCloud.pca_transform(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1) -> Optional[List[float]]` *(static)* — Transform that aligns ``points_b`` onto ``points_a`` via PCA axis alignment.
+  - `PointCloud.cluster_by_distance(points: Sequence[Sequence[float]], threshold: float) -> List[List[int]]` *(static)* — Group points into clusters linked by proximity (threshold flood-fill).
+  - `PointCloud.hash_points(points, precision=4)` *(static)* — Hash the given list of point values (fixed-point, position-stable).
+
+<a id="geo_utils--polyline"></a>
+### `geo_utils/polyline.py`
+
+Pure polyline / curve geometry — generate, measure, sample, reshape.
+
+- **[`class Polyline`](pythontk/pythontk/geo_utils/polyline.py#L31)** — Stateless polyline/curve geometry (the line other tools follow).
+  - `Polyline.make(width: float = 6.0, curvature: float = 0.0, segments: int = 24, closed: bool = False, center: Vec = (0.0, 0.0, 0.0)) -> Tuple[List[Vec], bool]` *(static)* — Build a default polyline: a straight line of ``width`` (``curvature == 0``).
+  - `Polyline.from_point_cloud(cls, points: Sequence, count: int, axis: Optional[int] = None, precision: Optional[int] = None) -> List[List[float]]` *(class)* — Extract an ordered centerline polyline from a tube-shaped **point cloud**.
+  - `Polyline.order_points(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]` *(static)* — Order scattered points into a continuous path (greedy nearest-neighbour).
+  - `Polyline.length(points: Sequence[Vec], closed: bool = False) -> float` *(static)* — Total arc length of the polyline (wrapping last->first if closed).
+  - `Polyline.point_at(points: Sequence[Sequence[float]], t: float) -> List[float]` *(static)* — Interpolated point at parameter ``t`` (0..1) along the polyline.
+  - `Polyline.resample(cls, points: Sequence[Sequence[float]], count: int, reverse: bool = False, interpolation: Callable[[Sequence[Sequence[float]], float], List[float]] = None, start_offset: float = 0.0, end_offset: float = 0.0) -> List[List[float]]` *(class)* — Distribute ``count`` evenly-spaced points along the polyline.
+  - `Polyline.smooth(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list` *(static)* — Moving-average smooth of a point sequence.
+  - `Polyline.simplify(points: Sequence[Sequence[float]], tolerance: float) -> List[int]` *(static)* — Ramer-Douglas-Peucker indices: which points to keep to stay within
+  - `Polyline.frames(points: Sequence[Vec], segments: int, closed: bool, up: Vec = (0.0, 1.0, 0.0)) -> List[Tuple[Vec, Vec, Vec]]` *(static)* — Resample to ``segments + 1`` even points with a local frame at each.
+
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
@@ -493,6 +581,7 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
   - `ImgUtils.enforce_mode(cls, image: Image.Image, target_mode: str, allow_compatible: bool = False) -> Image.Image` *(class)* — Converts image to target_mode.
   - `ImgUtils.assert_pathlike(obj: object, name: str = 'argument') -> None` *(static)* — Assert that the given object is a valid path-like object.
+  - `ImgUtils.validate_image_integrity(filepath: str) -> Tuple[bool, str]` *(static)* — Cheaply check that an image file is complete and decodable.
   - `ImgUtils.create_image(mode, size=(4096, 4096), color=None)` *(static)* — Create a new image.
   - `ImgUtils.register_dds_codec(cls, codec) -> None` *(class)* — Register an external DDS codec for block formats Pillow can't write.
   - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
@@ -507,6 +596,7 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `ImgUtils.set_bit_depth(cls, image, map_type: str, allow_palette: bool = False) -> object` *(class)* — Sets the bit depth and image mode of an image according to the map type.
   - `ImgUtils.invert_grayscale_image(cls, image: Union[str, Image.Image]) -> Image.Image` *(class)* — Inverts a grayscale image.
   - `ImgUtils.invert_channels(cls, image, channels='RGBA')` *(class)* — Invert specified channels in an image.
+  - `ImgUtils.swizzle_channels(cls, image, mapping)` *(class)* — Reorder, duplicate, or constant-fill an image's channels.
   - `ImgUtils.create_mask(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))` *(class)* — Create mask(s) from the given image(s).
   - `ImgUtils.fill_masked_area(cls, image, color, mask)` *(class)* — Parameters:
   - `ImgUtils.fill(cls, image, color=(0, 0, 0, 0))` *(class)* — Parameters:
@@ -518,6 +608,7 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
   - `ImgUtils.assemble_atlas(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'` *(class)* — Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
   - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
+  - `ImgUtils.rasterize_silhouette(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)` *(class)* — Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.
   - `ImgUtils.convert_rgb_to_gray(cls, data)` *(class)* — Convert an RGB Image data array to grayscale (luma weights).
   - `ImgUtils.convert_rgb_to_hsv(cls, image)` *(class)* — Convert an RGB image to HSV mode.
   - `ImgUtils.convert_i_to_l(cls, image)` *(class)* — Convert a high-bit-depth grayscale image to 8-bit 'L'.
@@ -577,6 +668,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
 - **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/img_utils/map_factory/_map_factory.py#L59)** — Refactored factory with pluggable workflow system.
   - `MapFactory.register_conversions(cls, registry: ConversionRegistry)` *(class)* — Register all standard PBR conversions.
   - `MapFactory.resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str` *(class)* — Resolves the map type from a filename or alias using `map_types`.
+  - `MapFactory.resolve_color_space(cls, file: str, default: str = 'Linear') -> str` *(class)* — Resolve the working color space ("sRGB" or "Linear") for a texture by filename.
   - `MapFactory.resolve_texture_filename(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str` *(class)* — Generates a correctly formatted filename while preserving the original suffix and file extension.
   - `MapFactory.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
   - `MapFactory.group_textures_by_set(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]` *(class)* — Groups texture maps into sets based on matching base names.
@@ -589,7 +681,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.get_map_fallbacks(cls, map_type: str) -> Tuple[str, ...]` *(class)* — Get fallback map types for a given map type.
   - `MapFactory.get_precedence_rules(cls) -> Dict[str, List[str]]` *(class)* — Returns a dictionary of map precedence rules.
   - `MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, List[str]]) -> None` *(class)* — Filters out maps that are rendered redundant by other present maps (e.g.
-  - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
+  - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
   - `MapFactory.pack_transparency_into_albedo(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…
   - `MapFactory.pack_smoothness_into_metallic(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
   - `MapFactory.detect_normal_map_format(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]` *(class)* — Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
@@ -758,6 +850,17 @@ Background mask generation via rembg (optional dependency).
   - `MaskGenerator.is_available(self) -> bool`
   - `MaskGenerator.generate_masks(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]` — Generate alpha-channel masks for every image in ``input_dir``.
 
+<a id="img_utils--mat_report"></a>
+### `img_utils/mat_report.py`
+
+DCC-agnostic formatters for material / texture info reports.
+
+- **[`class MatReport`](pythontk/pythontk/img_utils/mat_report.py#L24)** — Pure record→text/HTML formatters for material & texture info reports.
+  - `MatReport.format_texture_info_text(cls, info_list: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_texture_info`` output as a plain-text report.
+  - `MatReport.format_texture_info_html(cls, info_list: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_texture_info`` output as styled HTML.
+  - `MatReport.format_mat_info_text(cls, records: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_mat_info`` output as a plain-text report.
+  - `MatReport.format_mat_info_html(cls, records: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_mat_info`` output as styled HTML.
+
 <a id="img_utils--output_template"></a>
 ### `img_utils/output_template.py`
 
@@ -797,8 +900,9 @@ Per-map output-format templates — the "export preset" layer.
 ### `math_utils/_math_utils.py`
 
 - **[`class MathUtils(HelpMixin)`](pythontk/pythontk/math_utils/_math_utils.py#L15)**
+  - `MathUtils.eval_expression(expression: str) -> str` *(static)* — Safely evaluate a math expression string (calculator engine).
+  - `MathUtils.convert_length_unit(cls, value: float, from_unit: str, to_unit: str) -> str` *(class)* — Convert a length ``value`` between units (mm, cm, m, km, in, ft, yd, mi).
   - `MathUtils.linear_sum_assignment(cost_matrix: Sequence[Sequence[float]], maximize: bool = False) -> Tuple[List[int], List[int]]` *(static)* — Solve the linear sum assignment problem (Hungarian algorithm).
-  - `MathUtils.get_pca_transform(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1) -> Optional[List[float]]` *(static)* — Calculate the transformation matrix to align points_b to points_a using PCA axis alignment.
   - `MathUtils.kmeans_clustering(points: Sequence[Sequence[float]], k: int, max_iterations: int = 30, seed_indices: Optional[List[int]] = None) -> List[List[int]]` *(static)* — Perform K-Means clustering on a set of points.
   - `MathUtils.kmeans_1d(values: Sequence[float], k: int = 3, max_iterations: int = 10) -> Tuple[List[float], List[List[float]]]` *(static)* — Perform 1D K-Means clustering to find natural breakpoints in scalar data.
   - `MathUtils.get_kmeans_threshold(cls, values: Sequence[float], k: int = 3) -> float` *(class)* — Use K-Means to find an adaptive threshold separating "parts" from "bodies".
@@ -827,19 +931,12 @@ Per-map output-format templates — the "export preset" layer.
   - `MathUtils.evaluate_sampled_progress(time_value: float, sample_times: Sequence[float], progress: Sequence[float], tolerance: float = 1e-06) -> float` *(static)* — Interpolate normalized progress from sampled time/progress pairs.
   - `MathUtils.generate_geometric_sequence(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]` *(static)* — Generate a geometric sequence.
   - `MathUtils.remap(value: Union[float, List[Any], Tuple[Any, ...], 'np.ndarray'], old_range: Tuple[float, float], new_range: Tuple[float, float], clamp: bool = False) -> Union[float, List[Any], Tuple[Any, ...], 'np.ndarray']` *(static)* — Remaps a value, list, or tuple of varying sizes from one range to another.
-  - `MathUtils.calculate_curve_length(centerline_points: List[List[float]]) -> float` *(static)* — Calculates the total length of the centerline path.
-  - `MathUtils.get_point_on_centerline(centerline_points: List[List[float]], param: float) -> List[float]` *(static)* — Returns the interpolated point along the centerline.
-  - `MathUtils.dist_points_along_centerline(cls, centerline: List[List[float]], num_points: int, reverse: bool = False, interpolation: Callable[[List[List[float]], float], List[float]] = None, start_offset: float = 0.0, end_offset: float = 0.0) -> List[List[float]]` *(class)* — Distributes points evenly along the centerline with optional offsets and custom interpolation.
-  - `MathUtils.arrange_points_as_path(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]` *(static)* — Orders a list of points to form a continuous path.
-  - `MathUtils.smooth_points(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list` *(static)* — Apply a moving average to smooth a sequence of 3D points.
   - `MathUtils.point_segment_distance(p: Sequence[float], a: Sequence[float], b: Sequence[float]) -> float` *(static)* — Perpendicular distance from point ``p`` to the segment ``a``-``b``.
-  - `MathUtils.simplify_rdp(cls, points: Sequence[Sequence[float]], tolerance: float) -> List[int]` *(class)* — Ramer-Douglas-Peucker indices: which points to keep to stay within
   - `MathUtils.nearest_power_of_two(value: int) -> int` *(static)* — Finds the nearest power of two for a given integer without using the math module.
   - `MathUtils.is_close_to_whole(value: float, tolerance: float = 0.0001) -> bool` *(static)* — Check if a float value is close to a whole number within tolerance.
   - `MathUtils.round_value(value: float, mode: str = 'none', max_distance: float = 1.5) -> Union[int, float]` *(static)* — General-purpose rounding function with multiple modes.
   - `MathUtils.round_to_preferred(value: float, max_distance: float = 1.5) -> int` *(static)* — Round to aesthetically pleasing 'round' numbers (conservative approach).
   - `MathUtils.round_to_aggressive_preferred(cls, value: float) -> int` *(class)* — Round to aesthetically pleasing 'round' numbers (aggressive approach).
-  - `MathUtils.hash_points(points, precision=4)` *(static)* — Hash the given list of point values.
   - `MathUtils.calculate_rotation_distance(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float` *(static)* — Calculate the effective rotation distance between two Euler rotations.
 
 <a id="math_utils--noise"></a>

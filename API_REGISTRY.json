@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-06-11",
+  "generated_at": "2026-06-19",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -458,6 +458,234 @@
       ]
     },
     {
+      "relpath": "core_utils/app_handoff.py",
+      "summary": "Generic, Qt-free / DCC-free engine for \"export something and hand it to an app\".",
+      "functions": [],
+      "classes": [
+        {
+          "name": "AppSpec",
+          "summary": "Declarative target-application executable-discovery config (data, not code).",
+          "line": 44,
+          "bases": [],
+          "members": [
+            {
+              "name": "resolve",
+              "qualname": "AppSpec.resolve",
+              "kind": "method",
+              "signature": "(self) -> Optional[str]",
+              "summary": "Resolve the executable, first hit wins (env -> find_app -> install scan).",
+              "line": 59,
+              "deprecated": false
+            },
+            {
+              "name": "not_found_message",
+              "qualname": "AppSpec.not_found_message",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "A user-facing \"couldn't find it\" message (custom, or a sensible default).",
+              "line": 69,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "HandoffRequest",
+          "summary": "The unit of work threaded through the skeleton.",
+          "line": 75,
+          "bases": [],
+          "members": [
+            {
+              "name": "get",
+              "qualname": "HandoffRequest.get",
+              "kind": "method",
+              "signature": "(self, key: str, default: Any = None) -> Any",
+              "summary": "Read a per-bridge orchestration knob from :attr:`extras`.",
+              "line": 89,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "Payload",
+          "summary": "What :meth:`HandoffBridge._produce` hands to the deliverer.",
+          "line": 95,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "Deliverer",
+          "summary": "Strategy: hand a produced :class:`Payload` to the target app.",
+          "line": 110,
+          "bases": [],
+          "members": [
+            {
+              "name": "preflight",
+              "qualname": "Deliverer.preflight",
+              "kind": "method",
+              "signature": "(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool",
+              "summary": "Validate *request* before producing the payload.",
+              "line": 119,
+              "deprecated": false
+            },
+            {
+              "name": "deliver",
+              "qualname": "Deliverer.deliver",
+              "kind": "method",
+              "signature": "(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
+              "summary": "Hand *payload* to the target app;",
+              "line": 123,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "HandoffBridge",
+          "summary": "Template-Method base: ``resolve -> preflight -> produce -> deliver``.",
+          "line": 131,
+          "bases": [
+            "LoggingMixin"
+          ],
+          "members": [
+            {
+              "name": "app_path",
+              "qualname": "HandoffBridge.app_path",
+              "kind": "property",
+              "signature": "(self) -> Optional[str]",
+              "summary": "Resolved target executable (cached), or ``None``.",
+              "line": 161,
+              "deprecated": false
+            },
+            {
+              "name": "app_path",
+              "qualname": "HandoffBridge.app_path",
+              "kind": "method",
+              "signature": "(self, value: Optional[str]) -> None",
+              "summary": "",
+              "line": 172,
+              "deprecated": false
+            },
+            {
+              "name": "params_defaults",
+              "qualname": "HandoffBridge.params_defaults",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "Return ``{key: default}`` for the bridge's tunable params (default empty).",
+              "line": 176,
+              "deprecated": false
+            },
+            {
+              "name": "merge_params",
+              "qualname": "HandoffBridge.merge_params",
+              "kind": "method",
+              "signature": "(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]",
+              "summary": "Merge *params* over :meth:`params_defaults` (user values win).",
+              "line": 180,
+              "deprecated": false
+            },
+            {
+              "name": "send",
+              "qualname": "HandoffBridge.send",
+              "kind": "method",
+              "signature": "(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]",
+              "summary": "Export *objects* and hand them to the target app (one-way).",
+              "line": 187,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ScriptLaunchSpec",
+          "summary": "Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.",
+          "line": 268,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "ScriptLaunchDeliverer",
+          "summary": "Render a template, write it next to the payload, launch a **fresh** app on it.",
+          "line": 284,
+          "bases": [
+            "Deliverer"
+          ],
+          "members": [
+            {
+              "name": "preflight",
+              "qualname": "ScriptLaunchDeliverer.preflight",
+              "kind": "method",
+              "signature": "(self, bridge: HandoffBridge, request: HandoffRequest) -> bool",
+              "summary": "",
+              "line": 301,
+              "deprecated": false
+            },
+            {
+              "name": "deliver",
+              "qualname": "ScriptLaunchDeliverer.deliver",
+              "kind": "method",
+              "signature": "(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
+              "summary": "",
+              "line": 320,
+              "deprecated": false
+            },
+            {
+              "name": "render",
+              "qualname": "ScriptLaunchDeliverer.render",
+              "kind": "method",
+              "signature": "(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]",
+              "summary": "Return the rendered script body for *request*'s template, or ``None`` on miss.",
+              "line": 355,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ScriptLaunchBridge",
+          "summary": "A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.",
+          "line": 377,
+          "bases": [
+            "HandoffBridge"
+          ],
+          "members": [
+            {
+              "name": "render_context",
+              "qualname": "ScriptLaunchBridge.render_context",
+              "kind": "method",
+              "signature": "(self, params: Dict[str, Any]) -> Dict[str, str]",
+              "summary": "Format *params* into a ``__KEY__`` substitution context (subclass hook).",
+              "line": 396,
+              "deprecated": false
+            },
+            {
+              "name": "render_template",
+              "qualname": "ScriptLaunchBridge.render_template",
+              "kind": "method",
+              "signature": "(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]",
+              "summary": "Render *template*'s body with *payload_path* + *params* (no launch).",
+              "line": 400,
+              "deprecated": false
+            },
+            {
+              "name": "list_template_modes",
+              "qualname": "ScriptLaunchBridge.list_template_modes",
+              "kind": "method",
+              "signature": "(self) -> List[Tuple[str, str]]",
+              "summary": "``[(stem, mode), ...]`` for the bridge's template directory.",
+              "line": 415,
+              "deprecated": false
+            },
+            {
+              "name": "list_templates",
+              "qualname": "ScriptLaunchBridge.list_templates",
+              "kind": "method",
+              "signature": "(self) -> List[Path]",
+              "summary": "User-visible template paths for the bridge.",
+              "line": 421,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "core_utils/app_installer.py",
       "summary": "",
       "functions": [],
@@ -498,7 +726,7 @@
         {
           "name": "AppLauncher",
           "summary": "A utility class for launching applications on Windows and Linux.",
-          "line": 14,
+          "line": 13,
           "bases": [],
           "members": [
             {
@@ -507,7 +735,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier, args=None, cwd=None, detached=True, env=None)",
               "summary": "Launches an application.",
-              "line": 20,
+              "line": 19,
               "deprecated": false
             },
             {
@@ -516,7 +744,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None)",
               "summary": "Execute an application synchronously and return its result.",
-              "line": 72,
+              "line": 71,
               "deprecated": false
             },
             {
@@ -525,7 +753,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "Windows session id of the *current* process.",
-              "line": 130,
+              "line": 129,
               "deprecated": false
             },
             {
@@ -534,7 +762,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "Session id of the physically logged-in console (interactive desktop).",
-              "line": 152,
+              "line": 151,
               "deprecated": false
             },
             {
@@ -543,7 +771,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "True if the current process is in an interactive session (non-zero —",
-              "line": 173,
+              "line": 172,
               "deprecated": false
             },
             {
@@ -552,7 +780,7 @@
               "kind": "staticmethod",
               "signature": "(explicit=None)",
               "summary": "Locate a helper able to launch a process into *another* interactive",
-              "line": 185,
+              "line": 184,
               "deprecated": false
             },
             {
@@ -561,7 +789,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier, args=None, session=None, cwd=None, launcher=None, accept_eula=True)",
               "summary": "Launch an application into a specific interactive Windows session.",
-              "line": 212,
+              "line": 211,
               "deprecated": false
             },
             {
@@ -570,7 +798,7 @@
               "kind": "staticmethod",
               "signature": "(process, timeout=15, check_fn=None)",
               "summary": "Waits until the application is ready.",
-              "line": 269,
+              "line": 268,
               "deprecated": false
             },
             {
@@ -579,7 +807,7 @@
               "kind": "staticmethod",
               "signature": "(pid)",
               "summary": "Returns a list of window titles owned by the given PID.",
-              "line": 349,
+              "line": 348,
               "deprecated": false
             },
             {
@@ -588,7 +816,7 @@
               "kind": "staticmethod",
               "signature": "(path, user_scope=True)",
               "summary": "Appends a directory to the system PATH.",
-              "line": 382,
+              "line": 381,
               "deprecated": false
             },
             {
@@ -597,7 +825,7 @@
               "kind": "staticmethod",
               "signature": "(root_paths, executable_name, depth=3)",
               "summary": "Scans directories for a specific executable.",
-              "line": 432,
+              "line": 431,
               "deprecated": false
             },
             {
@@ -606,7 +834,25 @@
               "kind": "staticmethod",
               "signature": "(path)",
               "summary": "Checks if the path is permanently stored in the system configuration (e.g.",
-              "line": 471,
+              "line": 470,
+              "deprecated": false
+            },
+            {
+              "name": "scan_install_dirs",
+              "qualname": "AppLauncher.scan_install_dirs",
+              "kind": "staticmethod",
+              "signature": "(scan_globs)",
+              "summary": "Yield existing files matching *scan_globs*, newest (reverse-sorted) first.",
+              "line": 531,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_app_path",
+              "qualname": "AppLauncher.resolve_app_path",
+              "kind": "staticmethod",
+              "signature": "(*, env_vars=(), location_env_vars=(), app_names=(), scan_globs=())",
+              "summary": "Resolve a target application executable;",
+              "line": 560,
               "deprecated": false
             },
             {
@@ -615,7 +861,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier)",
               "summary": "Attempts to locate the executable for the given application identifier.",
-              "line": 524,
+              "line": 604,
               "deprecated": false
             },
             {
@@ -624,7 +870,7 @@
               "kind": "staticmethod",
               "signature": "(process_name)",
               "summary": "Returns a list of PIDs of running processes matching the given name.",
-              "line": 551,
+              "line": 631,
               "deprecated": false
             },
             {
@@ -633,7 +879,7 @@
               "kind": "staticmethod",
               "signature": "(pid, force=False)",
               "summary": "Terminates the process with the given PID.",
-              "line": 603,
+              "line": 685,
               "deprecated": false
             }
           ]
@@ -765,7 +1011,7 @@
               "kind": "staticmethod",
               "signature": "(threshold, message, logger=None, allow_escape_cancel=False, show_dialog: bool = True, force_action: str | None = None, watchdog_timeout: float | None = None, watchdog_heartbeat_interval: float = 1.0, watchdog_check_interval: float = 1.0, watchdog_kill_tree: bool = True, watchdog_heartbeat_path: str | None = None, indicator: bool | str | None = None)",
               "summary": "Decorator that monitors execution time and (optionally) prompts the user via a native",
-              "line": 538,
+              "line": 541,
               "deprecated": false
             },
             {
@@ -774,7 +1020,7 @@
               "kind": "staticmethod",
               "signature": "(timeout: float, message: str = 'Operation appears to have stalled', heartbeat_interval: float = 1.0, check_interval: float = 1.0, kill_tree: bool = True, logger=None, heartbeat_path: str | None = None)",
               "summary": "Decorator that starts an OS-level watchdog for the current process.",
-              "line": 831,
+              "line": 834,
               "deprecated": false
             }
           ]
@@ -2048,7 +2294,7 @@
           "kind": "function",
           "signature": "(name: str) -> str",
           "summary": "Filesystem-safe filename stem for a preset *name*.",
-          "line": 40,
+          "line": 46,
           "deprecated": false
         }
       ],
@@ -2056,7 +2302,7 @@
         {
           "name": "PresetStore",
           "summary": "Named-preset collection with a read-only built-in tier and a writable",
-          "line": 50,
+          "line": 56,
           "bases": [],
           "members": [
             {
@@ -2065,7 +2311,7 @@
               "kind": "property",
               "signature": "(self) -> Path",
               "summary": "Writable preset directory (created lazily on first :meth:`save`).",
-              "line": 83,
+              "line": 89,
               "deprecated": false
             },
             {
@@ -2074,7 +2320,25 @@
               "kind": "property",
               "signature": "(self) -> Optional[Path]",
               "summary": "Read-only shipped preset directory, or ``None`` when not configured.",
-              "line": 91,
+              "line": 97,
+              "deprecated": false
+            },
+            {
+              "name": "active",
+              "qualname": "PresetStore.active",
+              "kind": "property",
+              "signature": "(self) -> Optional[str]",
+              "summary": "The last-selected preset name, or ``None`` when unset/unreadable.",
+              "line": 108,
+              "deprecated": false
+            },
+            {
+              "name": "active",
+              "qualname": "PresetStore.active",
+              "kind": "method",
+              "signature": "(self, name: Optional[str]) -> None",
+              "summary": "Set (or clear, with ``None``) the active-preset pointer.",
+              "line": 129,
               "deprecated": false
             },
             {
@@ -2083,7 +2347,7 @@
               "kind": "method",
               "signature": "(self, tier: Optional[str] = None) -> List[str]",
               "summary": "Sorted preset names.",
-              "line": 102,
+              "line": 154,
               "deprecated": false
             },
             {
@@ -2092,7 +2356,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[str]",
               "summary": "Which tier *name* resolves from: ``\"user\"``, ``\"builtin\"``, or ``None``.",
-              "line": 119,
+              "line": 171,
               "deprecated": false
             },
             {
@@ -2101,7 +2365,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> bool",
               "summary": "",
-              "line": 127,
+              "line": 179,
               "deprecated": false
             },
             {
@@ -2110,7 +2374,7 @@
               "kind": "method",
               "signature": "(self, name: str, tier: str = 'user') -> Path",
               "summary": "Sanitized file path for *name* in *tier* (``\"user\"`` or ``\"builtin\"``).",
-              "line": 130,
+              "line": 182,
               "deprecated": false
             },
             {
@@ -2119,7 +2383,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> dict",
               "summary": "Return the preset dict for *name* (user tier shadows built-in).",
-              "line": 143,
+              "line": 195,
               "deprecated": false
             },
             {
@@ -2128,7 +2392,7 @@
               "kind": "method",
               "signature": "(self, name: str, data: dict) -> Path",
               "summary": "Write *data* as a user preset *name* (built-ins stay read-only).",
-              "line": 162,
+              "line": 214,
               "deprecated": false
             },
             {
@@ -2137,7 +2401,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> bool",
               "summary": "Delete the *user* preset *name*.",
-              "line": 174,
+              "line": 226,
               "deprecated": false
             },
             {
@@ -2146,7 +2410,7 @@
               "kind": "method",
               "signature": "(self, old: str, new: str) -> bool",
               "summary": "Rename a *user* preset.",
-              "line": 187,
+              "line": 243,
               "deprecated": false
             }
           ]
@@ -2229,6 +2493,49 @@
           ]
         }
       ]
+    },
+    {
+      "relpath": "core_utils/script_template.py",
+      "summary": "Generic on-disk script-template discovery + ``__KEY__`` rendering.",
+      "functions": [
+        {
+          "name": "list_templates",
+          "qualname": "list_templates",
+          "kind": "function",
+          "signature": "(template_dir, extension: str = '.py') -> List[Path]",
+          "summary": "Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).",
+          "line": 47,
+          "deprecated": false
+        },
+        {
+          "name": "template_modes",
+          "qualname": "template_modes",
+          "kind": "function",
+          "signature": "(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]",
+          "summary": "Return the modes a template declares via its ``<field> = (...)`` tuple.",
+          "line": 56,
+          "deprecated": false
+        },
+        {
+          "name": "list_template_modes",
+          "qualname": "list_template_modes",
+          "kind": "function",
+          "signature": "(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]",
+          "summary": "Return ``[(stem, mode), ...]`` for every (template, mode) pairing.",
+          "line": 81,
+          "deprecated": false
+        },
+        {
+          "name": "render_template",
+          "qualname": "render_template",
+          "kind": "function",
+          "signature": "(template_path, context: Dict[str, str]) -> str",
+          "summary": "Substitute ``__KEY__`` placeholders in *template_path* using *context*.",
+          "line": 95,
+          "deprecated": false
+        }
+      ],
+      "classes": []
     },
     {
       "relpath": "core_utils/singleton_mixin.py",
@@ -2446,12 +2753,21 @@
               "deprecated": false
             },
             {
+              "name": "reveal_in_file_manager",
+              "qualname": "FileUtils.reveal_in_file_manager",
+              "kind": "classmethod",
+              "signature": "(cls, path, _runner=None)",
+              "summary": "Open the OS file manager showing ``path`` (selecting the file when supported, else",
+              "line": 534,
+              "deprecated": false
+            },
+            {
               "name": "get_file_info",
               "qualname": "FileUtils.get_file_info",
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 534,
+              "line": 569,
               "deprecated": false
             },
             {
@@ -2460,7 +2776,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 617,
+              "line": 652,
               "deprecated": false
             },
             {
@@ -2469,7 +2785,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 687,
+              "line": 722,
               "deprecated": false
             },
             {
@@ -2478,7 +2794,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 732,
+              "line": 767,
               "deprecated": false
             },
             {
@@ -2487,7 +2803,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 785,
+              "line": 820,
               "deprecated": false
             },
             {
@@ -2496,7 +2812,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 807,
+              "line": 842,
               "deprecated": false
             },
             {
@@ -2505,7 +2821,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 943,
+              "line": 978,
               "deprecated": false
             },
             {
@@ -2514,7 +2830,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Set the current json filepath.",
-              "line": 1102,
+              "line": 1137,
               "deprecated": false
             },
             {
@@ -2523,7 +2839,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Get the current json filepath.",
-              "line": 1114,
+              "line": 1149,
               "deprecated": false
             },
             {
@@ -2532,7 +2848,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, value, file=None)",
               "summary": "Parameters:",
-              "line": 1126,
+              "line": 1161,
               "deprecated": false
             },
             {
@@ -2541,7 +2857,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, file=None)",
               "summary": "Parameters:",
-              "line": 1163,
+              "line": 1198,
               "deprecated": false
             }
           ]
@@ -2677,6 +2993,188 @@
       ]
     },
     {
+      "relpath": "geo_utils/drape.py",
+      "summary": "Procedural draped-cloth (curtain) generator — pure geometry, no DCC.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "CurtainDrape",
+          "summary": "Drape a grid into a pleated, gravity-sagged curtain — pure math.",
+          "line": 63,
+          "bases": [
+            "LoggingMixin"
+          ],
+          "members": [
+            {
+              "name": "prepare",
+              "qualname": "CurtainDrape.prepare",
+              "kind": "method",
+              "signature": "(self) -> Tuple[int, int, List[Tuple[Vec, Vec, Vec]]]",
+              "summary": "Precompute the per-build state and return ``(u_segs, v_segs, frames)``.",
+              "line": 178,
+              "deprecated": false
+            },
+            {
+              "name": "grid_points",
+              "qualname": "CurtainDrape.grid_points",
+              "kind": "method",
+              "signature": "(self) -> Tuple[int, int, List[Vec]]",
+              "summary": "The full draped grid: ``(u_segs, v_segs, points)``.",
+              "line": 204,
+              "deprecated": false
+            },
+            {
+              "name": "drape",
+              "qualname": "CurtainDrape.drape",
+              "kind": "method",
+              "signature": "(self, u, v, pos, tan, normal) -> Vec",
+              "summary": "Place one cloth vertex.",
+              "line": 253,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "geo_utils/pointcloud.py",
+      "summary": "Point-cloud geometry — analyze and group unordered sets of points.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PointCloud",
+          "summary": "Stateless point-cloud geometry (alignment / clustering / hashing).",
+          "line": 23,
+          "bases": [],
+          "members": [
+            {
+              "name": "pca_transform",
+              "qualname": "PointCloud.pca_transform",
+              "kind": "staticmethod",
+              "signature": "(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1) -> Optional[List[float]]",
+              "summary": "Transform that aligns ``points_b`` onto ``points_a`` via PCA axis alignment.",
+              "line": 27,
+              "deprecated": false
+            },
+            {
+              "name": "cluster_by_distance",
+              "qualname": "PointCloud.cluster_by_distance",
+              "kind": "staticmethod",
+              "signature": "(points: Sequence[Sequence[float]], threshold: float) -> List[List[int]]",
+              "summary": "Group points into clusters linked by proximity (threshold flood-fill).",
+              "line": 242,
+              "deprecated": false
+            },
+            {
+              "name": "hash_points",
+              "qualname": "PointCloud.hash_points",
+              "kind": "staticmethod",
+              "signature": "(points, precision=4)",
+              "summary": "Hash the given list of point values (fixed-point, position-stable).",
+              "line": 318,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "geo_utils/polyline.py",
+      "summary": "Pure polyline / curve geometry — generate, measure, sample, reshape.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Polyline",
+          "summary": "Stateless polyline/curve geometry (the line other tools follow).",
+          "line": 31,
+          "bases": [],
+          "members": [
+            {
+              "name": "make",
+              "qualname": "Polyline.make",
+              "kind": "staticmethod",
+              "signature": "(width: float = 6.0, curvature: float = 0.0, segments: int = 24, closed: bool = False, center: Vec = (0.0, 0.0, 0.0)) -> Tuple[List[Vec], bool]",
+              "summary": "Build a default polyline: a straight line of ``width`` (``curvature == 0``).",
+              "line": 42,
+              "deprecated": false
+            },
+            {
+              "name": "from_point_cloud",
+              "qualname": "Polyline.from_point_cloud",
+              "kind": "classmethod",
+              "signature": "(cls, points: Sequence, count: int, axis: Optional[int] = None, precision: Optional[int] = None) -> List[List[float]]",
+              "summary": "Extract an ordered centerline polyline from a tube-shaped **point cloud**.",
+              "line": 79,
+              "deprecated": false
+            },
+            {
+              "name": "order_points",
+              "qualname": "Polyline.order_points",
+              "kind": "staticmethod",
+              "signature": "(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]",
+              "summary": "Order scattered points into a continuous path (greedy nearest-neighbour).",
+              "line": 141,
+              "deprecated": false
+            },
+            {
+              "name": "length",
+              "qualname": "Polyline.length",
+              "kind": "staticmethod",
+              "signature": "(points: Sequence[Vec], closed: bool = False) -> float",
+              "summary": "Total arc length of the polyline (wrapping last->first if closed).",
+              "line": 193,
+              "deprecated": false
+            },
+            {
+              "name": "point_at",
+              "qualname": "Polyline.point_at",
+              "kind": "staticmethod",
+              "signature": "(points: Sequence[Sequence[float]], t: float) -> List[float]",
+              "summary": "Interpolated point at parameter ``t`` (0..1) along the polyline.",
+              "line": 202,
+              "deprecated": false
+            },
+            {
+              "name": "resample",
+              "qualname": "Polyline.resample",
+              "kind": "classmethod",
+              "signature": "(cls, points: Sequence[Sequence[float]], count: int, reverse: bool = False, interpolation: Callable[[Sequence[Sequence[float]], float], List[float]] = None, start_offset: float = 0.0, end_offset: float = 0.0) -> List[List[float]]",
+              "summary": "Distribute ``count`` evenly-spaced points along the polyline.",
+              "line": 223,
+              "deprecated": false
+            },
+            {
+              "name": "smooth",
+              "qualname": "Polyline.smooth",
+              "kind": "staticmethod",
+              "signature": "(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list",
+              "summary": "Moving-average smooth of a point sequence.",
+              "line": 265,
+              "deprecated": false
+            },
+            {
+              "name": "simplify",
+              "qualname": "Polyline.simplify",
+              "kind": "staticmethod",
+              "signature": "(points: Sequence[Sequence[float]], tolerance: float) -> List[int]",
+              "summary": "Ramer-Douglas-Peucker indices: which points to keep to stay within",
+              "line": 323,
+              "deprecated": false
+            },
+            {
+              "name": "frames",
+              "qualname": "Polyline.frames",
+              "kind": "staticmethod",
+              "signature": "(points: Sequence[Vec], segments: int, closed: bool, up: Vec = (0.0, 1.0, 0.0)) -> List[Tuple[Vec, Vec, Vec]]",
+              "summary": "Resample to ``segments + 1`` even points with a local frame at each.",
+              "line": 375,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "img_utils/_img_utils.py",
       "summary": "",
       "functions": [],
@@ -2735,12 +3233,21 @@
               "deprecated": false
             },
             {
+              "name": "validate_image_integrity",
+              "qualname": "ImgUtils.validate_image_integrity",
+              "kind": "staticmethod",
+              "signature": "(filepath: str) -> Tuple[bool, str]",
+              "summary": "Cheaply check that an image file is complete and decodable.",
+              "line": 288,
+              "deprecated": false
+            },
+            {
               "name": "create_image",
               "qualname": "ImgUtils.create_image",
               "kind": "staticmethod",
               "signature": "(mode, size=(4096, 4096), color=None)",
               "summary": "Create a new image.",
-              "line": 288,
+              "line": 404,
               "deprecated": false
             },
             {
@@ -2749,7 +3256,7 @@
               "kind": "classmethod",
               "signature": "(cls, codec) -> None",
               "summary": "Register an external DDS codec for block formats Pillow can't write.",
-              "line": 302,
+              "line": 418,
               "deprecated": false
             },
             {
@@ -2758,7 +3265,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, **kwargs)",
               "summary": "Save an image to ``name``, dispatching on the file extension.",
-              "line": 315,
+              "line": 431,
               "deprecated": false
             },
             {
@@ -2767,7 +3274,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath)",
               "summary": "Load an image and return a PIL copy, dispatching on the file extension.",
-              "line": 465,
+              "line": 581,
               "deprecated": false
             },
             {
@@ -2776,7 +3283,7 @@
               "kind": "classmethod",
               "signature": "(cls, directory, inc=None, exc='')",
               "summary": "Get bitmap images from a given directory as PIL images.",
-              "line": 519,
+              "line": 635,
               "deprecated": false
             },
             {
@@ -2785,7 +3292,7 @@
               "kind": "staticmethod",
               "signature": "(image_path: str) -> Optional[Tuple[int, int]]",
               "summary": "``(width, height)`` of an image, read as cheaply as possible.",
-              "line": 602,
+              "line": 718,
               "deprecated": false
             },
             {
@@ -2794,7 +3301,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]",
               "summary": "Get information about image files.",
-              "line": 623,
+              "line": 739,
               "deprecated": false
             },
             {
@@ -2803,7 +3310,7 @@
               "kind": "classmethod",
               "signature": "(cls, imageA, imageB)",
               "summary": "Check if two images are the same.",
-              "line": 669,
+              "line": 785,
               "deprecated": false
             },
             {
@@ -2812,7 +3319,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, x, y)",
               "summary": "Returns a resized copy of an image.",
-              "line": 687,
+              "line": 803,
               "deprecated": false
             },
             {
@@ -2821,7 +3328,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Resizes an image to the nearest Power of Two dimensions.",
-              "line": 702,
+              "line": 818,
               "deprecated": false
             },
             {
@@ -2830,7 +3337,7 @@
               "kind": "classmethod",
               "signature": "(cls, mode_or_image) -> str",
               "summary": "Format bit depth as e.g.",
-              "line": 727,
+              "line": 843,
               "deprecated": false
             },
             {
@@ -2839,7 +3346,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, map_type: str, allow_palette: bool = False) -> object",
               "summary": "Sets the bit depth and image mode of an image according to the map type.",
-              "line": 739,
+              "line": 855,
               "deprecated": false
             },
             {
@@ -2848,7 +3355,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Inverts a grayscale image.",
-              "line": 787,
+              "line": 903,
               "deprecated": false
             },
             {
@@ -2857,7 +3364,16 @@
               "kind": "classmethod",
               "signature": "(cls, image, channels='RGBA')",
               "summary": "Invert specified channels in an image.",
-              "line": 800,
+              "line": 916,
+              "deprecated": false
+            },
+            {
+              "name": "swizzle_channels",
+              "qualname": "ImgUtils.swizzle_channels",
+              "kind": "classmethod",
+              "signature": "(cls, image, mapping)",
+              "summary": "Reorder, duplicate, or constant-fill an image's channels.",
+              "line": 965,
               "deprecated": false
             },
             {
@@ -2866,7 +3382,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))",
               "summary": "Create mask(s) from the given image(s).",
-              "line": 850,
+              "line": 1031,
               "deprecated": false
             },
             {
@@ -2875,7 +3391,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color, mask)",
               "summary": "Parameters:",
-              "line": 895,
+              "line": 1076,
               "deprecated": false
             },
             {
@@ -2884,7 +3400,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color=(0, 0, 0, 0))",
               "summary": "Parameters:",
-              "line": 914,
+              "line": 1095,
               "deprecated": false
             },
             {
@@ -2893,7 +3409,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mode=None, average=False)",
               "summary": "Sample the pixel values of each corner of an image and if they are uniform, return the result.",
-              "line": 931,
+              "line": 1112,
               "deprecated": false
             },
             {
@@ -2902,7 +3418,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None)",
               "summary": "Parameters:",
-              "line": 965,
+              "line": 1146,
               "deprecated": false
             },
             {
@@ -2911,7 +3427,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, level=255)",
               "summary": "Parameters:",
-              "line": 1003,
+              "line": 1184,
               "deprecated": false
             },
             {
@@ -2920,7 +3436,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']",
               "summary": "Apply a Gaussian blur to an image or 2D/3D numpy array.",
-              "line": 1023,
+              "line": 1204,
               "deprecated": false
             },
             {
@@ -2929,7 +3445,7 @@
               "kind": "staticmethod",
               "signature": "(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8) -> 'np.ndarray'",
               "summary": "Extend valid pixels outward into empty (background) regions.",
-              "line": 1105,
+              "line": 1331,
               "deprecated": false
             },
             {
@@ -2938,7 +3454,7 @@
               "kind": "staticmethod",
               "signature": "(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]",
               "summary": "Lay out N weighted items as non-overlapping rects tiling the unit square.",
-              "line": 1188,
+              "line": 1414,
               "deprecated": false
             },
             {
@@ -2947,7 +3463,7 @@
               "kind": "classmethod",
               "signature": "(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'",
               "summary": "Composite per-item images into one atlas at normalized ``scaleOffset`` rects.",
-              "line": 1261,
+              "line": 1487,
               "deprecated": false
             },
             {
@@ -2956,7 +3472,16 @@
               "kind": "staticmethod",
               "signature": "(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'",
               "summary": "Generate a normalized radial gradient as a 2D numpy array.",
-              "line": 1342,
+              "line": 1568,
+              "deprecated": false
+            },
+            {
+              "name": "rasterize_silhouette",
+              "qualname": "ImgUtils.rasterize_silhouette",
+              "kind": "classmethod",
+              "signature": "(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)",
+              "summary": "Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.",
+              "line": 1675,
               "deprecated": false
             },
             {
@@ -2965,7 +3490,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Convert an RGB Image data array to grayscale (luma weights).",
-              "line": 1400,
+              "line": 1737,
               "deprecated": false
             },
             {
@@ -2974,7 +3499,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert an RGB image to HSV mode.",
-              "line": 1416,
+              "line": 1753,
               "deprecated": false
             },
             {
@@ -2983,7 +3508,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a high-bit-depth grayscale image to 8-bit 'L'.",
-              "line": 1431,
+              "line": 1768,
               "deprecated": false
             },
             {
@@ -2992,7 +3517,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 1454,
+              "line": 1791,
               "deprecated": false
             },
             {
@@ -3001,7 +3526,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 1550,
+              "line": 1887,
               "deprecated": false
             },
             {
@@ -3010,7 +3535,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 1700,
+              "line": 2037,
               "deprecated": false
             },
             {
@@ -3019,7 +3544,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 1712,
+              "line": 2049,
               "deprecated": false
             },
             {
@@ -3028,7 +3553,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> List[Image.Image]",
               "summary": "Generate a mipmap chain for an image.",
-              "line": 1723,
+              "line": 2060,
               "deprecated": false
             },
             {
@@ -3037,7 +3562,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 1750,
+              "line": 2087,
               "deprecated": false
             },
             {
@@ -3046,7 +3571,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 1770,
+              "line": 2107,
               "deprecated": false
             },
             {
@@ -3055,7 +3580,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 1811,
+              "line": 2148,
               "deprecated": false
             },
             {
@@ -3064,7 +3589,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 1892,
+              "line": 2229,
               "deprecated": false
             }
           ]
@@ -3303,12 +3828,21 @@
               "deprecated": false
             },
             {
+              "name": "resolve_color_space",
+              "qualname": "MapFactory.resolve_color_space",
+              "kind": "classmethod",
+              "signature": "(cls, file: str, default: str = 'Linear') -> str",
+              "summary": "Resolve the working color space (\"sRGB\" or \"Linear\") for a texture by filename.",
+              "line": 532,
+              "deprecated": false
+            },
+            {
               "name": "resolve_texture_filename",
               "qualname": "MapFactory.resolve_texture_filename",
               "kind": "classmethod",
               "signature": "(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str",
               "summary": "Generates a correctly formatted filename while preserving the original suffix and file extension.",
-              "line": 532,
+              "line": 552,
               "deprecated": false
             },
             {
@@ -3317,7 +3851,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 606,
+              "line": 626,
               "deprecated": false
             },
             {
@@ -3326,7 +3860,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]",
               "summary": "Groups texture maps into sets based on matching base names.",
-              "line": 688,
+              "line": 708,
               "deprecated": false
             },
             {
@@ -3335,7 +3869,7 @@
               "kind": "classmethod",
               "signature": "(cls, files, types='')",
               "summary": "Parameters:",
-              "line": 721,
+              "line": 811,
               "deprecated": false
             },
             {
@@ -3344,7 +3878,7 @@
               "kind": "classmethod",
               "signature": "(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]",
               "summary": "Sort image files by map type based on the input format.",
-              "line": 736,
+              "line": 826,
               "deprecated": false
             },
             {
@@ -3353,7 +3887,7 @@
               "kind": "classmethod",
               "signature": "(cls, files, map_types)",
               "summary": "Check if the given images contain the given map types.",
-              "line": 771,
+              "line": 861,
               "deprecated": false
             },
             {
@@ -3362,7 +3896,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Check the map type for one of the normal values in map_types.",
-              "line": 798,
+              "line": 888,
               "deprecated": false
             },
             {
@@ -3371,7 +3905,7 @@
               "kind": "classmethod",
               "signature": "(cls, handler_class: Type[WorkflowHandler])",
               "summary": "Register a custom workflow handler (extensibility).",
-              "line": 817,
+              "line": 907,
               "deprecated": false
             },
             {
@@ -3380,7 +3914,7 @@
               "kind": "classmethod",
               "signature": "(cls, conversion: MapConversion)",
               "summary": "Register a custom map conversion (extensibility).",
-              "line": 822,
+              "line": 912,
               "deprecated": false
             },
             {
@@ -3389,7 +3923,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_type: str) -> Tuple[str, ...]",
               "summary": "Get fallback map types for a given map type.",
-              "line": 827,
+              "line": 917,
               "deprecated": false
             },
             {
@@ -3398,7 +3932,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, List[str]]",
               "summary": "Returns a dictionary of map precedence rules.",
-              "line": 839,
+              "line": 929,
               "deprecated": false
             },
             {
@@ -3407,16 +3941,16 @@
               "kind": "classmethod",
               "signature": "(cls, sorted_maps: Dict[str, List[str]]) -> None",
               "summary": "Filters out maps that are rendered redundant by other present maps (e.g.",
-              "line": 847,
+              "line": 937,
               "deprecated": false
             },
             {
               "name": "prepare_maps",
               "qualname": "MapFactory.prepare_maps",
               "kind": "classmethod",
-              "signature": "(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', **kwargs) -> Union[List[str], Dict[str, List[str]]]",
+              "signature": "(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]",
               "summary": "Main factory method.",
-              "line": 868,
+              "line": 958,
               "deprecated": false
             },
             {
@@ -3425,7 +3959,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…",
-              "line": 1217,
+              "line": 1325,
               "deprecated": false
             },
             {
@@ -3434,7 +3968,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.",
-              "line": 1275,
+              "line": 1383,
               "deprecated": false
             },
             {
@@ -3443,7 +3977,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]",
               "summary": "Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.",
-              "line": 1329,
+              "line": 1437,
               "deprecated": false
             },
             {
@@ -3452,7 +3986,7 @@
               "kind": "classmethod",
               "signature": "(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.",
-              "line": 1402,
+              "line": 1510,
               "deprecated": false
             },
             {
@@ -3461,7 +3995,7 @@
               "kind": "classmethod",
               "signature": "(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a bump/height map to a tangent-space normal map.",
-              "line": 1476,
+              "line": 1584,
               "deprecated": false
             },
             {
@@ -3470,7 +4004,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]",
               "summary": "Extracts gloss from a specific channel in the specular map.",
-              "line": 1635,
+              "line": 1743,
               "deprecated": false
             },
             {
@@ -3479,7 +4013,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]",
               "summary": "Converts Specular/Glossiness maps to PBR Metal/Rough.",
-              "line": 1669,
+              "line": 1777,
               "deprecated": false
             },
             {
@@ -3488,7 +4022,7 @@
               "kind": "classmethod",
               "signature": "(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'",
               "summary": "Computes Base Color from Specular workflow with better metal handling.",
-              "line": 1761,
+              "line": 1869,
               "deprecated": false
             },
             {
@@ -3497,7 +4031,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'",
               "summary": "Creates a metallic map from a specular (and optional glossiness) map.",
-              "line": 1817,
+              "line": 1925,
               "deprecated": false
             },
             {
@@ -3506,7 +4040,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'",
               "summary": "Estimates roughness from a specular map.",
-              "line": 1862,
+              "line": 1970,
               "deprecated": false
             },
             {
@@ -3515,7 +4049,7 @@
               "kind": "classmethod",
               "signature": "(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'",
               "summary": "Converts a Base Color map to a true Albedo map by:",
-              "line": 1910,
+              "line": 2018,
               "deprecated": false
             },
             {
@@ -3524,7 +4058,7 @@
               "kind": "staticmethod",
               "signature": "(map_type: str, available: dict) -> Optional[Any]",
               "summary": "Get the converted map based on the given map type and available maps.",
-              "line": 1952,
+              "line": 2060,
               "deprecated": false
             },
             {
@@ -3533,7 +4067,7 @@
               "kind": "classmethod",
               "signature": "(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.",
-              "line": 2000,
+              "line": 2108,
               "deprecated": false
             },
             {
@@ -3542,7 +4076,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']",
               "summary": "Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.",
-              "line": 2072,
+              "line": 2180,
               "deprecated": false
             },
             {
@@ -3551,7 +4085,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']",
               "summary": "Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.",
-              "line": 2174,
+              "line": 2282,
               "deprecated": false
             },
             {
@@ -3560,7 +4094,7 @@
               "kind": "classmethod",
               "signature": "(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Smoothness map to a Roughness map by inverting the grayscale values.",
-              "line": 2276,
+              "line": 2384,
               "deprecated": false
             },
             {
@@ -3569,7 +4103,7 @@
               "kind": "classmethod",
               "signature": "(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Roughness map to a Smoothness map by inverting the grayscale values.",
-              "line": 2329,
+              "line": 2437,
               "deprecated": false
             },
             {
@@ -3578,7 +4112,7 @@
               "kind": "classmethod",
               "signature": "(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.",
-              "line": 2382,
+              "line": 2490,
               "deprecated": false
             },
             {
@@ -3587,7 +4121,7 @@
               "kind": "classmethod",
               "signature": "(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpack Metallic, AO, and Smoothness from a combined MSAO texture.",
-              "line": 2421,
+              "line": 2529,
               "deprecated": false
             },
             {
@@ -3596,7 +4130,7 @@
               "kind": "classmethod",
               "signature": "(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpack Metallic, Roughness, and AO from a combined MRAO texture.",
-              "line": 2476,
+              "line": 2584,
               "deprecated": false
             },
             {
@@ -3605,7 +4139,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.",
-              "line": 2531,
+              "line": 2639,
               "deprecated": false
             },
             {
@@ -3614,7 +4148,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Metallic (RGB) and Smoothness (A) from a combined map.",
-              "line": 2556,
+              "line": 2664,
               "deprecated": false
             },
             {
@@ -3623,7 +4157,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Specular (RGB) and Glossiness (A) from a combined map.",
-              "line": 2582,
+              "line": 2690,
               "deprecated": false
             }
           ]
@@ -4663,6 +5197,57 @@
       ]
     },
     {
+      "relpath": "img_utils/mat_report.py",
+      "summary": "DCC-agnostic formatters for material / texture info reports.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MatReport",
+          "summary": "Pure record→text/HTML formatters for material & texture info reports.",
+          "line": 24,
+          "bases": [],
+          "members": [
+            {
+              "name": "format_texture_info_text",
+              "qualname": "MatReport.format_texture_info_text",
+              "kind": "classmethod",
+              "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
+              "summary": "Render ``get_texture_info`` output as a plain-text report.",
+              "line": 63,
+              "deprecated": false
+            },
+            {
+              "name": "format_texture_info_html",
+              "qualname": "MatReport.format_texture_info_html",
+              "kind": "classmethod",
+              "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
+              "summary": "Render ``get_texture_info`` output as styled HTML.",
+              "line": 81,
+              "deprecated": false
+            },
+            {
+              "name": "format_mat_info_text",
+              "qualname": "MatReport.format_mat_info_text",
+              "kind": "classmethod",
+              "signature": "(cls, records: List[Dict[str, Any]]) -> str",
+              "summary": "Render ``get_mat_info`` output as a plain-text report.",
+              "line": 94,
+              "deprecated": false
+            },
+            {
+              "name": "format_mat_info_html",
+              "qualname": "MatReport.format_mat_info_html",
+              "kind": "classmethod",
+              "signature": "(cls, records: List[Dict[str, Any]]) -> str",
+              "summary": "Render ``get_mat_info`` output as styled HTML.",
+              "line": 135,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "img_utils/output_template.py",
       "summary": "Per-map output-format templates — the \"export preset\" layer.",
       "functions": [],
@@ -4913,21 +5498,30 @@
           ],
           "members": [
             {
+              "name": "eval_expression",
+              "qualname": "MathUtils.eval_expression",
+              "kind": "staticmethod",
+              "signature": "(expression: str) -> str",
+              "summary": "Safely evaluate a math expression string (calculator engine).",
+              "line": 31,
+              "deprecated": false
+            },
+            {
+              "name": "convert_length_unit",
+              "qualname": "MathUtils.convert_length_unit",
+              "kind": "classmethod",
+              "signature": "(cls, value: float, from_unit: str, to_unit: str) -> str",
+              "summary": "Convert a length ``value`` between units (mm, cm, m, km, in, ft, yd, mi).",
+              "line": 68,
+              "deprecated": false
+            },
+            {
               "name": "linear_sum_assignment",
               "qualname": "MathUtils.linear_sum_assignment",
               "kind": "staticmethod",
               "signature": "(cost_matrix: Sequence[Sequence[float]], maximize: bool = False) -> Tuple[List[int], List[int]]",
               "summary": "Solve the linear sum assignment problem (Hungarian algorithm).",
-              "line": 19,
-              "deprecated": false
-            },
-            {
-              "name": "get_pca_transform",
-              "qualname": "MathUtils.get_pca_transform",
-              "kind": "staticmethod",
-              "signature": "(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1) -> Optional[List[float]]",
-              "summary": "Calculate the transformation matrix to align points_b to points_a using PCA axis alignment.",
-              "line": 164,
+              "line": 94,
               "deprecated": false
             },
             {
@@ -4936,7 +5530,7 @@
               "kind": "staticmethod",
               "signature": "(points: Sequence[Sequence[float]], k: int, max_iterations: int = 30, seed_indices: Optional[List[int]] = None) -> List[List[int]]",
               "summary": "Perform K-Means clustering on a set of points.",
-              "line": 377,
+              "line": 239,
               "deprecated": false
             },
             {
@@ -4945,7 +5539,7 @@
               "kind": "staticmethod",
               "signature": "(values: Sequence[float], k: int = 3, max_iterations: int = 10) -> Tuple[List[float], List[List[float]]]",
               "summary": "Perform 1D K-Means clustering to find natural breakpoints in scalar data.",
-              "line": 529,
+              "line": 389,
               "deprecated": false
             },
             {
@@ -4954,7 +5548,7 @@
               "kind": "classmethod",
               "signature": "(cls, values: Sequence[float], k: int = 3) -> float",
               "summary": "Use K-Means to find an adaptive threshold separating \"parts\" from \"bodies\".",
-              "line": 650,
+              "line": 510,
               "deprecated": false
             },
             {
@@ -4963,7 +5557,7 @@
               "kind": "staticmethod",
               "signature": "(num, places)",
               "summary": "Move the decimal place in a given number.",
-              "line": 700,
+              "line": 560,
               "deprecated": false
             },
             {
@@ -4972,7 +5566,7 @@
               "kind": "staticmethod",
               "signature": "(a: List[float], b: List[float]) -> Tuple[float, float, float]",
               "summary": "Get a directional vector from a given start and end point.",
-              "line": 726,
+              "line": 586,
               "deprecated": false
             },
             {
@@ -4981,7 +5575,7 @@
               "kind": "staticmethod",
               "signature": "(n=0.0, minimum=0.0, maximum=1.0)",
               "summary": "Clamps the value x between min and max.",
-              "line": 745,
+              "line": 605,
               "deprecated": false
             },
             {
@@ -4990,7 +5584,7 @@
               "kind": "staticmethod",
               "signature": "(start, end, clamp_start=None, clamp_end=None, validate=True)",
               "summary": "Clamp a numeric range (start, end) to optional boundaries with validation.",
-              "line": 762,
+              "line": 622,
               "deprecated": false
             },
             {
@@ -4999,7 +5593,7 @@
               "kind": "classmethod",
               "signature": "(cls, vector, amount=1)",
               "summary": "Normalize a 2 or 3 dimensional vector.",
-              "line": 805,
+              "line": 665,
               "deprecated": false
             },
             {
@@ -5008,7 +5602,7 @@
               "kind": "staticmethod",
               "signature": "(vector)",
               "summary": "Get the magnatude (length) of a given vector.",
-              "line": 825,
+              "line": 685,
               "deprecated": false
             },
             {
@@ -5017,7 +5611,7 @@
               "kind": "classmethod",
               "signature": "(cls, v1, v2, normalize_input=False)",
               "summary": "Returns the dot product of two 3D float arrays.",
-              "line": 844,
+              "line": 704,
               "deprecated": false
             },
             {
@@ -5026,7 +5620,7 @@
               "kind": "classmethod",
               "signature": "(cls, a, b, c=None, normalize=0)",
               "summary": "Get the cross product of two vectors, using two 3d vectors, or 3 points.",
-              "line": 867,
+              "line": 727,
               "deprecated": false
             },
             {
@@ -5035,7 +5629,7 @@
               "kind": "classmethod",
               "signature": "(cls, p, d, v=None)",
               "summary": "Move a point relative to it's current position.",
-              "line": 899,
+              "line": 759,
               "deprecated": false
             },
             {
@@ -5044,7 +5638,7 @@
               "kind": "classmethod",
               "signature": "(cls, a, b, vect, dist, toward=True)",
               "summary": "Move a point (a) along a given vector toward or away from a given point (b).",
-              "line": 937,
+              "line": 797,
               "deprecated": false
             },
             {
@@ -5053,7 +5647,7 @@
               "kind": "staticmethod",
               "signature": "(a: Tuple[float, ...], b: Tuple[float, ...]) -> float",
               "summary": "Calculates the Euclidean distance between two points in N-dimensional space.",
-              "line": 966,
+              "line": 826,
               "deprecated": false
             },
             {
@@ -5062,7 +5656,7 @@
               "kind": "staticmethod",
               "signature": "(a: List[float], b: List[float]) -> Tuple[float, float, float]",
               "summary": "Get the point in the middle of two given points.",
-              "line": 985,
+              "line": 845,
               "deprecated": false
             },
             {
@@ -5071,7 +5665,7 @@
               "kind": "classmethod",
               "signature": "(cls, v1, v2, degree=False)",
               "summary": "Get an angle from two given vectors.",
-              "line": 1003,
+              "line": 863,
               "deprecated": false
             },
             {
@@ -5080,7 +5674,7 @@
               "kind": "staticmethod",
               "signature": "(a, b, c, degree=False)",
               "summary": "Get the opposing angle from 3 given points.",
-              "line": 1030,
+              "line": 890,
               "deprecated": false
             },
             {
@@ -5089,7 +5683,7 @@
               "kind": "staticmethod",
               "signature": "(a1, a2, s, unit='degrees')",
               "summary": "Get the length of two sides of a triangle, given two angles, and the length of the side in-between.",
-              "line": 1068,
+              "line": 928,
               "deprecated": false
             },
             {
@@ -5098,7 +5692,7 @@
               "kind": "classmethod",
               "signature": "(cls, theta, axis, degree=False)",
               "summary": "Get the rotation about the X,Y,Z axes given an angle for rotation",
-              "line": 1095,
+              "line": 965,
               "deprecated": false
             },
             {
@@ -5107,7 +5701,7 @@
               "kind": "staticmethod",
               "signature": "(start, end, t: float)",
               "summary": "Linear interpolation between two values or two equal-length points.",
-              "line": 1171,
+              "line": 1041,
               "deprecated": false
             },
             {
@@ -5116,7 +5710,7 @@
               "kind": "classmethod",
               "signature": "(cls, vector, fallback, amount: float = 1)",
               "summary": ":meth:`normalize`, returning ``fallback`` for a ~zero-length vector.",
-              "line": 1191,
+              "line": 1061,
               "deprecated": false
             },
             {
@@ -5125,7 +5719,7 @@
               "kind": "staticmethod",
               "signature": "(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float",
               "summary": "Canonical clamped Hermite smoothstep (``3t² − 2t³``).",
-              "line": 1204,
+              "line": 1074,
               "deprecated": false
             },
             {
@@ -5134,7 +5728,7 @@
               "kind": "staticmethod",
               "signature": "(x: float) -> float",
               "summary": "Ricker (Mexican-hat) wavelet — a unit ridge flanked by two balanced",
-              "line": 1228,
+              "line": 1098,
               "deprecated": false
             },
             {
@@ -5143,7 +5737,7 @@
               "kind": "staticmethod",
               "signature": "(t: float, tension: float) -> float",
               "summary": "Normalized catenary (``cosh``) profile across a span.",
-              "line": 1247,
+              "line": 1117,
               "deprecated": false
             },
             {
@@ -5152,7 +5746,7 @@
               "kind": "classmethod",
               "signature": "(cls, t: float, tension: float, round_amount: float = 0.0, gather: float = 0.0) -> float",
               "summary": "Catenary sag profile, optionally rounded / gathered at the supports.",
-              "line": 1272,
+              "line": 1142,
               "deprecated": false
             },
             {
@@ -5161,7 +5755,7 @@
               "kind": "staticmethod",
               "signature": "(time_value: float, sample_times: Sequence[float], progress: Sequence[float], tolerance: float = 1e-06) -> float",
               "summary": "Interpolate normalized progress from sampled time/progress pairs.",
-              "line": 1317,
+              "line": 1187,
               "deprecated": false
             },
             {
@@ -5170,7 +5764,7 @@
               "kind": "staticmethod",
               "signature": "(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]",
               "summary": "Generate a geometric sequence.",
-              "line": 1368,
+              "line": 1238,
               "deprecated": false
             },
             {
@@ -5179,52 +5773,7 @@
               "kind": "staticmethod",
               "signature": "(value: Union[float, List[Any], Tuple[Any, ...], 'np.ndarray'], old_range: Tuple[float, float], new_range: Tuple[float, float], clamp: bool = False) -> Union[float, List[Any], Tuple[Any, ...], 'np.ndarray']",
               "summary": "Remaps a value, list, or tuple of varying sizes from one range to another.",
-              "line": 1398,
-              "deprecated": false
-            },
-            {
-              "name": "calculate_curve_length",
-              "qualname": "MathUtils.calculate_curve_length",
-              "kind": "staticmethod",
-              "signature": "(centerline_points: List[List[float]]) -> float",
-              "summary": "Calculates the total length of the centerline path.",
-              "line": 1443,
-              "deprecated": false
-            },
-            {
-              "name": "get_point_on_centerline",
-              "qualname": "MathUtils.get_point_on_centerline",
-              "kind": "staticmethod",
-              "signature": "(centerline_points: List[List[float]], param: float) -> List[float]",
-              "summary": "Returns the interpolated point along the centerline.",
-              "line": 1460,
-              "deprecated": false
-            },
-            {
-              "name": "dist_points_along_centerline",
-              "qualname": "MathUtils.dist_points_along_centerline",
-              "kind": "classmethod",
-              "signature": "(cls, centerline: List[List[float]], num_points: int, reverse: bool = False, interpolation: Callable[[List[List[float]], float], List[float]] = None, start_offset: float = 0.0, end_offset: float = 0.0) -> List[List[float]]",
-              "summary": "Distributes points evenly along the centerline with optional offsets and custom interpolation.",
-              "line": 1489,
-              "deprecated": false
-            },
-            {
-              "name": "arrange_points_as_path",
-              "qualname": "MathUtils.arrange_points_as_path",
-              "kind": "staticmethod",
-              "signature": "(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]",
-              "summary": "Orders a list of points to form a continuous path.",
-              "line": 1527,
-              "deprecated": false
-            },
-            {
-              "name": "smooth_points",
-              "qualname": "MathUtils.smooth_points",
-              "kind": "staticmethod",
-              "signature": "(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list",
-              "summary": "Apply a moving average to smooth a sequence of 3D points.",
-              "line": 1573,
+              "line": 1268,
               "deprecated": false
             },
             {
@@ -5233,16 +5782,7 @@
               "kind": "staticmethod",
               "signature": "(p: Sequence[float], a: Sequence[float], b: Sequence[float]) -> float",
               "summary": "Perpendicular distance from point ``p`` to the segment ``a``-``b``.",
-              "line": 1631,
-              "deprecated": false
-            },
-            {
-              "name": "simplify_rdp",
-              "qualname": "MathUtils.simplify_rdp",
-              "kind": "classmethod",
-              "signature": "(cls, points: Sequence[Sequence[float]], tolerance: float) -> List[int]",
-              "summary": "Ramer-Douglas-Peucker indices: which points to keep to stay within",
-              "line": 1660,
+              "line": 1313,
               "deprecated": false
             },
             {
@@ -5251,7 +5791,7 @@
               "kind": "staticmethod",
               "signature": "(value: int) -> int",
               "summary": "Finds the nearest power of two for a given integer without using the math module.",
-              "line": 1711,
+              "line": 1342,
               "deprecated": false
             },
             {
@@ -5260,7 +5800,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, tolerance: float = 0.0001) -> bool",
               "summary": "Check if a float value is close to a whole number within tolerance.",
-              "line": 1739,
+              "line": 1370,
               "deprecated": false
             },
             {
@@ -5269,7 +5809,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, mode: str = 'none', max_distance: float = 1.5) -> Union[int, float]",
               "summary": "General-purpose rounding function with multiple modes.",
-              "line": 1759,
+              "line": 1390,
               "deprecated": false
             },
             {
@@ -5278,7 +5818,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, max_distance: float = 1.5) -> int",
               "summary": "Round to aesthetically pleasing 'round' numbers (conservative approach).",
-              "line": 1816,
+              "line": 1447,
               "deprecated": false
             },
             {
@@ -5287,16 +5827,7 @@
               "kind": "classmethod",
               "signature": "(cls, value: float) -> int",
               "summary": "Round to aesthetically pleasing 'round' numbers (aggressive approach).",
-              "line": 1871,
-              "deprecated": false
-            },
-            {
-              "name": "hash_points",
-              "qualname": "MathUtils.hash_points",
-              "kind": "staticmethod",
-              "signature": "(points, precision=4)",
-              "summary": "Hash the given list of point values.",
-              "line": 1894,
+              "line": 1502,
               "deprecated": false
             },
             {
@@ -5305,7 +5836,7 @@
               "kind": "staticmethod",
               "signature": "(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float",
               "summary": "Calculate the effective rotation distance between two Euler rotations.",
-              "line": 1922,
+              "line": 1525,
               "deprecated": false
             }
           ]

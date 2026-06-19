@@ -87,6 +87,43 @@ class PresetStoreTest(unittest.TestCase):
         self.assertEqual(self.store.load("a/b:c")["x"], 1)
         self.assertEqual(self.store.path("a/b:c", "user").name, sanitize_preset_name("a/b:c") + ".json")
 
+    # --- active pointer ------------------------------------------------------
+    def test_active_round_trips_and_clears(self):
+        self.assertIsNone(self.store.active)  # unset by default
+        self.store.active = "studio"
+        self.assertEqual(self.store.active, "studio")
+        # A fresh store over the same dirs reads the same pointer (cross-session).
+        other = PresetStore("photog", "extapps", builtin_dir=self.builtin, user_dir=self.user)
+        self.assertEqual(other.active, "studio")
+        self.store.active = None
+        self.assertIsNone(self.store.active)
+
+    def test_active_sidecar_excluded_from_listing(self):
+        self.store.save("custom", {"x": 1})
+        self.store.active = "custom"
+        # The .active dotfile must not surface as a preset.
+        self.assertEqual(self.store.list("user"), ["custom"])
+        self.assertFalse(self.store.exists(".active"))
+
+    def test_delete_clears_dangling_active(self):
+        self.store.save("draft", {"x": 1})
+        self.store.active = "draft"
+        self.store.delete("draft")
+        self.assertIsNone(self.store.active)  # pointed-at preset is gone
+
+    def test_delete_keeps_active_when_builtin_remains(self):
+        # A user shadow deleted but the built-in of the same name survives.
+        self.store.save("studio", {"x": 1})
+        self.store.active = "studio"
+        self.store.delete("studio")  # removes user shadow, builtin remains
+        self.assertEqual(self.store.active, "studio")
+
+    def test_rename_follows_active(self):
+        self.store.save("draft", {"x": 1})
+        self.store.active = "draft"
+        self.store.rename("draft", "final")
+        self.assertEqual(self.store.active, "final")
+
     def test_no_builtin_dir_is_user_only(self):
         store = PresetStore("p", "extapps", user_dir=self.user)
         self.assertIsNone(store.builtin_dir)
