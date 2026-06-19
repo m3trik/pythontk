@@ -529,6 +529,26 @@ class MapFactory(LoggingMixin):
         return result
 
     @classmethod
+    def resolve_color_space(cls, file: str, default: str = "Linear") -> str:
+        """Resolve the working color space ("sRGB" or "Linear") for a texture by filename.
+
+        Looks up the resolved map type's declared ``color_space`` — the SSoT in the map
+        registry (Base Color / Albedo / Emissive are sRGB; Normal / Roughness / Metallic and
+        the other data maps are Linear). DCC-agnostic: callers translate "Linear" to their own
+        raw/data label (Maya's *Raw*, Blender's *Non-Color*).
+
+        Parameters:
+            file (str): Image filename, full path, or map-type suffix.
+            default (str): Returned when the map type cannot be resolved from the name.
+
+        Returns:
+            str: "sRGB" or "Linear" (or ``default`` when unresolved).
+        """
+        map_type = cls._map_registry.resolve_type_from_path(file)
+        entry = cls._map_registry.get(map_type) if map_type else None
+        return entry.color_space if entry else default
+
+    @classmethod
     def resolve_texture_filename(
         cls,
         texture_path: str,
@@ -718,6 +738,76 @@ class MapFactory(LoggingMixin):
         return texture_sets
 
     @classmethod
+    def _supplement_sets_from_dir(
+        cls,
+        texture_sets: Dict[str, List[str]],
+        directory: str,
+        prefix: str = "",
+        suffix: str = "",
+        logger=None,
+    ) -> Dict[str, List[str]]:
+        """Gap-fill each texture set with same-base-name siblings from ``directory``.
+
+        For every set, scans ``directory`` for files that resolve to the same base
+        name (honoring ``prefix``/``suffix``) and a recognized map type, then appends
+        any whose map type is missing from the set. Provided files always win — an
+        existing map slot is never replaced and files already present are not
+        duplicated. Lets callers pull in required maps that live next to the inputs
+        but weren't part of the supplied list (e.g. a Normal sitting in a project's
+        ``sourceimages`` that was never wired into the material).
+
+        Parameters:
+            texture_sets: Mapping of base name -> file paths (mutated in place).
+            directory: Directory to scan for sibling textures.
+            prefix: Prefix stripped during base-name resolution (must match set keys).
+            suffix: Suffix stripped during base-name resolution.
+            logger: Optional logger for reporting discovered files.
+
+        Returns:
+            Dict[str, List[str]]: The same ``texture_sets`` mapping, supplemented.
+        """
+        log = logger or cls.logger
+        if not (directory and os.path.isdir(directory)):
+            return texture_sets
+
+        dir_files = FileUtils.get_dir_contents(
+            directory,
+            "filepath",
+            inc_files=[f"*.{ext}" for ext in ImgUtils.texture_file_types],
+        )
+        if not dir_files:
+            return texture_sets
+
+        dir_by_set = cls.group_textures_by_set(dir_files, prefix=prefix, suffix=suffix)
+
+        for base_name, files in texture_sets.items():
+            siblings = dir_by_set.get(base_name)
+            if not siblings:
+                continue
+
+            present_types = {cls.resolve_map_type(f) for f in files}
+            present_paths = {os.path.normcase(os.path.abspath(f)) for f in files}
+
+            for sib in siblings:
+                key = os.path.normcase(os.path.abspath(sib))
+                if key in present_paths:
+                    continue
+                map_type = cls.resolve_map_type(sib)
+                if not map_type or map_type in present_types:
+                    continue
+
+                files.append(sib)
+                present_types.add(map_type)
+                present_paths.add(key)
+                if log:
+                    log.info(
+                        f"Discovered {os.path.basename(sib)} ({map_type}) "
+                        f"for set '{base_name}'"
+                    )
+
+        return texture_sets
+
+    @classmethod
     def filter_images_by_type(cls, files, types=""):
         """
         Parameters:
@@ -874,6 +964,7 @@ class MapFactory(LoggingMixin):
         progress_callback: Callable = None,
         prefix: str = "",
         suffix: str = "",
+        discover_dir: str = None,
         **kwargs,
     ) -> Union[List[str], Dict[str, List[str]]]:
         """
@@ -884,6 +975,11 @@ class MapFactory(LoggingMixin):
             output_dir: Optional output directory.
             group_by_set: Whether to automatically group textures into sets (default: True).
                           If False, all input files are treated as a single set.
+            discover_dir: Optional directory to scan for same-base-name sibling
+                          textures that aren't in ``source``. Any whose map type is
+                          missing from a set is pulled in (gap-fill); provided files
+                          always win — a present map type is never replaced. Honors
+                          ``prefix``/``suffix`` when matching base names.
             max_workers: Number of threads for parallel processing.
             progress_callback: Optional callback(current, total, message) for reporting progress.
             **kwargs: Configuration options overriding DEFAULT_CONFIG.
@@ -958,7 +1054,19 @@ class MapFactory(LoggingMixin):
             base_name = cls.get_base_texture_name(
                 files[0], prefix=prefix, suffix=suffix
             )
-            texture_sets = {base_name: files}
+            # Copy so the working set never aliases the caller's input list
+            # (discovery and downstream steps append/edit it).
+            texture_sets = {base_name: list(files)}
+
+        # Gap-fill each set with same-base-name siblings found on disk.
+        if discover_dir:
+            texture_sets = cls._supplement_sets_from_dir(
+                texture_sets,
+                discover_dir,
+                prefix=prefix,
+                suffix=suffix,
+                logger=logger,
+            )
 
         results = {}
         total_sets = len(texture_sets)

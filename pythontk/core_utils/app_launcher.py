@@ -1,7 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
 import os
-import sys
 import glob
 import subprocess
 import shutil
@@ -521,6 +520,87 @@ class AppLauncher:
         return False
 
     @staticmethod
+    def _program_files_roots():
+        """Return the 64-bit and 32-bit ``Program Files`` roots from the environment."""
+        return (
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        )
+
+    @staticmethod
+    def scan_install_dirs(scan_globs):
+        """Yield existing files matching *scan_globs*, newest (reverse-sorted) first.
+
+        A ``{program_files}`` token in a pattern expands to both Program Files roots,
+        so callers write one portable pattern instead of hardcoding the 64/32-bit
+        dirs::
+
+            AppLauncher.scan_install_dirs([r"{program_files}\\Autodesk\\Maya*\\bin\\maya.exe"])
+
+        :param scan_globs: An iterable of glob patterns (each may use the token).
+        :return: A generator of absolute file paths, newest first.
+        """
+        pf64, pf32 = AppLauncher._program_files_roots()
+        candidates = []
+        for pattern in scan_globs:
+            if "{program_files}" in pattern:
+                expanded = [
+                    pattern.format(program_files=pf64),
+                    pattern.format(program_files=pf32),
+                ]
+            else:
+                expanded = [pattern]
+            for pat in expanded:
+                candidates.extend(glob.glob(pat))
+        for c in sorted(set(candidates), reverse=True):
+            if os.path.isfile(c):
+                yield c
+
+    @staticmethod
+    def resolve_app_path(
+        *, env_vars=(), location_env_vars=(), app_names=(), scan_globs=()
+    ):
+        """Resolve a target application executable; the first hit wins.
+
+        Consolidates the ``$ENV -> find_app -> install-dir scan`` discovery that
+        app hand-off callers (Maya / Blender / RizomUV / Painter / Toolbag) would
+        otherwise each re-implement. Resolution order:
+
+        1. *env_vars* -- each name whose ``os.environ`` value points at an existing
+           file (e.g. ``BLENDER_EXE`` / ``MAYA_EXE``).
+        2. *location_env_vars* -- each ``(env_var, suffix)`` where
+           ``<env_value>/<suffix>`` exists (e.g.
+           ``("MAYA_LOCATION", ("bin", "maya.exe"))``). *suffix* may be a string
+           or a path-segment sequence.
+        3. *app_names* -- each name via :meth:`find_app` (PATH / Windows App Paths).
+        4. *scan_globs* -- :meth:`scan_install_dirs` over the patterns (newest wins).
+
+        :return: The absolute path, or ``None`` when nothing resolves.
+        """
+        for var in env_vars:
+            p = os.environ.get(var)
+            if p and os.path.isfile(p):
+                return p
+
+        for var, suffix in location_env_vars:
+            loc = os.environ.get(var)
+            if not loc:
+                continue
+            parts = [suffix] if isinstance(suffix, str) else list(suffix)
+            p = os.path.join(loc, *parts)
+            if os.path.isfile(p):
+                return p
+
+        for name in app_names:
+            found = AppLauncher.find_app(name)
+            if found:
+                return found
+
+        for found in AppLauncher.scan_install_dirs(scan_globs):
+            return found
+        return None
+
+    @staticmethod
     def find_app(app_identifier):
         """
         Attempts to locate the executable for the given application identifier.
@@ -562,12 +642,14 @@ class AppLauncher:
         try:
             if system == "windows":
                 # 'tasklist /FO CSV /NH' returns "Image Name","PID","Session Name","Session#","Mem Usage"
-                # Filter by name using /FI to rely on system filter
-                cmd = f'tasklist /FO CSV /NH /FI "IMAGENAME eq {process_name}"'
-                # run via subprocess
-                output = subprocess.check_output(cmd, shell=True).decode(
-                    errors="ignore"
-                )
+                # Filter by name using /FI to rely on system filter.
+                # List args (no shell=True): immune to quoting/injection issues
+                # if process_name ever contains shell metacharacters.
+                cmd = [
+                    "tasklist", "/FO", "CSV", "/NH",
+                    "/FI", f"IMAGENAME eq {process_name}",
+                ]
+                output = subprocess.check_output(cmd).decode(errors="ignore")
 
                 import csv
                 import io

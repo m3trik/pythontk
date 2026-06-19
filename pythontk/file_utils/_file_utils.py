@@ -531,6 +531,41 @@ class FileUtils(HelpMixin):
         )
 
     @classmethod
+    def reveal_in_file_manager(cls, path, _runner=None):
+        """Open the OS file manager showing ``path`` (selecting the file when supported, else
+        opening its containing folder). Cross-platform (Windows / macOS / Linux).
+
+        Parameters:
+            path (str): File or directory to reveal.
+            _runner (callable): Testing seam — receives the launch arg list instead of
+                ``subprocess`` (default launches detached via ``subprocess.Popen``).
+
+        Returns:
+            list: The launch command + args used (also handy for testing/logging).
+
+        Raises:
+            FileNotFoundError: when the containing directory does not exist.
+        """
+        import subprocess
+        import sys
+
+        target = os.path.normpath(str(path))
+        folder = target if os.path.isdir(target) else os.path.dirname(target)
+        if not os.path.isdir(folder):
+            raise FileNotFoundError(f"Directory not found: {folder}")
+        select = os.path.isfile(target)  # only files can be selected
+
+        if sys.platform.startswith("win"):
+            args = ["explorer", "/select,", target] if select else ["explorer", folder]
+        elif sys.platform == "darwin":
+            args = ["open", "-R", target] if select else ["open", folder]
+        else:  # most Linux file managers can't select a file → open the folder
+            args = ["xdg-open", folder]
+
+        (_runner or (lambda a: subprocess.Popen(a)))(args)
+        return args
+
+    @classmethod
     def get_file_info(cls, paths, info, hash_algo=None, force_tuples=False):
         """Returns file and directory information for a list of file strings based on specified parameters.
 

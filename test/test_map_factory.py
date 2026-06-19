@@ -312,6 +312,122 @@ class TestMapFactoryRefactored(unittest.TestCase):
         finally:
             logger.removeHandler(handler)
 
+    def test_supplement_sets_from_dir_gap_fills(self):
+        """_supplement_sets_from_dir pulls missing same-base-name siblings from disk."""
+        base = MapFactory.get_base_texture_name(self.texture_paths[0])
+        base_color = next(p for p in self.texture_paths if "BaseColor" in p)
+
+        sets = {base: [base_color]}
+        result = MapFactory._supplement_sets_from_dir(sets, self.test_files_dir)
+
+        types = {MapFactory.resolve_map_type(p) for p in result[base]}
+        self.assertIn("Base_Color", types)
+        # Siblings sitting on disk but absent from the provided list are added.
+        self.assertIn("Roughness", types)
+        self.assertIn("Normal_OpenGL", types)
+        # The already-present Base Color is not duplicated.
+        self.assertEqual(
+            sum(1 for p in result[base] if "BaseColor" in os.path.basename(p)), 1
+        )
+
+    def test_supplement_does_not_replace_present_type(self):
+        """A connected map slot is never replaced by a same-type sibling on disk."""
+        base = MapFactory.get_base_texture_name(self.texture_paths[0])
+        # A "connected" Base Color living outside the scan directory.
+        external = os.path.join(self.test_dir, "test_material_BaseColor.png")
+        ImgUtils.save_image(ImgUtils.create_image("RGB", (8, 8), (1, 2, 3)), external)
+        try:
+            sets = {base: [external]}
+            MapFactory._supplement_sets_from_dir(sets, self.test_files_dir)
+
+            base_colors = [
+                p
+                for p in sets[base]
+                if MapFactory.resolve_map_type(p) == "Base_Color"
+            ]
+            self.assertEqual(len(base_colors), 1)
+            self.assertEqual(
+                os.path.normcase(os.path.abspath(base_colors[0])),
+                os.path.normcase(os.path.abspath(external)),
+            )
+        finally:
+            if os.path.exists(external):
+                os.remove(external)
+
+    def test_prepare_maps_discover_dir_pulls_missing(self):
+        """prepare_maps(discover_dir=...) processes siblings discovered on disk."""
+        disc = os.path.join(self.test_dir, "discover")
+        os.makedirs(disc, exist_ok=True)
+        try:
+            for fn, color in [
+                ("widget_BaseColor.png", (128, 128, 128)),
+                ("widget_Roughness.png", 128),
+                ("widget_Normal_OpenGL.png", (128, 128, 255)),
+            ]:
+                mode = "L" if isinstance(color, int) else "RGB"
+                ImgUtils.save_image(
+                    ImgUtils.create_image(mode, (16, 16), color),
+                    os.path.join(disc, fn),
+                )
+
+            base_color = os.path.join(disc, "widget_BaseColor.png")
+            results = MapFactory.prepare_maps(
+                [base_color],
+                output_dir=self.output_dir,
+                discover_dir=disc,
+                group_by_set=False,
+                rename=True,
+                callback=lambda *args: None,
+            )
+            names = [os.path.basename(p) for p in results]
+            self.assertTrue(any("Roughness" in n for n in names))
+            self.assertTrue(any("Normal" in n for n in names))
+        finally:
+            shutil.rmtree(disc, ignore_errors=True)
+
+    def test_discover_dir_does_not_mutate_input_list(self):
+        """prepare_maps(discover_dir=...) must not mutate the caller's source list."""
+        disc = os.path.join(self.test_dir, "discover_nomutate")
+        os.makedirs(disc, exist_ok=True)
+        try:
+            for fn in ("gizmo_BaseColor.png", "gizmo_Roughness.png"):
+                ImgUtils.save_image(
+                    ImgUtils.create_image("RGB", (8, 8), (128, 128, 128)),
+                    os.path.join(disc, fn),
+                )
+            source = [os.path.join(disc, "gizmo_BaseColor.png")]
+            before = list(source)
+            MapFactory.prepare_maps(
+                source,
+                output_dir=self.output_dir,
+                discover_dir=disc,
+                group_by_set=False,
+                rename=True,
+                # Empty ignored_patterns skips the filter rebind, so the input
+                # list would be aliased into the working set without a guard.
+                ignored_patterns=[],
+                callback=lambda *a: None,
+            )
+            self.assertEqual(
+                source, before, "source list was mutated by discovery"
+            )
+        finally:
+            shutil.rmtree(disc, ignore_errors=True)
+
+    def test_prepare_maps_no_discover_dir_is_unchanged(self):
+        """Without discover_dir, only the supplied files are processed."""
+        base_color = next(p for p in self.texture_paths if "BaseColor" in p)
+        results = MapFactory.prepare_maps(
+            [base_color],
+            output_dir=self.output_dir,
+            group_by_set=False,
+            rename=True,
+            callback=lambda *args: None,
+        )
+        names = [os.path.basename(p) for p in results]
+        self.assertFalse(any("Roughness" in n for n in names))
+        self.assertFalse(any("Normal" in n for n in names))
+
 
 class TestMapFactoryExtended(unittest.TestCase):
     """Extended unit tests for MapFactory internal logic."""
@@ -388,6 +504,22 @@ class TestMapFactoryExtended(unittest.TestCase):
             if arg in self.context.inventory:
                 return self.context.inventory[arg]
         return None
+
+    def test_resolve_color_space(self):
+        """resolve_color_space maps color textures to sRGB and data textures to Linear."""
+        from pythontk import MapFactory
+
+        self.assertEqual(MapFactory.resolve_color_space("rock_BaseColor.png"), "sRGB")
+        self.assertEqual(MapFactory.resolve_color_space("rock_Emissive.png"), "sRGB")
+        for data_map in ("rock_Normal.png", "rock_Roughness.png", "rock_Metallic.png",
+                         "rock_Height.png", "rock_AO.png"):
+            self.assertEqual(
+                MapFactory.resolve_color_space(data_map), "Linear", msg=data_map
+            )
+        # Unresolved map type falls back to the supplied default.
+        self.assertEqual(
+            MapFactory.resolve_color_space("studio_environment.hdr", default=""), ""
+        )
 
     def test_convert_specular_to_metallic(self):
         result = self.context.convert_specular_to_metallic(

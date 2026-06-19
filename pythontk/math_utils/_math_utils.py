@@ -2,7 +2,7 @@
 # coding=utf-8
 from bisect import bisect_left
 import math
-from typing import List, Tuple, Union, Callable, Sequence, Any, Optional, TYPE_CHECKING
+from typing import List, Tuple, Union, Sequence, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
@@ -14,6 +14,81 @@ from pythontk.core_utils.help_mixin import HelpMixin
 
 class MathUtils(HelpMixin):
     """ """
+
+    # Centimeter-relative length factors (1 unit -> N centimeters).
+    LENGTH_UNIT_FACTORS = {
+        "mm": 0.1,
+        "cm": 1.0,
+        "m": 100.0,
+        "km": 100000.0,
+        "in": 2.54,
+        "ft": 30.48,
+        "yd": 91.44,
+        "mi": 160934.4,
+    }
+
+    @staticmethod
+    def eval_expression(expression: str) -> str:
+        """Safely evaluate a math expression string (calculator engine).
+
+        Exposes the ``math`` module's functions/constants plus ``abs/round/min/max/pow``;
+        Python builtins are disabled so only arithmetic is reachable. Integer-valued floats
+        are returned without a trailing ``.0``.
+
+        Parameters:
+            expression (str): e.g. ``"sin(pi/2) + 2**3"``.
+
+        Returns:
+            str: the formatted result, ``""`` for an empty expression, or ``"Error"``
+                when the expression is invalid.
+
+        Example:
+            MathUtils.eval_expression("2+2")        -> "4"
+            MathUtils.eval_expression("10/4")       -> "2.5"
+            MathUtils.eval_expression("sqrt(16)")   -> "4"
+        """
+        if not expression:
+            return ""
+        try:
+            allowed_names = {"__builtins__": None}
+            for name in dir(math):
+                if not name.startswith("__"):
+                    allowed_names[name] = getattr(math, name)
+            allowed_names.update(
+                {"abs": abs, "round": round, "min": min, "max": max, "pow": pow}
+            )
+            result = eval(expression, allowed_names)  # noqa: S307 - sandboxed, builtins off
+            if isinstance(result, float) and result.is_integer():
+                result = int(result)
+            return str(result)
+        except Exception:
+            return "Error"
+
+    @classmethod
+    def convert_length_unit(cls, value: float, from_unit: str, to_unit: str) -> str:
+        """Convert a length ``value`` between units (mm, cm, m, km, in, ft, yd, mi).
+
+        Parameters:
+            value (float): the numeric value to convert.
+            from_unit (str): source unit key (one of ``LENGTH_UNIT_FACTORS``).
+            to_unit (str): target unit key.
+
+        Returns:
+            str: the converted value rounded to 6 decimals, or ``"Error"`` for an
+                unknown unit / non-numeric value.
+
+        Example:
+            MathUtils.convert_length_unit(100, "cm", "m")  -> "1.0"
+            MathUtils.convert_length_unit(1, "in", "cm")   -> "2.54"
+        """
+        try:
+            factors = cls.LENGTH_UNIT_FACTORS
+            if from_unit not in factors or to_unit not in factors:
+                return "Error"
+            cm_value = float(value) * factors[from_unit]
+            return str(round(cm_value / factors[to_unit], 6))
+        except (TypeError, ValueError):
+            return "Error"
 
     @staticmethod
     def linear_sum_assignment(
@@ -161,219 +236,6 @@ class MathUtils(HelpMixin):
         return (row_ind, col_ind)
 
     @staticmethod
-    def get_pca_transform(
-        points_a: "np.ndarray",
-        points_b: "np.ndarray",
-        tolerance: float = 0.001,
-        robust: bool = False,
-        sample_size: int = 500,
-        symmetry_threshold: float = 0.1,
-    ) -> Optional[List[float]]:
-        """
-        Calculate the transformation matrix to align points_b to points_a using PCA axis alignment.
-
-        This method is robust against vertex reordering as it aligns the principal axes of the shapes.
-        It tests all 24 possible orthogonal alignments of the principal axes to find the best fit.
-
-        Parameters:
-            points_a: (N, 3) array of points for the target shape.
-            points_b: (N, 3) array of points for the source shape (to be transformed).
-            tolerance: Maximum allowed average distance for a valid match.
-            robust: If True, enables enhanced handling for:
-                - Cylindrical symmetry (eigenvalue degeneracy)
-                - Large point clouds (via sampling)
-                - Arbitrary rotations (tests spin around symmetric axis)
-                Note: robust=True requires scipy.spatial.KDTree.
-            sample_size: Max points to use for KDTree queries when robust=True.
-            symmetry_threshold: Relative eigenvalue difference to detect cylindrical symmetry.
-                If two eigenvalues are within this ratio of each other, treat as symmetric.
-
-        Returns:
-            A 16-element list representing the 4x4 transformation matrix (row-major).
-            Returns None if no alignment is found within tolerance or if dependencies unavailable.
-
-        Note:
-            Requires numpy. scipy.spatial.KDTree is optional but improves performance.
-            When robust=True, scipy.spatial.KDTree is required.
-        """
-        try:
-            import numpy as np
-            import itertools
-        except ImportError:
-            return None
-
-        try:
-            from scipy.spatial import KDTree
-        except ImportError:
-            KDTree = None
-            if robust:
-                return None  # robust mode requires KDTree
-
-        pts_a = np.array(points_a)
-        pts_b = np.array(points_b)
-
-        if len(pts_a) < 3 or len(pts_b) < 3:
-            return None
-        if not robust and len(pts_a) != len(pts_b):
-            return None
-
-        # 1. Centroids
-        c_a = np.mean(pts_a, axis=0)
-        c_b = np.mean(pts_b, axis=0)
-
-        # 2. Center points
-        p_a = pts_a - c_a
-        p_b = pts_b - c_b
-
-        # 3. PCA (Eigenvectors)
-        cov_a = np.cov(p_a, rowvar=False)
-        cov_b = np.cov(p_b, rowvar=False)
-
-        val_a, vec_a = np.linalg.eigh(cov_a)
-        val_b, vec_b = np.linalg.eigh(cov_b)
-
-        # Sort by eigenvalue (descending)
-        idx_a = np.argsort(val_a)[::-1]
-        idx_b = np.argsort(val_b)[::-1]
-
-        val_a = val_a[idx_a]
-        val_b = val_b[idx_b]
-        vec_a = vec_a[:, idx_a]
-        vec_b = vec_b[:, idx_b]
-
-        # Ensure right-handed coordinate systems
-        if np.linalg.det(vec_a) < 0:
-            vec_a[:, 2] *= -1
-        if np.linalg.det(vec_b) < 0:
-            vec_b[:, 2] *= -1
-
-        # 4. Generate all 24 base rotations (cached for performance)
-        if not hasattr(MathUtils, "_pca_base_rotations"):
-            axes = [np.array([1, 0, 0]), np.array([0, 1, 0]), np.array([0, 0, 1])]
-            rotations = []
-            for p in itertools.permutations([0, 1, 2]):
-                for sx in [-1, 1]:
-                    for sy in [-1, 1]:
-                        col0 = axes[p[0]] * sx
-                        col1 = axes[p[1]] * sy
-                        col2 = np.cross(col0, col1)
-                        P = np.column_stack((col0, col1, col2))
-                        rotations.append(P)
-            MathUtils._pca_base_rotations = rotations
-        base_rotations = MathUtils._pca_base_rotations
-
-        # 5. Symmetry detection and spin angles (robust mode only)
-        sym_axis_b = None
-        spin_angles = [0.0]
-
-        if robust:
-            # Detect cylindrical symmetry
-            def detect_symmetry(eigenvalues):
-                e = eigenvalues
-                max_e = max(abs(e[0]), abs(e[-1]))
-                if max_e < 1e-9:
-                    return None
-                if abs(e[1] - e[2]) < symmetry_threshold * max_e:
-                    return 0  # Symmetry around axis 0
-                if abs(e[0] - e[1]) < symmetry_threshold * max_e:
-                    return 2  # Symmetry around axis 2
-                return None
-
-            sym_axis_b = detect_symmetry(val_b)
-            if sym_axis_b is not None:
-                spin_angles = [
-                    i * np.pi / 12 for i in range(24)
-                ]  # 15-degree increments
-
-            # Subsample for performance
-            p_a_work = (
-                p_a[np.random.choice(len(p_a), sample_size, replace=False)]
-                if len(p_a) > sample_size
-                else p_a
-            )
-            p_b_work = (
-                p_b[np.random.choice(len(p_b), sample_size, replace=False)]
-                if len(p_b) > sample_size
-                else p_b
-            )
-        else:
-            p_a_work = p_a
-            p_b_work = p_b
-
-        # 6. Build KDTree or prepare fallback
-        tree = KDTree(p_a_work) if KDTree else None
-
-        if not tree:
-            a_sq = np.sum(p_a_work**2, axis=1)
-            b_sq = np.sum(p_b_work**2, axis=1)
-
-        def axis_angle_matrix(axis, angle):
-            c = np.cos(angle)
-            s = np.sin(angle)
-            t = 1 - c
-            x, y, z = axis / np.linalg.norm(axis)
-            return np.array(
-                [
-                    [t * x * x + c, t * x * y - z * s, t * x * z + y * s],
-                    [t * x * y + z * s, t * y * y + c, t * y * z - x * s],
-                    [t * x * z - y * s, t * y * z + x * s, t * z * z + c],
-                ]
-            )
-
-        best_diff = float("inf")
-        best_matrix = None
-
-        for P in base_rotations:
-            R_base = vec_a @ P @ vec_b.T
-
-            # Generate spins to try
-            if sym_axis_b is not None:
-                spin_axis = vec_b[:, sym_axis_b]
-                spins = [axis_angle_matrix(spin_axis, angle) for angle in spin_angles]
-            else:
-                spins = [np.eye(3)]
-
-            for R_spin in spins:
-                R = R_base @ R_spin
-                p_b_rot = p_b_work @ R.T
-
-                # Measure distance
-                if tree:
-                    dists, _ = tree.query(p_b_rot, k=1)
-                    avg_dist = np.mean(dists)
-                else:
-                    dists_sq = (
-                        b_sq[:, np.newaxis]
-                        + a_sq[np.newaxis, :]
-                        - 2 * np.dot(p_b_rot, p_a_work.T)
-                    )
-                    dists_sq = np.maximum(dists_sq, 0)
-                    min_dists = np.sqrt(np.min(dists_sq, axis=1))
-                    avg_dist = np.mean(min_dists)
-
-                if avg_dist < best_diff:
-                    best_diff = avg_dist
-                    best_matrix = R
-                    # Early exit on near-perfect match
-                    if best_diff < tolerance * 0.01:
-                        break
-            if best_diff < tolerance * 0.01:
-                break
-
-        if best_diff > tolerance:
-            return None
-
-        # Construct 4x4 Matrix (Row-Major)
-        R = best_matrix
-        T = c_a - R @ c_b
-
-        M = np.eye(4)
-        M[:3, :3] = R.T
-        M[3, :3] = T
-
-        return M.flatten().tolist()
-
-    @staticmethod
     def kmeans_clustering(
         points: Sequence[Sequence[float]],
         k: int,
@@ -466,8 +328,6 @@ class MathUtils(HelpMixin):
 
         else:
             # Fallback without numpy
-            import math
-
             # Initialization (Farthest Point)
             centers = [points[0]]
             while len(centers) < k:
@@ -1077,15 +937,25 @@ class MathUtils(HelpMixin):
         Returns:
             (tuple)
 
+        Raises:
+            ValueError: If the two angles sum to >= 180° — no triangle exists
+                (the two side rays are parallel or diverge).
+
         Example:
             get_two_sides_of_asa_triangle(60, 60, 100) #returns: (100.0, 100.0)
         """
-        from math import sin, radians, pi
+        from math import sin, radians, degrees, pi
 
         if unit == "degrees":
             a1, a2 = radians(a1), radians(a2)
 
         a3 = pi - a1 - a2
+
+        if a3 <= 0 or abs(sin(a3)) < 1e-9:
+            raise ValueError(
+                "Degenerate ASA triangle: the two angles sum to "
+                f"{degrees(a1 + a2):.4f}° — the side rays never meet."
+            )
 
         result = ((s / sin(a3)) * sin(a1), (s / sin(a3)) * sin(a2))
 
@@ -1440,194 +1310,6 @@ class MathUtils(HelpMixin):
         return process_element(value)
 
     @staticmethod
-    def calculate_curve_length(centerline_points: List[List[float]]) -> float:
-        """Calculates the total length of the centerline path.
-
-        Parameters:
-            centerline_points (List[List[float]]): The list of points along the centerline.
-
-        Returns:
-            float: The total length of the centerline path.
-        """
-        length = 0
-        for i in range(1, len(centerline_points)):
-            p1 = centerline_points[i - 1]
-            p2 = centerline_points[i]
-            length += sum([(p2[j] - p1[j]) ** 2 for j in range(3)]) ** 0.5
-        return length
-
-    @staticmethod
-    def get_point_on_centerline(
-        centerline_points: List[List[float]], param: float
-    ) -> List[float]:
-        """Returns the interpolated point along the centerline.
-
-        Parameters:
-            centerline_points (List[List[float]]): The list of points along the centerline.
-            param (float): The parameter value along the centerline path.
-
-        Returns:
-            List[float]: The interpolated point along the centerline.
-        """
-        total_length = len(centerline_points) - 1  # Total number of segments
-        param = max(0, min(param, 1))  # Clamp the param value between 0 and 1
-        index = int(param * total_length)
-
-        if index == total_length:
-            return centerline_points[-1]
-
-        p1 = centerline_points[index]
-        p2 = centerline_points[index + 1]
-        interp_point = [
-            p1[0] + (p2[0] - p1[0]) * (param * (len(centerline_points) - 1) - index),
-            p1[1] + (p2[1] - p1[1]) * (param * (len(centerline_points) - 1) - index),
-            p1[2] + (p2[2] - p1[2]) * (param * (len(centerline_points) - 1) - index),
-        ]
-        return interp_point
-
-    @classmethod
-    def dist_points_along_centerline(
-        cls,
-        centerline: List[List[float]],
-        num_points: int,
-        reverse: bool = False,
-        interpolation: Callable[[List[List[float]], float], List[float]] = None,
-        start_offset: float = 0.0,
-        end_offset: float = 0.0,
-    ) -> List[List[float]]:
-        """Distributes points evenly along the centerline with optional offsets and custom interpolation.
-
-        Parameters:
-            centerline (List[List[float]]): The list of points along the centerline.
-            num_points (int): The number of points to distribute along the centerline.
-            reverse (bool): Reverse the order of the points.
-            interpolation (Callable): The interpolation function to use.
-            start_offset (float): The offset from the start of the centerline.
-            end_offset (float): The offset from the end of the centerline.
-
-        Returns:
-            List[List[float]]: The evenly distributed points along the centerline.
-        """
-        if start_offset < 0 or end_offset < 0 or start_offset + end_offset >= 1:
-            raise ValueError("Invalid start or end offset values.")
-
-        if interpolation is None:
-            interpolation = cls.get_point_on_centerline
-
-        positions = [
-            interpolation(
-                centerline,
-                cls.remap(i, (0, num_points - 1), (start_offset, 1 - end_offset)),
-            )
-            for i in range(num_points)
-        ]
-        return positions[::-1] if reverse else positions
-
-    @staticmethod
-    def arrange_points_as_path(
-        points: List[List[float]],
-        closed_path: bool = False,
-        distance_metric: Optional[Callable[[List[float], List[float]], float]] = None,
-    ) -> List[List[float]]:
-        """Orders a list of points to form a continuous path.
-
-        Parameters:
-            points (List): The list of points to order. Each entry may be a
-                plain ``[x, y, z]`` sequence or an object exposing ``.x``,
-                ``.y`` and ``.z`` (e.g. ``om.MPoint``, ``om.MVector``).
-            closed_path (bool): Whether to treat the path as a closed loop.
-            distance_metric: Optional callable ``(p1, p2) -> float``. Defaults
-                to Euclidean distance that handles both forms above.
-
-        Returns:
-            List: Ordered list of points (same type as input) forming a
-            continuous path. The input sequence is not modified.
-        """
-        if not points:
-            return []
-        points = list(points)  # work on a copy; also accepts tuples
-
-        if distance_metric is None:
-            def distance_metric(p1, p2):
-                # Branchless dispatch: prefer .x/.y/.z (MPoint/MVector/dt.Point),
-                # fall back to subscripting (lists, tuples, numpy arrays).
-                if hasattr(p1, "x"):
-                    dx, dy, dz = p1.x - p2.x, p1.y - p2.y, p1.z - p2.z
-                else:
-                    dx, dy, dz = p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]
-                return (dx * dx + dy * dy + dz * dz) ** 0.5
-
-        sorted_points = [points.pop(0)]
-        while points:
-            last_point = sorted_points[-1]
-            next_point = min(points, key=lambda p: distance_metric(p, last_point))
-            sorted_points.append(next_point)
-            points.remove(next_point)
-
-        if closed_path:
-            sorted_points.append(sorted_points[0])
-
-        return sorted_points
-
-    @staticmethod
-    def smooth_points(
-        points: Sequence[Union[tuple, object]], window_size: int = 1
-    ) -> list:
-        """Apply a moving average to smooth a sequence of 3D points.
-
-        Parameters:
-            points: A sequence of (x, y, z) tuples or dt.Point objects.
-            window_size: The number of points to include in each averaging window.
-
-        Returns:
-            A list of smoothed points in the same format as the input.
-        """
-        if not points or window_size <= 1:
-            return list(points)
-
-        n = len(points)
-        window_size = min(window_size, n)
-        smoothed_points = []
-
-        is_dt_point = hasattr(points[0], "__add__") and hasattr(
-            points[0], "__truediv__"
-        )
-
-        # Initialize running sum
-        running_sum = points[0] * 0 if is_dt_point else (0.0, 0.0, 0.0)
-        count = 0
-
-        for i in range(n):
-            # Add new point to the running sum
-            new_point = points[i]
-            running_sum = (
-                running_sum + new_point
-                if is_dt_point
-                else tuple(running_sum[j] + new_point[j] for j in range(3))
-            )
-            count += 1
-
-            # Remove the old point when window slides forward
-            if i >= window_size:
-                old_point = points[i - window_size]
-                running_sum = (
-                    running_sum - old_point
-                    if is_dt_point
-                    else tuple(running_sum[j] - old_point[j] for j in range(3))
-                )
-                count -= 1
-
-            # Compute and store the smoothed point
-            avg_point = (
-                running_sum / count
-                if is_dt_point
-                else tuple(v / count for v in running_sum)
-            )
-            smoothed_points.append(avg_point)
-
-        return smoothed_points
-
-    @staticmethod
     def point_segment_distance(
         p: Sequence[float], a: Sequence[float], b: Sequence[float]
     ) -> float:
@@ -1655,57 +1337,6 @@ class MathUtils(HelpMixin):
         t = sum(ap[i] * ab[i] for i in range(n)) / denom
         t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
         return sum((ap[i] - t * ab[i]) ** 2 for i in range(n)) ** 0.5
-
-    @classmethod
-    def simplify_rdp(
-        cls, points: Sequence[Sequence[float]], tolerance: float
-    ) -> List[int]:
-        """Ramer-Douglas-Peucker indices: which points to keep to stay within
-        ``tolerance`` of the original polyline.
-
-        The classic curve-simplification / flattening algorithm. It keeps the
-        endpoints, then recursively keeps the point of greatest deviation from
-        the current chord while that deviation exceeds ``tolerance`` — so the
-        retained points **concentrate where the polyline bends** (corners, tight
-        arcs) and near-collinear runs collapse to their endpoints. Ideal for
-        deciding *where to spend* samples/divisions along a curve.
-
-        Iterative (explicit stack) so it is safe on very dense polylines. Points
-        may be any fixed dimension (2D, 3D, …).
-
-        Parameters:
-            points (Sequence[Sequence[float]]): The ordered polyline vertices.
-            tolerance (float): Max allowed deviation (same units as ``points``).
-                Smaller keeps more points; ``<= 0`` keeps every point.
-
-        Returns:
-            (list) Sorted indices into ``points`` to keep (always includes the
-            first and last). For ``< 3`` points, all indices are returned.
-        """
-        n = len(points)
-        if n < 3:
-            return list(range(n))
-        if tolerance <= 0:
-            return list(range(n))
-
-        keep = [False] * n
-        keep[0] = keep[n - 1] = True
-        stack = [(0, n - 1)]
-        while stack:
-            i, j = stack.pop()
-            if j <= i + 1:
-                continue
-            a, b = points[i], points[j]
-            d_max, idx = -1.0, -1
-            for k in range(i + 1, j):
-                d = cls.point_segment_distance(points[k], a, b)
-                if d > d_max:
-                    d_max, idx = d, k
-            if d_max > tolerance:
-                keep[idx] = True
-                stack.append((i, idx))
-                stack.append((idx, j))
-        return [i for i in range(n) if keep[i]]
 
     @staticmethod
     def nearest_power_of_two(value: int) -> int:
@@ -1889,34 +1520,6 @@ class MathUtils(HelpMixin):
             round_to_aggressive_preferred(7.8) #returns: 10
         """
         return cls.round_to_preferred(value, max_distance=10)
-
-    @staticmethod
-    def hash_points(points, precision=4):
-        """Hash the given list of point values.
-
-        Parameters:
-            points (list): A list of point values as tuples.
-            precision (int): Determines the number of decimal places that are retained
-                    in the fixed-point representation. For example, with a value of 4, the
-                    fixed-point representation would retain 4 decimal places.
-
-        Returns:
-            (list) list(s) of hashed tuples.
-
-        Example:
-            hash_points([(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]) #returns: [hash values]
-            hash_points([[(1.0, 2.0, 3.0)], [(4.0, 5.0, 6.0)]]) #returns: [[hash values], [hash values]]
-        """
-        nested = CoreUtils.nested_depth(points) > 1
-        sets = points if nested else [points]
-
-        def clamp(p):
-            return int(p * 10**precision)
-
-        result = []
-        for pset in sets:
-            result.append([hash(tuple(map(clamp, i))) for i in pset])
-        return CoreUtils.format_return(result, nested)
 
     @staticmethod
     def calculate_rotation_distance(

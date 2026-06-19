@@ -202,48 +202,105 @@ class TestExecutionMonitor(BaseTestCase):
                 mock_get_key.return_value = 0
                 self.assertFalse(ExecutionMonitor.is_escape_pressed())
 
-    def test_show_long_execution_dialog_windows(self):
-        """Test show_long_execution_dialog on Windows (mocked) — no force button by default."""
+    # Patch target for the module-under-test's own references.
+    _EM_MOD = "pythontk.core_utils.execution_monitor._execution_monitor"
+
+    def _dialog_subprocess_mock(self, returncode):
+        """A stand-in for the em-module's ``subprocess`` whose ``run`` reports
+        *returncode* from the custom dialog viewer. A full MagicMock also
+        supplies STARTUPINFO/flags, so the primary path is exercised even on
+        non-Windows CI (where the real subprocess module lacks them)."""
+        sp = MagicMock()
+        sp.run.return_value.returncode = returncode
+        return sp
+
+    def test_show_long_execution_dialog_windows_custom_dialog(self):
+        """The custom dialog viewer (primary win32 path) maps exit codes to
+        results: 0/3 -> keep waiting, 10 -> cancel, 2 -> force sentinel.
+
+        Regression: a local ``import subprocess`` in the linux branch used to
+        shadow the module-level import for the WHOLE function, so this path
+        always died with UnboundLocalError (silently caught) and fell through
+        to MessageBoxW — the custom dialog never showed on Windows.
+        """
         with patch("sys.platform", "win32"):
             with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
-                # Default (force_action=None) uses MB_YESNO (no Cancel button)
-                # IDYES=6 -> True
-                mock_msg_box.return_value = 6
-                self.assertTrue(
-                    ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
-                )
+                mock_msg_box.return_value = 6  # would mean True via fallback
+                with patch(
+                    f"{self._EM_MOD}.subprocess", self._dialog_subprocess_mock(10)
+                ):
+                    # rc 10 = Cancel. The fallback would have returned True —
+                    # False proves the primary path produced the answer.
+                    self.assertFalse(
+                        ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
+                    )
+                    mock_msg_box.assert_not_called()
+                with patch(
+                    f"{self._EM_MOD}.subprocess", self._dialog_subprocess_mock(0)
+                ):
+                    self.assertTrue(
+                        ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
+                    )
+                with patch(
+                    f"{self._EM_MOD}.subprocess", self._dialog_subprocess_mock(2)
+                ):
+                    self.assertEqual(
+                        ExecutionMonitor.show_long_execution_dialog(
+                            "Title", "Msg", force_action="kill"
+                        ),
+                        "FORCE_KILL",
+                    )
 
-                # IDNO=7 -> False
-                mock_msg_box.return_value = 7
-                self.assertFalse(
-                    ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
-                )
+    def _force_messagebox_fallback(self):
+        """Make the custom-dialog script 'missing' so the win32 branch takes
+        the MessageBoxW fallback (the dialog viewer is the primary path)."""
+        return patch(f"{self._EM_MOD}.os.path.exists", return_value=False)
+
+    def test_show_long_execution_dialog_windows(self):
+        """Test the MessageBoxW fallback on Windows — no force button by default."""
+        with patch("sys.platform", "win32"):
+            with self._force_messagebox_fallback():
+                with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
+                    # Default (force_action=None) uses MB_YESNO (no Cancel button)
+                    # IDYES=6 -> True
+                    mock_msg_box.return_value = 6
+                    self.assertTrue(
+                        ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
+                    )
+
+                    # IDNO=7 -> False
+                    mock_msg_box.return_value = 7
+                    self.assertFalse(
+                        ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
+                    )
 
     def test_show_long_execution_dialog_windows_force_kill(self):
-        """Test show_long_execution_dialog with force_action='kill' returns FORCE_KILL."""
+        """Test the MessageBoxW fallback with force_action='kill' returns FORCE_KILL."""
         with patch("sys.platform", "win32"):
-            with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
-                # IDCANCEL=2 -> "FORCE_KILL"
-                mock_msg_box.return_value = 2
-                self.assertEqual(
-                    ExecutionMonitor.show_long_execution_dialog(
-                        "Title", "Msg", force_action="kill"
-                    ),
-                    "FORCE_KILL",
-                )
+            with self._force_messagebox_fallback():
+                with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
+                    # IDCANCEL=2 -> "FORCE_KILL"
+                    mock_msg_box.return_value = 2
+                    self.assertEqual(
+                        ExecutionMonitor.show_long_execution_dialog(
+                            "Title", "Msg", force_action="kill"
+                        ),
+                        "FORCE_KILL",
+                    )
 
     def test_show_long_execution_dialog_windows_force_interrupt(self):
-        """Test show_long_execution_dialog with force_action='interrupt' returns FORCE_INTERRUPT."""
+        """Test the MessageBoxW fallback with force_action='interrupt' returns FORCE_INTERRUPT."""
         with patch("sys.platform", "win32"):
-            with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
-                # IDCANCEL=2 -> "FORCE_INTERRUPT"
-                mock_msg_box.return_value = 2
-                self.assertEqual(
-                    ExecutionMonitor.show_long_execution_dialog(
-                        "Title", "Msg", force_action="interrupt"
-                    ),
-                    "FORCE_INTERRUPT",
-                )
+            with self._force_messagebox_fallback():
+                with patch("ctypes.windll.user32.MessageBoxW") as mock_msg_box:
+                    # IDCANCEL=2 -> "FORCE_INTERRUPT"
+                    mock_msg_box.return_value = 2
+                    self.assertEqual(
+                        ExecutionMonitor.show_long_execution_dialog(
+                            "Title", "Msg", force_action="interrupt"
+                        ),
+                        "FORCE_INTERRUPT",
+                    )
 
     def test_is_escape_pressed_linux(self):
         """Test is_escape_pressed on Linux (mocked)."""

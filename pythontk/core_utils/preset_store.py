@@ -36,6 +36,12 @@ logger = logging.getLogger(__name__)
 
 EXT = ".json"
 
+# Sidecar (in ``user_dir``) recording the last-selected preset name, so a GUI
+# can restore the *active* preset across sessions and a headless runner can
+# honour "last used". A dotfile with no ``.json`` extension so the ``*.json``
+# discovery glob never picks it up (same convention as ``.migrated``).
+ACTIVE_SENTINEL = ".active"
+
 
 def sanitize_preset_name(name: str) -> str:
     """Filesystem-safe filename stem for a preset *name*.
@@ -91,6 +97,52 @@ class PresetStore:
     def builtin_dir(self) -> Optional[Path]:
         """Read-only shipped preset directory, or ``None`` when not configured."""
         return self._builtin_dir
+
+    # ----------------------------------------------------------------- active
+    @property
+    def _active_path(self) -> Path:
+        """Path to the ``.active`` sidecar (last-selected preset pointer)."""
+        return self.user_dir / ACTIVE_SENTINEL
+
+    @property
+    def active(self) -> Optional[str]:
+        """The last-selected preset name, or ``None`` when unset/unreadable.
+
+        Stored as ``{"name": <preset>}`` in the ``.active`` sidecar. The raw
+        name is returned even if it no longer resolves to a file, so callers
+        can decide how to handle a stale pointer (a GUI combo simply falls back
+        to no-selection); :meth:`delete` / :meth:`rename` keep it consistent
+        when *they* are the cause of the change.
+        """
+        path = self._active_path
+        if not path.is_file():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        name = data.get("name") if isinstance(data, dict) else None
+        return name if isinstance(name, str) and name else None
+
+    @active.setter
+    def active(self, name: Optional[str]) -> None:
+        """Set (or clear, with ``None``) the active-preset pointer."""
+        path = self._active_path
+        if not name:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logger.debug("PresetStore: could not clear .active: %s", e)
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"name": name}, fh)
+        except OSError as e:
+            logger.debug("PresetStore: could not write .active: %s", e)
 
     # ------------------------------------------------------------------ query
     @staticmethod
@@ -181,6 +233,10 @@ class PresetStore:
         if path.is_file():
             path.unlink()
             logger.debug("PresetStore: deleted %r -> %s", name, path)
+            # Drop a now-dangling active pointer (a user shadow that fell back
+            # to a built-in of the same name is still valid, so guard on exists).
+            if self.active == name and not self.exists(name):
+                self.active = None
             return True
         return False
 
@@ -194,4 +250,6 @@ class PresetStore:
         if not src.is_file() or self.exists(new):
             return False
         src.rename(self.path(new, "user"))
+        if self.active == old:
+            self.active = new
         return True

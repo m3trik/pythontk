@@ -177,8 +177,8 @@ class MathTest(BaseTestCase):
         """Test normalize with zero vector."""
         # Zero vector normalization typically returns zero or raises
         try:
-            result = MathUtils.normalize((0, 0, 0))
-            # If it doesn't raise, check it handles gracefully
+            MathUtils.normalize((0, 0, 0))
+            # If it doesn't raise, it handled the zero vector gracefully
             self.assertTrue(True)
         except (ZeroDivisionError, ValueError):
             self.assertTrue(True)
@@ -482,6 +482,20 @@ class MathTest(BaseTestCase):
         # Equal angles should give equal sides
         self.assertAlmostEqual(result[0], result[1], places=5)
 
+    def test_get_two_sides_of_asa_triangle_degenerate_raises_value_error(self):
+        """Angles summing to >= 180° describe no triangle (the two side rays
+        are parallel or diverge); the contract is a clear ValueError, not a
+        bare ZeroDivisionError from sin(0).
+
+        Regression: mayatk's create_curve_between_two_objs feeds angles built
+        from opposing vectors; with parallel curve normals a1 + a2 == 180
+        exactly and this crashed with ZeroDivisionError.
+        """
+        with self.assertRaises(ValueError):
+            MathUtils.get_two_sides_of_asa_triangle(90, 90, 100)
+        with self.assertRaises(ValueError):
+            MathUtils.get_two_sides_of_asa_triangle(120, 70, 100)
+
     # -------------------------------------------------------------------------
     # Rotation Tests
     # -------------------------------------------------------------------------
@@ -711,155 +725,6 @@ class MathTest(BaseTestCase):
         self.assertGreater(threshold, 10)
 
     # -------------------------------------------------------------------------
-    # PCA Transform Tests
-    # -------------------------------------------------------------------------
-
-    def test_get_pca_transform_identity(self):
-        """Test get_pca_transform with identical points returns identity-like matrix."""
-        try:
-            import numpy as np
-        except ImportError:
-            self.skipTest("numpy not available")
-
-        pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
-        try:
-            result = MathUtils.get_pca_transform(pts, pts, tolerance=0.001)
-        except (ImportError, ValueError) as e:
-            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
-                self.skipTest(f"scipy/numpy incompatibility: {e}")
-            raise
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 16)  # 4x4 matrix
-
-    def test_get_pca_transform_translated(self):
-        """Test get_pca_transform finds translation."""
-        try:
-            import numpy as np
-        except ImportError:
-            self.skipTest("numpy not available")
-
-        pts_a = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
-        pts_b = pts_a + np.array([10, 20, 30])  # Translated copy
-        try:
-            result = MathUtils.get_pca_transform(pts_a, pts_b, tolerance=0.1)
-        except (ImportError, ValueError) as e:
-            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
-                self.skipTest(f"scipy/numpy incompatibility: {e}")
-            raise
-        self.assertIsNotNone(result)
-
-    def test_get_pca_transform_rotated(self):
-        """Test get_pca_transform finds rotation alignment."""
-        try:
-            import numpy as np
-        except ImportError:
-            self.skipTest("numpy not available")
-
-        # Create a shape
-        pts_a = np.array(
-            [[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0], [1, 0.5, 0.5]], dtype=float
-        )
-
-        # Rotate 90 degrees around Z axis
-        theta = np.pi / 2
-        R = np.array(
-            [
-                [np.cos(theta), -np.sin(theta), 0],
-                [np.sin(theta), np.cos(theta), 0],
-                [0, 0, 1],
-            ]
-        )
-        pts_b = pts_a @ R.T
-
-        try:
-            result = MathUtils.get_pca_transform(pts_a, pts_b, tolerance=0.1)
-        except (ImportError, ValueError) as e:
-            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
-                self.skipTest(f"scipy/numpy incompatibility: {e}")
-            raise
-        self.assertIsNotNone(result)
-
-    def test_get_pca_transform_insufficient_points(self):
-        """Test get_pca_transform with too few points returns None."""
-        try:
-            import numpy as np
-        except ImportError:
-            self.skipTest("numpy not available")
-
-        pts = np.array([[0, 0, 0], [1, 1, 1]], dtype=float)
-        try:
-            result = MathUtils.get_pca_transform(pts, pts, tolerance=0.1)
-        except (ImportError, ValueError) as e:
-            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
-                self.skipTest(f"scipy/numpy incompatibility: {e}")
-            raise
-        self.assertIsNone(result)
-
-    def test_get_pca_transform_no_match(self):
-        """Test get_pca_transform returns None when shapes don't match."""
-        try:
-            import numpy as np
-        except ImportError:
-            self.skipTest("numpy not available")
-
-        pts_a = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
-        pts_b = np.array(
-            [[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], dtype=float
-        )  # Different scale
-        try:
-            result = MathUtils.get_pca_transform(pts_a, pts_b, tolerance=0.001)
-        except (ImportError, ValueError) as e:
-            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
-                self.skipTest(f"scipy/numpy incompatibility: {e}")
-            raise
-        self.assertIsNone(result)
-
-    def test_get_pca_transform_robust_mode(self):
-        """Test get_pca_transform robust mode with different point counts."""
-        try:
-            import numpy as np
-            from scipy.spatial import KDTree  # noqa: F401
-        except (ImportError, ValueError) as e:
-            self.skipTest(f"numpy or scipy not available: {e}")
-
-        np.random.seed(42)
-        pts_a = np.random.rand(100, 3)
-        pts_b = np.random.rand(80, 3)  # Different count
-
-        try:
-            # Robust mode should handle different point counts
-            result = MathUtils.get_pca_transform(
-                pts_a, pts_b, tolerance=10.0, robust=True
-            )
-        except (ImportError, ValueError) as e:
-            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
-                self.skipTest(f"scipy/numpy incompatibility: {e}")
-            raise
-        # May or may not find a match depending on data, but shouldn't crash
-        self.assertTrue(result is None or len(result) == 16)
-
-    def test_get_pca_transform_caching(self):
-        """Test get_pca_transform caches base rotations."""
-        try:
-            import numpy as np
-        except ImportError:
-            self.skipTest("numpy not available")
-
-        pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
-
-        try:
-            # First call creates cache
-            MathUtils.get_pca_transform(pts, pts, tolerance=0.1)
-        except (ImportError, ValueError) as e:
-            if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
-                self.skipTest(f"scipy/numpy incompatibility: {e}")
-            raise
-
-        # Verify cache exists
-        self.assertTrue(hasattr(MathUtils, "_pca_base_rotations"))
-        self.assertEqual(len(MathUtils._pca_base_rotations), 24)
-
-    # -------------------------------------------------------------------------
     # Clamp Range Tests
     # -------------------------------------------------------------------------
 
@@ -902,82 +767,6 @@ class MathTest(BaseTestCase):
         """Test clamp_range with validate=False."""
         result = MathUtils.clamp_range(15, 5, validate=False)
         self.assertEqual(result, (15, 5))
-
-    # -------------------------------------------------------------------------
-    # arrange_points_as_path
-    #
-    # Regression: the default distance_metric used to be
-    # ``(p1 - p2).length()`` which only worked for PyMEL ``dt.Point`` /
-    # OpenMaya ``MPoint``. Plain ``[x, y, z]`` lists (the documented input
-    # type, and what ``cmds.pointPosition`` returns) raised TypeError
-    # because ``list - list`` is undefined.
-    # -------------------------------------------------------------------------
-
-    def test_arrange_points_as_path_with_lists(self):
-        """Default distance_metric must handle plain [x, y, z] lists."""
-        # Three colinear points along the X axis, given out of order.
-        points = [[2.0, 0, 0], [0.0, 0, 0], [1.0, 0, 0]]
-        ordered = MathUtils.arrange_points_as_path(points)
-
-        self.assertEqual(len(ordered), 3)
-        # First point seeds the path; nearest neighbours follow.
-        self.assertEqual(ordered[0], [2.0, 0, 0])
-        self.assertEqual(ordered[1], [1.0, 0, 0])
-        self.assertEqual(ordered[2], [0.0, 0, 0])
-
-    def test_arrange_points_as_path_with_tuples(self):
-        """Tuples should also work via the subscripting fallback."""
-        points = [(0.0, 0, 0), (5.0, 0, 0), (10.0, 0, 0)]
-        ordered = MathUtils.arrange_points_as_path(points)
-        self.assertEqual([p[0] for p in ordered], [0.0, 5.0, 10.0])
-
-    def test_arrange_points_as_path_with_xyz_objects(self):
-        """Objects with .x/.y/.z attributes use the attribute branch."""
-
-        class P:
-            def __init__(self, x, y, z):
-                self.x, self.y, self.z = x, y, z
-
-            def __eq__(self, other):
-                return (
-                    isinstance(other, P)
-                    and (self.x, self.y, self.z) == (other.x, other.y, other.z)
-                )
-
-            def __hash__(self):
-                return hash((self.x, self.y, self.z))
-
-        points = [P(2, 0, 0), P(0, 0, 0), P(1, 0, 0)]
-        ordered = MathUtils.arrange_points_as_path(points)
-        self.assertEqual([p.x for p in ordered], [2, 1, 0])
-
-    def test_arrange_points_as_path_empty(self):
-        """Empty input returns an empty list."""
-        self.assertEqual(MathUtils.arrange_points_as_path([]), [])
-
-    def test_arrange_points_as_path_closed(self):
-        """closed_path appends a copy of the first point at the end."""
-        points = [[0.0, 0, 0], [1.0, 0, 0], [2.0, 0, 0]]
-        ordered = MathUtils.arrange_points_as_path(points, closed_path=True)
-        self.assertEqual(len(ordered), 4)
-        self.assertEqual(ordered[0], ordered[-1])
-
-    def test_arrange_points_as_path_custom_metric(self):
-        """Caller-supplied distance_metric overrides the default."""
-        points = [[0.0, 0, 0], [3.0, 0, 0], [1.0, 0, 0]]
-        # Manhattan distance — same ordering on this colinear set.
-        ordered = MathUtils.arrange_points_as_path(
-            points,
-            distance_metric=lambda a, b: abs(a[0] - b[0]),
-        )
-        self.assertEqual([p[0] for p in ordered], [0.0, 1.0, 3.0])
-
-    def test_arrange_points_as_path_does_not_mutate_input(self):
-        """Regression: the path walk used pop/remove on the caller's list,
-        silently emptying it as a side effect."""
-        points = [[0.0, 0, 0], [5.0, 0, 0], [1.0, 0, 0]]
-        MathUtils.arrange_points_as_path(points)
-        self.assertEqual(points, [[0.0, 0, 0], [5.0, 0, 0], [1.0, 0, 0]])
 
     # ------------------------------------------------------------- misc fixes
 
@@ -1126,47 +915,48 @@ class MathTest(BaseTestCase):
             MathUtils.point_segment_distance((3, 4, 0), (0, 0, 0), (0, 0, 0)), 5.0
         )
 
-    def test_simplify_rdp_collapses_straight_run(self):
-        # collinear points collapse to just the two endpoints
-        pts = [(x, 0, 0) for x in range(11)]
-        self.assertEqual(MathUtils.simplify_rdp(pts, 0.01), [0, 10])
 
-    def test_simplify_rdp_keeps_corner(self):
-        # an L: the corner must survive (it's the max-deviation point)
-        pts = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (2, 1, 0), (2, 2, 0)]
-        kept = MathUtils.simplify_rdp(pts, 0.1)
-        self.assertEqual(kept[0], 0)
-        self.assertEqual(kept[-1], len(pts) - 1)
-        self.assertIn(2, kept)  # the corner vertex
 
-    def test_simplify_rdp_concentrates_on_bends(self):
-        # straight ends with a sharp middle bend: kept points cluster at the
-        # bend, the straight runs contribute (almost) nothing.
-        pts = (
-            [(x, 0.0, 0.0) for x in range(0, 10)]
-            + [(10, 0, 0), (10.5, 1.5, 0), (11, 0, 0)]
-            + [(x, 0.0, 0.0) for x in range(12, 21)]
-        )
-        kept = MathUtils.simplify_rdp(pts, 0.2)
-        bend_lo, bend_hi = 9, 13  # index window around the bend
-        in_bend = sum(1 for i in kept if bend_lo <= i <= bend_hi)
-        on_straight = sum(1 for i in kept if i < bend_lo or i > bend_hi)
-        self.assertGreater(in_bend, on_straight)
-        # tighter tolerance -> at least as many points kept (monotone refinement)
-        self.assertGreaterEqual(len(MathUtils.simplify_rdp(pts, 0.05)), len(kept))
 
-    def test_simplify_rdp_edge_cases(self):
-        self.assertEqual(MathUtils.simplify_rdp([], 0.1), [])
-        self.assertEqual(MathUtils.simplify_rdp([(0, 0, 0)], 0.1), [0])
-        self.assertEqual(MathUtils.simplify_rdp([(0, 0, 0), (1, 1, 1)], 0.1), [0, 1])
-        # tolerance <= 0 keeps everything
-        pts = [(0, 0, 0), (1, 0.01, 0), (2, 0, 0)]
-        self.assertEqual(MathUtils.simplify_rdp(pts, 0.0), [0, 1, 2])
 
-    def test_simplify_rdp_works_in_2d(self):
-        pts = [(0, 0), (1, 0), (2, 0), (2, 2)]
-        self.assertEqual(MathUtils.simplify_rdp(pts, 0.1), [0, 2, 3])
 
+    # -------------------------------------------------------------------------
+    # Calculator engine — eval_expression / convert_length_unit
+    # (shared by the mayatk + blendertk Calculator panels)
+    # -------------------------------------------------------------------------
+
+    def test_eval_expression_basic(self):
+        self.assertEqual(MathUtils.eval_expression("2+2"), "4")
+        self.assertEqual(MathUtils.eval_expression("10/4"), "2.5")
+        self.assertEqual(MathUtils.eval_expression("2**3"), "8")
+
+    def test_eval_expression_integer_float_collapses(self):
+        # An integer-valued float drops the trailing .0
+        self.assertEqual(MathUtils.eval_expression("8.0/2"), "4")
+
+    def test_eval_expression_math_functions(self):
+        self.assertEqual(MathUtils.eval_expression("sqrt(16)"), "4")
+        self.assertEqual(MathUtils.eval_expression("max(3, 7, 1)"), "7")
+
+    def test_eval_expression_empty_and_error(self):
+        self.assertEqual(MathUtils.eval_expression(""), "")
+        self.assertEqual(MathUtils.eval_expression("1/0"), "Error")
+        self.assertEqual(MathUtils.eval_expression("nonsense("), "Error")
+
+    def test_eval_expression_builtins_disabled(self):
+        # Builtins are off, so arbitrary code paths resolve to Error, not execution.
+        self.assertEqual(MathUtils.eval_expression("__import__('os')"), "Error")
+        self.assertEqual(MathUtils.eval_expression("open('x')"), "Error")
+
+    def test_convert_length_unit(self):
+        self.assertEqual(MathUtils.convert_length_unit(100, "cm", "m"), "1.0")
+        self.assertEqual(MathUtils.convert_length_unit(1, "in", "cm"), "2.54")
+        self.assertEqual(MathUtils.convert_length_unit(10, "mm", "cm"), "1.0")
+        self.assertEqual(MathUtils.convert_length_unit(1, "m", "mm"), "1000.0")
+
+    def test_convert_length_unit_errors(self):
+        self.assertEqual(MathUtils.convert_length_unit(1, "cm", "parsec"), "Error")
+        self.assertEqual(MathUtils.convert_length_unit("abc", "cm", "m"), "Error")
 
 if __name__ == "__main__":
     unittest.main(exit=False)
