@@ -6,6 +6,7 @@ import threading
 import logging as internal_logging
 import re
 import unicodedata
+from collections import deque
 from typing import Union, List, Optional, Any, Callable
 from pythontk.core_utils.class_property import ClassProperty
 
@@ -220,6 +221,11 @@ class LoggerExt:
             "add_file_handler": LoggerExt._add_file_handler,
             "add_stream_handler": LoggerExt._add_stream_handler,
             "add_text_widget_handler": LoggerExt._add_text_widget_handler,
+            "set_log_file": LoggerExt._set_log_file,
+            "enable_log_buffer": LoggerExt._enable_log_buffer,
+            "disable_log_buffer": LoggerExt._disable_log_buffer,
+            "clear_log_buffer": LoggerExt._clear_log_buffer,
+            "dump_log": LoggerExt._dump_log,
             "setup_logging_redirect": LoggerExt._setup_logging_redirect,
             "get_redirect_width": LoggerExt._get_redirect_width,
             "success": LoggerExt._success,
@@ -1099,6 +1105,137 @@ class LoggerExt:
         """Clear the error cache."""
         logger._error_cache.clear()
 
+    # ------------------------------------------------------------------
+    # File tee + in-memory ring buffer (optional, off by default)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _coerce_level(level: Union[int, str]) -> int:
+        """Map a level name to its int; pass ints through unchanged."""
+        if isinstance(level, str):
+            return internal_logging._nameToLevel.get(
+                level.upper(), internal_logging.NOTSET
+            )
+        return level
+
+    @staticmethod
+    def _set_log_file(
+        logger: internal_logging.Logger,
+        filename: Optional[str],
+        level: Union[int, str] = internal_logging.NOTSET,
+    ) -> Optional[internal_logging.FileHandler]:
+        """Tee every record this logger emits to *filename* (continuous).
+
+        Manages exactly one "log file" handler per logger so the call is a
+        clean on/off toggle: passing a path attaches (replacing any prior
+        managed file), passing ``None`` detaches and closes it. Off by
+        default — until called there is zero file I/O.
+
+        The handler defaults to ``NOTSET`` so it captures whatever passes
+        the logger's level (control verbosity with ``set_log_level``).
+        Output is plain text (HTML stripped), matching the console/file
+        formatter pipeline. Returns the handler (or ``None`` when detached).
+        """
+        existing = getattr(logger, "_managed_file_handler", None)
+        if existing is not None:
+            # Detach before closing: a concurrent emit must never reach a
+            # handler whose stream is already closed (I/O on closed file).
+            logger.removeHandler(existing)
+            existing.close()
+            logger._managed_file_handler = None
+
+        if filename is None:
+            return None
+
+        handler = internal_logging.FileHandler(filename)
+        handler.setLevel(LoggerExt._coerce_level(level))
+        handler.setFormatter(LevelAwareFormatter(logger=logger, strip_html=True))
+        logger.addHandler(handler)
+        logger._managed_file_handler = handler
+        return handler
+
+    @staticmethod
+    def _enable_log_buffer(
+        logger: internal_logging.Logger,
+        capacity: int = 2000,
+        level: Union[int, str] = internal_logging.NOTSET,
+    ) -> "RingBufferHandler":
+        """Start capturing records into a capped in-memory ring buffer.
+
+        Emit is O(1) and does no string formatting (records are stored by
+        reference and rendered only on ``dump_log``), so an enabled buffer
+        adds negligible hot-path cost. Oldest records drop once *capacity*
+        is exceeded. Re-calling re-sizes in place, preserving the most
+        recent records. Returns the handler.
+        """
+        existing = getattr(logger, "_ring_buffer_handler", None)
+        if existing is not None:
+            if existing.capacity != capacity:
+                existing.buffer = deque(existing.buffer, maxlen=capacity)
+                existing.capacity = capacity
+            existing.setLevel(LoggerExt._coerce_level(level))
+            return existing
+
+        handler = RingBufferHandler(
+            capacity=capacity, level=LoggerExt._coerce_level(level)
+        )
+        handler.setFormatter(LevelAwareFormatter(logger=logger, strip_html=True))
+        logger.addHandler(handler)
+        logger._ring_buffer_handler = handler
+        return handler
+
+    @staticmethod
+    def _disable_log_buffer(logger: internal_logging.Logger) -> None:
+        """Stop ring-buffer capture and discard buffered records."""
+        handler = getattr(logger, "_ring_buffer_handler", None)
+        if handler is not None:
+            logger.removeHandler(handler)
+            handler.clear()
+            handler.close()  # drop from logging's module-level handler registry
+            logger._ring_buffer_handler = None
+
+    @staticmethod
+    def _clear_log_buffer(logger: internal_logging.Logger) -> None:
+        """Drop buffered records but keep capturing."""
+        handler = getattr(logger, "_ring_buffer_handler", None)
+        if handler is not None:
+            handler.clear()
+
+    @staticmethod
+    def _dump_log(
+        logger: internal_logging.Logger,
+        target: Union[str, object, None] = None,
+        mode: str = "w",
+        encoding: str = "utf-8",
+    ) -> str:
+        """Render the ring buffer to plain text and return it.
+
+        *target* may be a file path (str), any object with ``write`` (a
+        stream), or ``None`` to only return the text. Requires
+        ``enable_log_buffer`` first; otherwise warns once and returns ``""``.
+        """
+        handler = getattr(logger, "_ring_buffer_handler", None)
+        if handler is None:
+            logger.warning_once(
+                "dump_log() called but no log buffer is enabled; "
+                "call enable_log_buffer() first."
+            )
+            return ""
+
+        formatter = LevelAwareFormatter(logger=logger, strip_html=True)
+        text = handler.format_records(formatter)
+        payload = text + "\n" if text else ""
+
+        if isinstance(target, str):
+            with open(target, mode, encoding=encoding) as fh:
+                fh.write(payload)
+        elif target is not None and hasattr(target, "write"):
+            target.write(payload)
+            flush = getattr(target, "flush", None)
+            if callable(flush):
+                flush()
+
+        return text
+
     @classmethod
     def get_color(cls, level: str) -> str:
         """Get the color code for a given log level."""
@@ -1192,6 +1329,44 @@ class DefaultTextLogHandler(internal_logging.Handler):
 
     def get_color(self, level: str) -> str:
         return LoggerExt.get_color(level)
+
+
+class RingBufferHandler(internal_logging.Handler):
+    """In-memory capped ring buffer of log records.
+
+    ``emit`` is O(1) and does no string formatting — records are stored by
+    reference and rendered only when dumped (see ``format_records``), so an
+    enabled buffer adds negligible cost to the logging hot path. Once
+    ``capacity`` is exceeded the oldest record is dropped (``deque(maxlen)``).
+    """
+
+    def __init__(self, capacity: int = 2000, level: int = internal_logging.NOTSET):
+        super().__init__(level=level)
+        self.capacity = capacity
+        self.buffer = deque(maxlen=capacity)
+
+    def emit(self, record: internal_logging.LogRecord) -> None:
+        # Deliberately minimal: store the record, defer all formatting.
+        self.buffer.append(record)
+
+    def clear(self) -> None:
+        self.buffer.clear()
+
+    def format_records(self, formatter: internal_logging.Formatter = None) -> str:
+        """Render buffered records to a single plain-text string.
+
+        Raw records (boxes/dividers emitted via ``log_raw``) bypass the
+        level formatter and have their HTML stripped, mirroring the
+        stream/file output path so the dump reads like the console did.
+        """
+        fmt = formatter or self.formatter or internal_logging.Formatter()
+        lines = []
+        for record in list(self.buffer):
+            if getattr(record, "raw", False):
+                lines.append(re.sub(r"<[^>]+>", "", record.getMessage()))
+            else:
+                lines.append(fmt.format(record))
+        return "\n".join(lines)
 
 
 class TableMixin:
@@ -1363,10 +1538,26 @@ class LoggingMixin(TableMixin):
     HTML_PRESETS = LoggerExt.HTML_PRESETS
     log_link = staticmethod(LoggerExt._log_link)
 
-    def __init__(self, *args, log_level: Optional[Union[int, str]] = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        log_level: Optional[Union[int, str]] = None,
+        log_file: Optional[str] = None,
+        log_buffer: Union[bool, int, None] = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         if log_level is not None:
             self.set_log_level(log_level)
+        if log_file is not None:
+            self.set_log_file(log_file)
+        if log_buffer:
+            # log_buffer may be True (default capacity) or an int capacity.
+            # bool is an int subclass, so test it first.
+            if isinstance(log_buffer, int) and not isinstance(log_buffer, bool):
+                self.enable_log_buffer(capacity=log_buffer)
+            else:
+                self.enable_log_buffer()
 
     @ClassProperty
     def logger(cls) -> internal_logging.Logger:
@@ -1409,6 +1600,52 @@ class LoggingMixin(TableMixin):
         cls.logger.setLevel(level)
         for handler in cls.logger.handlers:
             handler.setLevel(level)
+
+    @classmethod
+    def set_log_file(
+        cls, filename: Optional[str], level: Union[int, str] = internal_logging.NOTSET
+    ) -> None:
+        """Tee this class's log output to *filename* (or ``None`` to stop).
+
+        Off by default; continuous once enabled. See ``LoggerExt._set_log_file``.
+        Class-scoped, since ``logger`` is shared across instances.
+        """
+        cls.logger.set_log_file(filename, level)
+
+    @classmethod
+    def enable_log_buffer(
+        cls, capacity: int = 2000, level: Union[int, str] = internal_logging.NOTSET
+    ) -> None:
+        """Capture this class's log records into a capped ring buffer.
+
+        Near-zero cost until ``dump_log`` is called. See
+        ``LoggerExt._enable_log_buffer``.
+        """
+        cls.logger.enable_log_buffer(capacity, level)
+
+    @classmethod
+    def disable_log_buffer(cls) -> None:
+        """Stop ring-buffer capture and discard buffered records."""
+        cls.logger.disable_log_buffer()
+
+    @classmethod
+    def clear_log_buffer(cls) -> None:
+        """Drop buffered records but keep capturing."""
+        cls.logger.clear_log_buffer()
+
+    @classmethod
+    def dump_log(
+        cls,
+        target: Union[str, object, None] = None,
+        mode: str = "w",
+        encoding: str = "utf-8",
+    ) -> str:
+        """Render the ring buffer to text, optionally writing it to *target*.
+
+        *target* is a file path, a writable stream, or ``None`` (return only).
+        Returns the rendered text. Requires ``enable_log_buffer`` first.
+        """
+        return cls.logger.dump_log(target, mode, encoding)
 
 
 # -------------------------------------------------------------------------------
