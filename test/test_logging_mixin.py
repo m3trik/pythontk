@@ -622,5 +622,158 @@ class LogGroupTest(BaseTestCase):
         self.assertTrue(out.startswith("\n"), f"Expected leading newline, got {out!r}")
 
 
+class FileTeeAndBufferTest(BaseTestCase):
+    """Tests for the optional file tee + in-memory ring buffer dump."""
+
+    def _tmp(self):
+        fd, path = tempfile.mkstemp(suffix=".log")
+        os.close(fd)
+        return path
+
+    def test_set_log_file_tees_records(self):
+        """set_log_file attaches a continuous file handler; records land in it."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        path = self._tmp()
+        try:
+            Foo.set_log_file(path, level="DEBUG")
+            Foo.logger.info("hello-tee")
+            Foo.set_log_file(None)  # closes/detaches → safe to read
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("hello-tee", content)
+        finally:
+            Foo.set_log_file(None)
+            os.unlink(path)
+
+    def test_set_log_file_toggle_replaces_and_detaches(self):
+        """Re-calling replaces the managed handler; None detaches it."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        self.assertIsNone(getattr(Foo.logger, "_managed_file_handler", None))
+        p1, p2 = self._tmp(), self._tmp()
+        try:
+            Foo.set_log_file(p1)
+            h1 = Foo.logger._managed_file_handler
+            Foo.set_log_file(p2)
+            h2 = Foo.logger._managed_file_handler
+            self.assertIsNot(h1, h2)
+            self.assertNotIn(h1, Foo.logger.handlers)
+            Foo.set_log_file(None)
+            self.assertIsNone(Foo.logger._managed_file_handler)
+        finally:
+            Foo.set_log_file(None)
+            os.unlink(p1)
+            os.unlink(p2)
+
+    def test_buffer_dump_returns_text_and_writes_file(self):
+        """enable_log_buffer captures records; dump_log returns + writes them."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        Foo.enable_log_buffer(capacity=10)
+        Foo.logger.info("alpha")
+        Foo.logger.warning("beta")
+
+        text = Foo.dump_log()
+        self.assertIn("alpha", text)
+        self.assertIn("beta", text)
+
+        path = self._tmp()
+        try:
+            returned = Foo.dump_log(path)
+            self.assertEqual(returned, text)
+            with open(path, encoding="utf-8") as f:
+                self.assertIn("alpha", f.read())
+        finally:
+            os.unlink(path)
+
+    def test_buffer_capacity_drops_oldest(self):
+        """The ring buffer is capped: oldest records are evicted."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        Foo.enable_log_buffer(capacity=3)
+        for i in range(5):
+            Foo.logger.info("msg%d", i)
+
+        text = Foo.dump_log()
+        self.assertNotIn("msg0", text)
+        self.assertNotIn("msg1", text)
+        self.assertIn("msg4", text)
+
+    def test_dump_log_to_stream(self):
+        """dump_log writes to any object with .write()."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        Foo.enable_log_buffer()
+        Foo.logger.info("streamed")
+        sink = io.StringIO()
+        Foo.dump_log(sink)
+        self.assertIn("streamed", sink.getvalue())
+
+    def test_dump_log_without_buffer_returns_empty(self):
+        """dump_log is a safe no-op (returns '') when no buffer is enabled."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        self.assertEqual(Foo.dump_log(), "")
+
+    def test_clear_and_disable_buffer(self):
+        """clear empties but keeps capturing; disable removes the buffer."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        Foo.enable_log_buffer()
+        Foo.logger.info("x")
+        Foo.clear_log_buffer()
+        self.assertEqual(Foo.dump_log(), "")
+        Foo.disable_log_buffer()
+        self.assertIsNone(getattr(Foo.logger, "_ring_buffer_handler", None))
+
+    def test_constructor_log_file_and_buffer(self):
+        """log_file= and log_buffer= constructor kwargs wire everything up."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        path = self._tmp()
+        try:
+            Foo(log_level="DEBUG", log_file=path, log_buffer=True)
+            Foo.logger.info("ctor-msg")
+            self.assertIn("ctor-msg", Foo.dump_log())
+            Foo.set_log_file(None)
+            with open(path, encoding="utf-8") as f:
+                self.assertIn("ctor-msg", f.read())
+        finally:
+            Foo.set_log_file(None)
+            os.unlink(path)
+
+    def test_enable_log_buffer_resize_preserves_recent(self):
+        """Re-enabling with a new capacity resizes, keeping recent records."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        Foo.enable_log_buffer(capacity=5)
+        for i in range(5):
+            Foo.logger.info("r%d", i)
+        Foo.enable_log_buffer(capacity=2)  # shrink in place
+        text = Foo.dump_log()
+        self.assertIn("r4", text)
+        self.assertIn("r3", text)
+        self.assertNotIn("r0", text)
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-19_
+_Generated: 2026-06-21_
 
 ## Index
 
@@ -319,27 +319,36 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
 <a id="core_utils--logging_mixin"></a>
 ### `core_utils/logging_mixin.py`
 
-- **[`class StripHtmlFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L13)** — Formatter that strips HTML tags from the message.
+- **[`class StripHtmlFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L14)** — Formatter that strips HTML tags from the message.
   - `StripHtmlFormatter.format(self, record)`
-- **[`class LevelAwareFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L35)** — Formatter that dynamically selects format per-record based on log level.
+- **[`class LevelAwareFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L36)** — Formatter that dynamically selects format per-record based on log level.
   - `LevelAwareFormatter.format(self, record)`
-- **[`class LoggerExt`](pythontk/pythontk/core_utils/logging_mixin.py#L75)**
+- **[`class LoggerExt`](pythontk/pythontk/core_utils/logging_mixin.py#L76)**
   - `LoggerExt.patch(cls, logger: internal_logging.Logger) -> None` *(class)* — Patch the logger with additional methods and setup.
   - `LoggerExt.get_color(cls, level: str) -> str` *(class)* — Get the color code for a given log level.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1145)** — A generic thread-safe logging handler that writes logs to any widget
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1282)** — A generic thread-safe logging handler that writes logs to any widget
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1197)** — Mixin for formatting data as ASCII tables.
+- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1334)** — In-memory capped ring buffer of log records.
+  - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
+  - `RingBufferHandler.clear(self) -> None`
+  - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1372)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1351)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1526)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
   - `LoggingMixin.set_log_level(cls, level: int | str)` *(class)* — Set log level for the class logger and its handlers.
+  - `LoggingMixin.set_log_file(cls, filename: Optional[str], level: Union[int, str] = internal_logging.NOTSET) -> None` *(class)* — Tee this class's log output to *filename* (or ``None`` to stop).
+  - `LoggingMixin.enable_log_buffer(cls, capacity: int = 2000, level: Union[int, str] = internal_logging.NOTSET) -> None` *(class)* — Capture this class's log records into a capped ring buffer.
+  - `LoggingMixin.disable_log_buffer(cls) -> None` *(class)* — Stop ring-buffer capture and discard buffered records.
+  - `LoggingMixin.clear_log_buffer(cls) -> None` *(class)* — Drop buffered records but keep capturing.
+  - `LoggingMixin.dump_log(cls, target: Union[str, object, None] = None, mode: str = 'w', encoding: str = 'utf-8') -> str` *(class)* — Render the ring buffer to text, optionally writing it to *target*.
 
 <a id="core_utils--module_reloader"></a>
 ### `core_utils/module_reloader.py`
