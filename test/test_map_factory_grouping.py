@@ -110,6 +110,68 @@ class FilterRedundantMapsTest(BaseTestCase):
         MapFactory.filter_redundant_maps(d)
         self.assertIn(redundant, d, "Redundant kept when dominant has no files")
 
+    # --- Workflow-aware redundancy (packed vs. separate maps) ---
+    #
+    # Regression: the "PBR Metallic/Roughness" preset (mask_map=False) left the
+    # packed MSAO connected and dropped the separate Metallic/Roughness/AO maps,
+    # because the packed map unconditionally "replaced" its loose components.
+
+    def test_unpacked_preset_drops_packed_keeps_separate(self):
+        """mask_map=False with separates present -> MSAO dropped, separates kept."""
+        d = {
+            "MSAO": ["/x/asset_MSAO.png"],
+            "Metallic": ["/x/asset_Metallic.png"],
+            "Roughness": ["/x/asset_Roughness.png"],
+            "Ambient_Occlusion": ["/x/asset_AO.png"],
+        }
+        MapFactory.filter_redundant_maps(d, config={"mask_map": False})
+        self.assertNotIn("MSAO", d, "Redundant MSAO should be dropped for an unpacked preset")
+        self.assertIn("Metallic", d)
+        self.assertIn("Roughness", d)
+        self.assertIn("Ambient_Occlusion", d)
+
+    def test_packed_preset_keeps_packed_drops_separate(self):
+        """mask_map=True -> MSAO supersedes the separate components."""
+        d = {
+            "MSAO": ["/x/asset_MSAO.png"],
+            "Metallic": ["/x/asset_Metallic.png"],
+            "Roughness": ["/x/asset_Roughness.png"],
+            "Ambient_Occlusion": ["/x/asset_AO.png"],
+        }
+        MapFactory.filter_redundant_maps(d, config={"mask_map": True})
+        self.assertIn("MSAO", d)
+        self.assertNotIn("Metallic", d)
+        self.assertNotIn("Roughness", d)
+        self.assertNotIn("Ambient_Occlusion", d)
+
+    def test_unpacked_preset_keeps_packed_when_no_separates(self):
+        """mask_map=False but only MSAO present -> keep it (sole source of channels)."""
+        d = {"MSAO": ["/x/asset_MSAO.png"]}
+        MapFactory.filter_redundant_maps(d, config={"mask_map": False})
+        self.assertIn("MSAO", d, "Packed map kept when no separate components exist")
+
+    def test_force_packed_overrides_unpacked_preset(self):
+        """force_packed_maps=True keeps the packed map even when its flag is off."""
+        d = {
+            "MSAO": ["/x/asset_MSAO.png"],
+            "Metallic": ["/x/asset_Metallic.png"],
+        }
+        MapFactory.filter_redundant_maps(
+            d, config={"mask_map": False, "force_packed_maps": True}
+        )
+        self.assertIn("MSAO", d)
+        self.assertNotIn("Metallic", d)
+
+    def test_no_config_preserves_legacy_packed_wins(self):
+        """Omitting config keeps the original packed-wins behavior."""
+        d = {
+            "MSAO": ["/x/asset_MSAO.png"],
+            "Metallic": ["/x/asset_Metallic.png"],
+        }
+        MapFactory.filter_redundant_maps(d)
+        self.assertIn("MSAO", d)
+        self.assertNotIn("Metallic", d)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -934,18 +934,52 @@ class MapFactory(LoggingMixin):
         return cls._map_registry.get_precedence_rules()
 
     @classmethod
-    def filter_redundant_maps(cls, sorted_maps: Dict[str, List[str]]) -> None:
-        """Filters out maps that are rendered redundant by other present maps (e.g. MSAO).
+    def filter_redundant_maps(
+        cls, sorted_maps: Dict[str, List[str]], config: Dict[str, Any] = None
+    ) -> None:
+        """Resolve packed/loose map redundancy in-place.
+
+        A packed map (ORM/MSAO/MRAO) and its loose components (Metallic,
+        Roughness, AO, …) are mutually redundant — wiring both fights over the
+        same material slots. Which one wins depends on the target workflow:
+
+        - **Packed workflow** — the packed map is a requested output, or no
+          ``config`` is supplied (legacy behavior): the packed map supersedes
+          its loose components, which are dropped.
+        - **Unpacked workflow** — ``config`` is supplied and the packed map is
+          *not* requested (e.g. the "PBR Metallic/Roughness" preset with
+          ``mask_map=False``): the packed map is itself the redundant one and is
+          dropped in favor of the present loose components, so the separate
+          Metallic/Roughness/AO maps connect instead of the mask map.
 
         Modifies the sorted_maps dictionary in-place.
 
         Parameters:
-            sorted_maps: Dictionary of map types to file paths.
+            sorted_maps: Dictionary of map types to file path(s). Mutated in place.
+            config: Optional workflow config. When provided, redundancy direction
+                follows each packed map's ``config_key`` flag (plus
+                ``force_packed_maps``). When omitted, packed maps always win.
         """
         precedence_rules = cls.get_precedence_rules()
+        registry = cls._map_registry
 
         for dominant, redundants in precedence_rules.items():
-            if dominant in sorted_maps and sorted_maps[dominant]:
+            if not (dominant in sorted_maps and sorted_maps[dominant]):
+                continue
+
+            # Does the target workflow actually want this packed map as output?
+            # Default True keeps legacy "packed wins" behavior when no config.
+            packed_requested = True
+            if config is not None:
+                map_def = registry.get(dominant)
+                key = map_def.config_key if map_def else None
+                if key:
+                    packed_requested = bool(config.get(key)) or bool(
+                        config.get("force_packed_maps")
+                    )
+
+            if packed_requested:
+                # Packed map supersedes its loose components.
                 for redundant in redundants:
                     if redundant in sorted_maps:
                         cls.logger.info(
@@ -953,6 +987,14 @@ class MapFactory(LoggingMixin):
                             extra={"preset": "highlight"},
                         )
                         del sorted_maps[redundant]
+            elif any(r in sorted_maps and sorted_maps[r] for r in redundants):
+                # Unpacked workflow with loose components present: drop the packed
+                # map so the separate maps win the material slots.
+                cls.logger.info(
+                    f"Skipping {dominant} map (separate maps present)",
+                    extra={"preset": "highlight"},
+                )
+                del sorted_maps[dominant]
 
     @classmethod
     def prepare_maps(

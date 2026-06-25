@@ -61,6 +61,9 @@ class MapType:
     replaces: List[str] = field(
         default_factory=list
     )  # Maps that this map renders redundant
+    config_key: Optional[str] = (
+        None  # SSoT for the config flag gating this packed map as a desired OUTPUT (note MSAO -> "mask_map", not "msao_map"). filter_redundant_maps consults it (where the map declares `replaces`) to choose packed vs. separate maps.
+    )
     workflows: List[str] = field(default_factory=list)  # Workflows that use this map
 
 
@@ -146,6 +149,7 @@ class MapRegistry(SingletonMixin):
             mode="RGBA",
             default_background=(0, 0, 0, 255),
             input_fallbacks=["Base_Color"],
+            config_key="albedo_transparency",
             workflows=WF.ALL_ENGINES,
             resolution_critical=True,
         ),
@@ -245,6 +249,7 @@ class MapRegistry(SingletonMixin):
             scale_as_mask=True,
             output_fallbacks=["Ambient_Occlusion", "Roughness", "Metallic"],
             replaces=["Metallic", "Ambient_Occlusion", "Roughness"],
+            config_key="orm_map",
             workflows=[WF.UE, WF.GLTF],
         ),
         "MSAO": MapType(
@@ -282,6 +287,7 @@ class MapRegistry(SingletonMixin):
                 "Detail_Mask",
                 "Metallic_Smoothness",
             ],
+            config_key="mask_map",
             workflows=[WF.HDRP],
         ),
         "MRAO": MapType(
@@ -317,6 +323,7 @@ class MapRegistry(SingletonMixin):
                 "Smoothness",
                 "Glossiness",
             ],
+            config_key="mrao_map",
             workflows=[],
         ),
         "Metallic_Smoothness": MapType(
@@ -339,6 +346,7 @@ class MapRegistry(SingletonMixin):
             is_packed=True,
             scale_as_mask=True,
             output_fallbacks=["Metallic", "Smoothness"],
+            config_key="metallic_smoothness",
             workflows=[WF.URP, WF.SPEC],
         ),
         "Ambient_Occlusion": MapType(
