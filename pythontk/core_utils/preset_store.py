@@ -27,14 +27,43 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 
 from pythontk.core_utils.user_config import user_config_root
 
 logger = logging.getLogger(__name__)
 
-EXT = ".json"
+
+@dataclass(frozen=True)
+class Codec:
+    """Pluggable (de)serialiser for a :class:`PresetStore`'s on-disk format.
+
+    *load* parses file text into a dict, *dump* renders a dict back to text, and
+    *ext* is the file extension (with leading dot).  The default
+    :data:`JSON_CODEC` preserves the historical JSON behaviour; a caller needing
+    another format (e.g. mayatk's YAML behavior templates) injects its own, so
+    pythontk itself stays dependency-free.
+    """
+
+    ext: str
+    load: Callable[[str], Any]
+    dump: Callable[[Any], str]
+
+    def __post_init__(self):
+        # Honour the documented "with leading dot" contract leniently: a caller
+        # injecting ``Codec("yaml", …)`` gets ``.yaml`` rather than a dotless
+        # extension that would silently break path-building / discovery globs.
+        if self.ext and not self.ext.startswith("."):
+            object.__setattr__(self, "ext", "." + self.ext)
+
+
+JSON_CODEC = Codec(
+    ext=".json",
+    load=json.loads,
+    dump=lambda data: json.dumps(data, indent=4),
+)
 
 # Sidecar (in ``user_dir``) recording the last-selected preset name, so a GUI
 # can restore the *active* preset across sessions and a headless runner can
@@ -55,7 +84,8 @@ def sanitize_preset_name(name: str) -> str:
 
 class PresetStore:
     """Named-preset collection with a read-only built-in tier and a writable
-    user tier. Qt-free; deals in plain JSON dicts.
+    user tier. Qt-free; deals in plain dicts (JSON by default, or any injected
+    :class:`Codec` — e.g. YAML).
 
     Parameters:
         name: Collection name. With no explicit *user_dir*, the user tier is
@@ -67,9 +97,9 @@ class PresetStore:
         user_dir: Explicit writable directory. When omitted it is derived from
             *package*/*name* under :func:`user_config_root`. (uitk passes its own
             already-migrated dir here so both layers agree.)
+        codec: On-disk (de)serialiser (see :class:`Codec`). Defaults to
+            :data:`JSON_CODEC`; pass a YAML codec to back ``*.yaml`` templates.
     """
-
-    EXT = EXT
 
     def __init__(
         self,
@@ -78,11 +108,19 @@ class PresetStore:
         *,
         builtin_dir: Optional[Union[str, os.PathLike]] = None,
         user_dir: Optional[Union[str, os.PathLike]] = None,
+        codec: Codec = JSON_CODEC,
     ):
         self.name = name
         self.package = package
         self._builtin_dir = Path(builtin_dir) if builtin_dir else None
         self._user_dir = Path(user_dir) if user_dir else None
+        self._codec = codec
+        self._ext = codec.ext
+
+    @property
+    def ext(self) -> str:
+        """File extension this store reads/writes (from its :class:`Codec`)."""
+        return self._codec.ext
 
     # ------------------------------------------------------------------ dirs
     @property
@@ -145,11 +183,10 @@ class PresetStore:
             logger.debug("PresetStore: could not write .active: %s", e)
 
     # ------------------------------------------------------------------ query
-    @staticmethod
-    def _names_in(directory: Optional[Path]) -> List[str]:
+    def _names_in(self, directory: Optional[Path]) -> List[str]:
         if not directory or not Path(directory).is_dir():
             return []
-        return [p.stem for p in Path(directory).glob("*" + EXT) if p.is_file()]
+        return [p.stem for p in Path(directory).glob("*" + self._ext) if p.is_file()]
 
     def list(self, tier: Optional[str] = None) -> List[str]:
         """Sorted preset names.
@@ -189,14 +226,16 @@ class PresetStore:
             base = self._builtin_dir
         else:
             raise ValueError(f"tier must be 'user' or 'builtin'; got {tier!r}")
-        return base / f"{sanitize_preset_name(name)}{EXT}"
+        return base / f"{sanitize_preset_name(name)}{self._ext}"
 
     # ------------------------------------------------------------------ io
     def load(self, name: str) -> dict:
         """Return the preset dict for *name* (user tier shadows built-in).
 
-        Raises ``KeyError`` when *name* exists in neither tier and ``ValueError``
-        when the file is present but not a JSON object.
+        Raises ``KeyError`` when *name* exists in neither tier, propagates the
+        codec's own parse error for a malformed file (e.g. ``json``'s
+        ``ValueError`` / a YAML codec's ``YAMLError``), and raises ``ValueError``
+        when the parsed top-level value is not a mapping.
         """
         tier = self.source(name)
         if tier is None:
@@ -205,10 +244,9 @@ class PresetStore:
                 f"(available: {self.list() or '(none)'})"
             )
         path = self.path(name, tier)
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        data = self._codec.load(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError(f"preset {name!r} is not a JSON object: {path}")
+            raise ValueError(f"preset {name!r} is not a mapping: {path}")
         return data
 
     def save(self, name: str, data: dict) -> Path:
@@ -218,8 +256,7 @@ class PresetStore:
         """
         path = self.path(name, "user")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=4)
+        path.write_text(self._codec.dump(data), encoding="utf-8")
         logger.debug("PresetStore: saved %r -> %s", name, path)
         return path
 
