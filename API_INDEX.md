@@ -135,8 +135,9 @@ _Generated: 2026-06-27_
 
 ### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - `sanitize_preset_name(name: str) -> str`
+- `class Codec`
 - `class PresetStore`
-  - methods: user_dir, builtin_dir, active, active, list, source, exists, path, load, save, delete, rename
+  - methods: ext, user_dir, builtin_dir, active, active, list, source, exists, path, load, save, delete, rename
 
 ### `core_utils/qc_log.py` — Structured run logs and threshold-based acceptance gates for pipeline
 - `class GateError(RuntimeError)`
@@ -144,6 +145,15 @@ _Generated: 2026-06-27_
   - methods: stage, warn, set, finalize
 - `class QcGate`
   - methods: check
+
+### `core_utils/schema_spec.py` — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
+- `spec_field(*, help: str = '', example: Any = MISSING, required: bool = False, nested: Optional[Type['SchemaSpec']] = None, choices: Optional[Sequence[Any]] = None, validate: Optional[Callable[[Any], List[str]]] = None, default: Any = MISSING, default_factory: Any = MISSING)`
+- `class SchemaError(ValueError)`
+- `class FieldDoc`
+- `class ValidationResult`
+  - methods: ok, raise_if_errors, raise_or_warn, merge
+- `class SchemaSpec`
+  - methods: from_dict, to_dict, validate, skeleton, describe, to_markdown
 
 ### `core_utils/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - `list_templates(template_dir, extension: str = '.py') -> List[Path]`
@@ -154,6 +164,10 @@ _Generated: 2026-06-27_
 ### `core_utils/singleton_mixin.py`
 - `class SingletonMixin`
   - methods: instance, has_instance, reset_instance
+
+### `core_utils/template_set.py` — A discoverable, user-extensible collection of schema-validated template files.
+- `class TemplateSet`
+  - methods: names, source, exists, user_dir, builtin_dir, active, active, delete, rename, path, raw, validate, load, skeleton, save, write_skeleton, markdown
 
 ### `core_utils/user_config.py` — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - `user_config_root() -> Path`

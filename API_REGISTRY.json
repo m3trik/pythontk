@@ -2376,24 +2376,40 @@
           "kind": "function",
           "signature": "(name: str) -> str",
           "summary": "Filesystem-safe filename stem for a preset *name*.",
-          "line": 46,
+          "line": 75,
           "deprecated": false
         }
       ],
       "classes": [
         {
+          "name": "Codec",
+          "summary": "Pluggable (de)serialiser for a :class:`PresetStore`'s on-disk format.",
+          "line": 40,
+          "bases": [],
+          "members": []
+        },
+        {
           "name": "PresetStore",
           "summary": "Named-preset collection with a read-only built-in tier and a writable",
-          "line": 56,
+          "line": 85,
           "bases": [],
           "members": [
+            {
+              "name": "ext",
+              "qualname": "PresetStore.ext",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "File extension this store reads/writes (from its :class:`Codec`).",
+              "line": 121,
+              "deprecated": false
+            },
             {
               "name": "user_dir",
               "qualname": "PresetStore.user_dir",
               "kind": "property",
               "signature": "(self) -> Path",
               "summary": "Writable preset directory (created lazily on first :meth:`save`).",
-              "line": 89,
+              "line": 127,
               "deprecated": false
             },
             {
@@ -2402,7 +2418,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[Path]",
               "summary": "Read-only shipped preset directory, or ``None`` when not configured.",
-              "line": 97,
+              "line": 135,
               "deprecated": false
             },
             {
@@ -2411,7 +2427,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The last-selected preset name, or ``None`` when unset/unreadable.",
-              "line": 108,
+              "line": 146,
               "deprecated": false
             },
             {
@@ -2420,7 +2436,7 @@
               "kind": "method",
               "signature": "(self, name: Optional[str]) -> None",
               "summary": "Set (or clear, with ``None``) the active-preset pointer.",
-              "line": 129,
+              "line": 167,
               "deprecated": false
             },
             {
@@ -2429,7 +2445,7 @@
               "kind": "method",
               "signature": "(self, tier: Optional[str] = None) -> List[str]",
               "summary": "Sorted preset names.",
-              "line": 154,
+              "line": 191,
               "deprecated": false
             },
             {
@@ -2438,7 +2454,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[str]",
               "summary": "Which tier *name* resolves from: ``\"user\"``, ``\"builtin\"``, or ``None``.",
-              "line": 171,
+              "line": 208,
               "deprecated": false
             },
             {
@@ -2447,7 +2463,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> bool",
               "summary": "",
-              "line": 179,
+              "line": 216,
               "deprecated": false
             },
             {
@@ -2456,7 +2472,7 @@
               "kind": "method",
               "signature": "(self, name: str, tier: str = 'user') -> Path",
               "summary": "Sanitized file path for *name* in *tier* (``\"user\"`` or ``\"builtin\"``).",
-              "line": 182,
+              "line": 219,
               "deprecated": false
             },
             {
@@ -2465,7 +2481,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> dict",
               "summary": "Return the preset dict for *name* (user tier shadows built-in).",
-              "line": 195,
+              "line": 232,
               "deprecated": false
             },
             {
@@ -2474,7 +2490,7 @@
               "kind": "method",
               "signature": "(self, name: str, data: dict) -> Path",
               "summary": "Write *data* as a user preset *name* (built-ins stay read-only).",
-              "line": 214,
+              "line": 252,
               "deprecated": false
             },
             {
@@ -2483,7 +2499,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> bool",
               "summary": "Delete the *user* preset *name*.",
-              "line": 226,
+              "line": 263,
               "deprecated": false
             },
             {
@@ -2492,7 +2508,7 @@
               "kind": "method",
               "signature": "(self, old: str, new: str) -> bool",
               "summary": "Rename a *user* preset.",
-              "line": 243,
+              "line": 280,
               "deprecated": false
             }
           ]
@@ -2570,6 +2586,145 @@
               "signature": "(self, gate_name: str, metrics: Dict[str, Any]) -> bool",
               "summary": "Compare ``metrics`` against ``self.rules[gate_name]``.",
               "line": 94,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/schema_spec.py",
+      "summary": "Declarative schema for JSON/YAML *template* files, defined as a dataclass.",
+      "functions": [
+        {
+          "name": "spec_field",
+          "qualname": "spec_field",
+          "kind": "function",
+          "signature": "(*, help: str = '', example: Any = MISSING, required: bool = False, nested: Optional[Type['SchemaSpec']] = None, choices: Optional[Sequence[Any]] = None, validate: Optional[Callable[[Any], List[str]]] = None, default: Any = MISSING, default_factory: Any = MISSING)",
+          "summary": "A :func:`dataclasses.field` carrying schema metadata.",
+          "line": 53,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "SchemaError",
+          "summary": "Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.",
+          "line": 49,
+          "bases": [
+            "ValueError"
+          ],
+          "members": []
+        },
+        {
+          "name": "FieldDoc",
+          "summary": "One row of a schema's generated reference.",
+          "line": 101,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "ValidationResult",
+          "summary": "Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.",
+          "line": 113,
+          "bases": [],
+          "members": [
+            {
+              "name": "ok",
+              "qualname": "ValidationResult.ok",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "``True`` when there are no errors (warnings are tolerable).",
+              "line": 120,
+              "deprecated": false
+            },
+            {
+              "name": "raise_if_errors",
+              "qualname": "ValidationResult.raise_if_errors",
+              "kind": "method",
+              "signature": "(self, prefix: str = '') -> None",
+              "summary": "Raise :class:`SchemaError` joining all errors, or do nothing.",
+              "line": 124,
+              "deprecated": false
+            },
+            {
+              "name": "raise_or_warn",
+              "qualname": "ValidationResult.raise_or_warn",
+              "kind": "method",
+              "signature": "(self, *, prefix: str = '', logger: Optional[logging.Logger] = None, strict: bool = False) -> None",
+              "summary": "Enforce a validated file: raise on errors, log (or, if *strict*, raise on) warnings.",
+              "line": 129,
+              "deprecated": false
+            },
+            {
+              "name": "merge",
+              "qualname": "ValidationResult.merge",
+              "kind": "method",
+              "signature": "(self, other: 'ValidationResult', path: str = '') -> None",
+              "summary": "Fold *other* in, prefixing each message with *path* (e.g.",
+              "line": 152,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "SchemaSpec",
+          "summary": "Base for declarative template schemas (see module docstring).",
+          "line": 171,
+          "bases": [],
+          "members": [
+            {
+              "name": "from_dict",
+              "qualname": "SchemaSpec.from_dict",
+              "kind": "classmethod",
+              "signature": "(cls, data: Dict[str, Any]) -> 'SchemaSpec'",
+              "summary": "Build an instance from a raw ``dict``, recursing into nested schemas.",
+              "line": 192,
+              "deprecated": false
+            },
+            {
+              "name": "to_dict",
+              "qualname": "SchemaSpec.to_dict",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "Serialise to a JSON/YAML-safe ``dict``;",
+              "line": 214,
+              "deprecated": false
+            },
+            {
+              "name": "validate",
+              "qualname": "SchemaSpec.validate",
+              "kind": "classmethod",
+              "signature": "(cls, data: Any) -> ValidationResult",
+              "summary": "Validate a raw ``dict`` against this schema.",
+              "line": 232,
+              "deprecated": false
+            },
+            {
+              "name": "skeleton",
+              "qualname": "SchemaSpec.skeleton",
+              "kind": "classmethod",
+              "signature": "(cls) -> Dict[str, Any]",
+              "summary": "A fully-populated example ``dict`` to model a new file after.",
+              "line": 279,
+              "deprecated": false
+            },
+            {
+              "name": "describe",
+              "qualname": "SchemaSpec.describe",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[FieldDoc]",
+              "summary": "Structured field-by-field reference (powers :meth:`to_markdown`).",
+              "line": 317,
+              "deprecated": false
+            },
+            {
+              "name": "to_markdown",
+              "qualname": "SchemaSpec.to_markdown",
+              "kind": "classmethod",
+              "signature": "(cls, title: Optional[str] = None, _level: int = 2) -> str",
+              "summary": "Markdown reference for this schema, recursing into nested schemas.",
+              "line": 340,
               "deprecated": false
             }
           ]
@@ -2655,6 +2810,174 @@
               "signature": "(cls, singleton_key: Optional[Any] = None) -> None",
               "summary": "",
               "line": 50,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/template_set.py",
+      "summary": "A discoverable, user-extensible collection of schema-validated template files.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TemplateSet",
+          "summary": "Schema-aware, two-tier collection of template files.",
+          "line": 40,
+          "bases": [],
+          "members": [
+            {
+              "name": "names",
+              "qualname": "TemplateSet.names",
+              "kind": "method",
+              "signature": "(self, tier: Optional[str] = None) -> List[str]",
+              "summary": "Sorted template names (``tier`` = ``None`` | ``\"user\"`` | ``\"builtin\"``).",
+              "line": 73,
+              "deprecated": false
+            },
+            {
+              "name": "source",
+              "qualname": "TemplateSet.source",
+              "kind": "method",
+              "signature": "(self, name: str) -> Optional[str]",
+              "summary": "Which tier *name* resolves from: ``\"user\"``, ``\"builtin\"``, or ``None``.",
+              "line": 77,
+              "deprecated": false
+            },
+            {
+              "name": "exists",
+              "qualname": "TemplateSet.exists",
+              "kind": "method",
+              "signature": "(self, name: str) -> bool",
+              "summary": "",
+              "line": 81,
+              "deprecated": false
+            },
+            {
+              "name": "user_dir",
+              "qualname": "TemplateSet.user_dir",
+              "kind": "property",
+              "signature": "(self) -> Path",
+              "summary": "Writable directory users drop their own templates into.",
+              "line": 85,
+              "deprecated": false
+            },
+            {
+              "name": "builtin_dir",
+              "qualname": "TemplateSet.builtin_dir",
+              "kind": "property",
+              "signature": "(self) -> Optional[Path]",
+              "summary": "",
+              "line": 90,
+              "deprecated": false
+            },
+            {
+              "name": "active",
+              "qualname": "TemplateSet.active",
+              "kind": "property",
+              "signature": "(self) -> Optional[str]",
+              "summary": "Last-selected template name (persisted across sessions).",
+              "line": 94,
+              "deprecated": false
+            },
+            {
+              "name": "active",
+              "qualname": "TemplateSet.active",
+              "kind": "method",
+              "signature": "(self, name: Optional[str]) -> None",
+              "summary": "",
+              "line": 99,
+              "deprecated": false
+            },
+            {
+              "name": "delete",
+              "qualname": "TemplateSet.delete",
+              "kind": "method",
+              "signature": "(self, name: str) -> bool",
+              "summary": "Delete a *user* template (built-ins are read-only).",
+              "line": 102,
+              "deprecated": false
+            },
+            {
+              "name": "rename",
+              "qualname": "TemplateSet.rename",
+              "kind": "method",
+              "signature": "(self, old: str, new: str) -> bool",
+              "summary": "",
+              "line": 106,
+              "deprecated": false
+            },
+            {
+              "name": "path",
+              "qualname": "TemplateSet.path",
+              "kind": "method",
+              "signature": "(self, name: str, tier: str = 'user') -> Path",
+              "summary": "",
+              "line": 109,
+              "deprecated": false
+            },
+            {
+              "name": "raw",
+              "qualname": "TemplateSet.raw",
+              "kind": "method",
+              "signature": "(self, name: str) -> Dict[str, Any]",
+              "summary": "The parsed file as a plain ``dict`` (no validation).",
+              "line": 113,
+              "deprecated": false
+            },
+            {
+              "name": "validate",
+              "qualname": "TemplateSet.validate",
+              "kind": "method",
+              "signature": "(self, name: str) -> ValidationResult",
+              "summary": "Validate a stored template against the schema.",
+              "line": 117,
+              "deprecated": false
+            },
+            {
+              "name": "load",
+              "qualname": "TemplateSet.load",
+              "kind": "method",
+              "signature": "(self, name: str, *, strict: bool = False) -> SchemaSpec",
+              "summary": "Parse, validate, and deserialise *name* to a :class:`SchemaSpec`.",
+              "line": 121,
+              "deprecated": false
+            },
+            {
+              "name": "skeleton",
+              "qualname": "TemplateSet.skeleton",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "A fully-populated example dict to model a new template after.",
+              "line": 133,
+              "deprecated": false
+            },
+            {
+              "name": "save",
+              "qualname": "TemplateSet.save",
+              "kind": "method",
+              "signature": "(self, name: str, data: Dict[str, Any]) -> Path",
+              "summary": "Write *data* as a user template *name* (built-ins stay read-only).",
+              "line": 137,
+              "deprecated": false
+            },
+            {
+              "name": "write_skeleton",
+              "qualname": "TemplateSet.write_skeleton",
+              "kind": "method",
+              "signature": "(self, name: str) -> Path",
+              "summary": "Write :meth:`skeleton` as a user template and return its path.",
+              "line": 141,
+              "deprecated": false
+            },
+            {
+              "name": "markdown",
+              "qualname": "TemplateSet.markdown",
+              "kind": "method",
+              "signature": "(self, title: Optional[str] = None) -> str",
+              "summary": "Generated Markdown reference for this template's format.",
+              "line": 150,
               "deprecated": false
             }
           ]

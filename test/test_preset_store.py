@@ -156,5 +156,53 @@ class PresetStoreDefaultLocationTest(unittest.TestCase):
         self.assertTrue(store.user_dir.is_dir())
 
 
+class PresetStoreCodecTest(unittest.TestCase):
+    """A pluggable codec changes the on-disk format and extension."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_default_codec_is_json(self):
+        store = PresetStore("p", user_dir=self.tmp)
+        self.assertEqual(store.ext, ".json")
+
+    def test_custom_codec_writes_its_extension_and_round_trips(self):
+        from pythontk.core_utils.preset_store import Codec
+
+        # A trivial non-JSON codec (here still JSON-encoded text, but a distinct
+        # extension) proves discovery + IO route through the codec, not hardcoded.
+        codec = Codec(".yaml", json.loads, lambda d: json.dumps(d))
+        store = PresetStore("p", user_dir=self.tmp, codec=codec)
+        path = store.save("cfg", {"a": 1})
+        self.assertEqual(path.suffix, ".yaml")
+        self.assertEqual(store.list(), ["cfg"])  # glob uses the codec ext
+        self.assertEqual(store.load("cfg"), {"a": 1})
+
+    def test_json_files_are_invisible_to_a_yaml_store(self):
+        from pythontk.core_utils.preset_store import Codec
+
+        json_store = PresetStore("p", user_dir=self.tmp)
+        json_store.save("only_json", {"a": 1})
+        yaml_store = PresetStore(
+            "p", user_dir=self.tmp, codec=Codec(".yaml", json.loads, json.dumps)
+        )
+        self.assertEqual(yaml_store.list(), [])  # different extension, not found
+
+    def test_codec_ext_is_normalized_with_leading_dot(self):
+        from pythontk.core_utils.preset_store import Codec
+
+        # A dotless ext is a natural public-API mistake; it must not produce
+        # 'cfgyaml' filenames / '*yaml' globs. __post_init__ prepends the dot.
+        store = PresetStore(
+            "p", user_dir=self.tmp, codec=Codec("yaml", json.loads, json.dumps)
+        )
+        self.assertEqual(store.ext, ".yaml")
+        self.assertEqual(store.save("cfg", {"a": 1}).suffix, ".yaml")
+        self.assertEqual(store.list(), ["cfg"])
+
+
 if __name__ == "__main__":
     unittest.main()

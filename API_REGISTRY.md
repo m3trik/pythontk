@@ -32,8 +32,10 @@ _Generated: 2026-06-27_
 - [`core_utils/package_manager.py`](#core_utils--package_manager)
 - [`core_utils/preset_store.py`](#core_utils--preset_store) — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - [`core_utils/qc_log.py`](#core_utils--qc_log) — Structured run logs and threshold-based acceptance gates for pipeline
+- [`core_utils/schema_spec.py`](#core_utils--schema_spec) — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 - [`core_utils/script_template.py`](#core_utils--script_template) — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
+- [`core_utils/template_set.py`](#core_utils--template_set) — A discoverable, user-extensible collection of schema-validated template files.
 - [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
 - [`file_utils/mesh_cleaner.py`](#file_utils--mesh_cleaner) — Mesh repair / cleanup via PyMeshLab (optional dependency).
@@ -432,8 +434,10 @@ Reusable module attribute resolver for package-style imports.
 
 Qt-free, zero-dependency named-preset *store* for the ecosystem.
 
-- [`sanitize_preset_name(name: str) -> str`](pythontk/pythontk/core_utils/preset_store.py#L46) — Filesystem-safe filename stem for a preset *name*.
-- **[`class PresetStore`](pythontk/pythontk/core_utils/preset_store.py#L56)** — Named-preset collection with a read-only built-in tier and a writable
+- [`sanitize_preset_name(name: str) -> str`](pythontk/pythontk/core_utils/preset_store.py#L75) — Filesystem-safe filename stem for a preset *name*.
+- **[`class Codec`](pythontk/pythontk/core_utils/preset_store.py#L40)** — Pluggable (de)serialiser for a :class:`PresetStore`'s on-disk format.
+- **[`class PresetStore`](pythontk/pythontk/core_utils/preset_store.py#L85)** — Named-preset collection with a read-only built-in tier and a writable
+  - `PresetStore.ext(self) -> str` *(property)* — File extension this store reads/writes (from its :class:`Codec`).
   - `PresetStore.user_dir(self) -> Path` *(property)* — Writable preset directory (created lazily on first :meth:`save`).
   - `PresetStore.builtin_dir(self) -> Optional[Path]` *(property)* — Read-only shipped preset directory, or ``None`` when not configured.
   - `PresetStore.active(self) -> Optional[str]` *(property)* — The last-selected preset name, or ``None`` when unset/unreadable.
@@ -461,6 +465,27 @@ Structured run logs and threshold-based acceptance gates for pipeline
 - **[`class QcGate`](pythontk/pythontk/core_utils/qc_log.py#L65)** — Threshold-based acceptance gate that logs into a bound :class:`QcLog`.
   - `QcGate.check(self, gate_name: str, metrics: Dict[str, Any]) -> bool` — Compare ``metrics`` against ``self.rules[gate_name]``.
 
+<a id="core_utils--schema_spec"></a>
+### `core_utils/schema_spec.py`
+
+Declarative schema for JSON/YAML *template* files, defined as a dataclass.
+
+- [`spec_field(*, help: str = '', example: Any = MISSING, required: bool = False, nested: Optional[Type['SchemaSpec']] = None, choices: Optional[Sequence[Any]] = None, validate: Optional[Callable[[Any], List[str]]] = None, default: Any = MISSING, default_factory: Any = MISSING)`](pythontk/pythontk/core_utils/schema_spec.py#L53) — A :func:`dataclasses.field` carrying schema metadata.
+- **[`class SchemaError(ValueError)`](pythontk/pythontk/core_utils/schema_spec.py#L49)** — Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.
+- **[`class FieldDoc`](pythontk/pythontk/core_utils/schema_spec.py#L101)** — One row of a schema's generated reference.
+- **[`class ValidationResult`](pythontk/pythontk/core_utils/schema_spec.py#L113)** — Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.
+  - `ValidationResult.ok(self) -> bool` *(property)* — ``True`` when there are no errors (warnings are tolerable).
+  - `ValidationResult.raise_if_errors(self, prefix: str = '') -> None` — Raise :class:`SchemaError` joining all errors, or do nothing.
+  - `ValidationResult.raise_or_warn(self, *, prefix: str = '', logger: Optional[logging.Logger] = None, strict: bool = False) -> None` — Enforce a validated file: raise on errors, log (or, if *strict*, raise on) warnings.
+  - `ValidationResult.merge(self, other: 'ValidationResult', path: str = '') -> None` — Fold *other* in, prefixing each message with *path* (e.g.
+- **[`class SchemaSpec`](pythontk/pythontk/core_utils/schema_spec.py#L171)** — Base for declarative template schemas (see module docstring).
+  - `SchemaSpec.from_dict(cls, data: Dict[str, Any]) -> 'SchemaSpec'` *(class)* — Build an instance from a raw ``dict``, recursing into nested schemas.
+  - `SchemaSpec.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON/YAML-safe ``dict``;
+  - `SchemaSpec.validate(cls, data: Any) -> ValidationResult` *(class)* — Validate a raw ``dict`` against this schema.
+  - `SchemaSpec.skeleton(cls) -> Dict[str, Any]` *(class)* — A fully-populated example ``dict`` to model a new file after.
+  - `SchemaSpec.describe(cls) -> List[FieldDoc]` *(class)* — Structured field-by-field reference (powers :meth:`to_markdown`).
+  - `SchemaSpec.to_markdown(cls, title: Optional[str] = None, _level: int = 2) -> str` *(class)* — Markdown reference for this schema, recursing into nested schemas.
+
 <a id="core_utils--script_template"></a>
 ### `core_utils/script_template.py`
 
@@ -478,6 +503,30 @@ Generic on-disk script-template discovery + ``__KEY__`` rendering.
   - `SingletonMixin.instance(cls, *args: Any, **kwargs: Any) -> Any` *(class)*
   - `SingletonMixin.has_instance(cls, singleton_key: Optional[Any] = None) -> bool` *(class)*
   - `SingletonMixin.reset_instance(cls, singleton_key: Optional[Any] = None) -> None` *(class)*
+
+<a id="core_utils--template_set"></a>
+### `core_utils/template_set.py`
+
+A discoverable, user-extensible collection of schema-validated template files.
+
+- **[`class TemplateSet`](pythontk/pythontk/core_utils/template_set.py#L40)** — Schema-aware, two-tier collection of template files.
+  - `TemplateSet.names(self, tier: Optional[str] = None) -> List[str]` — Sorted template names (``tier`` = ``None`` | ``"user"`` | ``"builtin"``).
+  - `TemplateSet.source(self, name: str) -> Optional[str]` — Which tier *name* resolves from: ``"user"``, ``"builtin"``, or ``None``.
+  - `TemplateSet.exists(self, name: str) -> bool`
+  - `TemplateSet.user_dir(self) -> Path` *(property)* — Writable directory users drop their own templates into.
+  - `TemplateSet.builtin_dir(self) -> Optional[Path]` *(property)*
+  - `TemplateSet.active(self) -> Optional[str]` *(property)* — Last-selected template name (persisted across sessions).
+  - `TemplateSet.active(self, name: Optional[str]) -> None`
+  - `TemplateSet.delete(self, name: str) -> bool` — Delete a *user* template (built-ins are read-only).
+  - `TemplateSet.rename(self, old: str, new: str) -> bool`
+  - `TemplateSet.path(self, name: str, tier: str = 'user') -> Path`
+  - `TemplateSet.raw(self, name: str) -> Dict[str, Any]` — The parsed file as a plain ``dict`` (no validation).
+  - `TemplateSet.validate(self, name: str) -> ValidationResult` — Validate a stored template against the schema.
+  - `TemplateSet.load(self, name: str, *, strict: bool = False) -> SchemaSpec` — Parse, validate, and deserialise *name* to a :class:`SchemaSpec`.
+  - `TemplateSet.skeleton(self) -> Dict[str, Any]` — A fully-populated example dict to model a new template after.
+  - `TemplateSet.save(self, name: str, data: Dict[str, Any]) -> Path` — Write *data* as a user template *name* (built-ins stay read-only).
+  - `TemplateSet.write_skeleton(self, name: str) -> Path` — Write :meth:`skeleton` as a user template and return its path.
+  - `TemplateSet.markdown(self, title: Optional[str] = None) -> str` — Generated Markdown reference for this template's format.
 
 <a id="core_utils--user_config"></a>
 ### `core_utils/user_config.py`
