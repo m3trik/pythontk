@@ -758,6 +758,83 @@ class FileTest(BaseTestCase):
                 _runner=captured.append,
             )
 
+    # -------------------------------------------------------------------------
+    # is_cloud_placeholder Tests
+    # -------------------------------------------------------------------------
+
+    def test_is_cloud_placeholder_true_for_online_only(self):
+        """RECALL_ON_DATA_ACCESS (Dropbox/OneDrive online-only) → True."""
+        from unittest.mock import patch
+
+        with patch("pythontk.file_utils._file_utils.os.stat") as m_stat:
+            m_stat.return_value.st_file_attributes = 0x00400020  # RECALL | ARCHIVE
+            self.assertTrue(FileUtils.is_cloud_placeholder("X:/cloud/only.csv"))
+
+    def test_is_cloud_placeholder_true_for_offline_flag(self):
+        """Legacy FILE_ATTRIBUTE_OFFLINE also marks a placeholder."""
+        from unittest.mock import patch
+
+        with patch("pythontk.file_utils._file_utils.os.stat") as m_stat:
+            m_stat.return_value.st_file_attributes = 0x00001020  # OFFLINE | ARCHIVE
+            self.assertTrue(FileUtils.is_cloud_placeholder("X:/cloud/old.csv"))
+
+    def test_is_cloud_placeholder_false_for_local_file(self):
+        """A fully-hydrated local file (ARCHIVE only) → False."""
+        from unittest.mock import patch
+
+        with patch("pythontk.file_utils._file_utils.os.stat") as m_stat:
+            m_stat.return_value.st_file_attributes = 0x00000020  # ARCHIVE only
+            self.assertFalse(FileUtils.is_cloud_placeholder("X:/local/file.csv"))
+
+    def test_is_cloud_placeholder_false_without_attr_field(self):
+        """Non-Windows stat results lack st_file_attributes → False (no crash)."""
+        from unittest.mock import patch
+
+        class _StatNoAttrs:  # mimics a POSIX os.stat_result
+            st_size = 10
+
+        with patch(
+            "pythontk.file_utils._file_utils.os.stat", return_value=_StatNoAttrs()
+        ):
+            self.assertFalse(FileUtils.is_cloud_placeholder("X:/file.csv"))
+
+    def test_is_cloud_placeholder_false_for_missing_path(self):
+        """A path that can't be stat'd → False (caller handles 'not found')."""
+        self.assertFalse(
+            FileUtils.is_cloud_placeholder("X:/definitely/missing/abc123.csv")
+        )
+
+    # -------------------------------------------------------------------------
+    # free_space Tests
+    # -------------------------------------------------------------------------
+
+    def test_free_space_returns_int_for_existing_dir(self):
+        """An existing directory reports a non-negative free-byte count."""
+        import tempfile
+
+        free = FileUtils.free_space(tempfile.gettempdir())
+        self.assertIsInstance(free, int)
+        self.assertGreaterEqual(free, 0)
+
+    def test_free_space_resolves_nonexistent_child(self):
+        """A not-yet-created child resolves up to its existing parent volume."""
+        import os as _os
+        import tempfile
+
+        child = _os.path.join(tempfile.gettempdir(), "no_such_dir_xyz", "f.csv")
+        self.assertIsInstance(FileUtils.free_space(child), int)
+
+    def test_free_space_none_when_unresolvable(self):
+        """No existing ancestor → None (caller treats unknown as 'can't tell')."""
+        from unittest.mock import patch
+
+        # With nothing on the path existing, the walk-up reaches the drive root
+        # (a fixed point) and bails to None rather than guessing.
+        with patch(
+            "pythontk.file_utils._file_utils.os.path.exists", return_value=False
+        ):
+            self.assertIsNone(FileUtils.free_space("Z:/x/y/z.csv"))
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

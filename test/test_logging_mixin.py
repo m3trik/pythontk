@@ -64,6 +64,35 @@ class LoggerExtTest(BaseTestCase):
         self.assertEqual(logging.getLevelName(LoggerExt.RESULT), "RESULT")
         self.assertEqual(logging.getLevelName(LoggerExt.NOTICE), "NOTICE")
 
+    def test_setlevel_clears_custom_level_cache(self):
+        """Lowering the level re-enables custom levels (SUCCESS/RESULT/NOTICE).
+
+        Regression: these loggers are built via Logger() (not getLogger), so
+        they are absent from manager.loggerDict and the stdlib setLevel's
+        manager._clear_cache() never clears their per-logger isEnabledFor
+        cache. Once isEnabledFor(SUCCESS) was cached False (while the level
+        was above SUCCESS), success() stayed silently disabled even after the
+        level was lowered. _set_level now clears the logger's own cache.
+        Fixed: 2026-06-27
+        """
+        LoggerExt.patch(self.logger)
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setLevel(logging.DEBUG)
+        self.logger.addHandler(handler)
+
+        # Raise above SUCCESS and poison the isEnabledFor cache for level 25.
+        self.logger.setLevel(logging.ERROR)  # 40 > SUCCESS (25)
+        self.assertFalse(self.logger.isEnabledFor(LoggerExt.SUCCESS))
+        self.logger.success("suppressed at ERROR")
+        self.assertEqual(stream.getvalue(), "")
+
+        # Lower below SUCCESS — the custom level must re-enable, not stay stuck.
+        self.logger.setLevel(logging.INFO)  # 20 < SUCCESS (25)
+        self.assertTrue(self.logger.isEnabledFor(LoggerExt.SUCCESS))
+        self.logger.success("now visible")
+        self.assertIn("now visible", stream.getvalue())
+
     def test_percent_format_args_always_substituted(self):
         """Positional args are %-format args — never styling.
 
