@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-06-25_
+_Generated: 2026-06-27_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -162,7 +162,7 @@ _Generated: 2026-06-25_
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
+  - methods: is_valid, is_cloud_placeholder, free_space, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
 
 ### `file_utils/mesh_cleaner.py` — Mesh repair / cleanup via PyMeshLab (optional dependency).
 - `class MeshCleaner`

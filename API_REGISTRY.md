@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-25_
+_Generated: 2026-06-27_
 
 ## Index
 
@@ -329,17 +329,17 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1282)** — A generic thread-safe logging handler that writes logs to any widget
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1290)** — A generic thread-safe logging handler that writes logs to any widget
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1334)** — In-memory capped ring buffer of log records.
+- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1342)** — In-memory capped ring buffer of log records.
   - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `RingBufferHandler.clear(self) -> None`
   - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1372)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1380)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1526)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1534)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -497,6 +497,8 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
 
 - **[`class FileUtils(HelpMixin)`](pythontk/pythontk/file_utils/_file_utils.py#L16)**
   - `FileUtils.is_valid(filepath: str, expected_type: Optional[str] = None) -> bool` *(static)* — Check if a path is valid, optionally requiring a specific type ('file' or 'dir').
+  - `FileUtils.is_cloud_placeholder(filepath: str) -> bool` *(static)* — Return True if *filepath* is an online-only cloud-sync placeholder.
+  - `FileUtils.free_space(path: str) -> Optional[int]` *(static)* — Return free space (bytes) on the volume that holds *path*.
   - `FileUtils.create_dir(filepath: str) -> None` *(static)* — Create a directory if one doesn't already exist.
   - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str` *(static)* — Return the next available versioned path for `filepath`.
   - `FileUtils.get_dir_contents(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)` *(static)* — Get the contents of a directory and any of its children.

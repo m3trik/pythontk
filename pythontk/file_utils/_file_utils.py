@@ -37,6 +37,79 @@ class FileUtils(HelpMixin):
             return os.path.exists(fp)
 
     @staticmethod
+    def is_cloud_placeholder(filepath: str) -> bool:
+        """Return True if *filepath* is an online-only cloud-sync placeholder.
+
+        Detects "dehydrated" files managed by a cloud provider's sync engine
+        (OneDrive, Dropbox, Google Drive, Nextcloud, ...) on Windows.  Such a
+        file reports a normal ``os.stat`` (size, mtime) and satisfies
+        ``os.path.isfile``, but its content lives in the cloud: opening it for
+        read triggers an on-demand recall.  That recall *usually* succeeds, so
+        a True result does **not** mean the file is unreadable -- it only marks
+        the file as cloud-managed.  When a recall does fail (sometimes surfaced
+        as ``OSError(22, 'Invalid argument')``) the cause is typically the sync
+        client not running or the volume being out of space, not the
+        placeholder state itself -- so treat a True result as "cloud-managed,
+        so the sync client is relevant", not as a diagnosis.
+
+        Reads the Windows ``st_file_attributes`` bitmask for the OFFLINE /
+        RECALL_ON_OPEN / RECALL_ON_DATA_ACCESS flags.  Does **not** trigger a
+        recall (``os.stat`` reads placeholder metadata only).  Always returns
+        False on non-Windows platforms, or when the path can't be stat'd.
+
+        Parameters:
+            filepath (str): Path to test (environment variables are expanded).
+
+        Returns:
+            bool: True if the file is an unhydrated cloud placeholder.
+        """
+        # Windows FILE_ATTRIBUTE_* flags set on online-only placeholders.
+        offline = 0x00001000  # FILE_ATTRIBUTE_OFFLINE
+        recall_on_open = 0x00040000  # FILE_ATTRIBUTE_RECALL_ON_OPEN
+        recall_on_data_access = 0x00400000  # FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+        fp = os.path.expandvars(filepath)
+        try:
+            attrs = os.stat(fp).st_file_attributes  # Windows-only stat field
+        except (OSError, ValueError, AttributeError):
+            return False
+        return bool(attrs & (offline | recall_on_open | recall_on_data_access))
+
+    @staticmethod
+    def free_space(path: str) -> Optional[int]:
+        """Return free space (bytes) on the volume that holds *path*.
+
+        Resolves *path* to its nearest existing ancestor (so it works whether
+        *path* is a file, a directory, or a not-yet-created child) and queries
+        that volume.  Reads volume metadata only -- never opens, reads, or
+        hydrates *path* (so it's safe to call on a cloud placeholder).
+
+        Useful for turning an opaque read/write failure into a checkable
+        cause: a full or nearly-full volume is a common, concrete reason an
+        ``open()`` fails even though ``os.path.isfile`` succeeded (a cloud
+        file can't hydrate with no room to land).
+
+        Parameters:
+            path (str): Any path on the volume to measure (env vars expanded).
+
+        Returns:
+            int | None: Free bytes on the volume, or None if it can't be
+                queried (e.g. no part of the path resolves to a real location).
+        """
+        import shutil
+
+        probe = os.path.expandvars(path)
+        # Walk up to the first existing location; disk_usage needs one.
+        while probe and not os.path.exists(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:  # reached a drive root / relative dead-end
+                return None
+            probe = parent
+        try:
+            return shutil.disk_usage(probe).free
+        except OSError:
+            return None
+
+    @staticmethod
     def create_dir(filepath: str) -> None:
         """Create a directory if one doesn't already exist.
 

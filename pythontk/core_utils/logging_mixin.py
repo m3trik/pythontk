@@ -442,6 +442,14 @@ class LoggerExt:
                 level.upper(), internal_logging.INFO
             )
         self.internal_setLevel(level)  # Call the preserved original method
+        # These loggers are built via the Logger() constructor (see the `logger`
+        # property), so they are NOT in manager.loggerDict and the stdlib
+        # setLevel's manager._clear_cache() never reaches this logger's own
+        # isEnabledFor cache. Clear it directly so a level change re-evaluates
+        # every level — otherwise a custom level (SUCCESS/RESULT/NOTICE) whose
+        # isEnabledFor was cached False while the level was high stays silently
+        # disabled after the level is lowered again.
+        self._cache.clear()
         # Sync handler levels whenever level changes (not on every logger access)
         for handler in self.handlers:
             handler.setLevel(level)
