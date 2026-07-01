@@ -575,6 +575,47 @@ class IterTest(BaseTestCase):
         )
         self.assertEqual(result, [])
 
+    def test_filter_list_negate_prefix_inline_exclude(self):
+        """negate_prefix moves a prefixed include pattern to the exclude set."""
+        items = ["keep_one", "keep_drop", "other"]
+        # Include anything with 'keep', but drop anything with 'drop'.
+        result = IterUtils.filter_list(
+            items, inc="*keep*, !*drop*", negate_prefix="!"
+        )
+        self.assertEqual(result, ["keep_one"])
+
+    def test_filter_list_negate_prefix_only_negated(self):
+        """A query of only negated terms excludes those, keeps the rest."""
+        items = ["alpha", "beta", "temp_x"]
+        result = IterUtils.filter_list(items, inc="!*temp*", negate_prefix="!")
+        self.assertEqual(result, ["alpha", "beta"])
+
+    def test_filter_list_negate_prefix_off_by_default(self):
+        """Without negate_prefix the marker is matched literally (no split)."""
+        items = ["keep", "!keep"]
+        # No negate_prefix → "!*keep*" matches only the literal-'!' item.
+        result = IterUtils.filter_list(items, inc="!*keep*")
+        self.assertEqual(result, ["!keep"])
+
+    def test_filter_list_negate_prefix_bare_marker_dropped(self):
+        """A bare prefix (no remainder) is dropped, not treated as exclude-all."""
+        items = ["a", "b"]
+        result = IterUtils.filter_list(items, inc="!, *a*", negate_prefix="!")
+        self.assertEqual(result, ["a"])
+
+    def test_filter_list_negate_prefix_strips_whitespace_after_marker(self):
+        """A space after the marker ("! *drop*") still excludes, not a dead pattern."""
+        items = ["keep_one", "keep_drop", "other"]
+        result = IterUtils.filter_list(
+            items, inc="*keep*, ! *drop*", negate_prefix="!"
+        )
+        self.assertEqual(result, ["keep_one"])
+        # A prefix followed by only whitespace is a bare marker → dropped.
+        self.assertEqual(
+            IterUtils.filter_list(["a", "b"], inc="!   , *a*", negate_prefix="!"),
+            ["a"],
+        )
+
     def test_filter_list_match_all_with_exclusion(self):
         """Test filter_list with match_all=True combined with exclusion."""
         files = [
