@@ -324,6 +324,7 @@ class IterUtils(HelpMixin):
         ignore_case: bool = False,
         delimiter: str = ",",
         match_all: bool = False,
+        negate_prefix: Optional[str] = None,
     ) -> List:
         """Filters the given list based on inclusion/exclusion criteria using shell-style wildcards. This method can also apply
         the filter to nested structures like lists, tuples, or sets. If 'nested_as_unit' is True, then the entire structure is
@@ -364,6 +365,13 @@ class IterUtils(HelpMixin):
             match_all (bool, optional): If True, an item must match ALL inclusion patterns to be included
                 (AND logic). If False (default), an item is included if it matches ANY pattern (OR logic).
                 This is useful for filtering with multiple criteria like "*_module.ma" AND "C130*".
+            negate_prefix (str, optional): If set, any *string* inclusion pattern beginning with this
+                prefix is treated as an exclusion: the prefix is stripped and the remainder is appended
+                to `exc`. This lets a single query stream carry both include and exclude terms — e.g. with
+                ``negate_prefix="!"``, ``inc="*contains*, !*exclude*"`` keeps items matching ``*contains*``
+                while dropping any matching ``*exclude*``. Default None (no special handling — a literal
+                leading prefix is matched verbatim). The split happens after delimiter splitting, so it
+                composes with multi-pattern strings; ``match_all`` still applies to the remaining includes.
 
         Returns:
             list: The filtered list.
@@ -398,6 +406,25 @@ class IterUtils(HelpMixin):
 
         inc = list(cls.make_iterable(inc))
         exc = list(cls.make_iterable(exc))
+
+        # Inline negation: move prefix-tagged include patterns to the exclude set,
+        # so one query stream (e.g. "*keep*, !*drop*") carries both. Done before
+        # the empty-filter early-exit so a query of only negated terms still
+        # excludes. The remainder is stripped so "! *drop*" (a space after the
+        # marker) still excludes "*drop*" rather than a never-matching " *drop*"
+        # pattern — matches uitk's FilterOption.to_patterns. Empty remainders (a
+        # bare prefix, or prefix + whitespace) are dropped.
+        if negate_prefix:
+            negated, kept = [], []
+            for p in inc:
+                if isinstance(p, str) and p.startswith(negate_prefix):
+                    remainder = p[len(negate_prefix):].strip()
+                    if remainder:
+                        negated.append(remainder)
+                else:
+                    kept.append(p)
+            inc = kept
+            exc = exc + negated
 
         # Early exit: no filters means return original list
         if not inc and not exc:

@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-06-27",
+  "generated_at": "2026-07-01",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -5871,7 +5871,7 @@
               "name": "filter_list",
               "qualname": "IterUtils.filter_list",
               "kind": "classmethod",
-              "signature": "(cls, lst: List, inc: Optional[Union[str, List]] = None, exc: Optional[Union[str, List]] = None, map_func: Optional[Callable] = None, check_unmapped: bool = False, nested_as_unit: bool = False, basename_only: bool = False, ignore_case: bool = False, delimiter: str = ',', match_all: bool = False) -> List",
+              "signature": "(cls, lst: List, inc: Optional[Union[str, List]] = None, exc: Optional[Union[str, List]] = None, map_func: Optional[Callable] = None, check_unmapped: bool = False, nested_as_unit: bool = False, basename_only: bool = False, ignore_case: bool = False, delimiter: str = ',', match_all: bool = False, negate_prefix: Optional[str] = None) -> List",
               "summary": "Filters the given list based on inclusion/exclusion criteria using shell-style wildcards.",
               "line": 315,
               "deprecated": false
@@ -5882,7 +5882,7 @@
               "kind": "classmethod",
               "signature": "(cls, dct: Dict, keys: bool = False, values: bool = False, **kwargs) -> Dict",
               "summary": "Filter the given dictionary.",
-              "line": 536,
+              "line": 563,
               "deprecated": false
             },
             {
@@ -5891,7 +5891,7 @@
               "kind": "staticmethod",
               "signature": "(lst, into)",
               "summary": "Split a list into parts.",
-              "line": 581,
+              "line": 608,
               "deprecated": false
             },
             {
@@ -5900,7 +5900,7 @@
               "kind": "staticmethod",
               "signature": "(values, value_tolerance=1e-05)",
               "summary": "Return indices of redundant interior keys in flat segments.",
-              "line": 633,
+              "line": 660,
               "deprecated": false
             }
           ]

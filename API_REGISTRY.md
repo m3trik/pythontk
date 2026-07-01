@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-06-27_
+_Generated: 2026-07-01_
 
 ## Index
 
@@ -951,7 +951,7 @@ Per-map output-format templates — the "export preset" layer.
   - `IterUtils.indices(itr, value)` *(static)* — Get the index of each element of a list matching the given value.
   - `IterUtils.remove_duplicates(lst, trailing=True)` *(static)* — Removes duplicate entries from a list while maintaining the original order of the remaining items.
   - `IterUtils.filter_results(func: Callable) -> Callable` *(static)* — Decorator to filter the results of a function that returns a list or dictionary.
-  - `IterUtils.filter_list(cls, lst: List, inc: Optional[Union[str, List]] = None, exc: Optional[Union[str, List]] = None, map_func: Optional[Callable] = None, check_unmapped: bool = False, nested_as_unit: bool = False, basename_only: bool = False, ignore_case: bool = False, delimiter: str = ',', match_all: bool = False) -> List` *(class)* — Filters the given list based on inclusion/exclusion criteria using shell-style wildcards.
+  - `IterUtils.filter_list(cls, lst: List, inc: Optional[Union[str, List]] = None, exc: Optional[Union[str, List]] = None, map_func: Optional[Callable] = None, check_unmapped: bool = False, nested_as_unit: bool = False, basename_only: bool = False, ignore_case: bool = False, delimiter: str = ',', match_all: bool = False, negate_prefix: Optional[str] = None) -> List` *(class)* — Filters the given list based on inclusion/exclusion criteria using shell-style wildcards.
   - `IterUtils.filter_dict(cls, dct: Dict, keys: bool = False, values: bool = False, **kwargs) -> Dict` *(class)* — Filter the given dictionary.
   - `IterUtils.split_list(lst, into)` *(static)* — Split a list into parts.
   - `IterUtils.find_flat_interior_indices(values, value_tolerance=1e-05)` *(static)* — Return indices of redundant interior keys in flat segments.
