@@ -1,32 +1,76 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-0.8.32-blue.svg)](https://pypi.org/project/pythontk/)
+[![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-1612%20passed-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/Tests-1654%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
 <!-- short_description_start -->
-*A Python utility library for game development, DCC pipelines, and technical art workflows. Features texture processing, PBR conversion, batch processing, structured logging, and utilities designed for Maya/3ds Max pipelines.*
+*The foundation layer of a DCC-tooling ecosystem — composable Python primitives for files, strings, iteration, math, geometry, images, video, audio, and networking, plus the class mixins and package infrastructure the layers above are built on.*
 <!-- short_description_end -->
 
-## Installation
+Pure Python: no Qt, no DCC imports, two small hard dependencies (`numpy`, `Pillow`). Everything heavier — FFmpeg, OpenCV, rembg, PyMeshLab — is optional and feature-gated, so the core runs identically in `mayapy`, Blender's Python, a CI runner, or a bare venv.
+
+## Why
+
+pythontk is the bottom of an ecosystem chain (`pythontk → uitk → mayatk / blendertk → tentacle`) built for game-art and DCC pipeline tooling. Everything above imports it; it imports nothing above it — no `maya`, no `bpy`, no Qt. That constraint is the point: a helper written here works everywhere the ecosystem runs, and the layers above stay thin because the environment-independent 80% of every tool lives at this layer.
+
+Two rules shape the library:
+
+- **Primitives are placed by data type, not by domain.** Sharpest-frame extraction lives in `vid_utils` and perceptual-hash image curation in `img_utils` — not in a "photogrammetry" package — so each piece stays independently reusable. Domain pipelines (PBR texture conversion, photogrammetry ingest, timeline audio events) are *compositions* of these primitives, assembled downstream.
+- **Shared code moves down.** When two downstream tools need the same helper, it is extracted here and becomes the single source of truth — Maya and Blender panels share one calculator engine, one material-report formatter, one point-clustering routine, instead of drifting copies.
+
+The result is less a grab-bag of utilities than the standard library of its ecosystem: [uitk](https://github.com/m3trik/uitk) builds its preset and logging UIs on pythontk stores and mixins, [mayatk](https://github.com/m3trik/mayatk) launches Maya through `AppLauncher` and hands scenes to other apps through `HandoffBridge`, and every package in the chain boots its lazy-loading root through `module_resolver`.
+
+## Install
 
 ```bash
 pip install pythontk
 ```
 
-**Optional Dependencies:**
-- `Pillow` – Required for image/texture operations
-- `numpy` – Required for math and image operations
-- `FFmpeg` – Required for video utilities
+**Optional dependencies**, each gating a specific feature (guarded by `is_available()` checks — nothing else breaks without them):
+
+- `FFmpeg` (on PATH) — audio conversion / compositing, video compression
+- `OpenCV` — video frame extraction, image curation, exposure equalization, a few `ImgUtils` ops
+- `rembg` — background mask generation (`MaskGenerator`)
+- `PyMeshLab` — mesh repair (`MeshCleaner`)
+
+## Packages
+
+Everything is exposed at the package root via the lazy-loading resolver — bare or class-qualified:
+
+```python
+import pythontk as ptk
+
+ptk.filter_list(...)                # bare form — wildcard-exposed
+ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-proof
+```
+
+| Package | What it covers |
+|---|---|
+| `audio_utils` | FFmpeg-backed conversion, composite WAV building, waveform envelopes |
+| `color_utils` | `Color` / `Palette` primitives — hex/rgb/luminance, blending, themed palettes |
+| `core_utils` | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap (`module_resolver`), app orchestration (`AppLauncher`, `HandoffBridge`), config/template stores (`PresetStore`, `TemplateSet`, `SchemaSpec`, `UserConfig`), QC gates, `ExecutionMonitor`, hierarchy diffing |
+| `file_utils` | Filtered directory traversal, atomic writes, JSON helpers, cloud-placeholder detection, mesh format conversion, embedded metadata |
+| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify), `PointCloud` (PCA, clustering), procedural drape |
+| `img_utils` | Pillow-backed image ops, channel packing, `MapFactory` (PBR map conversion/packing), map optimizer & compositor, exposure equalization, image curation, mask generation |
+| `iter_utils` | Flatten, dedupe, wildcard filtering of lists/dicts, integer-sequence collapse |
+| `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, safe expression evaluation |
+| `net_utils` | SSH client, generic JSON-RPC client + DCC plugin installer, credentials, port/RDP helpers |
+| `str_utils` | Sanitizing, batch rename, affix handling, `FuzzyMatcher`, hotkey-token parsing |
+| `vid_utils` | Frame rate probing, compression, sharpest-frame extraction |
+
+Full public surface (every class, method, signature — auto-generated): [`API_REGISTRY.md`](../API_REGISTRY.md); compact index: [`API_INDEX.md`](../API_INDEX.md).
 
 ---
 
-## Core Features
+## Tour
+
+A curated subset — one example per idea, not per function.
 
 ### LoggingMixin
 
-Add structured logging to any class with custom log levels, spam prevention, and formatted output:
+Structured logging for any class — custom levels, spam prevention, file tee, ring-buffer dump:
 
 ```python
 import pythontk as ptk
@@ -34,296 +78,140 @@ import pythontk as ptk
 class MyProcessor(ptk.LoggingMixin):
     def process(self):
         self.logger.info("Starting process")
-        self.logger.success("Task completed")      # Custom level
-        self.logger.result("Output: 42")           # Custom level
-        self.logger.notice("Check results")        # Custom level
-        
-        # Prevent log spam – only logs once per 5 minutes
-        self.logger.error_once("Connection failed - retrying")
-        
-        # Formatted box output
+        self.logger.success("Task completed")      # custom level
+        self.logger.error_once("Connection failed") # logs once per 5 min, not per retry
         self.logger.log_box("Summary", ["Files: 10", "Errors: 0"])
-        # ╔══════════════════╗
-        # ║     Summary      ║
-        # ╟──────────────────╢
-        # ║ Files: 10        ║
-        # ║ Errors: 0        ║
-        # ╚══════════════════╝
 
-# Configure
 MyProcessor.logger.setLevel("DEBUG")
-MyProcessor.logger.add_file_handler("process.log")
-MyProcessor.logger.set_log_prefix("[MyApp] ")
-MyProcessor.logger.log_timestamp = "%H:%M:%S"
+MyProcessor.set_log_file("process.log")             # continuous tee
+MyProcessor.enable_log_buffer(2000)                 # O(1) ring buffer, dump on demand
 ```
 
-### @listify Decorator
+### @listify
 
-Make any function handle both single items and lists, with optional multi-threading:
+Make any function accept a single item or a list, with optional multi-threading:
 
 ```python
 @ptk.CoreUtils.listify(threading=True)
 def process_texture(filepath):
     return expensive_operation(filepath)
 
-# Automatically handles single or multiple inputs
-process_texture("texture.png")                    # Returns single result
-process_texture(["a.png", "b.png", "c.png"])      # Returns list (parallelized)
+process_texture("texture.png")                  # single result
+process_texture(["a.png", "b.png", "c.png"])    # list, parallelized
 ```
 
-### Directory Traversal with Filtering
+### Filtered directory traversal
 
 ```python
 files = ptk.get_dir_contents(
     "/path/to/project",
-    content="filepath",                           # Options: file, filename, filepath, dir, dirpath
+    content="filepath",              # file | filename | filepath | dir | dirpath
     recursive=True,
     inc_files=["*.py", "*.pyw"],
     exc_files=["*test*", "*_backup*"],
-    exc_dirs=["__pycache__", ".git", "venv"]
+    exc_dirs=["__pycache__", ".git", "venv"],
 )
-
-# Group results by type
-contents = ptk.get_dir_contents(
-    "/textures",
-    content=["filepath", "dirpath"],
-    group_by_type=True
-)
-# Returns: {'filepath': [...], 'dirpath': [...]}
 ```
 
-### Pattern Filtering
+### Wildcard filtering
 
-Filter lists or dictionaries using shell-style wildcards:
+The same include/exclude pattern language runs through the whole library:
 
 ```python
 ptk.filter_list(
     ["mesh_main", "mesh_backup", "mesh_LOD0", "cube_old"],
     inc=["mesh_*", "cube_*"],
-    exc=["*_backup", "*_old"]
+    exc=["*_backup", "*_old"],
 )
-# Returns: ['mesh_main', 'mesh_LOD0']
-
-ptk.filter_dict(
-    {"mesh_body": obj1, "mesh_head": obj2, "light_key": obj3},
-    inc=["mesh_*"],
-    keys=True
-)
-# Returns: {'mesh_body': obj1, 'mesh_head': obj2}
+# ['mesh_main', 'mesh_LOD0']
 ```
 
----
-
-## Texture & Image Processing
-
-### Channel Packing
-
-Pack grayscale maps into RGBA channels for game engines:
+### Texture maps — pack, convert, identify
 
 ```python
+# Pack grayscale maps into RGBA channels for game engines
 ptk.ImgUtils.pack_channels(
     channel_files={"R": "ao.png", "G": "roughness.png", "B": "metallic.png"},
-    output_path="packed_ORM.png"
+    output_path="packed_ORM.png",
 )
 
-ptk.ImgUtils.pack_channels(
-    channel_files={"R": "metallic.png", "G": "roughness.png", "B": "ao.png", "A": "height.png"},
-    output_path="packed_MRAH.tga",
-    output_format="TGA"
-)
-```
-
-### PBR Conversion
-
-Convert Specular/Glossiness to Metal/Roughness:
-
-```python
+# Spec/Gloss → Metal/Rough PBR conversion
 base_color, metallic, roughness = ptk.MapFactory.convert_spec_gloss_to_pbr(
-    specular_map="specular.png",
-    glossiness_map="gloss.png",
-    diffuse_map="diffuse.png"
+    specular_map="specular.png", glossiness_map="gloss.png", diffuse_map="diffuse.png",
 )
-```
 
-### Normal Map Generation
+# Bump/height → normal map
+ptk.MapFactory.convert_bump_to_normal("height.png", output_format="opengl", intensity=1.5)
 
-```python
-ptk.MapFactory.convert_bump_to_normal(
-    "height.png",
-    output_format="opengl",  # or "directx"
-    intensity=1.5,
-    edge_wrap=True
-)
-```
-
-### Texture Type Detection
-
-Identify texture types from filenames (100+ naming conventions):
-
-```python
+# Identify map types from filenames (100+ naming conventions)
 ptk.MapFactory.resolve_map_type("character_Normal_DirectX.png")  # "Normal_DirectX"
 ptk.MapFactory.resolve_map_type("material_BC.tga")               # "Base_Color"
-ptk.MapFactory.resolve_map_type("metal_AO.jpg")                  # "Ambient_Occlusion"
 ```
 
-### Map Converter & Map Packer UIs
+The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — ship in the [extapps](https://github.com/m3trik/extapps) repo; pythontk itself stays UI-agnostic.
 
-### UI panels (in `extapps`)
-
-The Qt panels that consume these helpers ship in the
-[extapps](https://github.com/m3trik/extapps) repo — `pythontk` itself
-remains DCC- and UI-agnostic. Each panel has a pythontk-side engine /
-helper that's reusable headlessly:
-
-- **Map Converter** (`extapps.map_converter`) — optimize, format-convert (DX↔GL normals, smoothness↔roughness, bump↔normal), unpack/repack channel-packed maps, and prep texture sets for engine workflows (Unity URP/HDRP, Unreal, glTF, Godot). Engine: `pythontk.ImgUtils` + `MapFactory`.
-- **Map Packer** (`extapps.map_packer`) — interactive RGBA channel packer with built-in presets (ORM, MSAO, MetallicSmoothness). Engine: `pythontk.ImgUtils` + `MapFactory`.
-- **Map Compositor** (`extapps.map_compositor`) — multi-layer texture compositing with auto DX/GL normal-map complement. Engine: `pythontk.MapCompositor`.
-
----
-
-## DCC Pipeline Utilities
-
-### Fuzzy Matching
-
-Match objects when numbering differs:
+### Batch rename & fuzzy matching
 
 ```python
-from pythontk import FuzzyMatcher
+ptk.find_str_and_format(["mesh_old", "cube_old"], to="*_new", fltr="*_old")
+# ['mesh_new', 'cube_new']
 
-matches, matched_missing, matched_extra = FuzzyMatcher.find_trailing_digit_matches(
+matches, matched_missing, matched_extra = ptk.FuzzyMatcher.find_trailing_digit_matches(
     missing_paths=["group1|mesh_01", "group1|mesh_02"],
-    extra_paths=["group1|mesh_03", "group1|mesh_05"]
+    extra_paths=["group1|mesh_03", "group1|mesh_05"],
 )
-# matches: list of {'target_path': 'group1|mesh_01', 'current_path': 'group1|mesh_03', ...}
-# matched_missing / matched_extra: paths the matcher consumed, ready to drop from each side
 ```
 
-### Batch Rename
+### Geometry & math
 
 ```python
-ptk.find_str_and_format(
-    ["mesh_old", "cube_old", "sphere_old"],
-    to="*_new",
-    fltr="*_old"
-)
-# Returns: ['mesh_new', 'cube_new', 'sphere_new']
+from pythontk import Polyline, ProgressionCurves
 
-ptk.find_str_and_format(
-    ["body", "head", "hands"],
-    to="character_**",  # ** = append
-    fltr="*"
-)
-# Returns: ['character_body', 'character_head', 'character_hands']
+ordered = Polyline.order_points(scattered_points, closed_path=True)
+smoothed = Polyline.smooth(ordered, window_size=3)
+
+factor = ProgressionCurves.ease_in_out(0.5)      # also: bounce, elastic, weighted, ...
+ptk.remap(50, old_range=(0, 100), new_range=(0, 1))   # 0.5
+
+ptk.collapse_integer_sequence([1, 2, 3, 5, 7, 8, 9, 15])   # "1-3, 5, 7-9, 15"
 ```
 
-### Integer Sequence Compression
+### Long-running task escape hatch
 
 ```python
-ptk.collapse_integer_sequence([1, 2, 3, 5, 7, 8, 9, 15])
-# Returns: "1-3, 5, 7-9, 15"
-
-ptk.collapse_integer_sequence([1, 2, 3, 5, 7, 8, 9, 15], limit=3)
-# Returns: "1-3, 5, 7-9, ..."
-```
-
-### Point Path Operations
-
-```python
-ordered = ptk.arrange_points_as_path(scattered_points, closed_path=True)
-smoothed = ptk.smooth_points(ordered, window_size=3)
-```
-
----
-
-## Animation & Math
-
-### Easing Curves
-
-```python
-from pythontk import ProgressionCurves
-
-# Available: linear, exponential, logarithmic, ease_in, ease_out,
-# ease_in_out, bounce, elastic, sine, smooth_step, weighted
-
-factor = ProgressionCurves.ease_in_out(0.5)
-factor = ProgressionCurves.bounce(0.5)
-factor = ProgressionCurves.elastic(0.5)
-factor = ProgressionCurves.weighted(0.5, weight_curve=2.0, weight_bias=0.3)
-factor = ProgressionCurves.calculate_progression_factor(5, 10, calculation_mode="ease_in_out")
-```
-
-### Range Remapping
-
-```python
-ptk.remap(50, old_range=(0, 100), new_range=(0, 1))  # 0.5
-ptk.remap([[0.5, 0.5], [0.0, 1.0]], old_range=(0, 1), new_range=(-1, 1))
-ptk.remap(150, old_range=(0, 100), new_range=(0, 1), clamp=True)  # 1.0
-```
-
----
-
-## Advanced Features
-
-### Execution Monitor
-
-```python
-from pythontk import ExecutionMonitor
-
-@ExecutionMonitor.execution_monitor(threshold=30, message="Processing")
+@ptk.ExecutionMonitor.execution_monitor(threshold=30, message="Processing")
 def batch_process():
-    # Shows dialog after 30s, allowing user to abort
-    ...
+    ...  # shows an abort dialog if it runs past 30s
 ```
 
-### Lazy Module Loading
-
-```python
-from pythontk.core_utils.module_resolver import bootstrap_package
-
-bootstrap_package(globals(), lazy_import=True, include={
-    "heavy_module": "*",
-    "optional_feature": ["SpecificClass"],
-})
-```
-
-### Plugin Discovery
+### Plugin discovery (AST-based — never executes plugin code)
 
 ```python
 plugins = ptk.get_classes_from_path(
-    "plugins/",
-    returned_type=["classobj", "filepath"],
-    inc=["*Plugin"],
-    exc=["*Base"]
+    "plugins/", returned_type=["classobj", "filepath"], inc=["*Plugin"], exc=["*Base"],
 )
-# Uses AST parsing – never executes plugin code
-```
-
-### Color Space Conversion
-
-```python
-linear_data = ptk.ImgUtils.srgb_to_linear(srgb_data)
-display_data = ptk.ImgUtils.linear_to_srgb(linear_data)
 ```
 
 ---
 
-## Reference
+## Infrastructure the ecosystem is built on
 
-| Function | Description |
-|----------|-------------|
-| `filter_list(lst, inc, exc)` | Filter with wildcards |
-| `filter_dict(d, inc, exc, keys)` | Filter dict keys/values |
-| `get_dir_contents(path, ...)` | Directory traversal |
-| `flatten(nested)` | Flatten nested lists |
-| `make_iterable(obj)` | Ensure iterable |
-| `remove_duplicates(lst)` | Dedupe preserving order |
-| `sanitize(text)` | Clean for filenames |
-| `remap(val, old, new)` | Remap ranges |
-| `clamp(val, min, max)` | Constrain to range |
-| `lerp(a, b, t)` | Linear interpolation |
+Beyond the data-type utilities, `core_utils` supplies the machinery every package in the chain shares:
 
-Full public surface (every class, method, signature) is auto-generated at [`API_REGISTRY.md`](../API_REGISTRY.md). The list above is a curated subset.
+- **`bootstrap_package`** (`module_resolver`) — the lazy-loading package root. Every ecosystem package (`uitk`, `mayatk`, `blendertk`, …) exposes its public surface through it.
+- **`PresetStore` / `TemplateSet` / `SchemaSpec` / `UserConfig`** — Qt-free named-preset and schema-validated-template stores with built-in + user tiers; uitk's `PresetManager` is a GUI over them.
+- **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges and of mayatk's `MayaConnection`.
+- **`QcLog` / `QcGate`** — structured run logs and threshold-based acceptance gates for batch pipelines.
+- **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in.
+
+## Links
+
+- **Full API:** [`API_REGISTRY.md`](../API_REGISTRY.md) · [`API_CHANGES.md`](../API_CHANGES.md)
+- **Changelog:** [`CHANGELOG.md`](../CHANGELOG.md)
+- **Contributor / AI-agent guide:** [`CLAUDE.md`](../CLAUDE.md)
+- **PyPI:** https://pypi.org/project/pythontk/
+- **Issues:** https://github.com/m3trik/pythontk/issues
 
 ## License
 
-MIT License
+MIT — see [LICENSE](../LICENSE).
