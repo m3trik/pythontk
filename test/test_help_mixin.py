@@ -7,11 +7,13 @@ Run with:
     python -m pytest test_help_mixin.py -v
     python test_help_mixin.py
 """
+import json
 import unittest
 from io import StringIO
 import sys
 
 from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.core_utils.symbol_record import SymbolRecord
 
 from conftest import BaseTestCase
 
@@ -470,6 +472,97 @@ class HelpMixinTest(BaseTestCase):
         # Should contain Optional and str
         self.assertIn("Optional", result)
         self.assertIn("str", result)
+
+    # =========================================================================
+    # Tests for structured output (as_dict / as_json)
+    # =========================================================================
+
+    def test_help_as_dict_class_payload(self):
+        """help(as_dict=True) returns a structured class payload."""
+        result = SampleClass.help(as_dict=True)
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["class"], "SampleClass")
+        self.assertIn("HelpMixin", result["mro"])
+        self.assertIsInstance(result["members"], list)
+
+    def test_help_as_dict_member_fields(self):
+        """Each member record carries the core + enriched fields."""
+        members = {m["name"]: m for m in SampleClass.help(as_dict=True)["members"]}
+        pm = members["public_method"]
+        self.assertEqual(pm["qualname"], "SampleClass.public_method")
+        self.assertEqual(pm["kind"], "method")
+        self.assertIn("arg1", pm["signature"])
+        self.assertEqual(pm["defined_in"], "SampleClass")
+        self.assertIn("test_help_mixin.py", pm["source"])
+        self.assertIn("flags", pm)
+
+    def test_help_as_dict_flags_async(self):
+        """async members surface an 'async' flag in structured output."""
+        members = {m["name"]: m for m in SampleClass.help(as_dict=True)["members"]}
+        self.assertIn("async", members["async_method"]["flags"])
+
+    def test_help_as_json_parses_to_dict_payload(self):
+        """as_json returns a JSON string equal to the as_dict payload."""
+        as_json = SampleClass.help(as_json=True)
+        self.assertIsInstance(as_json, str)
+        self.assertEqual(json.loads(as_json), SampleClass.help(as_dict=True))
+
+    def test_help_as_dict_single_member(self):
+        """help(name, as_dict=True) returns one enriched record."""
+        result = SampleClass.help("public_method", as_dict=True)
+        self.assertEqual(result["name"], "public_method")
+        self.assertEqual(result["defined_in"], "SampleClass")
+
+    def test_help_as_dict_nonexistent_member(self):
+        """A missing member yields an error payload, not an exception."""
+        result = SampleClass.help("nope", as_dict=True)
+        self.assertIn("error", result)
+
+    def test_help_as_dict_defined_in_tracks_inheritance(self):
+        """Inherited members report the defining class, not the subclass."""
+        members = {m["name"]: m for m in ChildClass.help(as_dict=True)["members"]}
+        self.assertEqual(members["public_method"]["defined_in"], "SampleClass")
+        self.assertEqual(members["child_method"]["defined_in"], "ChildClass")
+
+    def test_collect_records_returns_symbolrecords(self):
+        """_collect_records yields bare SymbolRecords (drift-gate shape)."""
+        records = SampleClass._collect_records(inherited=False)
+        self.assertTrue(all(isinstance(r, SymbolRecord) for r in records))
+        by_name = {r.name: r for r in records}
+        self.assertEqual(by_name["public_method"].qualname, "SampleClass.public_method")
+        self.assertEqual(by_name["from_string"].kind, "classmethod")
+        self.assertEqual(by_name["static_helper"].kind, "staticmethod")
+        self.assertEqual(by_name["doubled"].kind, "property")
+
+    def test_list_members_as_dict(self):
+        """list_members(as_dict=True) returns enriched records, not names."""
+        result = SampleClass.list_members(as_dict=True)
+        self.assertIsInstance(result, list)
+        self.assertTrue(all(isinstance(m, dict) for m in result))
+        self.assertIn("public_method", {m["name"] for m in result})
+
+    def test_classify_as_dict_all(self):
+        """classify(as_dict=True) returns a list of enriched records."""
+        result = SampleClass.classify(as_dict=True)
+        self.assertIsInstance(result, list)
+        self.assertIn("public_method", {m["name"] for m in result})
+
+    def test_classify_as_dict_single(self):
+        """classify(name, as_dict=True) returns one enriched record."""
+        result = SampleClass.classify("public_method", as_dict=True)
+        self.assertEqual(result["kind"], "method")
+
+    def test_about_as_dict(self):
+        """about(obj, as_dict=True) works on any object."""
+        result = HelpMixin.about(SampleClass.public_method, as_dict=True)
+        self.assertEqual(result["name"], "public_method")
+        self.assertIn("arg1", result["signature"])
+        self.assertIn("processes input", result["doc"])
+
+    def test_about_as_json(self):
+        """about(obj, as_json=True) returns a JSON string."""
+        result = HelpMixin.about(SampleClass, as_json=True)
+        self.assertEqual(json.loads(result)["name"], "SampleClass")
 
 
 if __name__ == "__main__":

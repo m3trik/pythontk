@@ -40,6 +40,7 @@ DEFAULT_INCLUDE = {
     "geo_utils.drape": "CurtainDrape",
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
+    "core_utils.symbol_record": "SymbolRecord",
     "core_utils.package_manager": "PackageManager",
     "core_utils.git": "Git",
     "core_utils.class_property": "ClassProperty",
@@ -97,6 +98,7 @@ DEFAULT_INCLUDE = {
     ],
     "net_utils.rpc.job": ["Call", "Result", "run_batch"],
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
+    "str_utils.hotkey_utils": "HotkeyUtils",
     "color_utils._color_utils": ["Color", "ColorPair", "Palette"],
 }
 
@@ -129,6 +131,7 @@ __all__ = [
     "FieldDoc",
     "TemplateSet",
     "HelpMixin",
+    "SymbolRecord",
     "LoggingMixin",
     "TableMixin",
     "NamespaceHandler",
@@ -167,6 +170,7 @@ __all__ = [
     "CurtainDrape",
     "StrUtils",
     "FuzzyMatcher",
+    "HotkeyUtils",
     "AudioUtils",
     "VidUtils",
     "Color",
