@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-07-01_
+_Generated: 2026-07-07_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -29,7 +29,7 @@ _Generated: 2026-07-01_
 - `class Deliverer`
   - methods: preflight, deliver
 - `class HandoffBridge(LoggingMixin)`
-  - methods: app_path, app_path, params_defaults, merge_params, send
+  - methods: app_path, params_defaults, merge_params, send
 - `class ScriptLaunchSpec`
 - `class ScriptLaunchDeliverer(Deliverer)`
   - methods: preflight, deliver, render
@@ -137,7 +137,7 @@ _Generated: 2026-07-01_
 - `sanitize_preset_name(name: str) -> str`
 - `class Codec`
 - `class PresetStore`
-  - methods: ext, user_dir, builtin_dir, active, active, list, source, exists, path, load, save, delete, rename
+  - methods: ext, user_dir, builtin_dir, active, list, source, exists, path, load, save, delete, rename
 
 ### `core_utils/qc_log.py` — Structured run logs and threshold-based acceptance gates for pipeline
 - `class GateError(RuntimeError)`
@@ -165,9 +165,13 @@ _Generated: 2026-07-01_
 - `class SingletonMixin`
   - methods: instance, has_instance, reset_instance
 
+### `core_utils/symbol_record.py` — SymbolRecord - the shared public-API symbol shape.
+- `class SymbolRecord`
+  - methods: as_dict, as_json, to_registry_row
+
 ### `core_utils/template_set.py` — A discoverable, user-extensible collection of schema-validated template files.
 - `class TemplateSet`
-  - methods: names, source, exists, user_dir, builtin_dir, active, active, delete, rename, path, raw, validate, load, skeleton, save, write_skeleton, markdown
+  - methods: names, source, exists, user_dir, builtin_dir, active, delete, rename, path, raw, validate, load, skeleton, save, write_skeleton, markdown
 
 ### `core_utils/user_config.py` — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - `user_config_root() -> Path`
@@ -205,7 +209,7 @@ _Generated: 2026-07-01_
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, compute_atlas_layout, assemble_atlas, radial_gradient, rasterize_silhouette, convert_rgb_to_gray, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, compute_atlas_layout, assemble_atlas, radial_gradient, rasterize_silhouette, convert_rgb_to_gray, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -219,7 +223,7 @@ _Generated: 2026-07-01_
 - `class BatchResult(Enum)`
 - `class NormalOutputMode(Enum)`
 - `class MapCompositor(ptk.LoggingMixin)`
-  - methods: removeNormalMap, removeNormalMap, reset, process_batch, apply_output_template, composite_images, retry_failed
+  - methods: removeNormalMap, reset, process_batch, apply_output_template, composite_images, retry_failed
 
 ### `img_utils/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
 - `class MapFactory(LoggingMixin)`
@@ -330,6 +334,10 @@ _Generated: 2026-07-01_
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`
   - methods: get_base_name, find_best_match, find_all_matches, find_trailing_digit_matches, find_unique_match, find_with_fallbacks, calculate_levenshtein_distance, similarity_from_distance
+
+### `str_utils/hotkey_utils.py` — Portable hotkey-token helpers shared by the ecosystem's macro managers.
+- `class HotkeyUtils`
+  - methods: parse_key, qt_sequence_to_key, key_to_qt_sequence, humanize_label
 
 ### `vid_utils/_vid_utils.py`
 - `class VidUtils(HelpMixin)`
