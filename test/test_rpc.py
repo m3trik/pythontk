@@ -28,7 +28,7 @@ from pythontk.net_utils.rpc.installer import (
     uninstall_plugin,
     is_plugin_installed,
 )
-from pythontk.net_utils.rpc.job import Call, Result, run_batch
+from pythontk.net_utils.rpc.job import Call, run_batch
 
 
 # ----------------------------------------------------------------------

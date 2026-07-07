@@ -5,7 +5,7 @@ import os
 import re
 import json
 import traceback
-from typing import Union, List, Dict, Tuple, Optional, Any
+from typing import Union, List, Tuple, Optional
 
 # From this package:
 from pythontk.core_utils._core_utils import CoreUtils
@@ -1001,7 +1001,7 @@ class FileUtils(HelpMixin):
                             mod = importlib.util.module_from_spec(spec)
                             spec.loader.exec_module(mod)
                             sys.modules[_filepath] = mod  # Cache it for consistency
-                        except Exception as e:
+                        except Exception:
                             continue
 
                     # Try to find the class in the loaded module

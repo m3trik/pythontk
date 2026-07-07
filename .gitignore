@@ -202,3 +202,7 @@ test/temp_tests/
 
 # Test runner output (regenerated each run)
 test/logs/
+
+# One-off test-run redirects (never commit)
+/out.txt
+/err.txt

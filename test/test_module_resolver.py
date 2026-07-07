@@ -9,7 +9,6 @@ import sys
 import tempfile
 import textwrap
 import types
-import unittest
 from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional, Any
 from dataclasses import dataclass, field
@@ -596,7 +595,7 @@ class ModuleResolverValidator:
             return ValidationResult(
                 "Package Structure",
                 False,
-                f"Package __init__.py not found",
+                "Package __init__.py not found",
             )
 
         # Discover subpackages

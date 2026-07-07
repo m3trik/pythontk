@@ -547,11 +547,7 @@ class StrUtils(CoreUtils):
             # Keep the first 'length' chars
             return string[:length] + insert
         elif mode == "middle":
-            # Split around the middle; allocate space for both sides
-            # Visible chars excluding insert
-            vis = max(1, length)
-            # If original code expected length as visible total excluding insert, we mimic prior behavior (it included insert area at trim point)
-            # We'll treat 'length' as the number of chars we preserve on each side total minus insert length.
+            # Split around the middle; visible chars exclude the insert
             avail = max(1, length - len(insert))
             if avail <= 1:
                 return string[0] + insert

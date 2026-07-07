@@ -6,7 +6,6 @@ import os
 import shutil
 import tempfile
 import unittest
-from pathlib import Path
 
 from pythontk.core_utils.preset_store import PresetStore, sanitize_preset_name
 from pythontk.core_utils.user_config import user_config_root, CONFIG_ROOT_ENV_VAR

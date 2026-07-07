@@ -1,5 +1,4 @@
 import tkinter as tk
-import sys
 
 
 def main():

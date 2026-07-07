@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import math
-from typing import Union, List
+from typing import List
 
 # From this package:
 from pythontk.math_utils._math_utils import MathUtils

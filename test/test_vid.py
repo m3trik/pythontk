@@ -632,7 +632,6 @@ class ExposureEqualizerTest(BaseTestCase):
     def test_strength_zero_is_near_passthrough(self) -> None:
         """strength=0 should leave pixels essentially unchanged (a LAB
         round-trip only), proving the blend term is wired."""
-        import numpy as np
         import cv2 as _cv2
         from pythontk import ExposureEqualizer
 
@@ -748,7 +747,6 @@ class ExposureEqualizerTest(BaseTestCase):
     )
     def test_global_reference_is_average_of_dirs(self) -> None:
         """'global' strategy targets the mean of every dir's stats."""
-        import numpy as np
         from pythontk.img_utils.exposure_equalizer import ExposureEqualizer
         eq = ExposureEqualizer()
         dark = self._make_dir("g_dark", 40)

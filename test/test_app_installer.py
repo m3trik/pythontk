@@ -3,7 +3,6 @@
 import sys
 import unittest
 import os
-import json
 import shutil
 import tempfile
 import zipfile

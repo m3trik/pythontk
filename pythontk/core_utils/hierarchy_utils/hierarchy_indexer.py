@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Callable
 
 
 class HierarchyIndexer:

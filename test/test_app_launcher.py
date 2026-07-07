@@ -3,7 +3,6 @@
 import sys
 import unittest
 import os
-import shutil
 import time
 
 # Ensure source is in path
@@ -88,7 +87,6 @@ class TestAppLauncher(unittest.TestCase):
             # We don't use AppLauncher.launch("python", ...) directly here because we need to ensure
             # we run the SAME python that is running this test to avoid environment mismatches.
             python_exe = sys.executable
-            cmd = [python_exe, fixture_path]
 
             # Use launch via the helper, but pass absolute path to python as identifier
             # We must use detached=False so that the PID we get is definitely the process running the window,

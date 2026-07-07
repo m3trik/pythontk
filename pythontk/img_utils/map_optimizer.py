@@ -19,10 +19,7 @@ import os
 import math
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict, Any, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from PIL import Image as PILImage
+from typing import List, Tuple, Dict, Any, Optional
 
 try:
     from PIL import Image

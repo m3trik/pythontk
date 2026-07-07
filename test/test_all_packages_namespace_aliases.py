@@ -7,7 +7,7 @@ Reusable test framework that can validate any package's namespace alias configur
 
 import sys
 import unittest
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 
 class NamespaceAliasEdgeCaseTests:
@@ -246,7 +246,7 @@ class TestAllPackagesNamespaceAliases(unittest.TestCase):
                 for alias in info["aliases"]:
                     print(f"     - {alias}")
             else:
-                print(f"  [--] No namespace aliases configured")
+                print("  [--] No namespace aliases configured")
         print("=" * 60 + "\n")
 
         # Test passes if discovery completed without exceptions
