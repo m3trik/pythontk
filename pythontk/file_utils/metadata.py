@@ -181,7 +181,7 @@ class MetadataInternal:
 
         if os.name == "nt":
             try:
-                from win32com.propsys import propsys, pscon
+                from win32com.propsys import propsys
                 from win32com.shell import shellcon
                 import pythoncom
             except ImportError:

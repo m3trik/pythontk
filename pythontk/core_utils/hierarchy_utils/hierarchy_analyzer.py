@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Any, Dict, List, Set, Tuple, Callable, Optional
+from typing import Any, Dict, List, Set, Callable
 from dataclasses import dataclass
 from enum import Enum
 

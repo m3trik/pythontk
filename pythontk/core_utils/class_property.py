@@ -1,6 +1,5 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Dict, Optional, Any
 
 
 class ClassProperty:

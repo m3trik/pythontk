@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-01_
+_Generated: 2026-07-07_
 
 ## Index
 
@@ -35,6 +35,7 @@ _Generated: 2026-07-01_
 - [`core_utils/schema_spec.py`](#core_utils--schema_spec) — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 - [`core_utils/script_template.py`](#core_utils--script_template) — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
+- [`core_utils/symbol_record.py`](#core_utils--symbol_record) — SymbolRecord - the shared public-API symbol shape.
 - [`core_utils/template_set.py`](#core_utils--template_set) — A discoverable, user-extensible collection of schema-validated template files.
 - [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
@@ -69,6 +70,7 @@ _Generated: 2026-07-01_
 - [`net_utils/ssh_client.py`](#net_utils--ssh_client)
 - [`str_utils/_str_utils.py`](#str_utils--_str_utils)
 - [`str_utils/fuzzy_matcher.py`](#str_utils--fuzzy_matcher)
+- [`str_utils/hotkey_utils.py`](#str_utils--hotkey_utils) — Portable hotkey-token helpers shared by the ecosystem's macro managers.
 - [`vid_utils/_vid_utils.py`](#vid_utils--_vid_utils)
 - [`vid_utils/frame_extractor.py`](#vid_utils--frame_extractor) — Extract still frames from a video file via OpenCV.
 
@@ -152,7 +154,6 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
 - **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L131)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
-  - `HandoffBridge.app_path(self, value: Optional[str]) -> None`
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
   - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
@@ -199,7 +200,7 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 <a id="core_utils--class_property"></a>
 ### `core_utils/class_property.py`
 
-- **[`class ClassProperty`](pythontk/pythontk/core_utils/class_property.py#L6)** — A descriptor for class-level properties (replaces @classmethod @property).
+- **[`class ClassProperty`](pythontk/pythontk/core_utils/class_property.py#L5)** — A descriptor for class-level properties (replaces @classmethod @property).
 
 <a id="core_utils--cli"></a>
 ### `core_utils/cli.py`
@@ -230,7 +231,7 @@ Subprocess-based dialog viewer for custom button labels.
 <a id="core_utils--execution_monitor--_gif_viewer"></a>
 ### `core_utils/execution_monitor/_gif_viewer.py`
 
-- [`run(gif_path, target_size=DEFAULT_SIZE, pos=None)`](pythontk/pythontk/core_utils/execution_monitor/_gif_viewer.py#L48)
+- [`run(gif_path, target_size=DEFAULT_SIZE, pos=None)`](pythontk/pythontk/core_utils/execution_monitor/_gif_viewer.py#L47)
 
 <a id="core_utils--execution_monitor--_spinner"></a>
 ### `core_utils/execution_monitor/_spinner.py`
@@ -242,7 +243,7 @@ Lightweight canvas-based spinner for task-indicator overlay.
 <a id="core_utils--git"></a>
 ### `core_utils/git.py`
 
-- **[`class Git`](pythontk/pythontk/core_utils/git.py#L10)** — A wrapper around git subprocess commands for a specific repository.
+- **[`class Git`](pythontk/pythontk/core_utils/git.py#L9)** — A wrapper around git subprocess commands for a specific repository.
   - `Git.execute(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]` — Run a generic shell command in the repository directory.
   - `Git.run(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]` — Run a git command in the repository.
   - `Git.checkout(self, branch: str)` — Checkout a branch.
@@ -258,15 +259,15 @@ Lightweight canvas-based spinner for task-indicator overlay.
 
 HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
 
-- **[`class HelpMixin`](pythontk/pythontk/core_utils/help_mixin.py#L14)** — A mixin providing enhanced help() functionality with filtering and sorting.
-  - `HelpMixin.help(cls, name: Optional[str] = None, *, members: Optional[str] = None, inherited: bool = True, brief: bool = False, sort: bool = False, private: bool = False, returns: bool = False) -> Optional[str]` *(class)* — Display or return help information for this class or a specific member.
+- **[`class HelpMixin`](pythontk/pythontk/core_utils/help_mixin.py#L17)** — A mixin providing enhanced help() functionality with filtering and sorting.
+  - `HelpMixin.help(cls, name: Optional[str] = None, *, members: Optional[str] = None, inherited: bool = True, brief: bool = False, sort: bool = False, private: bool = False, returns: bool = False, as_dict: bool = False, as_json: bool = False) -> Any` *(class)* — Display or return help information for this class or a specific member.
   - `HelpMixin.source(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]` *(class)* — Get source code for the class or a specific member.
   - `HelpMixin.where(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]` *(class)* — Get the file and line number where the class or member is defined.
   - `HelpMixin.show_mro(cls, *, brief: bool = False, returns: bool = False) -> Optional[str]` *(class)* — Show the method resolution order (inheritance chain) for this class.
   - `HelpMixin.signature(cls, name: str, *, returns: bool = False) -> Optional[str]` *(class)* — Get detailed signature information for a method.
-  - `HelpMixin.classify(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]` *(class)* — Classify a member or list all members with their classifications.
-  - `HelpMixin.list_members(cls, members: Optional[str] = None, *, inherited: bool = True, private: bool = False, sort: bool = True, returns: bool = False) -> Optional[List[str]]` *(class)* — Get a list of member names.
-  - `HelpMixin.about(target, name=None, *, brief=False, returns=False)` *(static)* — Get help for any Python object (class, function, module, method, etc.).
+  - `HelpMixin.classify(cls, name: Optional[str] = None, *, returns: bool = False, as_dict: bool = False, as_json: bool = False) -> Any` *(class)* — Classify a member or list all members with their classifications.
+  - `HelpMixin.list_members(cls, members: Optional[str] = None, *, inherited: bool = True, private: bool = False, sort: bool = True, returns: bool = False, as_dict: bool = False, as_json: bool = False) -> Any` *(class)* — Get a list of member names.
+  - `HelpMixin.about(target, name=None, *, brief=False, returns=False, as_dict=False, as_json=False)` *(static)* — Get help for any Python object (class, function, module, method, etc.).
 
 <a id="core_utils--hierarchy_utils--hierarchy_analyzer"></a>
 ### `core_utils/hierarchy_utils/hierarchy_analyzer.py`
@@ -441,7 +442,6 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
   - `PresetStore.user_dir(self) -> Path` *(property)* — Writable preset directory (created lazily on first :meth:`save`).
   - `PresetStore.builtin_dir(self) -> Optional[Path]` *(property)* — Read-only shipped preset directory, or ``None`` when not configured.
   - `PresetStore.active(self) -> Optional[str]` *(property)* — The last-selected preset name, or ``None`` when unset/unreadable.
-  - `PresetStore.active(self, name: Optional[str]) -> None` — Set (or clear, with ``None``) the active-preset pointer.
   - `PresetStore.list(self, tier: Optional[str] = None) -> List[str]` — Sorted preset names.
   - `PresetStore.source(self, name: str) -> Optional[str]` — Which tier *name* resolves from: ``"user"``, ``"builtin"``, or ``None``.
   - `PresetStore.exists(self, name: str) -> bool`
@@ -504,6 +504,16 @@ Generic on-disk script-template discovery + ``__KEY__`` rendering.
   - `SingletonMixin.has_instance(cls, singleton_key: Optional[Any] = None) -> bool` *(class)*
   - `SingletonMixin.reset_instance(cls, singleton_key: Optional[Any] = None) -> None` *(class)*
 
+<a id="core_utils--symbol_record"></a>
+### `core_utils/symbol_record.py`
+
+SymbolRecord - the shared public-API symbol shape.
+
+- **[`class SymbolRecord`](pythontk/pythontk/core_utils/symbol_record.py#L40)** — One public symbol: a top-level function or a class member.
+  - `SymbolRecord.as_dict(self) -> Dict[str, Any]` — Plain ``dict`` of the fields (matches the ``hierarchy_diff`` convention).
+  - `SymbolRecord.as_json(self, indent: int = 2) -> str` — JSON string of :meth:`as_dict`.
+  - `SymbolRecord.to_registry_row(self) -> str` — Render the full-registry class-member bullet.
+
 <a id="core_utils--template_set"></a>
 ### `core_utils/template_set.py`
 
@@ -516,7 +526,6 @@ A discoverable, user-extensible collection of schema-validated template files.
   - `TemplateSet.user_dir(self) -> Path` *(property)* — Writable directory users drop their own templates into.
   - `TemplateSet.builtin_dir(self) -> Optional[Path]` *(property)*
   - `TemplateSet.active(self) -> Optional[str]` *(property)* — Last-selected template name (persisted across sessions).
-  - `TemplateSet.active(self, name: Optional[str]) -> None`
   - `TemplateSet.delete(self, name: str) -> bool` — Delete a *user* template (built-ins are read-only).
   - `TemplateSet.rename(self, old: str, new: str) -> bool`
   - `TemplateSet.path(self, name: str, tier: str = 'user') -> Path`
@@ -612,7 +621,7 @@ Procedural draped-cloth (curtain) generator — pure geometry, no DCC.
 Point-cloud geometry — analyze and group unordered sets of points.
 
 - **[`class PointCloud`](pythontk/pythontk/geo_utils/pointcloud.py#L23)** — Stateless point-cloud geometry (alignment / clustering / hashing).
-  - `PointCloud.pca_transform(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1) -> Optional[List[float]]` *(static)* — Transform that aligns ``points_b`` onto ``points_a`` via PCA axis alignment.
+  - `PointCloud.pca_transform(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1, normals_a: Optional['np.ndarray'] = None, normals_b: Optional['np.ndarray'] = None, normal_threshold: float = 0.8) -> Optional[List[float]]` *(static)* — Transform that aligns ``points_b`` onto ``points_a`` via PCA axis alignment.
   - `PointCloud.cluster_by_distance(points: Sequence[Sequence[float]], threshold: float) -> List[List[int]]` *(static)* — Group points into clusters linked by proximity (threshold flood-fill).
   - `PointCloud.hash_points(points, precision=4)` *(static)* — Hash the given list of point values (fixed-point, position-stable).
 
@@ -646,6 +655,7 @@ Pure polyline / curve geometry — generate, measure, sample, reshape.
   - `ImgUtils.register_dds_codec(cls, codec) -> None` *(class)* — Register an external DDS codec for block formats Pillow can't write.
   - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
+  - `ImgUtils.list_image_files(cls, directory, exts=None, full_paths=False)` *(class)* — Sorted image file names in a directory (non-recursive).
   - `ImgUtils.get_images(cls, directory, inc=None, exc='')` *(class)* — Get bitmap images from a given directory as PIL images.
   - `ImgUtils.get_image_size(image_path: str) -> Optional[Tuple[int, int]]` *(static)* — ``(width, height)`` of an image, read as cheaply as possible.
   - `ImgUtils.get_image_info(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]` *(class)* — Get information about image files.
@@ -687,7 +697,7 @@ Pure polyline / curve geometry — generate, measure, sample, reshape.
 
 Cross-set exposure / white-balance equalization.
 
-- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L34)** — Equalize exposure / WB across a list of source directories.
+- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L35)** — Equalize exposure / WB across a list of source directories.
   - `ExposureEqualizer.is_available(self) -> bool`
   - `ExposureEqualizer.equalize_directories(self, source_dirs: Sequence[str], output_root: str, reference_dir: Optional[str] = None, suffix: str = '_eq', sample_count: int = 20, strength: float = 1.0, reference_strategy: str = 'first', quality: int = 100, preserve_exif: bool = True) -> List[str]` — Equalize every image in ``source_dirs`` against the reference set.
 
@@ -696,7 +706,7 @@ Cross-set exposure / white-balance equalization.
 
 Perceptual-hash + sharpness curation for large image sets.
 
-- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L41)** — Pre-SfM content-dedup + sharpness culling.
+- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L42)** — Pre-SfM content-dedup + sharpness culling.
   - `ImageCurator.is_available(self) -> bool`
   - `ImageCurator.dhash(image, size: int = 8) -> int` *(static)* — Difference hash.
   - `ImageCurator.hamming(a: int, b: int) -> int` *(static)*
@@ -713,7 +723,6 @@ Pure image-compositing engine — alpha-composite layered texture maps
 - **[`class NormalOutputMode(Enum)`](pythontk/pythontk/img_utils/map_compositor.py#L35)** — How the engine handles DirectX/OpenGL normal-map output.
 - **[`class MapCompositor(ptk.LoggingMixin)`](pythontk/pythontk/img_utils/map_compositor.py#L55)** — Alpha-composite layered texture maps and auto-generate the
   - `MapCompositor.removeNormalMap(self) -> bool` *(property)*
-  - `MapCompositor.removeNormalMap(self, value: bool) -> None`
   - `MapCompositor.reset(self) -> None` — Clear per-session state (masks, progress counters).
   - `MapCompositor.process_batch(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult` — Drive a full composite → retry-with-mask → re-composite cycle.
   - `MapCompositor.apply_output_template(self, output_dir: str) -> List[str]` — Post-process composited output for a target workflow.
@@ -872,8 +881,8 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 Plan, assess, and apply map (texture) optimizations.
 
-- **[`class Op`](pythontk/pythontk/img_utils/map_optimizer.py#L70)** — One operation in an optimization plan.
-- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/img_utils/map_optimizer.py#L83)** — Plan, assess, and apply map (texture) optimizations.
+- **[`class Op`](pythontk/pythontk/img_utils/map_optimizer.py#L67)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/img_utils/map_optimizer.py#L80)** — Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
   - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
@@ -906,7 +915,7 @@ Plan, assess, and apply map (texture) optimizations.
 
 Background mask generation via rembg (optional dependency).
 
-- **[`class MaskGenerator`](pythontk/pythontk/img_utils/mask_generator.py#L41)** — Run rembg over a directory of images and write binary masks.
+- **[`class MaskGenerator`](pythontk/pythontk/img_utils/mask_generator.py#L42)** — Run rembg over a directory of images and write binary masks.
   - `MaskGenerator.is_available(self) -> bool`
   - `MaskGenerator.generate_masks(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]` — Generate alpha-channel masks for every image in ``input_dir``.
 
@@ -1123,10 +1132,21 @@ One-shot batch pipeline over :class:`RpcClient`.
   - `FuzzyMatcher.calculate_levenshtein_distance(s1: str, s2: str) -> int` *(static)* — Calculate Levenshtein (edit) distance between two strings.
   - `FuzzyMatcher.similarity_from_distance(s1: str, s2: str) -> float` *(static)* — Calculate similarity score from Levenshtein distance.
 
+<a id="str_utils--hotkey_utils"></a>
+### `str_utils/hotkey_utils.py`
+
+Portable hotkey-token helpers shared by the ecosystem's macro managers.
+
+- **[`class HotkeyUtils`](pythontk/pythontk/str_utils/hotkey_utils.py#L19)** — Maya-style hotkey-token <-> Qt-key-sequence conversion + label humanizing.
+  - `HotkeyUtils.parse_key(cls, key: str) -> Tuple[bool, bool, bool, str]` *(class)* — Split a hotkey token into ``(ctl, alt, sht, key)``.
+  - `HotkeyUtils.qt_sequence_to_key(cls, sequence: str) -> str` *(class)* — Convert a Qt key-sequence string (``"Ctrl+Shift+I"``) to this
+  - `HotkeyUtils.key_to_qt_sequence(cls, key: str) -> str` *(class)* — Convert this convention's token (``"ctl+sht+i"``) to a Qt
+  - `HotkeyUtils.humanize_label(name: str, prefix: str = '', acronyms: Optional[Dict[str, str]] = None) -> str` *(static)* — Humanize a ``snake_case`` name for display, e.g.
+
 <a id="vid_utils--_vid_utils"></a>
 ### `vid_utils/_vid_utils.py`
 
-- **[`class VidUtils(HelpMixin)`](pythontk/pythontk/vid_utils/_vid_utils.py#L13)**
+- **[`class VidUtils(HelpMixin)`](pythontk/pythontk/vid_utils/_vid_utils.py#L16)**
   - `VidUtils.get_frame_rate(cls, value: Union[str, float, int]) -> Union[float, str]` *(class)* — Converts between frame rate names and values.
   - `VidUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Finds FFmpeg executable path in system path or managed installs.
   - `VidUtils.get_video_frame_rate(cls, filepath: str) -> float` *(class)* — Extracts frame rate from a video file using FFmpeg.

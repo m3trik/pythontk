@@ -11,7 +11,6 @@ import sys
 import tempfile
 import os
 import unittest
-from unittest.mock import patch, MagicMock
 
 from pythontk.core_utils.package_manager import (
     PackageManager,

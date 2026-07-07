@@ -64,7 +64,7 @@ class ModuleReloaderTests(BaseTestCase):
         return module
 
     def test_reload_submodules_and_dependencies(self) -> None:
-        pkg = self._make_package(
+        self._make_package(
             "reloader_pkg_a",
             init_body="""
                 value = "initial"
@@ -102,7 +102,7 @@ class ModuleReloaderTests(BaseTestCase):
         self.assertEqual(sys.modules["reloader_pkg_a.dep"].value, "dep-initial")
 
     def test_reload_skips_missing_modules_when_not_import_missing(self) -> None:
-        pkg = self._make_package(
+        self._make_package(
             "reloader_pkg_b",
             init_body="""
                 from . import dep
@@ -129,7 +129,7 @@ class ModuleReloaderTests(BaseTestCase):
         self.assertNotIn("reloader_pkg_b.extra", refreshed_names)
 
     def test_reload_handles_modules_named_init(self) -> None:
-        pkg = self._make_package(
+        self._make_package(
             "reloader_pkg_c",
             init_body="""
                 from . import inner
@@ -264,11 +264,11 @@ class ModuleReloaderTests(BaseTestCase):
                 module_events[module_name] = []
             module_events[module_name].append(event_type)
 
-        for module_name, types in module_events.items():
+        for module_name, event_types in module_events.items():
             self.assertEqual(
-                types,
+                event_types,
                 ["before", "after"],
-                f"Module {module_name} events mismatch: {types}",
+                f"Module {module_name} events mismatch: {event_types}",
             )
 
     def test_reload_respects_dependency_ordering(self) -> None:

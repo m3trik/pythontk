@@ -33,9 +33,10 @@ except ImportError:
     PIL_AVAILABLE = False
     Image = None
 
-logger = logging.getLogger(__name__)
+# From this package:
+from pythontk.img_utils._img_utils import ImgUtils
 
-IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp")
+logger = logging.getLogger(__name__)
 
 
 class MaskGenerator:
@@ -76,10 +77,7 @@ class MaskGenerator:
             return []
 
         os.makedirs(output_dir, exist_ok=True)
-        sources = sorted(
-            f for f in os.listdir(input_dir)
-            if f.lower().endswith(IMAGE_EXTS)
-        )
+        sources = ImgUtils.list_image_files(input_dir)
         if not sources:
             logger.warning(f"No images found in {input_dir}")
             return []

@@ -1,7 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
 import sys
-import math
 import tkinter as tk
 
 DEFAULT_SIZE = 128

@@ -218,7 +218,10 @@ class ExecutionMonitor:
             cmd = [executable, script_path]
             pos = ExecutionMonitor._get_cursor_pos()
             if pos:
-                cmd.extend(["--pos", f"{pos[0]},{pos[1]}"])
+                # '=' form is required: on a monitor left/above the primary the
+                # coordinates are negative, and a separate "-122,-341" token is
+                # parsed by argparse as an option flag (exit 2, no spinner).
+                cmd.append(f"--pos={pos[0]},{pos[1]}")
 
             process = subprocess.Popen(
                 cmd,

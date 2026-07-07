@@ -6,9 +6,12 @@ This module provides a mixin class that enhances class introspection by wrapping
 and extending Python's built-in help() functionality with filtering, sorting,
 and targeted output options.
 """
+import json
 import inspect
 import pydoc
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
+from pythontk.core_utils.symbol_record import SymbolRecord
 
 
 class HelpMixin:
@@ -67,7 +70,9 @@ class HelpMixin:
         sort: bool = False,
         private: bool = False,
         returns: bool = False,
-    ) -> Optional[str]:
+        as_dict: bool = False,
+        as_json: bool = False,
+    ) -> Any:
         """Display or return help information for this class or a specific member.
 
         Parameters:
@@ -95,7 +100,20 @@ class HelpMixin:
             >>> MyClass.help(brief=True)                # Brief summaries
             >>> MyClass.help(members="methods")         # Only methods
             >>> MyClass.help(inherited=False, sort=True) # Own members, sorted
+            >>> MyClass.help(as_dict=True)               # Structured dict (agent/RPC)
+            >>> MyClass.help("method", as_json=True)     # One member as JSON
         """
+        # Structured output for programmatic / cross-process (live-DCC) callers.
+        if as_dict or as_json:
+            return cls._structured_help(
+                name=name,
+                members=members,
+                inherited=inherited,
+                sort=sort,
+                private=private,
+                as_json=as_json,
+            )
+
         # Specific member requested - use built-in help or return targeted info
         if name is not None:
             return cls._help_for_member(name, brief=brief, returns=returns)
@@ -273,15 +291,7 @@ class HelpMixin:
         if member_type is None:
             member_type = cls._get_member_type(cls, name, member)
 
-        # Get signature if callable
-        sig = ""
-        if callable(member) and member_type != "property":
-            try:
-                # Unwrap to get true signature
-                unwrapped = inspect.unwrap(member)
-                sig = str(inspect.signature(unwrapped))
-            except (ValueError, TypeError):
-                sig = "(...)"
+        sig = cls._safe_signature(member, member_type)
 
         # Get first line of docstring using inspect.getdoc for cleaner output
         doc = ""
@@ -315,15 +325,7 @@ class HelpMixin:
 
         lines = []
 
-        # Header with signature
-        sig = ""
-        if callable(member) and member_type != "property":
-            try:
-                # Unwrap to get true signature
-                unwrapped = inspect.unwrap(member)
-                sig = str(inspect.signature(unwrapped))
-            except (ValueError, TypeError):
-                sig = "(...)"
+        sig = cls._safe_signature(member, member_type)
 
         # Build type label with flags
         flags = cls._get_member_flags(member)
@@ -358,6 +360,138 @@ class HelpMixin:
                     return line.split(". ")[0] + "."
                 return line
         return ""
+
+    # -------------------------------------------------------------------------
+    # Structured Output (SymbolRecord)
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def _structured_help(
+        cls,
+        *,
+        name: Optional[str],
+        members: Optional[str],
+        inherited: bool,
+        sort: bool,
+        private: bool,
+        as_json: bool,
+    ) -> Any:
+        """Build the structured payload for ``help(as_dict=...)``.
+
+        A single member yields one enriched record dict; the whole class yields
+        ``{class, bases, mro, doc, members:[...]}``. This is the shape the
+        live-DCC RPC and any agent tooling consume.
+        """
+        if name is not None:
+            member = getattr(cls, name, None)
+            if member is None:
+                payload: Any = {"error": f"'{cls.__name__}' has no member '{name}'"}
+            else:
+                payload = cls._enrich(cls._record_for(name, member))
+        else:
+            records = cls._collect_records(
+                members=members, inherited=inherited, private=private
+            )
+            if sort:
+                records = sorted(records, key=lambda r: r.name)
+            payload = {
+                "class": cls.__name__,
+                "bases": [b.__name__ for b in cls.__bases__],
+                "mro": [k.__name__ for k in inspect.getmro(cls)],
+                "doc": cls._get_summary(cls.__doc__) if cls.__doc__ else "",
+                "members": [cls._enrich(r) for r in records],
+            }
+        return json.dumps(payload, indent=2) if as_json else payload
+
+    @classmethod
+    def _collect_records(
+        cls,
+        *,
+        members: Optional[str] = None,
+        inherited: bool = True,
+        private: bool = False,
+    ) -> List[SymbolRecord]:
+        """Collect members as bare :class:`SymbolRecord`s.
+
+        The core, un-enriched shape - shared with the static API registry, so
+        the runtime-vs-static drift gate can compare the two producers directly.
+        """
+        return [
+            cls._record_for(name, member, member_type)
+            for name, member, member_type in cls._collect_members(
+                members=members, inherited=inherited, private=private
+            )
+        ]
+
+    @classmethod
+    def _record_for(
+        cls, name: str, member: Any, member_type: Optional[str] = None
+    ) -> SymbolRecord:
+        """Build one :class:`SymbolRecord` for a resolved member."""
+        if member_type is None:
+            member_type = cls._get_member_type(cls, name, member)
+        doc = inspect.getdoc(member)
+        return SymbolRecord(
+            name=name,
+            qualname=f"{cls.__name__}.{name}",
+            kind=member_type,
+            signature=cls._safe_signature(member, member_type),
+            summary=cls._get_summary(doc) if doc else "",
+            line=cls._safe_line(member),
+            deprecated=cls._is_deprecated(member),
+        )
+
+    @classmethod
+    def _enrich(cls, record: SymbolRecord) -> Dict[str, Any]:
+        """Layer runtime-only fields onto a record's dict.
+
+        Kept off :class:`SymbolRecord` itself so the static registry sidecar
+        (which serialises the bare record) is unaffected: ``flags`` (async /
+        generator / abstract), ``defined_in`` (the MRO class that owns it), and
+        a resolved ``source`` (file:line).
+        """
+        member = getattr(cls, record.name, None)
+        data = record.as_dict()
+        flags = cls._get_member_flags(member) if member is not None else ""
+        data["flags"] = flags.split(", ") if flags else []
+        data["defined_in"] = cls._defining_class_name(record.name)
+        data["source"] = cls.where(record.name, returns=True)
+        return data
+
+    @classmethod
+    def _defining_class_name(cls, name: str) -> Optional[str]:
+        """Name of the first MRO class whose ``__dict__`` defines ``name``."""
+        for klass in inspect.getmro(cls):
+            if name in klass.__dict__:
+                return klass.__name__
+        return None
+
+    @staticmethod
+    def _safe_signature(member: Any, member_type: str) -> str:
+        """Rendered signature, or ``''`` for non-callables/properties."""
+        if not callable(member) or member_type == "property":
+            return ""
+        try:
+            return str(inspect.signature(inspect.unwrap(member)))
+        except (ValueError, TypeError):
+            return "(...)"
+
+    @staticmethod
+    def _safe_line(member: Any) -> int:
+        """1-based definition line, or ``0`` if unavailable (builtin/C)."""
+        try:
+            return inspect.getsourcelines(inspect.unwrap(member))[1]
+        except (OSError, TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _is_deprecated(member: Any) -> bool:
+        """True if the callable carries a ``__deprecated__`` marker."""
+        try:
+            target = inspect.unwrap(member) if callable(member) else member
+        except Exception:
+            target = member
+        return bool(getattr(target, "__deprecated__", False))
 
     # -------------------------------------------------------------------------
     # Source Code Methods
@@ -619,7 +753,9 @@ class HelpMixin:
         name: Optional[str] = None,
         *,
         returns: bool = False,
-    ) -> Optional[str]:
+        as_dict: bool = False,
+        as_json: bool = False,
+    ) -> Any:
         """Classify a member or list all members with their classifications.
 
         Shows detailed information including:
@@ -638,7 +774,20 @@ class HelpMixin:
         Examples:
             >>> MyClass.classify("my_method")   # Single member
             >>> MyClass.classify()              # All members
+            >>> MyClass.classify(as_dict=True)  # Enriched records (type/owner/flags)
         """
+        if as_dict or as_json:
+            if name is not None:
+                member = getattr(cls, name, None)
+                payload: Any = (
+                    {"error": f"'{cls.__name__}' has no member '{name}'"}
+                    if member is None
+                    else cls._enrich(cls._record_for(name, member))
+                )
+            else:
+                payload = [cls._enrich(r) for r in cls._collect_records()]
+            return json.dumps(payload, indent=2) if as_json else payload
+
         if name is not None:
             # Classify single member
             member = getattr(cls, name, None)
@@ -758,7 +907,9 @@ class HelpMixin:
         private: bool = False,
         sort: bool = True,
         returns: bool = False,
-    ) -> Optional[List[str]]:
+        as_dict: bool = False,
+        as_json: bool = False,
+    ) -> Any:
         """Get a list of member names.
 
         Parameters:
@@ -776,7 +927,17 @@ class HelpMixin:
             >>> MyClass.list_members()                    # All public members
             >>> MyClass.list_members("methods")           # Only methods
             >>> names = MyClass.list_members(returns=True)
+            >>> MyClass.list_members(as_dict=True)         # Enriched member records
         """
+        if as_dict or as_json:
+            records = cls._collect_records(
+                members=members, inherited=inherited, private=private
+            )
+            if sort:
+                records = sorted(records, key=lambda r: r.name)
+            payload = [cls._enrich(r) for r in records]
+            return json.dumps(payload, indent=2) if as_json else payload
+
         collected = cls._collect_members(
             members=members,
             inherited=inherited,
@@ -799,6 +960,8 @@ class HelpMixin:
         *,
         brief=False,
         returns=False,
+        as_dict=False,
+        as_json=False,
     ):
         """Get help for any Python object (class, function, module, method, etc.).
 
@@ -853,6 +1016,23 @@ class HelpMixin:
             # Get docstring
             doc = inspect.getdoc(target) or "No documentation available."
 
+            if as_dict or as_json:
+                try:
+                    unwrapped_target = inspect.unwrap(target)
+                    src_file = inspect.getsourcefile(unwrapped_target)
+                    src_line = inspect.getsourcelines(unwrapped_target)[1]
+                    source = f"{src_file}:{src_line}" if src_file else None
+                except (OSError, TypeError, ValueError):
+                    source = None
+                info = {
+                    "name": display_name,
+                    "signature": sig,
+                    "module": getattr(target, "__module__", None),
+                    "doc": inspect.getdoc(target) or "",
+                    "source": source,
+                }
+                return json.dumps(info, indent=2) if as_json else info
+
             if brief:
                 # Just first line
                 first_line = doc.split("\n")[0].strip()
@@ -879,8 +1059,6 @@ class HelpMixin:
 # --------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from abc import abstractmethod
-
     # Example usage
     class BaseClass(HelpMixin):
         """Base class with some methods."""

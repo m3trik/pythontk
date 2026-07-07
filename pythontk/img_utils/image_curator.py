@@ -33,9 +33,10 @@ except ImportError:
     np = None
     CV2_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+# From this package:
+from pythontk.img_utils._img_utils import ImgUtils
 
-IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp")
+logger = logging.getLogger(__name__)
 
 
 class ImageCurator:
@@ -186,9 +187,7 @@ class ImageCurator:
             if not os.path.isdir(src_dir):
                 logger.warning(f"Source dir missing, skipping: {src_dir}")
                 continue
-            files = sorted(
-                f for f in os.listdir(src_dir) if f.lower().endswith(IMAGE_EXTS)
-            )
+            files = ImgUtils.list_image_files(src_dir)
             for i, name in enumerate(files):
                 path = os.path.join(src_dir, name)
                 img = cv2.imread(path)

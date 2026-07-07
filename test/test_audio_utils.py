@@ -271,7 +271,6 @@ class TestBuildCompositeWav(BaseTestCase):
         path = self._wav("half.wav", half_sec, sample_rate=sr)
 
         out = os.path.join(self.tmpdir, "comp.wav")
-        handler = logging.handlers = []
 
         class _Capture:
             msgs = []

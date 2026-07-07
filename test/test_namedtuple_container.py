@@ -7,7 +7,6 @@ Run with:
     python -m pytest test_namedtuple_container.py -v
     python test_namedtuple_container.py
 """
-import csv
 import os
 import tempfile
 import unittest

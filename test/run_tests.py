@@ -227,7 +227,6 @@ def update_readme_badge(passed: int, failed: int, readme_path: Path) -> bool:
 
     content = readme_path.read_text(encoding="utf-8")
 
-    total = passed + failed
     if failed == 0:
         color = "brightgreen"
         status = f"{passed} passed"
@@ -238,8 +237,11 @@ def update_readme_badge(passed: int, failed: int, readme_path: Path) -> bool:
         color = "orange"
         status = f"{passed} passed, {failed} failed"
 
-    # Create the new badge
-    new_badge = f"[![Tests](https://img.shields.io/badge/Tests-{status.replace(' ', '%20').replace(',', '')}-{color}.svg)](test/)"
+    # Link target computed relative to the README's location
+    # (docs/README.md -> ../test/), so a regenerate can't break the link.
+    test_dir = Path(__file__).resolve().parent
+    link_target = Path(os.path.relpath(test_dir, readme_path.parent)).as_posix() + "/"
+    new_badge = f"[![Tests](https://img.shields.io/badge/Tests-{status.replace(' ', '%20').replace(',', '')}-{color}.svg)]({link_target})"
 
     # Check if a Tests badge already exists and replace it
     tests_badge_pattern = (
@@ -301,14 +303,6 @@ def main():
     # Ensure test directory is in path for imports
     if str(test_dir) not in sys.path:
         sys.path.insert(0, str(test_dir))
-
-    print(f"DEBUG: sys.path[0]: {sys.path[0]}")
-    try:
-        import pythontk
-
-        print(f"DEBUG: pythontk file: {getattr(pythontk, '__file__', 'namespace')}")
-    except ImportError:
-        print("DEBUG: Could not import pythontk")
 
     # Run tests
     runner = TestRunner(test_dir, verbosity=verbosity)

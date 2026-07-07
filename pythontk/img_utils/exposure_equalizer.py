@@ -26,9 +26,10 @@ except ImportError:
     np = None
     CV2_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+# From this package:
+from pythontk.img_utils._img_utils import ImgUtils
 
-IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp")
+logger = logging.getLogger(__name__)
 
 
 class ExposureEqualizer:
@@ -155,11 +156,7 @@ class ExposureEqualizer:
         return per_dir[0][1], per_dir[0][2]
 
     def _list_images(self, directory: str) -> List[str]:
-        return sorted(
-            os.path.join(directory, f)
-            for f in os.listdir(directory)
-            if f.lower().endswith(IMAGE_EXTS)
-        )
+        return ImgUtils.list_image_files(directory, full_paths=True)
 
     def _sample_stats(self, directory: str, sample_count: int):
         files = self._list_images(directory)

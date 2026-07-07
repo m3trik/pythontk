@@ -1,5 +1,4 @@
 import unittest
-import logging
 from pythontk.core_utils.logging_mixin import LoggerExt
 
 

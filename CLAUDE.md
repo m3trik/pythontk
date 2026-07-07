@@ -2,7 +2,7 @@
 
 **Role**: Core Python utils (file IO, strings, math, audio). DCC-agnostic, zero-dependency where possible.
 
-**Nav**: [← root](../CLAUDE.md) · **Used by**: [uitk](../uitk/CLAUDE.md) · [mayatk](../mayatk/CLAUDE.md) · [tentacle](../tentacle/CLAUDE.md) · [unitytk](../unitytk/CLAUDE.md)
+**Nav**: [← root](../CLAUDE.md) · [docs](docs/README.md) · **Used by**: [uitk](../uitk/CLAUDE.md) · [mayatk](../mayatk/CLAUDE.md) · [tentacle](../tentacle/CLAUDE.md) · [unitytk](../unitytk/CLAUDE.md)
 
 ## Hard rules
 

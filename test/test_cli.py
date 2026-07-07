@@ -1,6 +1,6 @@
 import unittest
 import argparse
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 try:
     from pythontk.core_utils.cli import CLI

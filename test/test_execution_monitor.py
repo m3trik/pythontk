@@ -3,23 +3,13 @@ import time
 import threading
 import sys
 import os
+import subprocess
 import tempfile
 from unittest.mock import MagicMock, patch
 from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
-
+from pythontk import ExecutionMonitor as PublicExecutionMonitor
 
 from conftest import BaseTestCase
-import inspect
-import sys
-
-print(f"DEBUG: ExecutionMonitor file: {inspect.getfile(ExecutionMonitor)}")
-print(
-    f"DEBUG: pythontk.core_utils.execution_monitor in sys.modules: {'pythontk.core_utils.execution_monitor' in sys.modules}"
-)
-if "pythontk.core_utils.execution_monitor" in sys.modules:
-    print(
-        f"DEBUG: pythontk.core_utils.execution_monitor file: {getattr(sys.modules['pythontk.core_utils.execution_monitor'], '__file__', 'unknown')}"
-    )
 
 
 class TestExecutionMonitor(BaseTestCase):
@@ -730,6 +720,206 @@ class TestExecutionMonitor(BaseTestCase):
                 # Should have retried 3 times then fallen back
                 self.assertEqual(mock_api.PyThreadState_SetAsyncExc.call_count, 3)
                 mock_interrupt.assert_called_once()
+
+
+class TestExecutionMonitorPythonExecutable(unittest.TestCase):
+    """`_get_python_executable` DCC-host resolution (maya/max/nuke/generic)."""
+
+    def _test_resolution(self, current_exe, file_system, expected_result):
+        """Helper to test resolution logic.
+
+        Parameters:
+            current_exe: value of sys.executable.
+            file_system: set/list of paths that "exist" for this case.
+            expected_result: path that should be returned.
+        """
+        with patch("sys.executable", current_exe):
+            with patch("os.path.exists") as mock_exists:
+
+                def side_effect(path):
+                    path = path.lower().replace("\\", "/")
+                    return any(
+                        f.lower().replace("\\", "/") == path for f in file_system
+                    )
+
+                mock_exists.side_effect = side_effect
+
+                result = ExecutionMonitor._get_python_executable()
+                self.assertEqual(
+                    result.lower().replace("\\", "/"),
+                    expected_result.lower().replace("\\", "/"),
+                )
+
+    def test_standard_python(self):
+        """Standard python should return itself."""
+        exe = r"C:\Python39\python.exe"
+        self._test_resolution(exe, {exe}, exe)
+
+    def test_maya(self):
+        """maya.exe should find mayapy.exe."""
+        exe = r"C:\Program Files\Autodesk\Maya2025\bin\maya.exe"
+        mayapy = r"C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe"
+        self._test_resolution(exe, {exe, mayapy}, mayapy)
+
+    def test_mayabatch(self):
+        """mayabatch.exe should find mayapy.exe."""
+        exe = r"C:\Program Files\Autodesk\Maya2025\bin\mayabatch.exe"
+        mayapy = r"C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe"
+        self._test_resolution(exe, {exe, mayapy}, mayapy)
+
+    def test_3dsmax(self):
+        """3dsmax.exe should find 3dsmaxpy.exe."""
+        exe = r"C:\Max\3dsmax.exe"
+        maxpy = r"C:\Max\3dsmaxpy.exe"
+        self._test_resolution(exe, {exe, maxpy}, maxpy)
+
+    def test_generic_app_bundled_python(self):
+        """SomeApp.exe with a sibling python.exe."""
+        exe = r"C:\App\SomeApp.exe"
+        python = r"C:\App\python.exe"
+        self._test_resolution(exe, {exe, python}, python)
+
+    def test_unknown_app_no_python(self):
+        """UnknownApp.exe with no python sibling returns itself (safest fallback)."""
+        exe = r"C:\App\UnknownApp.exe"
+        self._test_resolution(exe, {exe}, exe)
+
+    def test_nuke(self):
+        """Nuke13.0.exe with a sibling python.exe."""
+        exe = r"C:\Nuke\Nuke13.0.exe"
+        python = r"C:\Nuke\python.exe"
+        self._test_resolution(exe, {exe, python}, python)
+
+
+class TestExecutionMonitorSpinner(unittest.TestCase):
+    """Spinner subprocess lifecycle and the public re-export surface."""
+
+    def test_public_import(self):
+        """ExecutionMonitor is importable from the top-level pythontk package."""
+        self.assertTrue(hasattr(PublicExecutionMonitor, "on_long_execution"))
+
+    @unittest.skipUnless(
+        sys.platform == "win32" or os.environ.get("DISPLAY"),
+        "Requires a display (headless CI has no GUI)",
+    )
+    def test_spinner_process_start_stop(self):
+        """Start and stop the spinner process directly."""
+        process = ExecutionMonitor._start_spinner_process()
+        self.assertIsNotNone(process)
+
+        time.sleep(1)
+        self.assertIsNone(process.poll())  # still running
+
+        ExecutionMonitor._stop_spinner_process(process)
+        self.assertIsNotNone(process.poll())  # stopped
+
+    @unittest.skipUnless(
+        sys.platform == "win32" or os.environ.get("DISPLAY"),
+        "Requires a display (headless CI has no GUI)",
+    )
+    def test_spinner_subprocess_stays_alive(self):
+        """The spinner subprocess runs without crashing.
+
+        Launches _spinner.py directly and confirms it stays alive for at
+        least 2 seconds (proves the tkinter mainloop is running).
+        """
+        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script_path = os.path.join(
+            current_dir,
+            "pythontk",
+            "core_utils",
+            "execution_monitor",
+            "_spinner.py",
+        )
+
+        if not os.path.exists(script_path):
+            self.skipTest("Spinner script not found")
+
+        executable = ExecutionMonitor._get_python_executable()
+        startupinfo = None
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+        proc = subprocess.Popen(
+            [executable, script_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            startupinfo=startupinfo,
+        )
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                _, err = proc.communicate(timeout=2)
+                self.fail(
+                    f"Spinner exited immediately (code={proc.returncode}). "
+                    f"stderr: {err.decode(errors='replace')}"
+                )
+            time.sleep(0.2)
+
+        proc.terminate()
+        proc.wait(timeout=3)
+
+    @unittest.skipUnless(
+        sys.platform == "win32" or os.environ.get("DISPLAY"),
+        "Requires a display (headless CI has no GUI)",
+    )
+    def test_spinner_accepts_negative_position(self):
+        """--pos must accept negative coordinates (cursor on a monitor
+        left/above the primary). A space-separated "--pos -122,-341" is
+        parsed by argparse as an option flag and exits with code 2 —
+        the launcher must use the '=' form.
+        """
+        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script_path = os.path.join(
+            current_dir,
+            "pythontk",
+            "core_utils",
+            "execution_monitor",
+            "_spinner.py",
+        )
+        if not os.path.exists(script_path):
+            self.skipTest("Spinner script not found")
+
+        executable = ExecutionMonitor._get_python_executable()
+        proc = subprocess.Popen(
+            [executable, script_path, "--pos=-100,-200"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            time.sleep(1)
+            if proc.poll() is not None:
+                _, err = proc.communicate(timeout=2)
+                self.fail(
+                    f"Spinner rejected negative --pos (code={proc.returncode}). "
+                    f"stderr: {err.decode(errors='replace')}"
+                )
+        finally:
+            proc.terminate()
+            proc.wait(timeout=3)
+
+    def test_decorator_with_indicator(self):
+        """The decorator runs the tkinter spinner indicator without error."""
+        callback_called = [False]
+
+        def my_callback():
+            callback_called[0] = True
+            return True  # Continue
+
+        @ExecutionMonitor.on_long_execution(
+            threshold=0.5, callback=my_callback, indicator=True
+        )
+        def long_task():
+            time.sleep(1.5)
+            return "Done"
+
+        result = long_task()
+
+        self.assertEqual(result, "Done")
+        self.assertTrue(callback_called[0], "Callback should have been triggered")
 
 
 if __name__ == "__main__":

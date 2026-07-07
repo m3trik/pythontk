@@ -638,7 +638,7 @@ class PackageResolverHandle:
                         continue
 
                     class_names = tuple(expanded_class_names)
-                except (ImportError, AttributeError) as e:
+                except (ImportError, AttributeError):
                     # If we can't expand wildcard, skip this alias
                     continue
 
@@ -656,7 +656,7 @@ class PackageResolverHandle:
                         self.module_globals[class_name] = cls
                     else:
                         missing_classes.append(class_name)
-            except (ImportError, AttributeError) as e:
+            except (ImportError, AttributeError):
                 # Module import failed, try individual class resolution
                 for class_name in class_names:
                     if class_name in self.module_globals:

@@ -7,7 +7,7 @@ import logging as internal_logging
 import re
 import unicodedata
 from collections import deque
-from typing import Union, List, Optional, Any, Callable
+from typing import Union, List, Optional, Any
 from pythontk.core_utils.class_property import ClassProperty
 
 

@@ -1,5 +1,4 @@
 import unittest
-import sys
 import os
 import socket
 from unittest.mock import MagicMock, patch
@@ -172,6 +171,68 @@ class TestSSHClient(unittest.TestCase):
         mock_client.exec_command.assert_called_with(
             "ls -la", get_pty=False, timeout=None
         )
+
+    @patch("pythontk.net_utils.ssh_client.paramiko.SSHClient")
+    def test_execute_transport_drains_output_buffered_at_exit(self, mock_ssh_cls):
+        """Captured PTY output must include chunks still buffered when the exit
+        status arrives.
+
+        Bug: the transport read loop broke on ``exit_status_ready()`` after at
+        most one 4096-byte read per stream, dropping any output still queued.
+        """
+        mock_client = mock_ssh_cls.return_value
+        channel = MagicMock()
+        transport = mock_client.get_transport.return_value
+        transport.active = True
+        transport.open_session.return_value = channel
+
+        chunks = [b"first-chunk ", b"second-chunk"]
+        channel.recv_ready.side_effect = lambda: bool(chunks)
+        channel.recv.side_effect = lambda n: chunks.pop(0)
+        channel.recv_stderr_ready.return_value = False
+        # Exit status is known from the very first poll — both chunks are
+        # already sitting in the receive buffer.
+        channel.exit_status_ready.return_value = True
+        channel.recv_exit_status.return_value = 0
+
+        client = SSHClient("test.host")
+        client._connected = True
+
+        out, err, code = client.execute("cat big.txt", use_pty=True)
+
+        self.assertEqual(out, "first-chunk second-chunk")
+        self.assertEqual(err, "")
+        self.assertEqual(code, 0)
+
+    @patch("pythontk.net_utils.ssh_client.paramiko.SSHClient")
+    def test_execute_transport_multibyte_char_split_across_chunks(self, mock_ssh_cls):
+        """A UTF-8 character split across two recv() chunks must decode intact.
+
+        Bug: each chunk was decoded independently with ``errors="replace"``,
+        so a multi-byte character straddling a 4096-byte chunk boundary became
+        two replacement characters instead of the character itself.
+        """
+        mock_client = mock_ssh_cls.return_value
+        channel = MagicMock()
+        transport = mock_client.get_transport.return_value
+        transport.active = True
+        transport.open_session.return_value = channel
+
+        # "café" with the 2-byte é (b"\xc3\xa9") split across the chunks.
+        chunks = [b"caf\xc3", b"\xa9 au lait"]
+        channel.recv_ready.side_effect = lambda: bool(chunks)
+        channel.recv.side_effect = lambda n: chunks.pop(0)
+        channel.recv_stderr_ready.return_value = False
+        channel.exit_status_ready.return_value = True
+        channel.recv_exit_status.return_value = 0
+
+        client = SSHClient("test.host")
+        client._connected = True
+
+        out, err, code = client.execute("cat utf8.txt", use_pty=True)
+
+        self.assertEqual(out, "café au lait")
+        self.assertEqual(code, 0)
 
 
 from pythontk.net_utils._net_utils import NetUtils
