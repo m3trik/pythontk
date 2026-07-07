@@ -25,7 +25,7 @@ try:
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
 try:
-    from PIL import Image, ImageEnhance, ImageOps, ImageFilter, ImageChops, ImageDraw
+    from PIL import Image, ImageOps, ImageFilter, ImageChops, ImageDraw
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
     Image = None  # type: ignore# from this package:
@@ -71,6 +71,12 @@ class ImgUtils(HelpMixin):
 
     # Backward-compatible alias for the historical flat list (discovery surfaces).
     texture_file_types = list(recognized)
+
+    # Plain photographic raster formats (dotted, lowercase) — the directory-scan
+    # set shared by the photogrammetry/SfM ingest cluster (ExposureEqualizer /
+    # ImageCurator / MaskGenerator). A deliberate semantic subset of
+    # ``image_formats``: capture stills only, no float/texture formats.
+    IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp")
 
     # DDS block-compression formats Pillow's writer handles directly (no external
     # tool). BC7 / BC6H are not in this set — they need a registered codec.
@@ -632,6 +638,34 @@ class ImgUtils(HelpMixin):
         return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), mode="RGB")
 
     @classmethod
+    def list_image_files(cls, directory, exts=None, full_paths=False):
+        """Sorted image file names in a directory (non-recursive).
+
+        Parameters:
+            directory (str): Directory to scan.
+            exts (str/tuple, optional): Dotted extension(s) to accept, any
+                    case; a bare string is treated as a single extension.
+                    Defaults to :attr:`IMAGE_EXTS` (plain photographic formats).
+            full_paths (bool): Return joined ``directory/name`` paths instead
+                    of bare file names.
+
+        Returns:
+            (list) Sorted file names, or joined paths when ``full_paths=True``.
+        """
+        if exts is None:
+            exts = cls.IMAGE_EXTS
+        else:
+            # A bare string would tuple-ize into single characters and
+            # silently match on them; names are compared lowercased.
+            if isinstance(exts, str):
+                exts = (exts,)
+            exts = tuple(e.lower() for e in exts)
+        names = sorted(f for f in os.listdir(directory) if f.lower().endswith(exts))
+        if full_paths:
+            return [os.path.join(directory, f) for f in names]
+        return names
+
+    @classmethod
     def get_images(
         cls,
         directory,
@@ -795,7 +829,7 @@ class ImgUtils(HelpMixin):
         imA = cls.ensure_image(imageA)
         imB = cls.ensure_image(imageB)
 
-        if np.sum(np.array(ImageChops.difference(imA, imB).getdata())) == 0:
+        if np.sum(np.array(ImageChops.difference(imA, imB))) == 0:
             return True
         return False
 

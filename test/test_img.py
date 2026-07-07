@@ -62,7 +62,7 @@ class ImgTest(BaseTestCase):
             os.path.join(cls.test_dir, "im_Base_color.png")
         )
         # Create 16-bit height map
-        ImgUtils.create_image("I", (1024, 1024), 32767).save(
+        ImgUtils.create_image("I;16", (1024, 1024), 32767).save(
             os.path.join(cls.test_dir, "im_Height_16.png")
         )
         # Create 8-bit height map
@@ -1449,6 +1449,40 @@ class ValidateImageIntegrityTest(unittest.TestCase):
     def test_unknown_extension_is_not_rejected(self):
         ok, _ = ImgUtils.validate_image_integrity(self._write(".png", b"\x89PNG" + b"0" * 50))
         self.assertTrue(ok)
+
+
+class ListImageFilesTest(unittest.TestCase):
+    """ImgUtils.list_image_files — the SfM-ingest directory-scan SSoT."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        for name in ("b.png", "a.JPG", "notes.txt", "c.tiff"):
+            with open(os.path.join(self.tmp, name), "wb") as f:
+                f.write(b"x")
+
+    def test_default_exts_sorted_names(self):
+        # Case-insensitive ext match, non-images excluded, sorted by name.
+        self.assertEqual(
+            ImgUtils.list_image_files(self.tmp), ["a.JPG", "b.png", "c.tiff"]
+        )
+
+    def test_full_paths(self):
+        paths = ImgUtils.list_image_files(self.tmp, full_paths=True)
+        self.assertEqual(
+            [os.path.basename(p) for p in paths], ["a.JPG", "b.png", "c.tiff"]
+        )
+        self.assertTrue(all(os.path.isfile(p) for p in paths))
+
+    def test_custom_exts(self):
+        self.assertEqual(ImgUtils.list_image_files(self.tmp, exts=(".png",)), ["b.png"])
+
+    def test_exts_accepts_bare_string_and_any_case(self):
+        # A bare string must not be tuple-ized into single characters,
+        # and caller-supplied extensions match case-insensitively.
+        self.assertEqual(ImgUtils.list_image_files(self.tmp, exts=".png"), ["b.png"])
+        self.assertEqual(ImgUtils.list_image_files(self.tmp, exts=(".PNG",)), ["b.png"])
+        self.assertEqual(ImgUtils.list_image_files(self.tmp, exts=(".jpg",)), ["a.JPG"])
 
 
 if __name__ == "__main__":

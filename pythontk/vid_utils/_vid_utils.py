@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import os
+import logging
 import subprocess
 import shutil
 import re
@@ -8,6 +9,8 @@ from typing import Optional, Union
 
 # from this package:
 from pythontk.core_utils.help_mixin import HelpMixin
+
+logger = logging.getLogger(__name__)
 
 
 class VidUtils(HelpMixin):
@@ -198,9 +201,7 @@ class VidUtils(HelpMixin):
             try:
                 frame_rate = cls.get_video_frame_rate(input_filepath)
             except RuntimeError as err:
-                print(
-                    f"[VidUtils] Warning: {err} - falling back to 24 fps for compression."
-                )
+                logger.warning(f"{err} - falling back to 24 fps for compression.")
                 frame_rate = 24
 
         ffmpeg_cmd = [ffmpeg_path, "-y"]
@@ -231,7 +232,7 @@ class VidUtils(HelpMixin):
             if option not in {"codec", "crf", "preset", "pixel_format"}:
                 ffmpeg_cmd.extend([f"-{option}", str(value)])
 
-        print(f"Running FFmpeg: {' '.join(ffmpeg_cmd)}")
+        logger.info(f"Running FFmpeg: {' '.join(ffmpeg_cmd)}")
 
         try:
             # Use Popen to stream output to avoid hanging UI without feedback
@@ -254,15 +255,16 @@ class VidUtils(HelpMixin):
                 if not line and process.poll() is not None:
                     break
                 if line:
-                    print(line.strip())
+                    logger.info(line.strip())
 
             if process.returncode != 0:
-                print(
-                    f"Error during FFmpeg compression. Exit code: {process.returncode}"
+                logger.error(
+                    f"FFmpeg compression failed for '{input_filepath}'. "
+                    f"Exit code: {process.returncode}"
                 )
                 return None
 
-            print(f"Compressed video saved to: {output_filepath}")
+            logger.info(f"Compressed video saved to: {output_filepath}")
 
             if (
                 delete_original
@@ -270,12 +272,12 @@ class VidUtils(HelpMixin):
                 and os.path.exists(input_filepath)
             ):
                 os.remove(input_filepath)
-                print(f"Original file {input_filepath} deleted.")
+                logger.info(f"Original file {input_filepath} deleted.")
 
             return output_filepath
 
         except Exception as e:
-            print(f"Error executing FFmpeg: {e}")
+            logger.error(f"Error executing FFmpeg: {e}")
             return None
 
 
