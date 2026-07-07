@@ -1,8 +1,8 @@
-import os
+import codecs
 import sys
 import time
 import socket
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 
 from .credentials import Credentials
 
@@ -168,28 +168,54 @@ class SSHClient:
             []
         )  # PTY merges stderr into stdout usually, but we'll try capture separate if possible
 
+        # Incremental decoders: a multi-byte character can straddle a 4096-byte
+        # chunk boundary, and decoding each chunk independently would turn it
+        # into replacement characters.
+        stdout_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        stderr_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
         while True:
             # Reading logic
+            pumped = False
             if channel.recv_ready():
-                data = channel.recv(4096).decode("utf-8", errors="replace")
+                data = stdout_decoder.decode(channel.recv(4096))
                 if stream:
                     sys.stdout.write(data)
                     sys.stdout.flush()
                 else:
                     captured_stdout.append(data)
+                pumped = True
 
             if channel.recv_stderr_ready():
-                data = channel.recv_stderr(4096).decode("utf-8", errors="replace")
+                data = stderr_decoder.decode(channel.recv_stderr(4096))
                 if stream:
                     sys.stderr.write(data)
                     sys.stderr.flush()
                 else:
                     captured_stderr.append(data)
+                pumped = True
 
-            if channel.exit_status_ready():
-                break
+            if not pumped:
+                # Only stop once the exit status is known AND both buffers are
+                # drained — the status can arrive while output is still queued,
+                # and each iteration reads at most one chunk per stream.
+                if channel.exit_status_ready():
+                    break
+                time.sleep(0.05)
 
-            time.sleep(0.05)
+        # Flush any bytes still buffered in the decoders (a trailing
+        # incomplete sequence renders as a replacement character).
+        for decoder, sink, out in (
+            (stdout_decoder, sys.stdout, captured_stdout),
+            (stderr_decoder, sys.stderr, captured_stderr),
+        ):
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                if stream:
+                    sink.write(tail)
+                    sink.flush()
+                else:
+                    out.append(tail)
 
         exit_code = channel.recv_exit_status()
 
