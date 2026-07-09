@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.80"
+__version__ = "0.8.82"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -37,6 +37,7 @@ DEFAULT_INCLUDE = {
     "math_utils.noise": "BandLimitedNoise",
     "geo_utils.polyline": "Polyline",
     "geo_utils.pointcloud": "PointCloud",
+    "geo_utils.assembly_sorter": "AssemblySorter",
     "geo_utils.drape": "CurtainDrape",
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
@@ -47,6 +48,7 @@ DEFAULT_INCLUDE = {
     "core_utils.logging_mixin": ["LoggingMixin", "TableMixin"],
     "core_utils.namespace_handler": "NamespaceHandler",
     "core_utils.namedtuple_container": "NamedTupleContainer",
+    "core_utils.color": ["Color", "ColorPair", "Palette"],
     "core_utils.hierarchy_utils.hierarchy_diff": "HierarchyDiff",
     "core_utils.singleton_mixin": "SingletonMixin",
     "core_utils.module_reloader": ["ModuleReloader", "reload_package"],
@@ -99,7 +101,6 @@ DEFAULT_INCLUDE = {
     "net_utils.rpc.job": ["Call", "Result", "run_batch"],
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
     "str_utils.hotkey_utils": "HotkeyUtils",
-    "color_utils._color_utils": ["Color", "ColorPair", "Palette"],
 }
 
 
@@ -167,6 +168,7 @@ __all__ = [
     "BandLimitedNoise",
     "Polyline",
     "PointCloud",
+    "AssemblySorter",
     "CurtainDrape",
     "StrUtils",
     "FuzzyMatcher",

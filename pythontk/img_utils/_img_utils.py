@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import math
-import re
 import struct
 
 # OpenCV reads this once, when its EXR codec first initializes (often at the
@@ -2188,9 +2187,11 @@ class ImgUtils(HelpMixin):
         """Extracts the base texture name from a filename or path,
         removing known suffixes (e.g., _normal, _roughness).
 
-        Logic:
-        - Long suffixes (>3 chars): Case-insensitive.
-        - Short suffixes (<=3 chars): Must start with a capital letter (rest case-insensitive) to avoid false positives.
+        Logic (see ``MapRegistry.get_suffix_strip_pattern`` — the SSoT):
+        - Underscore-delimited suffixes: case-insensitive at any length (``_ao``).
+        - Attached long suffixes (>3 chars): case-insensitive.
+        - Attached short suffixes (<=3 chars): must start with a capital letter
+          (rest case-insensitive) to avoid false positives.
 
         Parameters:
             filepath_or_filename (str): A texture path or name.
@@ -2209,47 +2210,11 @@ class ImgUtils(HelpMixin):
 
         from pythontk.img_utils.map_registry import MapRegistry
 
-        short_suffixes = []
-        long_suffixes = []
-
-        for type_aliases in MapRegistry().get_map_types().values():
-            for alias in type_aliases:
-                if len(alias) <= 3:
-                    short_suffixes.append(alias)
-                else:
-                    long_suffixes.append(alias)
-
-        # Sort by length descending to ensure longest match first
-        short_suffixes.sort(key=len, reverse=True)
-        long_suffixes.sort(key=len, reverse=True)
-
-        patterns = []
-
-        # Long suffixes: Case insensitive
-        if long_suffixes:
-            p = "|".join(re.escape(s) for s in long_suffixes)
-            patterns.append(f"(?i:{p})")
-
-        # Short suffixes: Start with capital, rest case insensitive
-        if short_suffixes:
-            short_parts = []
-            for s in short_suffixes:
-                if s and s[0].isalpha():
-                    # Enforce first char case (assuming registry has it capitalized)
-                    first = s[0].upper()
-                    rest = re.escape(s[1:])
-                    short_parts.append(f"{first}(?i:{rest})")
-                else:
-                    short_parts.append(re.escape(s))
-
-            p_short = "|".join(short_parts)
-            patterns.append(p_short)
-
-        suffixes_pattern = "|".join(patterns)
-
-        # Pattern: (underscore + suffix) OR (suffix) at end
-        pattern = f"(?:_{suffixes_pattern}|{suffixes_pattern})$"
-        base_name = StrUtils.format_suffix(base_name, strip=pattern)
+        # Canonical suffix pattern lives on the registry (the alias owner) so
+        # this and MapFactory.get_base_texture_name can never drift apart.
+        pattern = MapRegistry().get_suffix_strip_pattern()
+        if pattern:
+            base_name = StrUtils.format_suffix(base_name, strip=pattern)
 
         # Strip any configured user prefix/suffix so callers can re-apply them
         # idempotently, then collapse a trailing underscore (preserves the

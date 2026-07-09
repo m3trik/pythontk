@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Tuple, Any, Union
 from pythontk.core_utils.singleton_mixin import SingletonMixin
@@ -549,6 +550,7 @@ class MapRegistry(SingletonMixin):
     # Built lazily on first call and cached for the singleton's lifetime.
     _sorted_candidates: Optional[list] = None
     _resolve_cache: Optional[dict] = None
+    _suffix_strip_pattern: Optional[str] = None
 
     def get(self, name: str) -> Optional[MapType]:
         """Get a map type by name."""
@@ -611,6 +613,62 @@ class MapRegistry(SingletonMixin):
         if self._resolve_cache is not None:
             self._resolve_cache[name_only] = result
         return result
+
+    def get_suffix_strip_pattern(self) -> Optional[str]:
+        """Regex matching one trailing map-type suffix (any registered alias).
+
+        Single source of truth for base-name resolution — both
+        ``MapFactory.get_base_texture_name`` and ``ImgUtils.get_base_texture_name``
+        consume this pattern (they once carried drifted copies of it).
+
+        Matching rules:
+        - Underscore-delimited suffixes match case-insensitively at any length
+          (``brick_ao`` → ``brick``) — the explicit ``_`` boundary makes false
+          positives unlikely.
+        - Attached suffixes are case-insensitive only when longer than 3 chars;
+          short ones require a capital first letter (``brickAO``, not
+          ``brickao``) so ordinary words aren't misread as map types.
+
+        Returns:
+            str | None: The compiled-ready pattern, or None when no maps are
+            registered.
+        """
+        if self._suffix_strip_pattern is None:
+            all_aliases = sorted(
+                {a for aliases in self.get_map_types().values() for a in aliases},
+                key=len,
+                reverse=True,
+            )
+            if not all_aliases:
+                return None
+
+            p_underscore = "|".join(re.escape(s) for s in all_aliases)
+            pattern_underscore = f"_(?i:{p_underscore})$"
+
+            short_suffixes = [s for s in all_aliases if len(s) <= 3]
+            long_suffixes = [s for s in all_aliases if len(s) > 3]
+
+            attached_parts = []
+            if long_suffixes:
+                p_long = "|".join(re.escape(s) for s in long_suffixes)
+                attached_parts.append(f"(?i:{p_long})")
+            if short_suffixes:
+                p_short_parts = []
+                for s in short_suffixes:
+                    if s and s[0].isalpha():
+                        first = s[0].upper()
+                        rest = re.escape(s[1:])
+                        p_short_parts.append(f"{first}(?i:{rest})")
+                    else:
+                        p_short_parts.append(re.escape(s))
+                attached_parts.append("|".join(p_short_parts))
+
+            pattern_attached = f"(?:{'|'.join(attached_parts)})$"
+
+            self.__class__._suffix_strip_pattern = (
+                f"(?:{pattern_underscore}|{pattern_attached})"
+            )
+        return self._suffix_strip_pattern
 
     def get_workflow_presets(self) -> Dict[str, Dict[str, Any]]:
         """Generate the workflow presets dictionary."""

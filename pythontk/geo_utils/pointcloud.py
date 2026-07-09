@@ -11,7 +11,7 @@ primitives these compose, :class:`pythontk.MathUtils`.
 """
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, TYPE_CHECKING
+from typing import Callable, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.iter_utils._iter_utils import IterUtils
@@ -107,7 +107,6 @@ class PointCloud:
                 - Cylindrical symmetry (eigenvalue degeneracy)
                 - Large point clouds (via sampling)
                 - Arbitrary rotations (tests spin around symmetric axis)
-                Note: robust=True requires scipy.spatial.KDTree.
             sample_size: Max points to use for KDTree queries when robust=True.
             symmetry_threshold: Relative eigenvalue difference to detect cylindrical
                 symmetry. If two eigenvalues are within this ratio of each other,
@@ -130,8 +129,10 @@ class PointCloud:
             if dependencies are unavailable.
 
         Note:
-            Requires numpy. scipy.spatial.KDTree is optional but improves
-            performance. When robust=True, scipy.spatial.KDTree is required.
+            Requires numpy. scipy.spatial.KDTree is optional but strongly
+            recommended for performance; without it a brute-force scorer is
+            used and the Kabsch spin refinement (off-grid rotations around a
+            symmetric axis at tight tolerance) is unavailable.
         """
         try:
             import numpy as np
@@ -142,9 +143,12 @@ class PointCloud:
         try:
             from scipy.spatial import KDTree
         except ImportError:
+            # The brute-force scorer below handles robust mode too (slower,
+            # bounded memory); only the Kabsch spin refinement stays
+            # scipy-gated. Environments without scipy (e.g. Blender's
+            # bundled Python) still match — a copy at an off-grid spin angle
+            # may need scipy to pass at tight tolerance.
             KDTree = None
-            if robust:
-                return None  # robust mode requires KDTree
 
         pts_a = np.array(points_a)
         pts_b = np.array(points_b)
@@ -404,6 +408,341 @@ class PointCloud:
         M[3, :3] = T
 
         return M.flatten().tolist()
+
+    @staticmethod
+    def nn_query(target: "np.ndarray", query: "np.ndarray", k: int = 1):
+        """Nearest-neighbor distances/indices of *query* points against *target*.
+
+        Always returns ``(dists, idx)`` shaped ``(len(query), k)`` regardless
+        of backend or ``k``. Uses ``scipy.spatial.KDTree`` when available,
+        otherwise a chunked brute-force scan (bounded memory, identical
+        results). Caller clamps ``k <= len(target)``.
+        """
+        import numpy as np
+
+        try:
+            from scipy.spatial import KDTree
+
+            dists, idx = KDTree(target).query(query, k=k)
+            if k == 1:
+                dists, idx = dists.reshape(-1, 1), idx.reshape(-1, 1)
+            return dists, idx
+        except ImportError:
+            pass
+
+        t_sq = np.sum(target**2, axis=1)
+        out_d = np.empty((len(query), k))
+        out_i = np.empty((len(query), k), dtype=int)
+        chunk = max(1, int(4e6 // max(len(target), 1)))  # ~32MB per block
+        for start in range(0, len(query), chunk):
+            q = query[start : start + chunk]
+            d_sq = (
+                np.sum(q**2, axis=1)[:, None] + t_sq[None, :] - 2.0 * (q @ target.T)
+            )
+            part = np.argpartition(d_sq, k - 1, axis=1)[:, :k]
+            d_part = np.sqrt(np.maximum(np.take_along_axis(d_sq, part, axis=1), 0))
+            order = np.argsort(d_part, axis=1)
+            out_d[start : start + chunk] = np.take_along_axis(d_part, order, axis=1)
+            out_i[start : start + chunk] = np.take_along_axis(part, order, axis=1)
+        return out_d, out_i
+
+    @staticmethod
+    def match_clouds(
+        points_a: "np.ndarray",
+        points_b: "np.ndarray",
+        tolerance: float = 0.001,
+        scale_tolerance: float = 0.0,
+        normals_a: Optional["np.ndarray"] = None,
+        normals_b: Optional["np.ndarray"] = None,
+        normal_threshold: float = 0.8,
+        uvs_identical: Optional[Callable[[], bool]] = None,
+        sample_size: int = 500,
+        symmetry_threshold: float = 0.1,
+    ) -> Tuple[bool, Optional[List[float]]]:
+        """Three-stage identity test between two equal-count point clouds.
+
+        The shared verification pipeline behind auto-instancing (both the
+        Maya and Blender adapters feed it object-space vertices + per-vertex
+        shading normals):
+
+        1. **Fast ordered** — max per-vertex deviation ``<= tolerance``
+           assuming identical ordering, then normal agreement.
+        2. **Unordered identity** — max nearest-neighbor distance
+           ``<= tolerance`` (K=4 twin candidates per vertex: CAD hard edges
+           duplicate a position with different normals, and the wrong
+           coincident twin must not veto a true copy).
+        3. **Rigid / uniform-scale alignment** — clouds centered; when
+           ``scale_tolerance > 0`` the candidate is RMS-radius-normalized
+           onto the target (UNIFORM scale only — per-axis whitening erases
+           proportions and is deliberately not offered); then the robust
+           :meth:`pca_transform` rotation search runs at the strict
+           ``tolerance`` with the same flip-free normal gate.
+
+        Normal gate (stages 1-2, and inside ``pca_transform`` for stage 3):
+        mean best-twin dot ``>= normal_threshold`` AND zero flipped normals —
+        positions alone cannot distinguish a symmetric shape from its flipped
+        twin. Skipped when either normal array is missing or mismatched.
+
+        ``uvs_identical`` is an optional lazy callback evaluated only when a
+        stage-1/2 positional match succeeds; returning False hard-rejects the
+        pair (mirrors "identical geometry but different UV layout is not an
+        instance"). Stage 3 does not re-check UVs — they are compared
+        index-wise, meaningless after a reordering/rotation solve.
+
+        Returns:
+            ``(matched, matrix)`` — matrix is ``None`` for an identity match
+            (stages 1-2), or a flat 16-element ROW-MAJOR 4x4 (row-vector
+            convention, translation in row 3) mapping cloud-a geometry onto
+            cloud-b: ``p @ M = R·s·(p - c_a) + c_b``. With
+            ``scale_tolerance > 0`` the linear block carries rotation times
+            the uniform scale ratio (candidate's true size).
+        """
+        import numpy as np
+
+        pts_a = np.asarray(points_a, dtype=float)
+        pts_b = np.asarray(points_b, dtype=float)
+        if len(pts_a) != len(pts_b):
+            return False, None
+
+        n_a = n_b = None
+        if normals_a is not None and normals_b is not None:
+            n_a = np.asarray(normals_a, dtype=float)
+            n_b = np.asarray(normals_b, dtype=float)
+            if len(n_a) != len(pts_a) or len(n_b) != len(pts_b):
+                n_a = n_b = None
+
+        def normals_agree(idx=None, idx_valid=None) -> bool:
+            # A true copy aligns EVERY normal (float noise cannot drive a ~1
+            # dot below zero) — a single flipped normal rejects the match.
+            if n_a is None:
+                return True
+            if idx is None:
+                dots = np.sum(n_a * n_b, axis=1)
+            else:
+                cand = np.einsum("pki,pi->pk", n_b[idx], n_a)
+                if idx_valid is not None:
+                    cand = np.where(idx_valid, cand, -np.inf)
+                dots = cand.max(axis=1)
+            return float(dots.mean()) >= normal_threshold and not bool(
+                (dots < 0.0).any()
+            )
+
+        # Stage 1 — fast ordered path. A failed normal check falls through
+        # rather than rejecting: the PCA path can still find a rotation
+        # aligning both points AND normals (a flipped-authored plate matches
+        # under a real 180° rotation).
+        if len(pts_a) == 0 or float(
+            np.max(np.linalg.norm(pts_a - pts_b, axis=1))
+        ) <= tolerance:
+            if uvs_identical is not None and not uvs_identical():
+                return False, None
+            if len(pts_a) == 0 or normals_agree():
+                return True, None
+
+        # Stage 2 — unordered identity (reordered vertices, same local space).
+        k_twins = min(4, len(pts_b))
+        dists, nn_idx = PointCloud.nn_query(pts_b, pts_a, k=k_twins)
+        if float(np.max(dists[:, 0])) <= tolerance:
+            if uvs_identical is not None and not uvs_identical():
+                return False, None
+            idx_valid = dists <= tolerance
+            idx_valid[:, 0] = True  # the nearest is always a candidate
+            if normals_agree(idx=nn_idx, idx_valid=idx_valid):
+                return True, None
+
+        # Stage 3 — center both clouds. Deliberately NO pure-translation
+        # acceptance here: a frozen-at-offset copy must remain distinct from
+        # a transform-translated one in strict leaf-instancing.
+        c_a = pts_a.mean(axis=0)
+        c_b = pts_b.mean(axis=0)
+        p_a = pts_a - c_a
+        p_b = pts_b - c_b
+
+        scale = 1.0
+        if scale_tolerance > 0:
+            # UNIFORM-scale matching: normalize the candidate's RMS radius
+            # onto the target's, then run the SAME rigid verification.
+            r_a = float(np.sqrt((p_a**2).sum(axis=1).mean()))
+            r_b = float(np.sqrt((p_b**2).sum(axis=1).mean()))
+            if r_a < 1e-12 or r_b < 1e-12:
+                return False, None
+            scale = r_a / r_b
+            if abs(scale - 1.0) > 1e-9:
+                p_b = p_b * scale
+
+        matrix_list = PointCloud.pca_transform(
+            p_a,
+            p_b,
+            tolerance=tolerance,
+            robust=True,
+            sample_size=sample_size,
+            symmetry_threshold=symmetry_threshold,
+            normals_a=n_a,
+            normals_b=n_b,
+            normal_threshold=normal_threshold,
+        )
+        if not matrix_list:
+            return False, None
+
+        m = np.array(matrix_list, dtype=float).reshape(4, 4)
+        # pca_transform's matrix maps cloud-b onto cloud-a (row-vector
+        # q @ M = R·(q - c_b) + c_a). The instancing contract needs the
+        # OPPOSITE direction — prototype (a) geometry onto the candidate
+        # (b) — so invert the rotation by transposing the linear block
+        # before rebuilding the translation row. (The historical in-DCC
+        # version skipped this transpose; the bug was masked because every
+        # path that exercised it either canonicalized first — rel becomes
+        # identity — or used symmetric rotations where R == R.T.)
+        m[:3, :3] = m[:3, :3].T
+        if scale != 1.0:
+            # The rotation was solved with the candidate pre-scaled
+            # (R·(scale·(q - c_b)) ≈ p - c_a): fold the scale back out so
+            # the matrix maps cloud-a geometry onto the candidate's true
+            # size (the instance transform carries the scale).
+            m[:3, :3] /= scale
+        # Translation: T = c_b - (c_a @ M), row-vector convention, so that
+        # p @ M = (1/s)·R.T·(p - c_a) + c_b.
+        v_ca = np.array([c_a[0], c_a[1], c_a[2], 1.0])
+        transformed = v_ca @ m
+        m[3, 0] = c_b[0] - transformed[0]
+        m[3, 1] = c_b[1] - transformed[1]
+        m[3, 2] = c_b[2] - transformed[2]
+        return True, m.flatten().tolist()
+
+    @staticmethod
+    def _stabilize_axes(
+        axes: List["np.ndarray"], evals: "np.ndarray", centered: "np.ndarray"
+    ) -> List["np.ndarray"]:
+        """Make a PCA frame deterministic for identical geometry.
+
+        ``eigh`` returns sign-arbitrary eigenvectors, and inside a degenerate
+        (rotationally symmetric) eigen-subspace ANY orthogonal basis is
+        valid — float noise then spins each copy's frame differently, so
+        identical parts canonicalize to different local geometry and every
+        comparison falls into the expensive robust path (and can outright
+        fail at tight tolerance: a 15°-grid spin search cannot exactly align
+        an 18°-per-segment cylinder).
+
+        Anchors, all derived from the geometry itself (consistent across
+        copies that share vertex order): the third moment along each axis
+        fixes signs; the vertex farthest from the symmetry axis orients
+        degenerate subspaces (immune to where vertex 0 happens to sit —
+        first-vertex anchoring breaks on cones and lathed shapes whose
+        leading vertex lies ON the axis).
+        """
+        import numpy as np
+
+        ref = centered[0]
+        span = max(abs(float(evals[0])), 1e-12)
+
+        def anchored(vec: "np.ndarray") -> "np.ndarray":
+            skew = float(np.sum(np.dot(centered, vec) ** 3))
+            anchor = skew if abs(skew) > 1e-9 * span else float(np.dot(ref, vec))
+            return -vec if anchor < 0 else vec
+
+        def plane_anchor(axis: "np.ndarray") -> Optional["np.ndarray"]:
+            """Unit direction ⊥ *axis* toward the vertex farthest from it."""
+            offsets = centered - np.outer(np.dot(centered, axis), axis)
+            radii = np.linalg.norm(offsets, axis=1)
+            best = int(np.argmax(radii))
+            if radii[best] <= 1e-9:
+                return None  # all vertices on the axis
+            return offsets[best] / radii[best]
+
+        def eigh_fallback() -> List["np.ndarray"]:
+            return [anchored(a) for a in axes]
+
+        degenerate = [
+            abs(float(evals[i]) - float(evals[i + 1])) < 0.05 * span
+            for i in range(2)
+        ]
+
+        if all(degenerate):
+            # Fully symmetric (sphere-like): anchor to the farthest vertex,
+            # then the farthest off-that-axis vertex.
+            norms = np.linalg.norm(centered, axis=1)
+            best = int(np.argmax(norms))
+            if norms[best] > 1e-9:
+                a = centered[best] / norms[best]
+                b = plane_anchor(a)
+                if b is not None:
+                    return [a, b, np.cross(a, b)]
+            return eigh_fallback()  # point-like geometry — nothing to anchor
+
+        for i in range(2):
+            if degenerate[i]:
+                # Re-anchor the degenerate pair (i, i+1) within its plane.
+                other_idx = 2 - 2 * i  # the non-degenerate axis
+                other = anchored(axes[other_idx])
+                a = plane_anchor(other)
+                if a is None:
+                    break  # degenerate geometry — fall through
+                axes_out: List["np.ndarray"] = [None, None, None]  # type: ignore[list-item]
+                axes_out[other_idx] = other
+                axes_out[i] = a
+                axes_out[i + 1] = np.cross(other, a)
+                return axes_out
+
+        return eigh_fallback()
+
+    @staticmethod
+    def pca_basis(points: "np.ndarray") -> Optional[List[float]]:
+        """Stabilized PCA rotation frame for a point cloud.
+
+        Rows 0-2 of the returned matrix are the x/y/z basis vectors
+        (descending eigenvalue order, right-handed: z = x×y), stabilized so
+        identical geometry always yields the same frame (see
+        :meth:`_stabilize_axes`) — the foundation of transform
+        canonicalization, where copies must canonicalize to identical local
+        point sets to match cheaply.
+
+        Returns:
+            Flat 16-element row-major 4x4 (rotation only, no translation),
+            or ``None`` for fewer than 3 points.
+        """
+        import numpy as np
+
+        pts = np.asarray(points, dtype=float)
+        if len(pts) < 3:
+            return None
+        centroid = pts.mean(axis=0)
+        centered = pts - centroid
+        cov = np.cov(centered, rowvar=False)
+        evals, evecs = np.linalg.eigh(cov)
+        order = np.argsort(evals)[::-1]  # descending: axes[0] = largest
+        axes = [evecs[:, i] for i in order]
+        axes = PointCloud._stabilize_axes(axes, evals[order], centered)
+        x_axis, y_axis = axes[0], axes[1]
+        z_axis = np.cross(x_axis, y_axis)  # right-handed
+        mat = np.eye(4)
+        mat[0, :3] = x_axis
+        mat[1, :3] = y_axis
+        mat[2, :3] = z_axis
+        return mat.flatten().tolist()
+
+    @staticmethod
+    def pca_eigenvalue_signature(points: "np.ndarray", precision: int = 3) -> Tuple:
+        """Scale-invariant shape descriptor for signature bucketing.
+
+        Sorted covariance eigenvalues, normalized by the largest (uniform-
+        scale invariance) and quantized to *precision* decimals to ignore
+        float noise. Empty tuple for 3 or fewer points (covariance of a
+        near-degenerate cloud is meaningless for bucketing).
+        """
+        import numpy as np
+
+        pts = np.asarray(points, dtype=float)
+        if len(pts) <= 3:
+            return ()
+        centered = pts - pts.mean(axis=0)
+        cov = np.cov(centered, rowvar=False)
+        evals, _ = np.linalg.eigh(cov)
+        max_eval = float(np.max(evals))
+        if max_eval > 1e-6:
+            evals = evals / max_eval
+        return tuple(
+            sorted(0.0 if e == 0.0 else round(float(e), precision) for e in evals)
+        )
 
     @staticmethod
     def cluster_by_distance(

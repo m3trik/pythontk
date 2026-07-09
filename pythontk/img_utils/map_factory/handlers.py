@@ -169,7 +169,10 @@ class MRAOMapHandler(WorkflowHandler):
         if "MRAO" in context.inventory:
             return context.save_map(context.inventory["MRAO"], "MRAO")
 
-        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
+        # Request the target type only — the conversion registry derives it
+        # (e.g. Specular -> Metallic). Listing "Specular" as a preferred type
+        # would return the raw spec file verbatim as metallic data.
+        metallic = context.resolve_map("Metallic", allow_conversion=True)
         ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
 
         # Resolve roughness with inversion tracking
@@ -187,9 +190,7 @@ class MRAOMapHandler(WorkflowHandler):
                 invert = True
             else:
                 # Last resort: derive via the broader conversion system
-                roughness = context.resolve_map(
-                    "Roughness", "Specular", allow_conversion=True
-                )
+                roughness = context.resolve_map("Roughness", allow_conversion=True)
 
         if not any([metallic, roughness, ao]):
             return None
@@ -274,28 +275,30 @@ class MaskMapHandler(WorkflowHandler):
         if "MSAO" in context.inventory:
             return context.save_map(context.inventory["MSAO"], "MSAO")
 
-        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
+        # Request the target type only — the conversion registry derives it
+        # (e.g. Specular -> Metallic). Listing "Specular" as a preferred type
+        # would return the raw spec file verbatim as metallic data.
+        metallic = context.resolve_map("Metallic", allow_conversion=True)
         ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
 
         # Get smoothness with inversion tracking
         smoothness = None
         invert = False
 
-        # Try to resolve smoothness/roughness explicitly
+        # Try to resolve smoothness/roughness explicitly. When neither exists,
+        # leave None — pack_msao_texture fills the alpha with neutral white;
+        # substituting another map's data (e.g. metallic) would bake wrong
+        # smoothness values into the Mask Map.
         smoothness_map = context.resolve_map(
             "Smoothness", "Glossiness", allow_conversion=False
         )
         if smoothness_map:
             smoothness = smoothness_map
         else:
-            roughness_map = context.resolve_map(
-                "Roughness", "Specular", allow_conversion=True
-            )
+            roughness_map = context.resolve_map("Roughness", allow_conversion=True)
             if roughness_map:
                 smoothness = roughness_map
                 invert = True
-            else:
-                smoothness = metallic
 
         # Ensure we have at least one component
         if not any([metallic, ao, smoothness]):
@@ -379,10 +382,11 @@ class MetallicSmoothnessHandler(WorkflowHandler):
 
         # Fallback Logic: Check if we are a fallback for any failed requested map
         registry = MapRegistry()
-        for map_name, map_def in registry._maps.items():
+        for map_name in registry.get_map_types():
             if self.is_explicitly_requested(context, map_name):
                 if map_name not in context.used_maps:
-                    if "Metallic_Smoothness" in map_def.output_fallbacks:
+                    map_def = registry.get(map_name)
+                    if map_def and "Metallic_Smoothness" in map_def.output_fallbacks:
                         return True
 
         # Implicit Logic: Disabled to prevent greedy generation
@@ -394,7 +398,9 @@ class MetallicSmoothnessHandler(WorkflowHandler):
                 context.inventory["Metallic_Smoothness"], "Metallic_Smoothness"
             )
 
-        metallic = context.resolve_map("Metallic", "Specular", allow_conversion=True)
+        # Target type only — conversions derive Metallic from Specular etc.;
+        # a raw spec file must never stand in for metallic data verbatim.
+        metallic = context.resolve_map("Metallic", allow_conversion=True)
         if not metallic:
             return None
 
@@ -407,9 +413,7 @@ class MetallicSmoothnessHandler(WorkflowHandler):
         if smoothness:
             alpha_map = smoothness
         else:
-            roughness = context.resolve_map(
-                "Roughness", "Specular", allow_conversion=True
-            )
+            roughness = context.resolve_map("Roughness", allow_conversion=True)
             if roughness:
                 alpha_map = roughness
                 invert = True
@@ -432,7 +436,7 @@ class MetallicSmoothnessHandler(WorkflowHandler):
         except Exception as e:
             if context.logger:
                 context.logger.error(f"Error packing metallic/smoothness: {str(e)}")
-            return context.save_map(metallic, "Metallic")
+            return context.save_map(metallic, "Metallic", source_images=[metallic])
 
     def get_consumed_types(self) -> List[str]:
         return [
@@ -456,10 +460,12 @@ class SeparateMetallicRoughnessHandler(WorkflowHandler):
         """Returns list since this produces multiple maps."""
         output_maps = []
 
+        # Request the target type only. Listing "Smoothness"/"Specular" as
+        # preferred types would return those raw files verbatim under the
+        # target name (an un-inverted Smoothness saved as "_Roughness");
+        # the conversion registry performs the correct derivations.
         if "Metallic" not in context.used_maps:
-            metallic = context.resolve_map(
-                "Metallic", "Specular", allow_conversion=True
-            )
+            metallic = context.resolve_map("Metallic", allow_conversion=True)
             if metallic:
                 output_maps.append(
                     context.save_map(metallic, "Metallic", source_images=[metallic])
@@ -467,13 +473,7 @@ class SeparateMetallicRoughnessHandler(WorkflowHandler):
                 context.mark_used("Metallic", "Specular")
 
         if "Roughness" not in context.used_maps:
-            roughness = context.resolve_map(
-                "Roughness",
-                "Smoothness",
-                "Glossiness",
-                "Specular",
-                allow_conversion=True,
-            )
+            roughness = context.resolve_map("Roughness", allow_conversion=True)
             if roughness:
                 output_maps.append(
                     context.save_map(roughness, "Roughness", source_images=[roughness])
@@ -617,11 +617,12 @@ class BaseColorHandler(WorkflowHandler):
         return context.save_map(base_color, "Base_Color", source_images=[base_color])
 
     def get_consumed_types(self) -> List[str]:
+        # Opacity/Transparency are deliberately absent: they are only consumed
+        # when actually packed into Albedo_Transparency (marked in process());
+        # otherwise a separate Opacity map must pass through to its own slot.
         return [
             "Base_Color",
             "Diffuse",
-            "Opacity",
-            "Transparency",
             "Albedo_Transparency",
         ]
 
@@ -786,7 +787,11 @@ class NormalMapHandler(WorkflowHandler):
         return "DirectX" if format_type == "OpenGL" else "OpenGL"
 
     def get_consumed_types(self) -> List[str]:
-        return ["Normal", "Normal_OpenGL", "Normal_DirectX", "Bump", "Height"]
+        # Bump/Height are deliberately absent: they are only consumed when a
+        # normal map is actually generated from them (marked in process()).
+        # Height drives its own engine slot (parallax/displacement), so
+        # processing an existing normal map must not swallow it.
+        return ["Normal", "Normal_OpenGL", "Normal_DirectX"]
 
 
 class OutputFallbackHandler(WorkflowHandler):
@@ -804,7 +809,7 @@ class OutputFallbackHandler(WorkflowHandler):
 
         # Identify all requested maps
         requested_maps = []
-        for map_name in registry._maps:
+        for map_name in registry.get_map_types():
             if self.is_explicitly_requested(context, map_name):
                 requested_maps.append(map_name)
 

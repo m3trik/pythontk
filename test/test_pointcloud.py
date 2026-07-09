@@ -250,5 +250,241 @@ class TestHashPoints(unittest.TestCase):
         self.assertEqual(len(h[0]), 1)
 
 
+def _np():
+    try:
+        import numpy as np
+
+        return np
+    except ImportError:
+        return None
+
+
+def _asym_cloud(np, n=60, seed=7):
+    """Deterministic asymmetric jittered cloud (no rotational symmetry)."""
+    rng = np.random.default_rng(seed)
+    pts = rng.uniform(-1.0, 1.0, size=(n, 3))
+    pts[:, 0] *= 3.0  # stretch: distinct eigenvalues
+    pts[:, 1] *= 1.7
+    return pts
+
+
+def _rot(np, axis, theta):
+    x, y, z = np.asarray(axis, dtype=float) / np.linalg.norm(axis)
+    c, s, t = np.cos(theta), np.sin(theta), 1 - np.cos(theta)
+    return np.array(
+        [
+            [t * x * x + c, t * x * y - z * s, t * x * z + y * s],
+            [t * x * y + z * s, t * y * y + c, t * y * z - x * s],
+            [t * x * z - y * s, t * y * z + x * s, t * z * z + c],
+        ]
+    )
+
+
+def _apply_row_matrix(np, pts, flat16):
+    """Row-vector convention: p_h @ M."""
+    m = np.array(flat16, dtype=float).reshape(4, 4)
+    pts_h = np.hstack([pts, np.ones((len(pts), 1))])
+    return (pts_h @ m)[:, :3]
+
+
+class TestMatchClouds(unittest.TestCase):
+    """The shared auto-instancer verification pipeline."""
+
+    def setUp(self):
+        self.np = _np()
+        if self.np is None:
+            self.skipTest("numpy not available")
+
+    def test_identical_ordered(self):
+        np = self.np
+        pts = _asym_cloud(np)
+        ok, m = PointCloud.match_clouds(pts, pts.copy())
+        self.assertTrue(ok)
+        self.assertIsNone(m)  # identity match carries no matrix
+
+    def test_reordered_identity(self):
+        np = self.np
+        pts = _asym_cloud(np)
+        rng = np.random.default_rng(1)
+        perm = rng.permutation(len(pts))
+        ok, m = PointCloud.match_clouds(pts, pts[perm])
+        self.assertTrue(ok)
+        self.assertIsNone(m)
+
+    def test_count_mismatch_rejects(self):
+        np = self.np
+        pts = _asym_cloud(np)
+        ok, m = PointCloud.match_clouds(pts, pts[:-1])
+        self.assertFalse(ok)
+        self.assertIsNone(m)
+
+    def test_empty_clouds_are_identical(self):
+        """Two zero-point clouds match as identity (stage-1 short-circuit)."""
+        np = self.np
+        empty = np.empty((0, 3))
+        ok, m = PointCloud.match_clouds(empty, empty)
+        self.assertTrue(ok)
+        self.assertIsNone(m)
+
+    def test_rotated_copy_matches_with_matrix(self):
+        np = self.np
+        pts_a = _asym_cloud(np)
+        R = _rot(np, (0.3, 1.0, 0.2), 0.9)
+        offset = np.array([5.0, -2.0, 3.0])
+        pts_b = pts_a @ R.T + offset
+        ok, m = PointCloud.match_clouds(pts_a, pts_b, tolerance=0.001)
+        self.assertTrue(ok)
+        self.assertIsNotNone(m)
+        # The matrix maps cloud-a geometry onto cloud-b.
+        mapped = _apply_row_matrix(np, pts_a, m)
+        dists, _ = PointCloud.nn_query(pts_b, mapped, k=1)
+        self.assertLess(float(dists.max()), 0.01)
+
+    def test_uniform_scaled_copy(self):
+        np = self.np
+        pts_a = _asym_cloud(np)
+        R = _rot(np, (0, 0, 1), 0.5)
+        pts_b = (pts_a @ R.T) * 0.6 + np.array([10.0, 0.0, 0.0])
+        # Strict mode rejects a scaled copy...
+        ok_strict, _ = PointCloud.match_clouds(pts_a, pts_b, tolerance=0.001)
+        self.assertFalse(ok_strict)
+        # ...scale mode matches and the matrix carries the true size.
+        ok, m = PointCloud.match_clouds(
+            pts_a, pts_b, tolerance=0.001, scale_tolerance=1.0
+        )
+        self.assertTrue(ok)
+        mapped = _apply_row_matrix(np, pts_a, m)
+        dists, _ = PointCloud.nn_query(pts_b, mapped, k=1)
+        self.assertLess(float(dists.max()), 0.01)
+
+    def test_uvs_identical_callback_rejects(self):
+        np = self.np
+        pts = _asym_cloud(np)
+        ok, m = PointCloud.match_clouds(pts, pts.copy(), uvs_identical=lambda: False)
+        self.assertFalse(ok)
+
+    def test_half_flipped_normals_reject(self):
+        np = self.np
+        pts = _asym_cloud(np)
+        normals = np.tile(np.array([0.0, 0.0, 1.0]), (len(pts), 1))
+        flipped = normals.copy()
+        flipped[: len(pts) // 2] *= -1.0  # no rigid rotation aligns these
+        ok, _ = PointCloud.match_clouds(
+            pts, pts.copy(), normals_a=normals, normals_b=flipped
+        )
+        self.assertFalse(ok)
+
+    def test_matching_normals_pass(self):
+        np = self.np
+        pts = _asym_cloud(np)
+        normals = np.tile(np.array([0.0, 0.0, 1.0]), (len(pts), 1))
+        ok, _ = PointCloud.match_clouds(
+            pts, pts.copy(), normals_a=normals, normals_b=normals.copy()
+        )
+        self.assertTrue(ok)
+
+    def test_rotated_copy_matches_without_scipy(self):
+        """The brute-force fallback must still solve a rotated copy."""
+        import sys
+        from unittest import mock
+
+        np = self.np
+        pts_a = _asym_cloud(np)
+        R = _rot(np, (0, 0, 1), np.pi / 2)
+        pts_b = pts_a @ R.T
+        with mock.patch.dict(sys.modules, {"scipy": None, "scipy.spatial": None}):
+            ok, m = PointCloud.match_clouds(pts_a, pts_b, tolerance=0.001)
+        self.assertTrue(ok)
+        self.assertIsNotNone(m)
+        mapped = _apply_row_matrix(np, pts_a, m)
+        dists, _ = PointCloud.nn_query(pts_b, mapped, k=1)
+        self.assertLess(float(dists.max()), 0.01)
+
+
+class TestNnQuery(unittest.TestCase):
+    def setUp(self):
+        self.np = _np()
+        if self.np is None:
+            self.skipTest("numpy not available")
+
+    def test_fallback_matches_scipy(self):
+        import sys
+        from unittest import mock
+
+        np = self.np
+        target = _asym_cloud(np, n=40, seed=3)
+        query = _asym_cloud(np, n=25, seed=4)
+        d_scipy, i_scipy = PointCloud.nn_query(target, query, k=3)
+        with mock.patch.dict(sys.modules, {"scipy": None, "scipy.spatial": None}):
+            d_brute, i_brute = PointCloud.nn_query(target, query, k=3)
+        self.assertTrue(np.allclose(d_scipy, d_brute, atol=1e-9))
+        self.assertTrue((i_scipy == i_brute).all())
+
+    def test_k1_shape(self):
+        np = self.np
+        target = _asym_cloud(np, n=10)
+        d, i = PointCloud.nn_query(target, target, k=1)
+        self.assertEqual(d.shape, (10, 1))
+        self.assertEqual(i.shape, (10, 1))
+        self.assertLess(float(d.max()), 1e-12)
+
+
+class TestPcaBasis(unittest.TestCase):
+    def setUp(self):
+        self.np = _np()
+        if self.np is None:
+            self.skipTest("numpy not available")
+
+    def test_too_few_points(self):
+        self.assertIsNone(PointCloud.pca_basis([[0, 0, 0], [1, 1, 1]]))
+
+    def test_canonicalization_consistency(self):
+        """Copies canonicalize to the same local geometry under their bases."""
+        np = self.np
+        pts_a = _asym_cloud(np)
+        R = _rot(np, (1.0, 0.4, -0.2), 1.1)
+        pts_b = pts_a @ R.T + np.array([4.0, 4.0, -1.0])
+
+        ba = np.array(PointCloud.pca_basis(pts_a)).reshape(4, 4)[:3, :3]
+        bb = np.array(PointCloud.pca_basis(pts_b)).reshape(4, 4)[:3, :3]
+        ca = pts_a - pts_a.mean(axis=0)
+        cb = pts_b - pts_b.mean(axis=0)
+        local_a = ca @ ba.T  # coords in the stabilized frame (rows = axes)
+        local_b = cb @ bb.T
+        self.assertTrue(np.allclose(local_a, local_b, atol=1e-6))
+
+
+class TestPcaEigenvalueSignature(unittest.TestCase):
+    def setUp(self):
+        self.np = _np()
+        if self.np is None:
+            self.skipTest("numpy not available")
+
+    def test_rotation_and_scale_invariant(self):
+        np = self.np
+        pts = _asym_cloud(np)
+        R = _rot(np, (0.2, 0.9, 0.1), 0.7)
+        rotated_scaled = (pts @ R.T) * 2.5 + np.array([1.0, 2.0, 3.0])
+        self.assertEqual(
+            PointCloud.pca_eigenvalue_signature(pts),
+            PointCloud.pca_eigenvalue_signature(rotated_scaled),
+        )
+
+    def test_different_shapes_differ(self):
+        np = self.np
+        pts = _asym_cloud(np)
+        squashed = pts * np.array([1.0, 1.0, 0.05])
+        self.assertNotEqual(
+            PointCloud.pca_eigenvalue_signature(pts),
+            PointCloud.pca_eigenvalue_signature(squashed),
+        )
+
+    def test_too_few_points_empty(self):
+        self.assertEqual(
+            PointCloud.pca_eigenvalue_signature([[0, 0, 0], [1, 0, 0], [0, 1, 0]]),
+            (),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

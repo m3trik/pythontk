@@ -196,10 +196,11 @@ class TextureProcessor:
                 if details
                 else ""
             )
-            self.logger.info(
-                f"[Dry Run] Would save {map_type} to {output_path}{info}",
-                extra={"preset": "highlight"},
-            )
+            if self.logger:
+                self.logger.info(
+                    f"[Dry Run] Would save {map_type} to {output_path}{info}",
+                    extra={"preset": "highlight"},
+                )
             return output_path
 
         # Check if we can skip (only for file-based inputs)
@@ -214,7 +215,8 @@ class TextureProcessor:
             in_mtime = os.path.getmtime(image)
             # Check if output is newer than input
             if out_mtime > in_mtime:
-                self.logger.info(f"Skipping {map_type} (up to date)")
+                if self.logger:
+                    self.logger.info(f"Skipping {map_type} (up to date)")
                 return output_path
 
         # Determine if we should optimize
@@ -390,9 +392,11 @@ class TextureProcessor:
         Returns:
             Path to resolved map, PIL Image, or None
         """
-        # 1. Try direct matches first (in priority order)
+        # 1. Try direct matches first (in priority order). Truthiness, not
+        # membership — unpack helpers cache None for a missing channel, and
+        # that must read as absent rather than short-circuit resolution.
         for map_type in preferred_types:
-            if map_type in self.inventory:
+            if self.inventory.get(map_type):
                 return self.inventory[map_type]
 
         # 2. Try conversions if allowed
@@ -404,9 +408,13 @@ class TextureProcessor:
                     if all(self.inventory.get(src) for src in conversion.source_types):
                         try:
                             result = conversion.converter(self.inventory, self)
-                            # Cache the result in inventory
-                            self.inventory[target_type] = result
-                            return result
+                            # Only cache a usable result — caching None would
+                            # poison later lookups ("Roughness" in inventory
+                            # reads as present) and shadow lower-priority
+                            # conversions that could still succeed.
+                            if result:
+                                self.inventory[target_type] = result
+                                return result
                         except Exception as e:
                             if self.logger:
                                 self.logger.error(
@@ -420,7 +428,7 @@ class TextureProcessor:
                 map_def = MapRegistry().get(map_type)
                 if map_def:
                     for fb in map_def.input_fallbacks:
-                        if fb in self.inventory:
+                        if self.inventory.get(fb):
                             # Check if a conversion exists for this fallback
                             # We can check if any conversion for map_type uses fb as source
                             conversions = self.conversion_registry.get_conversions_for(
@@ -574,8 +582,8 @@ class TextureProcessor:
         self, source_path: Union[str, "Image.Image"]
     ) -> None:
         """Helper to unpack and cache results."""
-        # Return cached if available
-        if "Metallic" in self.inventory and "Smoothness" in self.inventory:
+        # Return cached if available (truthy — a failed unpack must not stick)
+        if self.inventory.get("Metallic") and self.inventory.get("Smoothness"):
             return
 
         metallic_img, smoothness_img = MapFactory.unpack_metallic_smoothness(
@@ -616,9 +624,9 @@ class TextureProcessor:
     def unpack_msao(self, source_path: Union[str, "Image.Image"]) -> None:
         """Helper to unpack MSAO and cache results."""
         if (
-            "Metallic" in self.inventory
-            and "AO" in self.inventory
-            and "Smoothness" in self.inventory
+            self.inventory.get("Metallic")
+            and self.inventory.get("AO")
+            and self.inventory.get("Smoothness")
         ):
             return
 
@@ -671,9 +679,9 @@ class TextureProcessor:
         RGBA → 4-channel mirror of MSAO).
         """
         if (
-            "Metallic" in self.inventory
-            and "Roughness" in self.inventory
-            and "AO" in self.inventory
+            self.inventory.get("Metallic")
+            and self.inventory.get("Roughness")
+            and self.inventory.get("AO")
         ):
             return
 
@@ -720,9 +728,9 @@ class TextureProcessor:
     def unpack_orm(self, source_path: Union[str, "Image.Image"]) -> None:
         """Helper to unpack ORM and cache results."""
         if (
-            "AO" in self.inventory
-            and "Roughness" in self.inventory
-            and "Metallic" in self.inventory
+            self.inventory.get("AO")
+            and self.inventory.get("Roughness")
+            and self.inventory.get("Metallic")
         ):
             return
 
@@ -769,7 +777,7 @@ class TextureProcessor:
         self, source_path: Union[str, "Image.Image"]
     ) -> None:
         """Helper to unpack Albedo+Transparency and cache results."""
-        if "Base_Color" in self.inventory and "Opacity" in self.inventory:
+        if self.inventory.get("Base_Color") and self.inventory.get("Opacity"):
             return
 
         base_color_img, opacity_img = MapFactory.unpack_albedo_transparency(
@@ -800,12 +808,13 @@ class TextureProcessor:
         self, inventory: Dict[str, Union[str, "Image.Image"]]
     ) -> "Image.Image":
         """Create ORM map from components."""
-        # Resolve required components
+        # Resolve required components. Target types only — the conversion
+        # registry derives them (Smoothness -> inverted Roughness, Specular ->
+        # Metallic). Listing sources as preferred types would return the raw
+        # files verbatim under the wrong semantics.
         ao = self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
-        roughness = self.resolve_map(
-            "Roughness", "Smoothness", "Glossiness", allow_conversion=True
-        )
-        metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
+        roughness = self.resolve_map("Roughness", allow_conversion=True)
+        metallic = self.resolve_map("Metallic", allow_conversion=True)
 
         if not (ao or roughness or metallic):
             raise ValueError("Missing components for ORM map")
@@ -830,18 +839,19 @@ class TextureProcessor:
         industry-standard order) or ``"rgba"`` (4-channel mirror of MSAO with
         roughness in alpha).
         """
-        metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
+        metallic = self.resolve_map("Metallic", allow_conversion=True)
         ao = self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
 
-        # Get roughness with inversion tracking
+        # Get roughness with inversion tracking. Truthiness (not `in`) so a
+        # cached failed unpack (None) can't shadow a usable alternative.
         roughness = None
         invert = False
-        if "Roughness" in inventory:
+        if inventory.get("Roughness"):
             roughness = inventory["Roughness"]
-        elif "Smoothness" in inventory:
+        elif inventory.get("Smoothness"):
             roughness = inventory["Smoothness"]
             invert = True
-        elif "Glossiness" in inventory:
+        elif inventory.get("Glossiness"):
             roughness = inventory["Glossiness"]
             invert = True
 
@@ -851,10 +861,7 @@ class TextureProcessor:
         layout = self.config.get("mrao_layout", "rgb")
         detail = None
         if layout == "rgba":
-            detail = (
-                self.resolve_map("Detail_Mask", "Detail", allow_conversion=False)
-                or None
-            )
+            detail = self.resolve_map("Detail_Mask", "Detail", allow_conversion=False)
 
         mrao_img = MapFactory.pack_mrao_texture(
             metallic_map_path=metallic,
@@ -883,17 +890,18 @@ class TextureProcessor:
         Map: R=Metallic, G=AO, B=Detail, A=Smoothness) or ``"rgb"`` (3-channel
         parallel to MRAO: R=Metallic, G=Smoothness, B=AO).
         """
-        metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
-        ao = self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False) or None
+        metallic = self.resolve_map("Metallic", allow_conversion=True)
+        ao = self.resolve_map("Ambient_Occlusion", "AO", allow_conversion=False)
 
-        # Get smoothness with inversion tracking
+        # Get smoothness with inversion tracking. Truthiness (not `in`) so a
+        # cached failed unpack (None) can't shadow a usable alternative.
         smoothness = None
         invert = False
-        if "Smoothness" in inventory:
+        if inventory.get("Smoothness"):
             smoothness = inventory["Smoothness"]
-        elif "Glossiness" in inventory:
+        elif inventory.get("Glossiness"):
             smoothness = inventory["Glossiness"]
-        elif "Roughness" in inventory:
+        elif inventory.get("Roughness"):
             smoothness = inventory["Roughness"]
             invert = True
 
@@ -905,10 +913,7 @@ class TextureProcessor:
         layout = self.config.get("mask_map_layout", "rgba")
         detail = None
         if layout == "rgba":
-            detail = (
-                self.resolve_map("Detail_Mask", "Detail", allow_conversion=False)
-                or None
-            )
+            detail = self.resolve_map("Detail_Mask", "Detail", allow_conversion=False)
 
         mask_map = MapFactory.pack_msao_texture(
             metallic_map_path=metallic,
@@ -932,16 +937,16 @@ class TextureProcessor:
         self, inventory: Dict[str, Union[str, "Image.Image"]]
     ) -> "Image.Image":
         """Create Metallic-Smoothness map from components."""
-        metallic = self.resolve_map("Metallic", "Specular", allow_conversion=True)
+        metallic = self.resolve_map("Metallic", allow_conversion=True)
 
         smoothness = None
         invert = False
 
-        if "Smoothness" in inventory:
+        if inventory.get("Smoothness"):
             smoothness = inventory["Smoothness"]
-        elif "Glossiness" in inventory:
+        elif inventory.get("Glossiness"):
             smoothness = inventory["Glossiness"]
-        elif "Roughness" in inventory:
+        elif inventory.get("Roughness"):
             smoothness = inventory["Roughness"]
             invert = True
 

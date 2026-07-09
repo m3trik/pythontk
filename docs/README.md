@@ -1,26 +1,24 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-1654%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-1684%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
 <!-- short_description_start -->
-*The foundation layer of a DCC-tooling ecosystem — composable Python primitives for files, strings, iteration, math, geometry, images, video, audio, and networking, plus the class mixins and package infrastructure the layers above are built on.*
+*Composable Python primitives for files, strings, iteration, math, geometry, images, video, audio, and networking — the DCC-agnostic foundation of a game-art tooling ecosystem.*
 <!-- short_description_end -->
 
-Pure Python: no Qt, no DCC imports, two small hard dependencies (`numpy`, `Pillow`). Everything heavier — FFmpeg, OpenCV, rembg, PyMeshLab — is optional and feature-gated, so the core runs identically in `mayapy`, Blender's Python, a CI runner, or a bare venv.
+Pure Python: no Qt, no DCC imports, two hard dependencies (`numpy`, `Pillow`). Everything heavier — FFmpeg, OpenCV, rembg, PyMeshLab — is optional and feature-gated, so the core runs identically in `mayapy`, Blender's Python, a CI runner, or a bare venv.
 
 ## Why
 
-pythontk is the bottom of an ecosystem chain (`pythontk → uitk → mayatk / blendertk → tentacle`) built for game-art and DCC pipeline tooling. Everything above imports it; it imports nothing above it — no `maya`, no `bpy`, no Qt. That constraint is the point: a helper written here works everywhere the ecosystem runs, and the layers above stay thin because the environment-independent 80% of every tool lives at this layer.
+pythontk is the bottom of the chain `pythontk → uitk → mayatk / blendertk → tentacle`: everything above imports it; it imports nothing above it. The environment-independent 80% of every tool lives at this layer — in effect, the ecosystem's standard library.
 
-Two rules shape the library:
+Two rules shape it:
 
-- **Primitives are placed by data type, not by domain.** Sharpest-frame extraction lives in `vid_utils` and perceptual-hash image curation in `img_utils` — not in a "photogrammetry" package — so each piece stays independently reusable. Domain pipelines (PBR texture conversion, photogrammetry ingest, timeline audio events) are *compositions* of these primitives, assembled downstream.
-- **Shared code moves down.** When two downstream tools need the same helper, it is extracted here and becomes the single source of truth — Maya and Blender panels share one calculator engine, one material-report formatter, one point-clustering routine, instead of drifting copies.
-
-The result is less a grab-bag of utilities than the standard library of its ecosystem: [uitk](https://github.com/m3trik/uitk) builds its preset and logging UIs on pythontk stores and mixins, [mayatk](https://github.com/m3trik/mayatk) launches Maya through `AppLauncher` and hands scenes to other apps through `HandoffBridge`, and every package in the chain boots its lazy-loading root through `module_resolver`.
+- **Placed by data type, not domain.** Sharpest-frame extraction lives in `vid_utils`, perceptual-hash curation in `img_utils` — not in a "photogrammetry" package — so each primitive stays independently reusable. Domain pipelines (PBR conversion, photogrammetry ingest, timeline audio events) are compositions of these, assembled downstream.
+- **Shared code moves down.** When two downstream tools need the same helper, it moves here and becomes the single source of truth — Maya and Blender panels share one calculator engine, one material-report formatter, one point-clustering routine, instead of drifting copies.
 
 ## Install
 
@@ -49,8 +47,7 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | Package | What it covers |
 |---|---|
 | `audio_utils` | FFmpeg-backed conversion, composite WAV building, waveform envelopes |
-| `color_utils` | `Color` / `Palette` primitives — hex/rgb/luminance, blending, themed palettes |
-| `core_utils` | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap (`module_resolver`), app orchestration (`AppLauncher`, `HandoffBridge`), config/template stores (`PresetStore`, `TemplateSet`, `SchemaSpec`, `UserConfig`), QC gates, `ExecutionMonitor`, hierarchy diffing |
+| `core_utils` | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap (`module_resolver`), hot-reload (`ModuleReloader`), app orchestration (`AppLauncher`, `HandoffBridge`), config/template stores (`PresetStore`, `TemplateSet`, `SchemaSpec`, `UserConfig`), QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives (`Color` / `ColorPair` / `Palette`) |
 | `file_utils` | Filtered directory traversal, atomic writes, JSON helpers, cloud-placeholder detection, mesh format conversion, embedded metadata |
 | `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify), `PointCloud` (PCA, clustering), procedural drape |
 | `img_utils` | Pillow-backed image ops, channel packing, `MapFactory` (PBR map conversion/packing), map optimizer & compositor, exposure equalization, image curation, mask generation |
@@ -100,22 +97,9 @@ process_texture("texture.png")                  # single result
 process_texture(["a.png", "b.png", "c.png"])    # list, parallelized
 ```
 
-### Filtered directory traversal
+### One filtering language
 
-```python
-files = ptk.get_dir_contents(
-    "/path/to/project",
-    content="filepath",              # file | filename | filepath | dir | dirpath
-    recursive=True,
-    inc_files=["*.py", "*.pyw"],
-    exc_files=["*test*", "*_backup*"],
-    exc_dirs=["__pycache__", ".git", "venv"],
-)
-```
-
-### Wildcard filtering
-
-The same include/exclude pattern language runs through the whole library:
+The same include/exclude wildcard language runs through the whole library — lists, dicts, directory traversal, image sets:
 
 ```python
 ptk.filter_list(
@@ -124,6 +108,15 @@ ptk.filter_list(
     exc=["*_backup", "*_old"],
 )
 # ['mesh_main', 'mesh_LOD0']
+
+files = ptk.get_dir_contents(
+    "/path/to/project",
+    content="filepath",              # file | filename | filepath | dir | dirpath
+    recursive=True,
+    inc_files=["*.py", "*.pyw"],
+    exc_files=["*test*", "*_backup*"],
+    exc_dirs=["__pycache__", ".git", "venv"],
+)
 ```
 
 ### Texture maps — pack, convert, identify
@@ -149,6 +142,24 @@ ptk.MapFactory.resolve_map_type("material_BC.tga")               # "Base_Color"
 ```
 
 The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — ship in the [extapps](https://github.com/m3trik/extapps) repo; pythontk itself stays UI-agnostic.
+
+### Capture ingest — sharpest-frame extraction & image curation
+
+Video-to-photogrammetry primitives. Fixed-step frame extraction wastes frames when the camera is still and starves overlap when it moves — sharpest-of-window picks the best frame from every part of the timeline instead. Then perceptual-hash curation collapses near-duplicates:
+
+```python
+frames = ptk.FrameExtractor().extract_frames_sharpest(
+    "capture.mp4", "frames/", window_sec=1.0,   # sharpest frame per second of footage
+)
+
+curated_dirs = ptk.ImageCurator().curate(
+    ["frames/"], "curated/",
+    hash_threshold=5,                 # Hamming distance on dHash — near-dupes cluster
+    sharpness_floor_percentile=10,    # drop the blurriest tenth of the survivors
+)
+```
+
+`ExposureEqualizer` (cross-set exposure / white-balance matching) and `MaskGenerator` (rembg-backed background masks) round out the ingest cluster.
 
 ### Batch rename & fuzzy matching
 
@@ -196,12 +207,13 @@ plugins = ptk.get_classes_from_path(
 
 ## Infrastructure the ecosystem is built on
 
-Beyond the data-type utilities, `core_utils` supplies the machinery every package in the chain shares:
+Beyond the data-type utilities, `core_utils` supplies the machinery the layers above are built on:
 
 - **`bootstrap_package`** (`module_resolver`) — the lazy-loading package root. Every ecosystem package (`uitk`, `mayatk`, `blendertk`, …) exposes its public surface through it.
 - **`PresetStore` / `TemplateSet` / `SchemaSpec` / `UserConfig`** — Qt-free named-preset and schema-validated-template stores with built-in + user tiers; uitk's `PresetManager` is a GUI over them.
 - **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges and of mayatk's `MayaConnection`.
 - **`QcLog` / `QcGate`** — structured run logs and threshold-based acceptance gates for batch pipelines.
+- **`HierarchyAnalyzer` / `HierarchyDiff`** — compare two path hierarchies with exact / tail-path / fuzzy matching; detects *moved* items, not just added/removed, and exports a structured diff report.
 - **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in.
 
 ## Links

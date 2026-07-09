@@ -9,7 +9,6 @@ conversion registry, processing context, and workflow handlers now live in
 sibling modules.
 """
 import os
-import re
 from typing import (
     Any,
     Callable,
@@ -632,9 +631,11 @@ class MapFactory(LoggingMixin):
         """Extracts the base texture name from a filename or path,
         removing known suffixes (e.g., _normal, _roughness).
 
-        Logic:
-        - Long suffixes (>3 chars): Case-insensitive.
-        - Short suffixes (<=3 chars): Must start with a capital letter (rest case-insensitive) to avoid false positives.
+        Logic (see ``MapRegistry.get_suffix_strip_pattern`` — the SSoT):
+        - Underscore-delimited suffixes: case-insensitive at any length (``_ao``).
+        - Attached long suffixes (>3 chars): case-insensitive.
+        - Attached short suffixes (<=3 chars): must start with a capital letter
+          (rest case-insensitive) to avoid false positives.
 
         Parameters:
             filepath_or_filename (str): A texture path or name.
@@ -651,50 +652,11 @@ class MapFactory(LoggingMixin):
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
 
-        all_suffixes = set()
-        for suffixes in cls.map_types.values():
-            all_suffixes.update(suffixes)
-
-        if not all_suffixes:
-            return base_name
-
-        sorted_suffixes = sorted(list(all_suffixes), key=len, reverse=True)
-
-        # 1. Build Pattern for Underscore-Delimited Suffixes (Loose/Case-Insensitive)
-        # Matches: _AO, _ao, _Normal, _normal at end of string
-        # (?i:...) makes the group case-insensitive
-        p_underscore_inner = "|".join(re.escape(s) for s in sorted_suffixes)
-        pattern_underscore = f"_(?i:{p_underscore_inner})$"
-
-        # 2. Build Pattern for Attached Suffixes (Strict for Short)
-        # Long (>3): Case Insensitive
-        # Short (<=3): Capitalized First Letter
-        short_suffixes = [s for s in sorted_suffixes if len(s) <= 3]
-        long_suffixes = [s for s in sorted_suffixes if len(s) > 3]
-
-        attached_parts = []
-
-        if long_suffixes:
-            p_long = "|".join(re.escape(s) for s in long_suffixes)
-            attached_parts.append(f"(?i:{p_long})")
-
-        if short_suffixes:
-            p_short_parts = []
-            for s in short_suffixes:
-                if s and s[0].isalpha():
-                    first = s[0].upper()
-                    rest = re.escape(s[1:])
-                    p_short_parts.append(f"{first}(?i:{rest})")
-                else:
-                    p_short_parts.append(re.escape(s))
-            attached_parts.append("|".join(p_short_parts))
-
-        pattern_attached = f"(?:{'|'.join(attached_parts)})$"
-
-        # Combine: Try Underscore first (greedy), then Attached
-        full_pattern = f"(?:{pattern_underscore}|{pattern_attached})"
-
-        base_name = StrUtils.format_suffix(base_name, strip=full_pattern)
+        # Canonical suffix pattern lives on the registry (the alias owner) so
+        # this and ImgUtils.get_base_texture_name can never drift apart.
+        pattern = cls._map_registry.get_suffix_strip_pattern()
+        if pattern:
+            base_name = StrUtils.format_suffix(base_name, strip=pattern)
 
         # Strip any configured user prefix/suffix so callers can re-apply them
         # idempotently, then collapse a trailing underscore (preserves the
@@ -2552,11 +2514,7 @@ class MapFactory(LoggingMixin):
         results = ImgUtils.extract_channels(
             orm_map_path, channel_config, output_dir=output_dir, save=save, **kwargs
         )
-
-        if save:
-            return results.get("R"), results.get("G"), results.get("B")
-        else:
-            return results.get("R"), results.get("G"), results.get("B")
+        return results.get("R"), results.get("G"), results.get("B")
 
     @staticmethod
     def _detect_packed_layout(source: Union[str, "Image.Image"]) -> str:
@@ -2696,11 +2654,7 @@ class MapFactory(LoggingMixin):
         results = ImgUtils.extract_channels(
             albedo_map_path, channel_config, output_dir=output_dir, save=save, **kwargs
         )
-
-        if save:
-            return results.get("RGB"), results.get("A")
-        else:
-            return results.get("RGB"), results.get("A")
+        return results.get("RGB"), results.get("A")
 
     @classmethod
     def unpack_metallic_smoothness(
@@ -2722,11 +2676,7 @@ class MapFactory(LoggingMixin):
         results = ImgUtils.extract_channels(
             map_path, channel_config, output_dir=output_dir, save=save, **kwargs
         )
-
-        if save:
-            return results.get("RGB"), results.get("A")
-        else:
-            return results.get("RGB"), results.get("A")
+        return results.get("RGB"), results.get("A")
 
     @classmethod
     def unpack_specular_gloss(
@@ -2748,11 +2698,7 @@ class MapFactory(LoggingMixin):
         results = ImgUtils.extract_channels(
             map_path, channel_config, output_dir=output_dir, save=save, **kwargs
         )
-
-        if save:
-            return results.get("RGB"), results.get("A")
-        else:
-            return results.get("RGB"), results.get("A")
+        return results.get("RGB"), results.get("A")
 
 
 # Initialize the registry with the factory class
