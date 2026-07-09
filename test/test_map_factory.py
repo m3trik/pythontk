@@ -428,6 +428,74 @@ class TestMapFactoryRefactored(unittest.TestCase):
         self.assertFalse(any("Roughness" in n for n in names))
         self.assertFalse(any("Normal" in n for n in names))
 
+    def test_height_passes_through_when_normal_present(self):
+        """Regression: processing a Normal map must not consume a provided
+        Height map — Height has its own engine slot (parallax/displacement)."""
+        subset = [
+            p
+            for p in self.texture_paths
+            if "Normal_OpenGL" in p or "Height" in p
+        ]
+        results = MapFactory.prepare_maps(
+            subset, output_dir=self.output_dir, rename=True
+        )
+        names = [os.path.basename(p) for p in results]
+        self.assertTrue(any("Normal" in n for n in names))
+        self.assertTrue(
+            any("Height" in n for n in names),
+            "Height map was dropped by normal-map processing",
+        )
+
+    def test_opacity_passes_through_when_not_packed(self):
+        """Regression: with albedo_transparency off, a separate Opacity map
+        must pass through instead of being silently consumed."""
+        subset = [
+            p for p in self.texture_paths if "BaseColor" in p or "Opacity" in p
+        ]
+        results = MapFactory.prepare_maps(
+            subset, output_dir=self.output_dir, rename=True
+        )
+        names = [os.path.basename(p) for p in results]
+        self.assertTrue(any("Base_Color" in n for n in names))
+        self.assertTrue(
+            any("Opacity" in n for n in names),
+            "Opacity map was dropped by base-color processing",
+        )
+
+    def test_mask_map_alpha_defaults_white_without_smoothness(self):
+        """Regression: with no smoothness/roughness source, the Mask Map's
+        alpha channel must be the neutral white fill — not a copy of the
+        metallic channel."""
+        from PIL import Image
+
+        src_dir = os.path.join(self.test_dir, "mask_alpha_src")
+        os.makedirs(src_dir, exist_ok=True)
+        try:
+            metallic = os.path.join(src_dir, "alphatest_Metallic.png")
+            ao = os.path.join(src_dir, "alphatest_AO.png")
+            ImgUtils.save_image(ImgUtils.create_image("L", (16, 16), 30), metallic)
+            ImgUtils.save_image(ImgUtils.create_image("L", (16, 16), 200), ao)
+
+            results = MapFactory.prepare_maps(
+                [metallic, ao],
+                output_dir=self.output_dir,
+                mask_map=True,
+                rename=True,
+            )
+            msao_path = next(
+                p for p in results if "MSAO" in os.path.basename(p)
+            )
+            with Image.open(msao_path) as img:
+                self.assertEqual(img.mode, "RGBA")
+                alpha_min, alpha_max = img.getextrema()[3]
+                self.assertEqual(
+                    (alpha_min, alpha_max),
+                    (255, 255),
+                    "Mask Map alpha should be white fill when no smoothness exists",
+                )
+        finally:
+            shutil.rmtree(src_dir, ignore_errors=True)
+
 
 class TestMapFactoryExtended(unittest.TestCase):
     """Extended unit tests for MapFactory internal logic."""
@@ -639,44 +707,14 @@ class TestMapFactoryExtended(unittest.TestCase):
         ImgUtils.save_image(img, packed_path)
 
         self.context.inventory = {}
-        self.context.get_metallic_from_packed(packed_path)
-        self.context.get_smoothness_from_packed(packed_path)
-
-        # Note: The original test checked side effects on inventory, but the new methods return images/paths.
-        # However, the methods might also update inventory if they are designed to do so?
-        # Let's check the implementation of get_metallic_from_packed.
-        # It calls ImgUtils.unpack_metallic_smoothness which returns (metallic, smoothness).
-        # Wait, get_metallic_from_packed returns just metallic.
-
-        # The original test called _unpack_metallic_smoothness which likely updated context.inventory.
-        # The new methods are granular getters.
-
-        # If I want to test unpacking, I should probably call the methods and check the return values.
-        # But the test asserts inventory content.
-
-        # Let's assume for now I should update the test to check return values or manually update inventory.
-        # Or maybe I should skip this update if the logic is too different.
-
-        # Actually, let's look at what I replaced _unpack_metallic_smoothness with.
-        # I deleted it. It was a static method that likely called ImgUtils and updated inventory.
-
-        # The new methods are:
-        # get_metallic_from_packed(packed_map) -> returns image/path
-        # get_smoothness_from_packed(packed_map) -> returns image/path
-
-        # So I should update the test to check return values.
-
         metallic = self.context.get_metallic_from_packed(packed_path)
         smoothness = self.context.get_smoothness_from_packed(packed_path)
 
         self.assertIsNotNone(metallic)
         self.assertIsNotNone(smoothness)
-
-        # The logger calls might be different too.
-        # get_metallic_from_packed logs "Unpacked Metallic from packed map"
-        # get_smoothness_from_packed logs "Unpacked Smoothness from packed map"
-
-        # I will update the test to reflect this.
+        # Unpacking caches both components in the inventory.
+        self.assertIn("Metallic", self.context.inventory)
+        self.assertIn("Smoothness", self.context.inventory)
 
     def test_unpack_msao(self):
         # Create a packed map
@@ -880,6 +918,50 @@ class TestTextureProcessorLogic(unittest.TestCase):
         result = self.context.resolve_map("D")
         self.assertEqual(result, "d_converted.png")
         mock_converter.assert_called()
+
+    def test_resolve_map_skips_planted_none_inventory_entry(self):
+        """Regression: unpack helpers can cache None for a missing channel
+        (e.g. Smoothness from an alpha-less packed map). A None entry must
+        read as absent — not short-circuit resolution as a direct match."""
+        self.registry.register("D", "C", lambda inv, ctx: "d_from_c.png")
+
+        self.context.inventory = {"D": None, "C": "c.png"}
+        self.assertEqual(self.context.resolve_map("D"), "d_from_c.png")
+
+    def test_resolve_map_skips_failed_conversion_result(self):
+        """Regression: a converter returning None must not be cached into the
+        inventory (poisoning later lookups) and must not shadow a
+        lower-priority conversion that can succeed."""
+        self.registry.register("D", "C", lambda inv, ctx: None, priority=10)
+        self.registry.register("D", "B", lambda inv, ctx: "d_from_b.png", priority=5)
+
+        self.context.inventory = {"C": "c.png", "B": "b.png"}
+        result = self.context.resolve_map("D")
+
+        self.assertEqual(result, "d_from_b.png")
+        self.assertTrue(
+            all(v is not None for v in self.context.inventory.values()),
+            f"None cached into inventory: {self.context.inventory}",
+        )
+
+    def test_save_map_dry_run_without_logger(self):
+        """Regression: save_map's dry-run path crashed when the processor was
+        constructed without a logger (a public, supported configuration)."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            context = TextureProcessor(
+                inventory={},
+                config={"dry_run": True},
+                output_dir=tmp,
+                base_name="test",
+                ext="png",
+                conversion_registry=ConversionRegistry(),
+                logger=None,
+            )
+            img = ImgUtils.create_image("L", (8, 8), 128)
+            path = context.save_map(img, "Roughness")
+            self.assertTrue(path.endswith("_Roughness.png"))
 
     def test_normal_map_orientation_convention(self):
         """Regression: convert_bump_to_normal produced DirectX orientation

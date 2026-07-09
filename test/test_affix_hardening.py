@@ -145,6 +145,11 @@ class TestGetBaseTextureNameAffix(unittest.TestCase):
         ("brick_MAT_Albedo.png", "", "_MAT", "brick"),
         # Without affixes
         ("brick_Albedo.png", "", "", "brick"),
+        # Underscore-delimited short map suffixes strip case-insensitively —
+        # both resolvers must agree (they once drifted: ImgUtils required a
+        # capital first letter even behind an explicit "_" delimiter).
+        ("brick_ao.png", "", "", "brick"),
+        ("Mat_brick_ao.png", "Mat_", "", "brick"),
     ]
 
     def test_map_factory(self):

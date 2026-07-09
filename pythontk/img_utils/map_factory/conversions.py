@@ -118,5 +118,14 @@ class ConversionRegistry:
         return self._conversions.get(target_type, [])
 
     def __getattr__(self, name):
-        """Allow property-style access to conversions (e.g. registry.Metallic)."""
+        """Allow property-style access to conversions (e.g. registry.Metallic).
+
+        Underscore-prefixed names raise AttributeError so protocol probes
+        (copy/pickle dunders, private-attr lookups) don't silently receive an
+        empty conversion list.
+        """
+        if name.startswith("_"):
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}"
+            )
         return self.get_conversions_for(name)

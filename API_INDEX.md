@@ -2,19 +2,11 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-07-08_
+_Generated: 2026-07-09_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
   - methods: resolve_ffmpeg, is_playable_extension, is_supported_source_extension, ensure_playable_path, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
-
-### `color_utils/_color_utils.py` — Lightweight, DCC-agnostic color primitives.
-- `class Color`
-  - methods: from_hex, from_rgbf, hex, rgb, rgba, rgbf, rgbaf, luminance, lighter, darker, with_alpha, blend, subtle_bg
-- `class ColorPair`
-  - methods: auto
-- `class Palette(dict)`
-  - methods: alias, override, status, axes, channels, ui, diff
 
 ### `core_utils/_core_utils.py`
 - `class CoreUtils(HelpMixin)`
@@ -50,6 +42,14 @@ _Generated: 2026-07-08_
 ### `core_utils/cli.py`
 - `class CLI`
   - methods: get_parser, add_connection_args, get_connection_kwargs
+
+### `core_utils/color.py` — Lightweight, DCC-agnostic color primitives.
+- `class Color`
+  - methods: from_hex, from_rgbf, hex, rgb, rgba, rgbf, rgbaf, luminance, lighter, darker, with_alpha, blend, subtle_bg
+- `class ColorPair`
+  - methods: auto
+- `class Palette(dict)`
+  - methods: alias, override, status, axes, channels, ui, diff
 
 ### `core_utils/execution_monitor/_dialog_viewer.py` — Subprocess-based dialog viewer for custom button labels.
 - `run(title: str, message: str, force_label: str | None = None)`
@@ -195,13 +195,17 @@ _Generated: 2026-07-08_
 - `class Metadata(MetadataInternal)`
   - methods: get, set
 
+### `geo_utils/assembly_sorter.py` — Sort separated mesh parts into repeated-assembly copies.
+- `class AssemblySorter`
+  - methods: sort
+
 ### `geo_utils/drape.py` — Procedural draped-cloth (curtain) generator — pure geometry, no DCC.
 - `class CurtainDrape(LoggingMixin)`
   - methods: prepare, grid_points, drape
 
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`
-  - methods: pca_transform, cluster_by_distance, hash_points
+  - methods: pca_transform, nn_query, match_clouds, pca_basis, pca_eigenvalue_signature, cluster_by_distance, hash_points
 
 ### `geo_utils/polyline.py` — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - `class Polyline`
@@ -267,7 +271,7 @@ _Generated: 2026-07-08_
 - `class WF`
 - `class MapType`
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, resolve_type_from_path, get_workflow_presets, get_map_types, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
+  - methods: get, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
 
 ### `img_utils/mask_generator.py` — Background mask generation via rembg (optional dependency).
 - `class MaskGenerator`

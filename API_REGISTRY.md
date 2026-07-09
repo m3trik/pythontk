@@ -2,18 +2,18 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-08_
+_Generated: 2026-07-09_
 
 ## Index
 
 - [`audio_utils/_audio_utils.py`](#audio_utils--_audio_utils)
-- [`color_utils/_color_utils.py`](#color_utils--_color_utils) — Lightweight, DCC-agnostic color primitives.
 - [`core_utils/_core_utils.py`](#core_utils--_core_utils)
 - [`core_utils/app_handoff.py`](#core_utils--app_handoff) — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 - [`core_utils/app_installer.py`](#core_utils--app_installer)
 - [`core_utils/app_launcher.py`](#core_utils--app_launcher)
 - [`core_utils/class_property.py`](#core_utils--class_property)
 - [`core_utils/cli.py`](#core_utils--cli)
+- [`core_utils/color.py`](#core_utils--color) — Lightweight, DCC-agnostic color primitives.
 - [`core_utils/execution_monitor/_dialog_viewer.py`](#core_utils--execution_monitor--_dialog_viewer) — Subprocess-based dialog viewer for custom button labels.
 - [`core_utils/execution_monitor/_execution_monitor.py`](#core_utils--execution_monitor--_execution_monitor)
 - [`core_utils/execution_monitor/_gif_viewer.py`](#core_utils--execution_monitor--_gif_viewer)
@@ -42,6 +42,7 @@ _Generated: 2026-07-08_
 - [`file_utils/mesh_cleaner.py`](#file_utils--mesh_cleaner) — Mesh repair / cleanup via PyMeshLab (optional dependency).
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
 - [`file_utils/metadata.py`](#file_utils--metadata)
+- [`geo_utils/assembly_sorter.py`](#geo_utils--assembly_sorter) — Sort separated mesh parts into repeated-assembly copies.
 - [`geo_utils/drape.py`](#geo_utils--drape) — Procedural draped-cloth (curtain) generator — pure geometry, no DCC.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
@@ -91,36 +92,6 @@ _Generated: 2026-07-08_
   - `AudioUtils.build_audio_map_from_files(cls, audio_files: List[str], cache_dir: Optional[str] = None, logger=None) -> Dict[str, str]` *(class)* — Build an audio map from an explicit list of file paths.
   - `AudioUtils.trim_silence(cls, wav_path: str, output_path: Optional[str] = None, threshold: int = 8) -> str` *(class)* — Trim leading and trailing silence from a 16-bit PCM WAV file.
   - `AudioUtils.compute_waveform_envelope(wav_path: str, num_bins: int = 512) -> List[tuple]` *(static)* — Read a WAV file and return a downsampled min/max envelope.
-
-<a id="color_utils--_color_utils"></a>
-### `color_utils/_color_utils.py`
-
-Lightweight, DCC-agnostic color primitives.
-
-- **[`class Color`](pythontk/pythontk/color_utils/_color_utils.py#L18)** — Immutable RGBA color stored as 0–255 integers.
-  - `Color.from_hex(cls, hex_str: str) -> 'Color'` *(class)* — Parse ``#RGB``, ``#RRGGBB``, or ``#RRGGBBAA``.
-  - `Color.from_rgbf(cls, r: float, g: float, b: float, a: float = 1.0) -> 'Color'` *(class)* — Create from 0.0–1.0 float components (Maya API convention).
-  - `Color.hex(self) -> str` *(property)* — ``'#RRGGBB'`` (or ``'#RRGGBBAA'`` when alpha < 255).
-  - `Color.rgb(self) -> Tuple[int, int, int]` *(property)* — ``(r, g, b)`` in 0–255.
-  - `Color.rgba(self) -> Tuple[int, int, int, int]` *(property)* — ``(r, g, b, a)`` in 0–255.
-  - `Color.rgbf(self) -> Tuple[float, float, float]` *(property)* — ``(r, g, b)`` in 0.0–1.0 (Maya API format).
-  - `Color.rgbaf(self) -> Tuple[float, float, float, float]` *(property)* — ``(r, g, b, a)`` in 0.0–1.0.
-  - `Color.luminance(self) -> float` *(property)* — Perceived luminance (ITU-R BT.709, linear approximation).
-  - `Color.lighter(self, factor: float = 0.2) -> 'Color'` — Return a lighter colour.
-  - `Color.darker(self, factor: float = 0.2) -> 'Color'` — Return a darker colour.
-  - `Color.with_alpha(self, a: Union[int, float]) -> 'Color'` — Return a copy with a new alpha (int 0–255 or float 0.0–1.0).
-  - `Color.blend(self, other: 'Color', t: float = 0.5) -> 'Color'` — Linear interpolation towards *other* by *t* (0.0 = self, 1.0 = other).
-  - `Color.subtle_bg(self, value: float = 0.24, sat_factor: float = 1.0) -> 'Color'` — Derive a tinted dark-theme background from this colour.
-- **[`class ColorPair`](pythontk/pythontk/color_utils/_color_utils.py#L177)** — Foreground / background pair for themed UIs.
-  - `ColorPair.auto(cls, fg: Union[str, 'Color'], value: float = 0.24, sat_factor: float = 1.0) -> 'ColorPair'` *(class)* — Derive background automatically from foreground for dark themes.
-- **[`class Palette(dict)`](pythontk/pythontk/color_utils/_color_utils.py#L254)** — Named color collection with auto-wrapping and alias support.
-  - `Palette.alias(self, mapping: Dict[str, str]) -> 'Palette'` — Return a new Palette with additional keys pointing to existing values.
-  - `Palette.override(self, **kwargs: object) -> 'Palette'` — Return a new Palette with selected entries replaced.
-  - `Palette.status(cls) -> 'Palette'` *(class)* — Standard severity palette for dark-theme UIs.
-  - `Palette.axes(cls) -> 'Palette'` *(class)* — Standard XYZ / RGB axis colours (Maya / 3D convention).
-  - `Palette.channels(cls) -> 'Palette'` *(class)* — Standard transform-attribute colours for animation editors.
-  - `Palette.ui(cls) -> 'Palette'` *(class)* — Common UI element colours for dark themes.
-  - `Palette.diff(cls) -> 'Palette'` *(class)* — Comparison / diff palette for dark-theme tree views.
 
 <a id="core_utils--_core_utils"></a>
 ### `core_utils/_core_utils.py`
@@ -209,6 +180,36 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `CLI.get_parser(description: str = None) -> argparse.ArgumentParser` *(static)* — Create a standard ArgumentParser.
   - `CLI.add_connection_args(parser: argparse.ArgumentParser, default_host: str = DEFAULT_HOST, default_user: str = DEFAULT_USER, default_target: str = DEFAULT_CRED_TARGET) -> argparse.ArgumentParser` *(static)* — Add standard SSH connection arguments (host, user, password, cred-target).
   - `CLI.get_connection_kwargs(args: argparse.Namespace) -> Dict[str, Any]` *(static)* — Convert parsed arguments into a dictionary suitable for SSHClient.__init__.
+
+<a id="core_utils--color"></a>
+### `core_utils/color.py`
+
+Lightweight, DCC-agnostic color primitives.
+
+- **[`class Color`](pythontk/pythontk/core_utils/color.py#L18)** — Immutable RGBA color stored as 0–255 integers.
+  - `Color.from_hex(cls, hex_str: str) -> 'Color'` *(class)* — Parse ``#RGB``, ``#RRGGBB``, or ``#RRGGBBAA``.
+  - `Color.from_rgbf(cls, r: float, g: float, b: float, a: float = 1.0) -> 'Color'` *(class)* — Create from 0.0–1.0 float components (Maya API convention).
+  - `Color.hex(self) -> str` *(property)* — ``'#RRGGBB'`` (or ``'#RRGGBBAA'`` when alpha < 255).
+  - `Color.rgb(self) -> Tuple[int, int, int]` *(property)* — ``(r, g, b)`` in 0–255.
+  - `Color.rgba(self) -> Tuple[int, int, int, int]` *(property)* — ``(r, g, b, a)`` in 0–255.
+  - `Color.rgbf(self) -> Tuple[float, float, float]` *(property)* — ``(r, g, b)`` in 0.0–1.0 (Maya API format).
+  - `Color.rgbaf(self) -> Tuple[float, float, float, float]` *(property)* — ``(r, g, b, a)`` in 0.0–1.0.
+  - `Color.luminance(self) -> float` *(property)* — Perceived luminance (ITU-R BT.709, linear approximation).
+  - `Color.lighter(self, factor: float = 0.2) -> 'Color'` — Return a lighter colour.
+  - `Color.darker(self, factor: float = 0.2) -> 'Color'` — Return a darker colour.
+  - `Color.with_alpha(self, a: Union[int, float]) -> 'Color'` — Return a copy with a new alpha (int 0–255 or float 0.0–1.0).
+  - `Color.blend(self, other: 'Color', t: float = 0.5) -> 'Color'` — Linear interpolation towards *other* by *t* (0.0 = self, 1.0 = other).
+  - `Color.subtle_bg(self, value: float = 0.24, sat_factor: float = 1.0) -> 'Color'` — Derive a tinted dark-theme background from this colour.
+- **[`class ColorPair`](pythontk/pythontk/core_utils/color.py#L177)** — Foreground / background pair for themed UIs.
+  - `ColorPair.auto(cls, fg: Union[str, 'Color'], value: float = 0.24, sat_factor: float = 1.0) -> 'ColorPair'` *(class)* — Derive background automatically from foreground for dark themes.
+- **[`class Palette(dict)`](pythontk/pythontk/core_utils/color.py#L254)** — Named color collection with auto-wrapping and alias support.
+  - `Palette.alias(self, mapping: Dict[str, str]) -> 'Palette'` — Return a new Palette with additional keys pointing to existing values.
+  - `Palette.override(self, **kwargs: object) -> 'Palette'` — Return a new Palette with selected entries replaced.
+  - `Palette.status(cls) -> 'Palette'` *(class)* — Standard severity palette for dark-theme UIs.
+  - `Palette.axes(cls) -> 'Palette'` *(class)* — Standard XYZ / RGB axis colours (Maya / 3D convention).
+  - `Palette.channels(cls) -> 'Palette'` *(class)* — Standard transform-attribute colours for animation editors.
+  - `Palette.ui(cls) -> 'Palette'` *(class)* — Common UI element colours for dark themes.
+  - `Palette.diff(cls) -> 'Palette'` *(class)* — Comparison / diff palette for dark-theme tree views.
 
 <a id="core_utils--execution_monitor--_dialog_viewer"></a>
 ### `core_utils/execution_monitor/_dialog_viewer.py`
@@ -605,6 +606,14 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `Metadata.get(cls, file_path: Any, *keys: str, mode: str = 'metadata') -> Any` *(class)* — Unified get method for metadata and tags.
   - `Metadata.set(cls, file_path: Any, mode: str = 'metadata', **kwargs) -> None` *(class)* — Unified set method for metadata and tags.
 
+<a id="geo_utils--assembly_sorter"></a>
+### `geo_utils/assembly_sorter.py`
+
+Sort separated mesh parts into repeated-assembly copies.
+
+- **[`class AssemblySorter`](pythontk/pythontk/geo_utils/assembly_sorter.py#L37)** — Cluster separated parts into copies of repeated assemblies.
+  - `AssemblySorter.sort(self, parts: List[Dict[str, Any]]) -> List[List[int]]` — Sort *parts* into assembly groups;
+
 <a id="geo_utils--drape"></a>
 ### `geo_utils/drape.py`
 
@@ -622,6 +631,10 @@ Point-cloud geometry — analyze and group unordered sets of points.
 
 - **[`class PointCloud`](pythontk/pythontk/geo_utils/pointcloud.py#L23)** — Stateless point-cloud geometry (alignment / clustering / hashing).
   - `PointCloud.pca_transform(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1, normals_a: Optional['np.ndarray'] = None, normals_b: Optional['np.ndarray'] = None, normal_threshold: float = 0.8) -> Optional[List[float]]` *(static)* — Transform that aligns ``points_b`` onto ``points_a`` via PCA axis alignment.
+  - `PointCloud.nn_query(target: 'np.ndarray', query: 'np.ndarray', k: int = 1)` *(static)* — Nearest-neighbor distances/indices of *query* points against *target*.
+  - `PointCloud.match_clouds(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, scale_tolerance: float = 0.0, normals_a: Optional['np.ndarray'] = None, normals_b: Optional['np.ndarray'] = None, normal_threshold: float = 0.8, uvs_identical: Optional[Callable[[], bool]] = None, sample_size: int = 500, symmetry_threshold: float = 0.1) -> Tuple[bool, Optional[List[float]]]` *(static)* — Three-stage identity test between two equal-count point clouds.
+  - `PointCloud.pca_basis(points: 'np.ndarray') -> Optional[List[float]]` *(static)* — Stabilized PCA rotation frame for a point cloud.
+  - `PointCloud.pca_eigenvalue_signature(points: 'np.ndarray', precision: int = 3) -> Tuple` *(static)* — Scale-invariant shape descriptor for signature bucketing.
   - `PointCloud.cluster_by_distance(points: Sequence[Sequence[float]], threshold: float) -> List[List[int]]` *(static)* — Group points into clusters linked by proximity (threshold flood-fill).
   - `PointCloud.hash_points(points, precision=4)` *(static)* — Hash the given list of point values (fixed-point, position-stable).
 
@@ -644,7 +657,7 @@ Pure polyline / curve geometry — generate, measure, sample, reshape.
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L46)** — Helper methods for working with image file formats.
+- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L45)** — Helper methods for working with image file formats.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
   - `ImgUtils.allow_large_images(cls)` *(class)* — Context manager to safely load very large images.
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
@@ -734,7 +747,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 ``MapFactory`` -- the texture-map workflow orchestrator.
 
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/img_utils/map_factory/_map_factory.py#L59)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/img_utils/map_factory/_map_factory.py#L58)** — Refactored factory with pluggable workflow system.
   - `MapFactory.register_conversions(cls, registry: ConversionRegistry)` *(class)* — Register all standard PBR conversions.
   - `MapFactory.resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str` *(class)* — Resolves the map type from a filename or alias using `map_types`.
   - `MapFactory.resolve_color_space(cls, file: str, default: str = 'Linear') -> str` *(class)* — Resolve the working color space ("sRGB" or "Linear") for a texture by filename.
@@ -805,15 +818,15 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L255)** — Handles Unity HDRP Mask Map (MSAO).
+- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L256)** — Handles Unity HDRP Mask Map (MSAO).
   - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L363)** — Handles packed Metallic+Smoothness.
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L366)** — Handles packed Metallic+Smoothness.
   - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L448)** — Handles separate metallic and roughness maps.
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L452)** — Handles separate metallic and roughness maps.
   - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
   - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
@@ -821,11 +834,11 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L629)** — Handles normal map format conversion.
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L630)** — Handles normal map format conversion.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L792)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/img_utils/map_factory/handlers.py#L797)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -892,11 +905,12 @@ Plan, assess, and apply map (texture) optimizations.
 <a id="img_utils--map_registry"></a>
 ### `img_utils/map_registry.py`
 
-- **[`class WF`](pythontk/pythontk/img_utils/map_registry.py#L7)** — Workflow identifiers.
-- **[`class MapType`](pythontk/pythontk/img_utils/map_registry.py#L44)** — Defines the properties of a texture map type.
-- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/img_utils/map_registry.py#L70)** — Central registry for map type definitions.
+- **[`class WF`](pythontk/pythontk/img_utils/map_registry.py#L8)** — Workflow identifiers.
+- **[`class MapType`](pythontk/pythontk/img_utils/map_registry.py#L45)** — Defines the properties of a texture map type.
+- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/img_utils/map_registry.py#L71)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
+  - `MapRegistry.get_suffix_strip_pattern(self) -> Optional[str]` — Regex matching one trailing map-type suffix (any registered alias).
   - `MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]` — Generate the workflow presets dictionary.
   - `MapRegistry.get_map_types(self) -> Dict[str, Tuple[str, ...]]` — Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.
   - `MapRegistry.get_fallbacks(self) -> Dict[str, Tuple[str, ...]]` — Generate the input fallback dictionary.

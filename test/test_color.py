@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Tests for pythontk.color_utils (Color, ColorPair, Palette)."""
+"""Tests for pythontk color primitives (Color, ColorPair, Palette)."""
 
 import unittest
 
@@ -9,7 +9,7 @@ class TestColor(unittest.TestCase):
     """Tests for the Color value type."""
 
     def _cls(self):
-        from pythontk.color_utils._color_utils import Color
+        from pythontk import Color
 
         return Color
 
@@ -159,12 +159,12 @@ class TestColorPair(unittest.TestCase):
     """Tests for the ColorPair container."""
 
     def _make(self, fg=None, bg=None):
-        from pythontk.color_utils._color_utils import ColorPair
+        from pythontk import ColorPair
 
         return ColorPair(fg, bg)
 
     def _auto(self, fg, **kw):
-        from pythontk.color_utils._color_utils import ColorPair
+        from pythontk import ColorPair
 
         return ColorPair.auto(fg, **kw)
 
@@ -235,17 +235,17 @@ class TestPalette(unittest.TestCase):
     """Tests for the Palette dict subclass."""
 
     def _cls(self):
-        from pythontk.color_utils._color_utils import Palette
+        from pythontk import Palette
 
         return Palette
 
     def _color_cls(self):
-        from pythontk.color_utils._color_utils import Color
+        from pythontk import Color
 
         return Color
 
     def _pair_cls(self):
-        from pythontk.color_utils._color_utils import ColorPair
+        from pythontk import ColorPair
 
         return ColorPair
 
