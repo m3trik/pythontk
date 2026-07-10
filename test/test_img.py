@@ -1265,6 +1265,59 @@ class AtlasLayoutTest(unittest.TestCase):
                 self._assert_tiles_unit_square(rects)
 
 
+class AtlasPixelRectsTest(unittest.TestCase):
+    """ImgUtils.atlas_pixel_rects — SSoT UV-rect → pixel-rect mapping (with flip)."""
+
+    def test_full_rect_covers_whole_canvas(self):
+        (r0, r1, c0, c1), = ImgUtils.atlas_pixel_rects([(1.0, 1.0, 0.0, 0.0)], 8)
+        self.assertEqual((r0, r1, c0, c1), (0, 8, 0, 8))
+
+    def test_uv_bottom_rect_lands_in_bottom_rows(self):
+        # UV oy=0 (bottom half) -> image rows 4..8 (bottom) after the flip.
+        (r0, r1, c0, c1), = ImgUtils.atlas_pixel_rects([(1.0, 0.5, 0.0, 0.0)], 8)
+        self.assertEqual((r0, r1), (4, 8))
+
+    def test_size_tuple_is_width_height(self):
+        (r0, r1, c0, c1), = ImgUtils.atlas_pixel_rects([(1.0, 1.0, 0.0, 0.0)], (6, 4))
+        self.assertEqual((r0, r1, c0, c1), (0, 4, 0, 6))
+
+    def test_shared_edges_have_no_gap_or_overlap(self):
+        rects = ImgUtils.compute_atlas_layout([1.0, 2.0, 3.0], rows=1)
+        px = ImgUtils.atlas_pixel_rects(rects, 64)
+        cols = sorted((c0, c1) for _r0, _r1, c0, c1 in px)
+        self.assertEqual(cols[0][1], cols[1][0])  # neighbor boundaries meet
+        self.assertEqual(cols[1][1], cols[2][0])  # exactly (same rounding)
+
+
+class InsetAtlasRectsTest(unittest.TestCase):
+    """ImgUtils.inset_atlas_rects — pixel gutter around each atlas rect."""
+
+    def test_inset_frees_gutter_on_all_sides(self):
+        (sx, sy, ox, oy), = ImgUtils.inset_atlas_rects([(1.0, 1.0, 0.0, 0.0)], 64, 4)
+        self.assertAlmostEqual(ox, 4 / 64)
+        self.assertAlmostEqual(oy, 4 / 64)
+        self.assertAlmostEqual(sx, 1.0 - 8 / 64)
+        self.assertAlmostEqual(sy, 1.0 - 8 / 64)
+
+    def test_tiny_rect_is_protected(self):
+        # A 4px-wide rect can't afford an 8px gutter: per-axis inset is capped
+        # at a quarter of the extent, so content keeps at least half the rect.
+        (sx, _sy, ox, _oy), = ImgUtils.inset_atlas_rects(
+            [(4 / 64, 1.0, 0.0, 0.0)], 64, 8
+        )
+        self.assertGreaterEqual(sx, (4 / 64) / 2)
+        self.assertLess(ox, 4 / 64)  # inset stayed inside the original rect
+
+    def test_inset_rects_remain_inside_originals(self):
+        rects = ImgUtils.compute_atlas_layout([1.0, 5.0, 2.0])
+        inset = ImgUtils.inset_atlas_rects(rects, 128, 4)
+        for (sx, sy, ox, oy), (isx, isy, iox, ioy) in zip(rects, inset):
+            self.assertGreaterEqual(iox, ox)
+            self.assertGreaterEqual(ioy, oy)
+            self.assertLessEqual(iox + isx, ox + sx + 1e-9)
+            self.assertLessEqual(ioy + isy, oy + sy + 1e-9)
+
+
 @unittest.skipUnless(HAS_CV2, "cv2 required for assemble_atlas resize")
 class AtlasAssembleTest(unittest.TestCase):
     """ImgUtils.assemble_atlas — pack per-item images into one atlas at rects."""
@@ -1483,6 +1536,36 @@ class ListImageFilesTest(unittest.TestCase):
         self.assertEqual(ImgUtils.list_image_files(self.tmp, exts=".png"), ["b.png"])
         self.assertEqual(ImgUtils.list_image_files(self.tmp, exts=(".PNG",)), ["b.png"])
         self.assertEqual(ImgUtils.list_image_files(self.tmp, exts=(".jpg",)), ["a.JPG"])
+
+
+class UniqueDirStemsTest(unittest.TestCase):
+    """ImgUtils.unique_dir_stems — collision-proof per-source output names
+    (the curator/equalizer key their per-source output dirs by these)."""
+
+    def test_distinct_basenames_pass_through(self):
+        from pythontk import ImgUtils
+        self.assertEqual(
+            ImgUtils.unique_dir_stems(["/x/capA", "/x/capB"]),
+            ["capA", "capB"],
+        )
+
+    def test_same_basename_gets_parent_qualified(self):
+        from pythontk import ImgUtils
+        stems = ImgUtils.unique_dir_stems(["/x/capA/images", "/x/capB/images"])
+        self.assertEqual(len(set(stems)), 2)
+        self.assertEqual(stems, ["capA_images", "capB_images"])
+
+    def test_identical_paths_fall_back_to_index(self):
+        from pythontk import ImgUtils
+        stems = ImgUtils.unique_dir_stems(["/x/a", "/x/a"])
+        self.assertEqual(len(set(stems)), 2)
+
+    def test_order_is_preserved(self):
+        from pythontk import ImgUtils
+        dirs = ["/p1/images", "/z/solo", "/p2/images"]
+        stems = ImgUtils.unique_dir_stems(dirs)
+        self.assertEqual(stems[1], "solo")
+        self.assertEqual(len(set(stems)), 3)
 
 
 if __name__ == "__main__":

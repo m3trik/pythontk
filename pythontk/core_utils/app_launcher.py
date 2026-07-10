@@ -529,7 +529,15 @@ class AppLauncher:
 
     @staticmethod
     def scan_install_dirs(scan_globs):
-        """Yield existing files matching *scan_globs*, newest (reverse-sorted) first.
+        """Yield existing files matching *scan_globs*; pattern order is a priority.
+
+        Every match for the first pattern is yielded (newest install dir
+        first, via reverse sort) before any match for the second pattern,
+        and so on — mirroring how :meth:`resolve_app_path` ranks its stages
+        (first hit wins). The previous pooled sort made the *filename* an
+        accidental tiebreaker: RizomUV's ``rizomuv_RS.exe`` outranked the
+        intended ``Rizomuv_VS.exe`` inside the same install dir purely by
+        ASCII order, inverting the caller's tuple priority.
 
         A ``{program_files}`` token in a pattern expands to both Program Files roots,
         so callers write one portable pattern instead of hardcoding the 64/32-bit
@@ -537,11 +545,12 @@ class AppLauncher:
 
             AppLauncher.scan_install_dirs([r"{program_files}\\Autodesk\\Maya*\\bin\\maya.exe"])
 
-        :param scan_globs: An iterable of glob patterns (each may use the token).
-        :return: A generator of absolute file paths, newest first.
+        :param scan_globs: An ordered iterable of glob patterns (each may use the token).
+        :return: A generator of absolute file paths — highest-priority pattern
+                 first, newest first within each pattern, duplicates skipped.
         """
         pf64, pf32 = AppLauncher._program_files_roots()
-        candidates = []
+        seen = set()
         for pattern in scan_globs:
             if "{program_files}" in pattern:
                 expanded = [
@@ -550,11 +559,13 @@ class AppLauncher:
                 ]
             else:
                 expanded = [pattern]
+            candidates = []
             for pat in expanded:
                 candidates.extend(glob.glob(pat))
-        for c in sorted(set(candidates), reverse=True):
-            if os.path.isfile(c):
-                yield c
+            for c in sorted(set(candidates), reverse=True):
+                if c not in seen and os.path.isfile(c):
+                    seen.add(c)
+                    yield c
 
     @staticmethod
     def resolve_app_path(

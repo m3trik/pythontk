@@ -3,7 +3,7 @@
 """Perceptual-hash + sharpness curation for large image sets.
 
 Built for the "I extracted 6000 video frames; help me get to a quality
-set" case. Default behavior:
+set" case:
 
 1. Compute a 64-bit difference hash (dHash) per image.
 2. Compute Laplacian-variance sharpness per image.
@@ -12,11 +12,14 @@ set" case. Default behavior:
    drop anything below ``sharpness_floor``.
 5. Copy kept files into a single curated output directory per source.
 
-Defaults are intentionally conservative — dHash threshold 5/64 catches
-*near-identical* frames only, so parallax-bearing pairs the SfM solver
-needs are preserved. Tune higher (10–15) for aggressive culling of
-handheld-video extractions; lower (2–3) when sharpness alone is the
-goal.
+Every stage is opt-in: the default ``hash_threshold=0`` disables
+clustering entirely (every frame survives dedup — even bit-identical
+hashes are not merged) and the sharpness floors default off, so a
+no-arg ``curate()`` is a safe pass-through copy.
+Near-duplicate frames of a moving camera carry exactly the
+small-baseline parallax SfM triangulates from, so destructive settings
+belong to the caller: ``5`` catches near-identical frames only,
+``10–15`` aggressively culls redundant static photo sets.
 """
 import logging
 import os
@@ -51,8 +54,9 @@ class ImageCurator:
         64-bit at size=8). Robust to slight crops / exposure shifts.
 
         Note: ``hash_threshold`` in :meth:`curate` is the max Hamming
-        distance — scale it with ``size``. Default 5 assumes size=8 (64
-        bits); at size=16 (256 bits), 20 is the equivalent ratio.
+        distance — scale it with ``size`` (e.g. 5 at size=8 / 64 bits ≈ 20
+        at size=16 / 256 bits). :meth:`curate` now defaults it to 0, which
+        disables hash clustering entirely.
         """
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         resized = cv2.resize(gray, (size + 1, size), interpolation=cv2.INTER_AREA)
@@ -69,10 +73,11 @@ class ImageCurator:
     @staticmethod
     def sharpness(image) -> float:
         """Variance-of-Laplacian sharpness. Absolute values scale with
-        image resolution — the curator computes this on a 256px-wide
-        thumbnail, so callers tuning ``sharpness_floor`` should
-        empirically inspect the score distribution rather than reuse
-        full-resolution thresholds from elsewhere.
+        image resolution — the curator computes this on a
+        :attr:`SCAN_WIDTH`-wide thumbnail, so callers tuning
+        ``sharpness_floor`` should empirically inspect the score
+        distribution rather than reuse full-resolution thresholds from
+        elsewhere.
         """
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return float(cv2.Laplacian(gray, cv2.CV_64F).var())
@@ -83,7 +88,7 @@ class ImageCurator:
         self,
         source_dirs: Sequence[str],
         output_root: str,
-        hash_threshold: int = 5,
+        hash_threshold: int = 0,
         sharpness_floor: float = 0.0,
         sharpness_floor_percentile: Optional[float] = None,
         min_sharpness_fraction_of_median: float = 0.0,
@@ -93,7 +98,9 @@ class ImageCurator:
         overwrite_output: bool = True,
     ) -> List[str]:
         """Curate every image across ``source_dirs`` → write the kept set
-        to ``output_root/<basename><suffix>/``.
+        to ``output_root/<stem><suffix>/``, where ``<stem>`` is the source
+        dir's basename, parent-qualified if needed to stay unique across
+        ``source_dirs`` (see :meth:`ImgUtils.unique_dir_stems`).
 
         Returns one output directory per input directory (preserving the
         per-source partition so downstream stages can still treat them
@@ -152,14 +159,17 @@ class ImageCurator:
             f"sharpness floor {sharpness_floor})"
         )
 
-        # 4. Write per-source output dirs.
+        # 4. Write per-source output dirs. Stems are collision-proofed:
+        # same-basename sources (capA/images + capB/images) would otherwise
+        # map to one out_dir and the second source's purge would delete the
+        # first's just-copied files.
         out_dirs: List[str] = []
         kept_by_src = {d: [] for d in source_dirs}
         for record in kept:
             kept_by_src[record[0]].append(record)
-        for src_dir in source_dirs:
-            stem = os.path.basename(os.path.normpath(src_dir)) + suffix
-            out_dir = os.path.join(output_root, stem)
+        stems = ImgUtils.unique_dir_stems(source_dirs)
+        for src_dir, stem in zip(source_dirs, stems):
+            out_dir = os.path.join(output_root, stem + suffix)
             if overwrite_output and os.path.isdir(out_dir):
                 # Purge stale survivors from any previous run at a
                 # different threshold.
@@ -178,9 +188,16 @@ class ImageCurator:
         return out_dirs
 
     # ------------------------------------------------------ shared stages (DRY)
+    # Analysis width for the sharpness thumbnail. At 256px a 10-px motion
+    # blur on a 4K frame is sub-pixel — invisible to the Laplacian — so blur
+    # ranking there is mostly noise; 1024px keeps real defocus/motion blur
+    # measurable while staying ~14x cheaper than full-res on 4K sources.
+    SCAN_WIDTH = 1024
+
     def _scan_images(self, source_dirs, progress=None):
-        """Scan every image: dHash + variance-of-Laplacian sharpness on a 256px
-        thumbnail. Returns ``[(src_dir, path, hash, sharpness), ...]``. Shared by
+        """Scan every image: dHash + variance-of-Laplacian sharpness on a
+        :attr:`SCAN_WIDTH`-wide thumbnail. Returns
+        ``[(src_dir, path, hash, sharpness), ...]``. Shared by
         :meth:`curate` and :meth:`preview`."""
         scanned: List[Tuple[str, str, int, float]] = []
         for src_dir in source_dirs:
@@ -193,10 +210,23 @@ class ImageCurator:
                 img = cv2.imread(path)
                 if img is None:
                     continue
-                # Downsize for hash/sharpness speed — 256px wide is plenty.
+                # Downsize for hash/sharpness speed. INTER_AREA, not the
+                # default INTER_LINEAR: a ~4x+ decimation through a 2x2
+                # linear tap aliases, and that aliasing feeds pseudo-random
+                # high-frequency energy straight into the Laplacian-variance
+                # sharpness ranking (dhash() does its own INTER_AREA resize,
+                # so the hash is safe either way).
                 h, w = img.shape[:2]
-                if w > 256:
-                    img = cv2.resize(img, (256, int(h * (256.0 / w))))
+                if w > self.SCAN_WIDTH:
+                    # max(1, ...): an extreme panorama strip (w > 1024*h)
+                    # would otherwise round to height 0 and cv2.resize
+                    # asserts, aborting the whole scan.
+                    img = cv2.resize(
+                        img,
+                        (self.SCAN_WIDTH,
+                         max(1, int(h * (float(self.SCAN_WIDTH) / w)))),
+                        interpolation=cv2.INTER_AREA,
+                    )
                 scanned.append((src_dir, path, self.dhash(img), self.sharpness(img)))
                 if progress is not None:
                     try:
@@ -210,7 +240,15 @@ class ImageCurator:
         """Greedy-by-anchor hash clustering: each record joins the first existing
         cluster whose anchor is within *hash_threshold* Hamming distance, else
         opens a new one. Not single-linkage — a slow pan segments into contiguous
-        chunks rather than chaining into one giant cluster."""
+        chunks rather than chaining into one giant cluster.
+
+        ``hash_threshold <= 0`` disables clustering outright (every frame its
+        own cluster). Hamming-0 matching would still merge *bit-identical*
+        hashes — routine for consecutive frames of a paused camera on a
+        thumbnail-sized dHash — silently contradicting the documented
+        "0 = no dedup, keep all" contract every runner/tooltip states."""
+        if hash_threshold <= 0:
+            return [[record] for record in scanned]
         clusters: List[List[Tuple[str, str, int, float]]] = []
         anchor_hashes: List[int] = []
         for record in scanned:

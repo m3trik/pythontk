@@ -496,8 +496,12 @@ class ImageCuratorTest(BaseTestCase):
             _cv2.imwrite(os.path.join(src, f"dup_{j:02d}.jpg"), frame(1))
 
         out_root = os.path.join(self.temp_dir, "rep_out")
+        # hash_threshold=1: identical dupes cluster (Hamming 0), distinct
+        # bands stay separate. 0 now disables clustering outright (the
+        # documented "no dedup" contract), which would defeat this test's
+        # representatives-vs-all-frames distinction.
         result = ImageCurator().curate(
-            [src], out_root, hash_threshold=0, keep_per_cluster=1,
+            [src], out_root, hash_threshold=1, keep_per_cluster=1,
             sharpness_floor_percentile=30.0,
         )
         kept = [f for f in os.listdir(result[0]) if f.lower().endswith(".jpg")]
@@ -762,6 +766,187 @@ class ExposureEqualizerTest(BaseTestCase):
         from pythontk import ExposureEqualizer
         with self.assertRaises(ValueError):
             ExposureEqualizer()._reference_stats(["/nope"], "bogus", 4)
+
+
+class PrepRegressionTest(BaseTestCase):
+    """Regressions from the 2026-07 photogrammetry prep audit: same-basename
+    source collisions, stale-output accumulation, and per-capture equalization
+    (see CHANGELOG 2026-07-10)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _write_frames(self, dirpath, count=3, base=100, size=64,
+                      vertical=False):
+        """Write ``count`` distinct-ish JPEG frames; returns their names.
+
+        ``vertical`` flips the stripe orientation — dHash is exposure-
+        invariant (it hashes horizontal gradients), so two captures that
+        differ only in brightness hash identically and cross-directory
+        dedup would merge them; orientation makes the *structure* differ.
+        """
+        import numpy as np
+        import cv2 as _cv2
+        os.makedirs(dirpath, exist_ok=True)
+        names = []
+        for i in range(count):
+            arr = np.full((size, size, 3), base + i * 20, dtype=np.uint8)
+            if vertical:
+                arr[:, :: (i + 2)] = 255
+            else:
+                arr[:: (i + 2), :] = 255  # texture so dHash/sharpness differ
+            name = f"f{i}.jpg"
+            _cv2.imwrite(os.path.join(dirpath, name), arr)
+            names.append(name)
+        return names
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
+    def test_curate_same_basename_sources_do_not_clobber(self) -> None:
+        """capA/images + capB/images share a basename; the second source's
+        output purge must not delete the first's just-copied files."""
+        from pythontk import ImageCurator
+        cap_a = os.path.join(self.temp_dir, "capA", "images")
+        cap_b = os.path.join(self.temp_dir, "capB", "images")
+        self._write_frames(cap_a, base=60)
+        self._write_frames(cap_b, base=160, vertical=True)
+        out_root = os.path.join(self.temp_dir, "curated")
+        out_dirs = ImageCurator().curate([cap_a, cap_b], out_root,
+                                         hash_threshold=0)
+        self.assertEqual(len(out_dirs), 2)
+        self.assertNotEqual(out_dirs[0], out_dirs[1])
+        for d in out_dirs:
+            self.assertTrue(os.listdir(d), f"{d} lost its capture's files")
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
+    def test_equalize_same_basename_sources_do_not_collide(self) -> None:
+        from pythontk import ExposureEqualizer
+        cap_a = os.path.join(self.temp_dir, "capA", "images")
+        cap_b = os.path.join(self.temp_dir, "capB", "images")
+        self._write_frames(cap_a, base=60)
+        self._write_frames(cap_b, base=160)
+        out_root = os.path.join(self.temp_dir, "eq")
+        out_dirs = ExposureEqualizer().equalize_directories(
+            [cap_a, cap_b], out_root, strength=0.5,
+            reference_strategy="median",
+        )
+        self.assertEqual(len(set(out_dirs)), 2)
+        for d in out_dirs:
+            self.assertEqual(len(os.listdir(d)), 3, d)
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
+    def test_equalize_purges_stale_output_on_rerun(self) -> None:
+        """Re-equalizing after the input set shrank (tighter curation) must
+        not leave the previous run's since-culled frames in the output dir —
+        downstream add_images ingests the union, degrading every re-run."""
+        from pythontk import ExposureEqualizer
+        src = os.path.join(self.temp_dir, "cap")
+        names = self._write_frames(src, count=4)
+        out_root = os.path.join(self.temp_dir, "eq")
+        eq = ExposureEqualizer()
+        first = eq.equalize_directories([src], out_root, strength=0.5)[0]
+        self.assertEqual(len(os.listdir(first)), 4)
+        os.remove(os.path.join(src, names[0]))  # "curation" culled a frame
+        second = eq.equalize_directories([src], out_root, strength=0.5)[0]
+        self.assertEqual(
+            sorted(os.listdir(second)), sorted(names[1:]),
+            "stale previously-equalized frame survived the re-run",
+        )
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
+    def test_equalize_never_purges_the_source_dir(self) -> None:
+        """output_root=parent + suffix="" resolves the output dir onto the
+        source dir itself; the stale-output purge must skip it (in-place
+        overwrite) instead of rmtree'ing the capture before reading it."""
+        from pythontk import ExposureEqualizer
+        src = os.path.join(self.temp_dir, "cap")
+        names = self._write_frames(src)
+        out = ExposureEqualizer().equalize_directories(
+            [src], self.temp_dir, suffix="", strength=0.5
+        )[0]
+        self.assertEqual(
+            os.path.normcase(os.path.normpath(out)),
+            os.path.normcase(os.path.normpath(src)),
+        )
+        self.assertEqual(
+            sorted(os.listdir(src)), sorted(names),
+            "source capture was destroyed by the overwrite purge",
+        )
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
+    def test_per_capture_mode_preserves_intra_capture_ordering(self) -> None:
+        """Default (per-capture) equalization applies ONE transform per dir,
+        so a capture's dark frame stays darker than its bright frame; the
+        legacy per-image mode collapses both onto the reference stats."""
+        import numpy as np
+        import cv2 as _cv2
+        from pythontk import ExposureEqualizer
+
+        src = os.path.join(self.temp_dir, "cap")
+        os.makedirs(src)
+        for name, base in (("dark.jpg", 40), ("bright.jpg", 200)):
+            arr = np.full((64, 64, 3), base, dtype=np.uint8)
+            arr[::3, :] = min(255, base + 40)
+            _cv2.imwrite(os.path.join(src, name), arr)
+        ref = os.path.join(self.temp_dir, "ref")
+        self._write_frames(ref, base=120)
+        out_root = os.path.join(self.temp_dir, "eq")
+        out = ExposureEqualizer().equalize_directories(
+            [src], out_root, reference_dir=ref, strength=1.0,
+        )[0]
+
+        def mean_luma(path):
+            img = _cv2.imread(path)
+            return float(
+                _cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY).mean()
+            )
+
+        dark = mean_luma(os.path.join(out, "dark.jpg"))
+        bright = mean_luma(os.path.join(out, "bright.jpg"))
+        self.assertLess(
+            dark + 10.0, bright,
+            "per-capture mode must preserve intra-capture exposure ordering",
+        )
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
+    def test_hash_threshold_zero_keeps_bit_identical_frames(self) -> None:
+        """threshold 0 = NO dedup, as every runner/tooltip promises — even
+        bit-identical frames (routine for a paused camera) must all survive.
+        Hamming-0 clustering used to merge them and keep one per cluster."""
+        import numpy as np
+        import cv2 as _cv2
+        from pythontk import ImageCurator
+
+        src = os.path.join(self.temp_dir, "identical")
+        os.makedirs(src)
+        arr = np.full((64, 64, 3), 128, dtype=np.uint8)
+        arr[::3, :] = 255
+        for i in range(3):  # three byte-identical frames
+            _cv2.imwrite(os.path.join(src, f"f{i}.jpg"), arr)
+        out_root = os.path.join(self.temp_dir, "identical_out")
+        out = ImageCurator().curate([src], out_root, hash_threshold=0)[0]
+        self.assertEqual(len(os.listdir(out)), 3,
+                         "hash_threshold=0 must keep ALL frames")
 
 
 if __name__ == "__main__":
