@@ -131,6 +131,49 @@ class PresetStoreTest(unittest.TestCase):
         self.assertEqual(store.list(), ["only"])
 
 
+class PresetStoreAtomicWriteTest(unittest.TestCase):
+    """Writes are atomic: a failed save can never corrupt an existing preset.
+
+    Both tests force the atomic swap (``os.replace``) to fail — under a
+    regression to a plain truncate-and-write (``write_text`` / ``json.dump``),
+    the patched ``os.replace`` never fires, the write *succeeds*, and the
+    asserts below fail. So these pin the routing through the atomic path, not
+    just the primitive (which ``test_atomic_write.py`` covers on its own).
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.store = PresetStore("p", "extapps", user_dir=self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_failed_save_propagates_and_leaves_existing_preset_intact(self):
+        from unittest import mock
+
+        self.store.save("cfg", {"version": 1})
+        with mock.patch("os.replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.store.save("cfg", {"version": 2})
+        # Old content survives readable (a truncate-then-write would have
+        # destroyed it even though the save failed), and no temp litter.
+        self.assertEqual(self.store.load("cfg"), {"version": 1})
+        self.assertEqual(self.store.list("user"), ["cfg"])
+        self.assertFalse(
+            [n for n in os.listdir(self.tmp) if n.endswith(".tmp")],
+            "failed save left a temp file behind",
+        )
+
+    def test_failed_active_write_keeps_prior_pointer(self):
+        from unittest import mock
+
+        self.store.save("cfg", {"x": 1})
+        self.store.active = "cfg"
+        with mock.patch("os.replace", side_effect=OSError("disk full")):
+            self.store.active = "other"  # setter swallows OSError by contract
+        self.assertEqual(self.store.active, "cfg")  # prior pointer intact
+
+
 class PresetStoreDefaultLocationTest(unittest.TestCase):
     """With no explicit user_dir, the user tier lands under user_config_root."""
 

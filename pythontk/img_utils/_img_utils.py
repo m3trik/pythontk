@@ -664,6 +664,43 @@ class ImgUtils(HelpMixin):
             return [os.path.join(directory, f) for f in names]
         return names
 
+    @staticmethod
+    def unique_dir_stems(dirs):
+        """Unique, order-preserving output stems for a set of directories.
+
+        The stem is the directory basename; when two directories share a
+        basename (e.g. ``capA/images`` and ``capB/images``) the parent
+        directory name is prepended (``capA_images``) — walking further up
+        the path until every stem is unique, with a positional-index suffix
+        as the final fallback (identical paths passed twice). Consumers that
+        write one output directory per input directory key them by these
+        stems so same-basename sources can't clobber each other.
+
+        Parameters:
+            dirs (Sequence[str]): Directory paths (need not exist).
+
+        Returns:
+            (list) One stem per input, in input order.
+        """
+        norm = [os.path.normpath(str(d)) for d in dirs]
+        stems = [os.path.basename(p) or p for p in norm]
+        parents = [os.path.dirname(p) for p in norm]
+        while len(set(stems)) != len(stems):
+            dupes = {s for s in stems if stems.count(s) > 1}
+            changed = False
+            for i, s in enumerate(stems):
+                parent_name = os.path.basename(parents[i])
+                if s in dupes and parent_name:
+                    stems[i] = f"{parent_name}_{s}"
+                    parents[i] = os.path.dirname(parents[i])
+                    changed = True
+            if not changed:  # path components exhausted (identical inputs)
+                stems = [
+                    f"{s}_{i}" if s in dupes else s for i, s in enumerate(stems)
+                ]
+                break
+        return stems
+
     @classmethod
     def get_images(
         cls,
@@ -1516,6 +1553,83 @@ class ImgUtils(HelpMixin):
             oy += sh
         return rects
 
+    @staticmethod
+    def atlas_pixel_rects(
+        rects: Sequence[Tuple[float, float, float, float]],
+        size: Union[int, Tuple[int, int]],
+    ) -> List[Tuple[int, int, int, int]]:
+        """Convert normalized ``scaleOffset`` rects to integer pixel rects.
+
+        The single source of truth for the UV-rect -> pixel-rect mapping,
+        including the vertical flip (UV v is bottom-up, image rows are
+        top-down): :meth:`assemble_atlas` places content with exactly this
+        mapping, so a consumer that needs the *placed* pixel regions (e.g. to
+        build a coverage mask for gutter dilation) must use this instead of
+        re-deriving the rounding and inviting off-by-one drift.
+
+        Parameters:
+            rects: ``(scaleX, scaleY, offsetX, offsetY)`` rects in [0, 1] UV
+                space (:meth:`compute_atlas_layout` / Unity ``lightmapScaleOffset``).
+            size: Atlas pixel size -- ``int`` for square, or ``(width, height)``.
+
+        Returns:
+            One ``(row0, row1, col0, col1)`` half-open pixel rect per input, in
+            input order -- i.e. the content occupies ``image[row0:row1, col0:col1]``.
+            Degenerate rects come back with zero (or negative) extent; callers
+            skip those the same way :meth:`assemble_atlas` does.
+        """
+        w_px, h_px = (size, size) if isinstance(size, int) else size
+        out: List[Tuple[int, int, int, int]] = []
+        for sx, sy, ox, oy in rects:
+            col0 = int(round(ox * w_px))
+            col1 = int(round((ox + sx) * w_px))
+            row0 = int(round((1.0 - (oy + sy)) * h_px))
+            row1 = int(round((1.0 - oy) * h_px))
+            out.append((row0, row1, col0, col1))
+        return out
+
+    @staticmethod
+    def inset_atlas_rects(
+        rects: Sequence[Tuple[float, float, float, float]],
+        size: Union[int, Tuple[int, int]],
+        gutter: int,
+    ) -> List[Tuple[float, float, float, float]]:
+        """Shrink each atlas rect by a pixel gutter on every side.
+
+        :meth:`compute_atlas_layout` tiles the unit square *exactly*, which
+        leaves zero spacing between neighbors -- any mip level or bilinear tap
+        near a rect edge then bleeds into the next item. Insetting the content
+        rects by ``gutter`` px (and later dilating the assembled atlas into the
+        freed border) gives every item a bleed margin while the returned rects
+        stay valid ``scaleOffset`` values for sampling the inset content.
+
+        Small rects are protected: the per-axis inset is capped at a quarter of
+        the rect's pixel extent, so content never shrinks below half its rect
+        (a rect too small to inset is returned unchanged).
+
+        Parameters:
+            rects: ``(scaleX, scaleY, offsetX, offsetY)`` rects in [0, 1] UV space.
+            size: Atlas pixel size -- ``int`` for square, or ``(width, height)``.
+            gutter: Margin in pixels to free on each side of each rect.
+
+        Returns:
+            The inset rects, same format and order as the input.
+        """
+        w_px, h_px = (size, size) if isinstance(size, int) else size
+        out: List[Tuple[float, float, float, float]] = []
+        for sx, sy, ox, oy in rects:
+            gx = min(float(gutter), max(0.0, (sx * w_px - 2.0) / 4.0))
+            gy = min(float(gutter), max(0.0, (sy * h_px - 2.0) / 4.0))
+            out.append(
+                (
+                    sx - 2.0 * gx / w_px,
+                    sy - 2.0 * gy / h_px,
+                    ox + gx / w_px,
+                    oy + gy / h_px,
+                )
+            )
+        return out
+
     @classmethod
     def assemble_atlas(
         cls,
@@ -1564,12 +1678,10 @@ class ImgUtils(HelpMixin):
         channels = 1 if squeeze else first.shape[2]
         canvas = np.full((h_px, w_px, channels), background, dtype=np.float32)
 
-        for img, (sx, sy, ox, oy) in zip(images, rects):
-            col0 = int(round(ox * w_px))
-            col1 = int(round((ox + sx) * w_px))
-            # UV v is bottom-up; image rows are top-down -> flip vertically.
-            row0 = int(round((1.0 - (oy + sy)) * h_px))
-            row1 = int(round((1.0 - oy) * h_px))
+        # UV v is bottom-up; image rows are top-down -> atlas_pixel_rects owns
+        # the flip + rounding so mask-building consumers can't drift from it.
+        pixel_rects = cls.atlas_pixel_rects(rects, (w_px, h_px))
+        for img, (row0, row1, col0, col1) in zip(images, pixel_rects):
             tw, th = col1 - col0, row1 - row0
             if tw <= 0 or th <= 0:
                 continue  # degenerate (e.g. zero-weight) rect -- nothing to place
@@ -1715,7 +1827,7 @@ class ImgUtils(HelpMixin):
         supplies world geometry, this projects → fills → composes the contact-falloff alpha. Reuses
         :meth:`gaussian_blur` and :meth:`radial_gradient`; pure numpy triangle fill (no OpenCV/PIL),
         and returns the array rather than writing a file — the caller persists it via its own image
-        API (Blender's python ships no PIL, Maya uses cv2), keeping this layer dependency-clean.
+        API (Blender via ``bpy``'s image API, Maya via PIL), keeping this layer dependency-clean.
 
         Parameters:
             meshes: iterable of ``(points, tris)`` — ``points`` an ``(N,3)`` world-space float array,

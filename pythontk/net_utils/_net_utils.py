@@ -126,6 +126,33 @@ class NetUtils:
             return False
 
     @staticmethod
+    def is_port_bindable(port: int, host: str = "127.0.0.1") -> bool:
+        """Check whether a NEW server could bind a TCP port on this machine.
+
+        This is a different question from :meth:`is_port_open`: a hung
+        (zombie) process can hold a port *bound but not listening* -- a
+        connect probe reads that as free, yet a new server's ``bind()`` still
+        fails, so anything launched on that port waits forever. Use this when
+        *choosing a port to launch a listener on*; use ``is_port_open`` when
+        detecting an existing service to connect to.
+
+        Args:
+            port (int): Port number to test.
+            host (str): Interface to bind on (default localhost).
+
+        Returns:
+            bool: True if a bind succeeded (the port is genuinely free).
+        """
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+        finally:
+            s.close()
+
+    @staticmethod
     def get_local_ip() -> Optional[str]:
         """
         Get the local IP address of this machine.

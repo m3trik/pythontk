@@ -82,6 +82,21 @@ def sanitize_preset_name(name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-", "_", " ") else "_" for c in str(name))
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write *text* to *path* atomically (temp file + ``os.replace``).
+
+    Preset files and the ``.active`` sidecar are read by other processes —
+    another DCC session applying its startup preset while this one saves — and
+    a plain ``write_text`` lets such a reader see a torn/partial file (and a
+    crash mid-write corrupt an existing preset permanently). Delegates to
+    ``FileUtils.atomic_write_text``; imported lazily because ``file_utils``
+    itself imports from ``core_utils`` (module-level would risk a cycle).
+    """
+    from pythontk.file_utils._file_utils import FileUtils
+
+    FileUtils.atomic_write_text(path, text)
+
+
 class PresetStore:
     """Named-preset collection with a read-only built-in tier and a writable
     user tier. Qt-free; deals in plain dicts (JSON by default, or any injected
@@ -177,8 +192,7 @@ class PresetStore:
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"name": name}, fh)
+            _atomic_write_text(path, json.dumps({"name": name}))
         except OSError as e:
             logger.debug("PresetStore: could not write .active: %s", e)
 
@@ -256,7 +270,7 @@ class PresetStore:
         """
         path = self.path(name, "user")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self._codec.dump(data), encoding="utf-8")
+        _atomic_write_text(path, self._codec.dump(data))
         logger.debug("PresetStore: saved %r -> %s", name, path)
         return path
 

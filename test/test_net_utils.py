@@ -257,6 +257,28 @@ class TestNetUtils(unittest.TestCase):
         mock_connect.side_effect = socket.timeout
         self.assertFalse(NetUtils.is_port_open("localhost", 80))
 
+    def test_is_port_bindable_free_port(self):
+        """A genuinely free (kernel-assigned, then released) port is bindable."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        self.assertTrue(NetUtils.is_port_bindable(port))
+
+    def test_is_port_bindable_detects_zombie_bind(self):
+        """Regression (2026-07-10): a bound-but-NOT-listening socket (a hung
+        process's leftover) must read as NOT bindable, even though a connect
+        probe (is_port_open) sees nothing to connect to there."""
+        squatter = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        squatter.bind(("127.0.0.1", 0))  # bound, deliberately never listen()s
+        port = squatter.getsockname()[1]
+        try:
+            self.assertFalse(NetUtils.is_port_bindable(port))
+            # The semantic split this helper exists for:
+            self.assertFalse(NetUtils.is_port_open("127.0.0.1", port, timeout=0.3))
+        finally:
+            squatter.close()
+
 
 if __name__ == "__main__":
     unittest.main()

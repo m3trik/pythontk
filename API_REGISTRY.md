@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-09_
+_Generated: 2026-07-10_
 
 ## Index
 
@@ -162,7 +162,7 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `AppLauncher.append_to_path(path, user_scope=True)` *(static)* — Appends a directory to the system PATH.
   - `AppLauncher.scan_for_executables(root_paths, executable_name, depth=3)` *(static)* — Scans directories for a specific executable.
   - `AppLauncher.is_path_persisted(path)` *(static)* — Checks if the path is permanently stored in the system configuration (e.g.
-  - `AppLauncher.scan_install_dirs(scan_globs)` *(static)* — Yield existing files matching *scan_globs*, newest (reverse-sorted) first.
+  - `AppLauncher.scan_install_dirs(scan_globs)` *(static)* — Yield existing files matching *scan_globs*;
   - `AppLauncher.resolve_app_path(*, env_vars=(), location_env_vars=(), app_names=(), scan_globs=())` *(static)* — Resolve a target application executable;
   - `AppLauncher.find_app(app_identifier)` *(static)* — Attempts to locate the executable for the given application identifier.
   - `AppLauncher.get_running_processes(process_name)` *(static)* — Returns a list of PIDs of running processes matching the given name.
@@ -438,7 +438,7 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
 
 - [`sanitize_preset_name(name: str) -> str`](pythontk/pythontk/core_utils/preset_store.py#L75) — Filesystem-safe filename stem for a preset *name*.
 - **[`class Codec`](pythontk/pythontk/core_utils/preset_store.py#L40)** — Pluggable (de)serialiser for a :class:`PresetStore`'s on-disk format.
-- **[`class PresetStore`](pythontk/pythontk/core_utils/preset_store.py#L85)** — Named-preset collection with a read-only built-in tier and a writable
+- **[`class PresetStore`](pythontk/pythontk/core_utils/preset_store.py#L100)** — Named-preset collection with a read-only built-in tier and a writable
   - `PresetStore.ext(self) -> str` *(property)* — File extension this store reads/writes (from its :class:`Codec`).
   - `PresetStore.user_dir(self) -> Path` *(property)* — Writable preset directory (created lazily on first :meth:`save`).
   - `PresetStore.builtin_dir(self) -> Optional[Path]` *(property)* — Read-only shipped preset directory, or ``None`` when not configured.
@@ -669,6 +669,7 @@ Pure polyline / curve geometry — generate, measure, sample, reshape.
   - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
   - `ImgUtils.list_image_files(cls, directory, exts=None, full_paths=False)` *(class)* — Sorted image file names in a directory (non-recursive).
+  - `ImgUtils.unique_dir_stems(dirs)` *(static)* — Unique, order-preserving output stems for a set of directories.
   - `ImgUtils.get_images(cls, directory, inc=None, exc='')` *(class)* — Get bitmap images from a given directory as PIL images.
   - `ImgUtils.get_image_size(image_path: str) -> Optional[Tuple[int, int]]` *(static)* — ``(width, height)`` of an image, read as cheaply as possible.
   - `ImgUtils.get_image_info(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]` *(class)* — Get information about image files.
@@ -689,6 +690,8 @@ Pure polyline / curve geometry — generate, measure, sample, reshape.
   - `ImgUtils.gaussian_blur(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']` *(class)* — Apply a Gaussian blur to an image or 2D/3D numpy array.
   - `ImgUtils.dilate_image(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8) -> 'np.ndarray'` *(static)* — Extend valid pixels outward into empty (background) regions.
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
+  - `ImgUtils.atlas_pixel_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]` *(static)* — Convert normalized ``scaleOffset`` rects to integer pixel rects.
+  - `ImgUtils.inset_atlas_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]` *(static)* — Shrink each atlas rect by a pixel gutter on every side.
   - `ImgUtils.assemble_atlas(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'` *(class)* — Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
   - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
   - `ImgUtils.rasterize_silhouette(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)` *(class)* — Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.
@@ -710,21 +713,21 @@ Pure polyline / curve geometry — generate, measure, sample, reshape.
 
 Cross-set exposure / white-balance equalization.
 
-- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L35)** — Equalize exposure / WB across a list of source directories.
+- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L36)** — Equalize exposure / WB across a list of source directories.
   - `ExposureEqualizer.is_available(self) -> bool`
-  - `ExposureEqualizer.equalize_directories(self, source_dirs: Sequence[str], output_root: str, reference_dir: Optional[str] = None, suffix: str = '_eq', sample_count: int = 20, strength: float = 1.0, reference_strategy: str = 'first', quality: int = 100, preserve_exif: bool = True) -> List[str]` — Equalize every image in ``source_dirs`` against the reference set.
+  - `ExposureEqualizer.equalize_directories(self, source_dirs: Sequence[str], output_root: str, reference_dir: Optional[str] = None, suffix: str = '_eq', sample_count: int = 20, strength: float = 1.0, reference_strategy: str = 'first', quality: int = 100, preserve_exif: bool = True, per_image: bool = False, overwrite_output: bool = True) -> List[str]` — Equalize every image in ``source_dirs`` against the reference set.
 
 <a id="img_utils--image_curator"></a>
 ### `img_utils/image_curator.py`
 
 Perceptual-hash + sharpness curation for large image sets.
 
-- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L42)** — Pre-SfM content-dedup + sharpness culling.
+- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L45)** — Pre-SfM content-dedup + sharpness culling.
   - `ImageCurator.is_available(self) -> bool`
   - `ImageCurator.dhash(image, size: int = 8) -> int` *(static)* — Difference hash.
   - `ImageCurator.hamming(a: int, b: int) -> int` *(static)*
   - `ImageCurator.sharpness(image) -> float` *(static)* — Variance-of-Laplacian sharpness.
-  - `ImageCurator.curate(self, source_dirs: Sequence[str], output_root: str, hash_threshold: int = 5, sharpness_floor: float = 0.0, sharpness_floor_percentile: Optional[float] = None, min_sharpness_fraction_of_median: float = 0.0, keep_per_cluster: int = 1, suffix: str = '_curated', progress: Optional[callable] = None, overwrite_output: bool = True) -> List[str]` — Curate every image across ``source_dirs`` → write the kept set
+  - `ImageCurator.curate(self, source_dirs: Sequence[str], output_root: str, hash_threshold: int = 0, sharpness_floor: float = 0.0, sharpness_floor_percentile: Optional[float] = None, min_sharpness_fraction_of_median: float = 0.0, keep_per_cluster: int = 1, suffix: str = '_curated', progress: Optional[callable] = None, overwrite_output: bool = True) -> List[str]` — Curate every image across ``source_dirs`` → write the kept set
   - `ImageCurator.preview(self, source_dirs, hash_thresholds=(5,), keep_per_cluster=1, sharpness_floor=0.0, sharpness_floor_percentile=None, min_sharpness_fraction_of_median=0.0, progress=None)` — Dry-run curation report — scan **once**, evaluate one or more
 
 <a id="img_utils--map_compositor"></a>
@@ -1008,6 +1011,9 @@ Per-map output-format templates — the "export preset" layer.
   - `MathUtils.lerp(start, end, t: float)` *(static)* — Linear interpolation between two values or two equal-length points.
   - `MathUtils.safe_normalize(cls, vector, fallback, amount: float = 1)` *(class)* — :meth:`normalize`, returning ``fallback`` for a ~zero-length vector.
   - `MathUtils.smoothstep(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float` *(static)* — Canonical clamped Hermite smoothstep (``3t² − 2t³``).
+  - `MathUtils.resolve_falloff_profile(profile: Union[str, Callable]) -> Callable[[float], float]` *(static)* — Resolve a falloff profile to a callable ``f(t) -> w`` over t in [0, 1].
+  - `MathUtils.bspline_clamped_knots(stations: List[float], degree: int) -> List[float]` *(static)* — Clamped knot vector over *stations* via knot averaging (de Boor).
+  - `MathUtils.bspline_basis(knots: List[float], span: int, degree: int, s: float) -> List[float]` *(static)* — The non-zero B-spline basis values ``N[span - degree ..
   - `MathUtils.ricker(x: float) -> float` *(static)* — Ricker (Mexican-hat) wavelet — a unit ridge flanked by two balanced
   - `MathUtils.catenary(t: float, tension: float) -> float` *(static)* — Normalized catenary (``cosh``) profile across a span.
   - `MathUtils.catenary_sag(cls, t: float, tension: float, round_amount: float = 0.0, gather: float = 0.0) -> float` *(class)* — Catenary sag profile, optionally rounded / gathered at the supports.
@@ -1053,6 +1059,7 @@ Per-map output-format templates — the "export preset" layer.
 - **[`class NetUtils`](pythontk/pythontk/net_utils/_net_utils.py#L16)** — General purpose network utilities.
   - `NetUtils.connect_rdp(host: str, username: str = None, password: str = None, width: int = None, height: int = None, fullscreen: bool = True, extra_settings: Dict[str, str] = None, save_credentials: bool = True)` *(static)* — Connect to a remote desktop using Windows RDP (mstsc.exe).
   - `NetUtils.is_port_open(host: str, port: int, timeout: float = 1.0) -> bool` *(static)* — Check if a TCP port is open on a host.
+  - `NetUtils.is_port_bindable(port: int, host: str = '127.0.0.1') -> bool` *(static)* — Check whether a NEW server could bind a TCP port on this machine.
   - `NetUtils.get_local_ip() -> Optional[str]` *(static)* — Get the local IP address of this machine.
 
 <a id="net_utils--credentials"></a>

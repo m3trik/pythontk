@@ -134,6 +134,39 @@ class AppScanTest(unittest.TestCase):
         got = AppLauncher.resolve_app_path(scan_globs=(glob_pat,))
         self.assertEqual(got, str(self.tmp / "App 5.1" / "app.exe"))
 
+    def test_scan_glob_pattern_order_is_priority(self):
+        """The first pattern's matches outrank later patterns' matches.
+
+        Regression: the pooled reverse-sort made the FILENAME an accidental
+        tiebreaker inside one install dir -- RizomUV's ``rizomuv_RS.exe``
+        outranked the intended ``Rizomuv_VS.exe`` by ASCII order, inverting
+        the caller's tuple priority (lowercase sorts above uppercase).
+        """
+        d = self.tmp / "Rizom Lab" / "RizomUV 2020.1"
+        d.mkdir(parents=True)
+        for name in ("Rizomuv_VS.exe", "rizomuv_RS.exe", "rizomuv.exe"):
+            (d / name).write_text("", encoding="utf-8")
+        base = self.tmp / "Rizom Lab" / "*"
+        got = AppLauncher.resolve_app_path(scan_globs=(
+            str(base / "Rizomuv_VS.exe"),
+            str(base / "rizomuv_RS.exe"),
+            str(base / "rizomuv.exe"),
+        ))
+        self.assertEqual(got, str(d / "Rizomuv_VS.exe"))
+
+    def test_scan_glob_priority_still_prefers_newest_within_pattern(self):
+        """Within one pattern, newer install dirs still win."""
+        for v in ("Tool 2020.1", "Tool 2022.2"):
+            d = self.tmp / v
+            d.mkdir()
+            (d / "primary.exe").write_text("", encoding="utf-8")
+        (self.tmp / "Tool 2020.1" / "fallback.exe").write_text("", encoding="utf-8")
+        got = AppLauncher.resolve_app_path(scan_globs=(
+            str(self.tmp / "Tool *" / "primary.exe"),
+            str(self.tmp / "Tool *" / "fallback.exe"),
+        ))
+        self.assertEqual(got, str(self.tmp / "Tool 2022.2" / "primary.exe"))
+
     def test_returns_none_when_nothing_resolves(self):
         self.assertIsNone(
             AppLauncher.resolve_app_path(

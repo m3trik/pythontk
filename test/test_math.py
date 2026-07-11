@@ -830,6 +830,50 @@ class MathTest(BaseTestCase):
         self.assertEqual(MathUtils.smoothstep(4.0, 2.0, 4.0), 1.0)
         self.assertAlmostEqual(MathUtils.smoothstep(3.0, 2.0, 4.0), 0.5, places=9)
 
+    # ------------------------------------------------- falloff / B-spline basis
+
+    def test_resolve_falloff_profile_passthrough_and_names(self):
+        fn = lambda t: t * t
+        self.assertIs(MathUtils.resolve_falloff_profile(fn), fn)
+        self.assertIs(
+            MathUtils.resolve_falloff_profile("smoothstep"), MathUtils.smoothstep
+        )
+        linear = MathUtils.resolve_falloff_profile("linear")
+        self.assertAlmostEqual(linear(0.25), 0.25, places=9)
+
+    def test_resolve_falloff_profile_invalid_raises(self):
+        with self.assertRaises(ValueError):
+            MathUtils.resolve_falloff_profile("not_a_profile")
+
+    def test_bspline_clamped_knots_structure(self):
+        stations = [0.0, 1.0, 3.0, 6.0]
+        degree = 2
+        knots = MathUtils.bspline_clamped_knots(stations, degree)
+        self.assertEqual(len(knots), len(stations) + degree + 1)
+        self.assertEqual(knots[: degree + 1], [0.0] * (degree + 1))
+        self.assertEqual(knots[-(degree + 1):], [6.0] * (degree + 1))
+        self.assertEqual(sorted(knots), knots)  # non-decreasing
+
+    def test_bspline_basis_partition_of_unity_and_end_pinning(self):
+        import bisect
+
+        stations = [0.0, 1.0, 3.0, 6.0, 10.0]
+        degree = 3
+        knots = MathUtils.bspline_clamped_knots(stations, degree)
+        n = len(stations)
+        for s in (0.5, 2.0, 5.0, 9.5):
+            span = min(max(bisect.bisect_right(knots, s) - 1, degree), n - 1)
+            basis = MathUtils.bspline_basis(knots, span, degree, s)
+            self.assertEqual(len(basis), degree + 1)
+            self.assertAlmostEqual(sum(basis), 1.0, places=9)
+            for w in basis:
+                self.assertGreaterEqual(w, -1e-12)
+        # Clamped ends: the first/last control point owns the end stations.
+        span0 = degree
+        self.assertAlmostEqual(
+            MathUtils.bspline_basis(knots, span0, degree, 0.0)[0], 1.0, places=9
+        )
+
     # ------------------------------------------------------------------- ricker
 
     def test_ricker_peak_and_zero_crossings(self):

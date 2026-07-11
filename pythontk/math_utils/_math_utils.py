@@ -2,7 +2,7 @@
 # coding=utf-8
 from bisect import bisect_left
 import math
-from typing import List, Tuple, Union, Sequence, Any, Optional, TYPE_CHECKING
+from typing import Callable, List, Tuple, Union, Sequence, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
@@ -1093,6 +1093,97 @@ class MathUtils(HelpMixin):
         t = (x - edge0) / (edge1 - edge0)
         t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
         return t * t * (3.0 - 2.0 * t)
+
+    @staticmethod
+    def resolve_falloff_profile(
+        profile: Union[str, Callable],
+    ) -> Callable[[float], float]:
+        """Resolve a falloff profile to a callable ``f(t) -> w`` over t in [0, 1].
+
+        Parameters:
+            profile (str/callable): A callable is passed through unchanged.
+                "smoothstep" maps to :meth:`smoothstep` (clamped Hermite); any
+                name in ``ProgressionCurves.CALCULATION_MODES`` (e.g. "linear",
+                "ease_in_out", "sine") maps to that curve function.
+
+        Returns:
+            (callable) The profile function.
+        """
+        # Deferred: progression.py imports MathUtils, so a module-level import
+        # here would be circular.
+        from pythontk.math_utils.progression import ProgressionCurves
+
+        if callable(profile):
+            return profile
+        if isinstance(profile, str):
+            name = profile.lower()
+            if name == "smoothstep":
+                return MathUtils.smoothstep
+            if name in ProgressionCurves.CALCULATION_MODES:
+                fn = getattr(ProgressionCurves, name)
+                return lambda t: fn(t)
+        valid = ["smoothstep"] + list(ProgressionCurves.CALCULATION_MODES)
+        raise ValueError(
+            f"Invalid falloff profile: {profile!r}. "
+            f"Expected a callable or one of {valid}."
+        )
+
+    @staticmethod
+    def bspline_clamped_knots(stations: List[float], degree: int) -> List[float]:
+        """Clamped knot vector over *stations* via knot averaging (de Boor).
+
+        Interior knots average consecutive stations so each control point's
+        basis function peaks near its own station; the ``degree + 1`` end
+        multiplicities pin the ends (basis exactly 1 at the end stations).
+
+        Parameters:
+            stations (list): Strictly increasing parameter values, one per
+                control point.
+            degree (int): B-spline degree (>= 1, <= len(stations) - 1).
+
+        Returns:
+            (list) The clamped knot vector, length ``len(stations) + degree + 1``.
+        """
+        n = len(stations)
+        interior = [
+            sum(stations[j : j + degree]) / degree for j in range(1, n - degree)
+        ]
+        return (
+            [stations[0]] * (degree + 1)
+            + interior
+            + [stations[-1]] * (degree + 1)
+        )
+
+    @staticmethod
+    def bspline_basis(
+        knots: List[float], span: int, degree: int, s: float
+    ) -> List[float]:
+        """The non-zero B-spline basis values ``N[span - degree .. span]`` at
+        *s* (Cox-de Boor recurrence, The NURBS Book A2.2).
+
+        Parameters:
+            knots (list): Knot vector (e.g. from :meth:`bspline_clamped_knots`).
+            span (int): Knot span index containing *s*.
+            degree (int): B-spline degree.
+            s (float): Parameter value.
+
+        Returns:
+            (list) ``degree + 1`` basis values; they sum to 1 (partition of
+            unity) inside the domain.
+        """
+        N = [1.0] + [0.0] * degree
+        left = [0.0] * (degree + 1)
+        right = [0.0] * (degree + 1)
+        for j in range(1, degree + 1):
+            left[j] = s - knots[span + 1 - j]
+            right[j] = knots[span + j] - s
+            saved = 0.0
+            for r in range(j):
+                temp = N[r] / (right[r + 1] + left[j - r])
+                N[r] = saved + right[r + 1] * temp
+                saved = left[j - r] * temp
+            N[j] = saved
+        return N
 
     @staticmethod
     def ricker(x: float) -> float:
