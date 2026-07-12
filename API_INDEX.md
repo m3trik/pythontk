@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-07-11_
+_Generated: 2026-07-12_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -50,6 +50,155 @@ _Generated: 2026-07-11_
   - methods: auto
 - `class Palette(dict)`
   - methods: alias, override, status, axes, channels, ui, diff
+
+### `core_utils/engines/instancing/assembly_sorter.py` — Sort separated mesh parts into repeated-assembly copies.
+- `class AssemblySorter`
+  - methods: sort
+
+### `core_utils/engines/shots/manifest/behaviors/_behaviors.py` — Behaviors — load JSON keying recipes and resolve them to keyframe math.
+- `templates() -> TemplateSet`
+- `load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]`
+- `list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]`
+- `resolve_keys(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]`
+- `compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`
+
+### `core_utils/engines/shots/manifest/behaviors/_spec.py` — Schema for a *behavior* template file, defined as a dataclass.
+- `validate_duration(value: Any) -> List[str]`
+- `validate_verify(value: Any) -> List[str]`
+- `validate_attributes(value: Any) -> List[str]`
+- `format_markdown() -> str`
+- `class BehaviorSpec(SchemaSpec)`
+
+### `core_utils/engines/shots/manifest/manifest_engine.py` — Shot Manifest engine — pure planning/orchestration core with scene hooks.
+- `resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]`
+- `class ShotManifest`
+  - methods: rewire_audio, apply_behaviors, sync, update, assess, from_csv
+
+### `core_utils/engines/shots/manifest/manifest_model.py` — Pure Shot Manifest data model + CSV parser.
+- `detect_behaviors(text: str) -> List[str]`
+- `parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]`
+- `class BuilderObject`
+- `class BuilderStep`
+  - methods: display_text, from_detection
+- `class PlannedShot`
+- `class ObjectStatus`
+- `class StepStatus`
+  - methods: status, missing_count, total_count
+- `class ColumnMap(SchemaSpec)`
+  - methods: to_dict, from_dict
+
+### `core_utils/engines/shots/manifest/mapping/_mapping.py` — CSV mapping resolver — interprets JSON mapping files.
+- `templates() -> TemplateSet`
+- `discover(directory: Optional[str] = None) -> List[str]`
+- `load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]`
+- `resolve(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]`
+
+### `core_utils/engines/shots/manifest/mapping/_spec.py` — Schema for a CSV *mapping* file, defined as a dataclass.
+- `validate_audio_resolve(value: Any) -> List[str]`
+- `validate_default_behaviors(value: Any) -> List[str]`
+- `format_markdown() -> str`
+- `class AudioMethod`
+- `class MappingSpec(SchemaSpec)`
+
+### `core_utils/engines/shots/manifest/range_resolver.py` — Range resolution algorithm for the Shot Manifest.
+- `prune_to_top_boundaries(region_starts: List[float], n_steps: int) -> List[float]`
+- `resolve_ranges(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], gap_starts: List[float], gap_end_map: Dict[float, float], gap: float, use_selected_keys: bool, last_resolved: List[Tuple[str, float, Optional[float], bool]], from_step_idx: int = 0, default_duration: float = 0, duration_fn: Optional[Callable[..., float]] = None) -> List[Tuple[str, float, Optional[float], bool]]`
+
+### `core_utils/engines/shots/shot_apply.py` — Commit a resolved :class:`MovePlan` via injected writer callables.
+- `apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None`
+
+### `core_utils/engines/shots/shot_detection.py` — Pure shot-boundary detection math.
+- `cluster_segments_by_gap(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]`
+- `boundaries_from_key_entries(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]`
+
+### `core_utils/engines/shots/shot_model.py` — DCC-agnostic shot data model and persistent store.
+- `leaf_name(node) -> str`
+- `resolve_clip_specs(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]`
+- `class ScenePersistence(Protocol)`
+  - methods: save, load
+- `class ShotBlock`
+  - methods: duration, classify_objects
+- `class StoreEvent`
+- `class ShotDefined(StoreEvent)`
+- `class ShotUpdated(StoreEvent)`
+- `class ShotRemoved(StoreEvent)`
+- `class ActiveShotChanged(StoreEvent)`
+- `class SettingsChanged(StoreEvent)`
+- `class BatchComplete(StoreEvent)`
+- `class StoreInvalidated(StoreEvent)`
+- `class ShotStore`
+  - methods: has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define
+
+### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
+- `plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan`
+- `plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan`
+- `plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan`
+- `plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan`
+- `class ShotMove`
+  - methods: delta, moves
+- `class MovePlan`
+
+### `core_utils/engines/textures/map_compositor.py` — Pure image-compositing engine — alpha-composite layered texture maps
+- `class BatchResult(Enum)`
+- `class NormalOutputMode(Enum)`
+- `class MapCompositor(ptk.LoggingMixin)`
+  - methods: removeNormalMap, reset, process_batch, apply_output_template, composite_images, retry_failed
+
+### `core_utils/engines/textures/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
+- `class MapFactory(LoggingMixin)`
+  - methods: register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
+
+### `core_utils/engines/textures/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
+- `class MapConversion`
+- `class ConversionRegistry`
+  - methods: add_plugin, register, register_from_class, get_conversions_for
+
+### `core_utils/engines/textures/map_factory/handlers.py` — Workflow handlers (Strategy pattern) for the texture MapFactory.
+- `class WorkflowHandler(ABC)`
+  - methods: can_handle, process, get_consumed_types, is_explicitly_requested
+- `class ORMMapHandler(WorkflowHandler)`
+  - methods: can_handle, process, get_consumed_types
+- `class MRAOMapHandler(WorkflowHandler)`
+  - methods: can_handle, process, get_consumed_types
+- `class MaskMapHandler(WorkflowHandler)`
+  - methods: can_handle, process, get_consumed_types
+- `class MetallicSmoothnessHandler(WorkflowHandler)`
+  - methods: can_handle, process, get_consumed_types
+- `class SeparateMetallicRoughnessHandler(WorkflowHandler)`
+  - methods: can_handle, process, get_consumed_types
+- `class BaseColorHandler(WorkflowHandler)`
+  - methods: can_handle, process, get_consumed_types
+- `class NormalMapHandler(WorkflowHandler)`
+  - methods: can_handle, process, get_consumed_types
+- `class OutputFallbackHandler(WorkflowHandler)`
+  - methods: can_handle, process, get_consumed_types
+
+### `core_utils/engines/textures/map_factory/processor.py` — ``TextureProcessor`` -- shared processing context for the MapFactory.
+- `class TextureProcessor`
+  - methods: get_cached_image, save_map, resolve_map, mark_used, convert_specular_to_metallic, convert_smoothness_to_roughness, convert_roughness_to_smoothness, convert_specular_to_roughness, convert_dx_to_gl, convert_gl_to_dx, convert_bump_to_normal, extract_gloss_from_spec, copy_map, unpack_metallic_smoothness, get_metallic_from_packed, get_smoothness_from_packed, get_roughness_from_packed, unpack_msao, get_metallic_from_msao, get_smoothness_from_msao, get_roughness_from_msao, get_ao_from_msao, unpack_mrao, get_metallic_from_mrao, get_roughness_from_mrao, get_smoothness_from_mrao, get_ao_from_mrao, unpack_orm, get_ao_from_orm, get_roughness_from_orm, get_smoothness_from_orm, get_metallic_from_orm, unpack_albedo_transparency, get_base_color_from_albedo_transparency, get_opacity_from_albedo_transparency, create_orm_map, create_mrao_map, create_mask_map, create_metallic_smoothness_map
+
+### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
+- `class Op`
+- `class MapOptimizer(HelpMixin)`
+  - methods: plan, apply, optimize_map, batch_optimize_maps, assess
+
+### `core_utils/engines/textures/map_registry.py`
+- `class WF`
+- `class MapType`
+- `class MapRegistry(SingletonMixin)`
+  - methods: get, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
+
+### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
+- `class MatReport`
+  - methods: format_texture_info_text, format_texture_info_html, format_mat_info_text, format_mat_info_html
+
+### `core_utils/engines/textures/output_template.py` — Per-map output-format templates — the "export preset" layer.
+- `class OutputSpec`
+  - methods: to_dict, from_dict
+- `class OutputTemplate`
+  - methods: resolve, to_dict, from_dict
+- `class OutputTemplates`
+  - methods: get, resolve
 
 ### `core_utils/execution_monitor/_dialog_viewer.py` — Subprocess-based dialog viewer for custom button labels.
 - `run(title: str, message: str, force_label: str | None = None)`
@@ -139,6 +288,14 @@ _Generated: 2026-07-11_
 - `class PresetStore`
   - methods: ext, user_dir, builtin_dir, active, list, source, exists, path, load, save, delete, rename
 
+### `core_utils/process_stream.py` — App-agnostic line-stream primitives for launched processes and log files.
+- `class OutputStream`
+  - methods: push, subscribe, history, clear_history, wait_for, close, closed
+- `class ProcessReader(threading.Thread)`
+  - methods: run
+- `class LogTailer(threading.Thread)`
+  - methods: stop, run
+
 ### `core_utils/qc_log.py` — Structured run logs and threshold-based acceptance gates for pipeline
 - `class GateError(RuntimeError)`
 - `class QcLog`
@@ -169,6 +326,10 @@ _Generated: 2026-07-11_
 - `class SymbolRecord`
   - methods: as_dict, as_json, to_registry_row
 
+### `core_utils/task_factory.py` — Generic task/check pipeline primitive -- host- and Qt-free.
+- `class TaskFactory`
+  - methods: run_tasks, run_tasks_by_category
+
 ### `core_utils/template_set.py` — A discoverable, user-extensible collection of schema-validated template files.
 - `class TemplateSet`
   - methods: names, source, exists, user_dir, builtin_dir, active, delete, rename, path, raw, validate, load, skeleton, save, write_skeleton, markdown
@@ -195,14 +356,6 @@ _Generated: 2026-07-11_
 - `class Metadata(MetadataInternal)`
   - methods: get, set
 
-### `geo_utils/assembly_sorter.py` — Sort separated mesh parts into repeated-assembly copies.
-- `class AssemblySorter`
-  - methods: sort
-
-### `geo_utils/drape.py` — Procedural draped-cloth (curtain) generator — pure geometry, no DCC.
-- `class CurtainDrape(LoggingMixin)`
-  - methods: prepare, grid_points, drape
-
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`
   - methods: pca_transform, nn_query, match_clouds, pca_basis, pca_eigenvalue_signature, cluster_by_distance, hash_points
@@ -210,6 +363,10 @@ _Generated: 2026-07-11_
 ### `geo_utils/polyline.py` — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - `class Polyline`
   - methods: make, from_point_cloud, order_points, length, point_at, resample, smooth, simplify, frames
+
+### `geo_utils/rail_surface.py` — Rail-driven parametric surface — a general geometry primitive.
+- `class RailSurface`
+  - methods: grid_points
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
@@ -223,71 +380,9 @@ _Generated: 2026-07-11_
 - `class ImageCurator`
   - methods: is_available, dhash, hamming, sharpness, curate, preview
 
-### `img_utils/map_compositor.py` — Pure image-compositing engine — alpha-composite layered texture maps
-- `class BatchResult(Enum)`
-- `class NormalOutputMode(Enum)`
-- `class MapCompositor(ptk.LoggingMixin)`
-  - methods: removeNormalMap, reset, process_batch, apply_output_template, composite_images, retry_failed
-
-### `img_utils/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
-- `class MapFactory(LoggingMixin)`
-  - methods: register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
-
-### `img_utils/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
-- `class MapConversion`
-- `class ConversionRegistry`
-  - methods: add_plugin, register, register_from_class, get_conversions_for
-
-### `img_utils/map_factory/handlers.py` — Workflow handlers (Strategy pattern) for the texture MapFactory.
-- `class WorkflowHandler(ABC)`
-  - methods: can_handle, process, get_consumed_types, is_explicitly_requested
-- `class ORMMapHandler(WorkflowHandler)`
-  - methods: can_handle, process, get_consumed_types
-- `class MRAOMapHandler(WorkflowHandler)`
-  - methods: can_handle, process, get_consumed_types
-- `class MaskMapHandler(WorkflowHandler)`
-  - methods: can_handle, process, get_consumed_types
-- `class MetallicSmoothnessHandler(WorkflowHandler)`
-  - methods: can_handle, process, get_consumed_types
-- `class SeparateMetallicRoughnessHandler(WorkflowHandler)`
-  - methods: can_handle, process, get_consumed_types
-- `class BaseColorHandler(WorkflowHandler)`
-  - methods: can_handle, process, get_consumed_types
-- `class NormalMapHandler(WorkflowHandler)`
-  - methods: can_handle, process, get_consumed_types
-- `class OutputFallbackHandler(WorkflowHandler)`
-  - methods: can_handle, process, get_consumed_types
-
-### `img_utils/map_factory/processor.py` — ``TextureProcessor`` -- shared processing context for the MapFactory.
-- `class TextureProcessor`
-  - methods: get_cached_image, save_map, resolve_map, mark_used, convert_specular_to_metallic, convert_smoothness_to_roughness, convert_roughness_to_smoothness, convert_specular_to_roughness, convert_dx_to_gl, convert_gl_to_dx, convert_bump_to_normal, extract_gloss_from_spec, copy_map, unpack_metallic_smoothness, get_metallic_from_packed, get_smoothness_from_packed, get_roughness_from_packed, unpack_msao, get_metallic_from_msao, get_smoothness_from_msao, get_roughness_from_msao, get_ao_from_msao, unpack_mrao, get_metallic_from_mrao, get_roughness_from_mrao, get_smoothness_from_mrao, get_ao_from_mrao, unpack_orm, get_ao_from_orm, get_roughness_from_orm, get_smoothness_from_orm, get_metallic_from_orm, unpack_albedo_transparency, get_base_color_from_albedo_transparency, get_opacity_from_albedo_transparency, create_orm_map, create_mrao_map, create_mask_map, create_metallic_smoothness_map
-
-### `img_utils/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
-- `class Op`
-- `class MapOptimizer(HelpMixin)`
-  - methods: plan, apply, optimize_map, batch_optimize_maps, assess
-
-### `img_utils/map_registry.py`
-- `class WF`
-- `class MapType`
-- `class MapRegistry(SingletonMixin)`
-  - methods: get, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
-
 ### `img_utils/mask_generator.py` — Background mask generation via rembg (optional dependency).
 - `class MaskGenerator`
   - methods: is_available, generate_masks
-
-### `img_utils/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
-- `class MatReport`
-  - methods: format_texture_info_text, format_texture_info_html, format_mat_info_text, format_mat_info_html
-
-### `img_utils/output_template.py` — Per-map output-format templates — the "export preset" layer.
-- `class OutputSpec`
-  - methods: to_dict, from_dict
-- `class OutputTemplate`
-  - methods: resolve, to_dict, from_dict
-- `class OutputTemplates`
-  - methods: get, resolve
 
 ### `iter_utils/_iter_utils.py`
 - `class IterUtils(HelpMixin)`
@@ -304,6 +399,10 @@ _Generated: 2026-07-11_
 ### `math_utils/progression.py`
 - `class ProgressionCurves`
   - methods: linear, exponential, logarithmic, sine, ease_in, ease_out, ease_in_out, smooth_step, bounce, elastic, weighted, calculate_progression_factor, get_curve_function, generate_curve_samples
+
+### `math_utils/weights.py` — Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
+- `class Weights`
+  - methods: round_weight, frame_to_weight, generate_weights
 
 ### `net_utils/_net_utils.py`
 - `class NetUtils`

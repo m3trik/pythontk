@@ -9,7 +9,7 @@ import shutil
 import unittest
 from unittest.mock import MagicMock
 from pythontk import ImgUtils
-from pythontk.img_utils.map_factory import (
+from pythontk.core_utils.engines.textures.map_factory import (
     MapFactory,
     TextureProcessor,
     ConversionRegistry,

@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-1711%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-1860%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -47,10 +47,10 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | Package | What it covers |
 |---|---|
 | `audio_utils` | FFmpeg-backed conversion, composite WAV building, waveform envelopes |
-| `core_utils` | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap (`module_resolver`), hot-reload (`ModuleReloader`), app orchestration (`AppLauncher`, `HandoffBridge`), config/template stores (`PresetStore`, `TemplateSet`, `SchemaSpec`, `UserConfig`), QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives (`Color` / `ColorPair` / `Palette`) |
+| `core_utils` | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap (`module_resolver`), hot-reload (`ModuleReloader`), app orchestration (`AppLauncher`, `HandoffBridge`), task pipeline (`TaskFactory`), process output streaming (`OutputStream`/`ProcessReader`/`LogTailer`), config/template stores (`PresetStore`, `TemplateSet`, `SchemaSpec`, `UserConfig`), QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives (`Color` / `ColorPair` / `Palette`) — plus the domain engines in `core_utils/engines/`: `shots` (timeline model/planner/manifest), `instancing` (`AssemblySorter`), `textures` (`MapFactory`, `MapCompositor`, map registry/optimizer) |
 | `file_utils` | Filtered directory traversal, atomic writes, JSON helpers, cloud-placeholder detection, mesh format conversion, embedded metadata |
-| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify), `PointCloud` (PCA, clustering), procedural drape |
-| `img_utils` | Pillow-backed image ops, channel packing, `MapFactory` (PBR map conversion/packing), map optimizer & compositor, exposure equalization, image curation, mask generation |
+| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing) |
+| `img_utils` | Pillow-backed image ops, channel packing, exposure equalization, image curation, mask generation |
 | `iter_utils` | Flatten, dedupe, wildcard filtering of lists/dicts, integer-sequence collapse |
 | `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, safe expression evaluation |
 | `net_utils` | SSH client, generic JSON-RPC client + DCC plugin installer, credentials, port/RDP helpers |

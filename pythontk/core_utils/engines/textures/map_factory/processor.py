@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 # From this package:
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.str_utils._str_utils import StrUtils
-from pythontk.img_utils.map_registry import MapRegistry
-from pythontk.img_utils.output_template import OutputTemplates
+from pythontk.core_utils.engines.textures.map_registry import MapRegistry
+from pythontk.core_utils.engines.textures.output_template import OutputTemplates
 from .conversions import ConversionRegistry
 
 # Constants -- single source of truth for the package (imported by _map_factory).

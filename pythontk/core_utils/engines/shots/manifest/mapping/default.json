@@ -1,0 +1,10 @@
+{
+    "columns": {
+        "step_id": ["Step", "ID", "Number"],
+        "description": ["Description", "Step Contents", "Contents", "Details"],
+        "assets": ["Assets", "Asset Names", "Asset", "Objects"],
+        "audio": ["Audio", "Voice", "Voice Support", "VO"],
+        "exclude_steps": ["SETUP"],
+        "exclude_values": {"assets": ["N/A", ""]}
+    }
+}

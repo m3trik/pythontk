@@ -1,5 +1,501 @@
 # pythontk — API Changes
 
-_Diff vs prior baseline. Generated 2026-07-11._
+_Diff vs prior baseline. Generated 2026-07-12._
 
-No public API changes since last refresh.
+## Removed (178)
+
+- `geo_utils/assembly_sorter.py::AssemblySorter` — was `(class)`
+- `geo_utils/assembly_sorter.py::AssemblySorter.sort` — was `(self, parts: List[Dict[str, Any]]) -> List[List[int]]`
+- `geo_utils/drape.py::CurtainDrape` — was `(class)`
+- `geo_utils/drape.py::CurtainDrape.drape` — was `(self, u, v, pos, tan, normal) -> Vec`
+- `geo_utils/drape.py::CurtainDrape.grid_points` — was `(self) -> Tuple[int, int, List[Vec]]`
+- `geo_utils/drape.py::CurtainDrape.prepare` — was `(self) -> Tuple[int, int, List[Tuple[Vec, Vec, Vec]]]`
+- `img_utils/map_compositor.py::BatchResult` — was `(class)`
+- `img_utils/map_compositor.py::MapCompositor` — was `(class)`
+- `img_utils/map_compositor.py::MapCompositor.apply_output_template` — was `(self, output_dir: str) -> List[str]`
+- `img_utils/map_compositor.py::MapCompositor.composite_images` — was `(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages`
+- `img_utils/map_compositor.py::MapCompositor.process_batch` — was `(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult`
+- `img_utils/map_compositor.py::MapCompositor.removeNormalMap` — was `(self) -> bool`
+- `img_utils/map_compositor.py::MapCompositor.reset` — was `(self) -> None`
+- `img_utils/map_compositor.py::MapCompositor.retry_failed` — was `(self, failed: SortedImages, name: str) -> SortedImages`
+- `img_utils/map_compositor.py::NormalOutputMode` — was `(class)`
+- `img_utils/map_factory/_map_factory.py::MapFactory` — was `(class)`
+- `img_utils/map_factory/_map_factory.py::MapFactory.contains_map_types` — was `(cls, files, map_types)`
+- `img_utils/map_factory/_map_factory.py::MapFactory.convert_base_color_to_albedo` — was `(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'`
+- `img_utils/map_factory/_map_factory.py::MapFactory.convert_bump_to_normal` — was `(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.convert_normal_map_format` — was `(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.convert_roughness_to_smoothness` — was `(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.convert_smoothness_to_roughness` — was `(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.convert_spec_gloss_to_pbr` — was `(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.create_base_color_from_spec` — was `(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'`
+- `img_utils/map_factory/_map_factory.py::MapFactory.create_metallic_from_spec` — was `(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'`
+- `img_utils/map_factory/_map_factory.py::MapFactory.create_roughness_from_spec` — was `(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'`
+- `img_utils/map_factory/_map_factory.py::MapFactory.detect_normal_map_format` — was `(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.extract_gloss_from_spec` — was `(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.filter_images_by_type` — was `(cls, files, types='')`
+- `img_utils/map_factory/_map_factory.py::MapFactory.filter_redundant_maps` — was `(cls, sorted_maps: Dict[str, List[str]], config: Dict[str, Any] = None) -> None`
+- `img_utils/map_factory/_map_factory.py::MapFactory.get_base_texture_name` — was `(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str`
+- `img_utils/map_factory/_map_factory.py::MapFactory.get_converted_map` — was `(map_type: str, available: dict) -> Optional[Any]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.get_map_fallbacks` — was `(cls, map_type: str) -> Tuple[str, ...]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.get_precedence_rules` — was `(cls) -> Dict[str, List[str]]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.group_textures_by_set` — was `(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.is_normal_map` — was `(cls, file)`
+- `img_utils/map_factory/_map_factory.py::MapFactory.pack_mrao_texture` — was `(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.pack_msao_texture` — was `(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.pack_orm_texture` — was `(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.pack_smoothness_into_metallic` — was `(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.pack_transparency_into_albedo` — was `(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/_map_factory.py::MapFactory.prepare_maps` — was `(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.register_conversion` — was `(cls, conversion: MapConversion)`
+- `img_utils/map_factory/_map_factory.py::MapFactory.register_conversions` — was `(cls, registry: ConversionRegistry)`
+- `img_utils/map_factory/_map_factory.py::MapFactory.register_handler` — was `(cls, handler_class: Type[WorkflowHandler])`
+- `img_utils/map_factory/_map_factory.py::MapFactory.resolve_color_space` — was `(cls, file: str, default: str = 'Linear') -> str`
+- `img_utils/map_factory/_map_factory.py::MapFactory.resolve_map_type` — was `(cls, file: str, key: bool = True, validate: str = None) -> str`
+- `img_utils/map_factory/_map_factory.py::MapFactory.resolve_texture_filename` — was `(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str`
+- `img_utils/map_factory/_map_factory.py::MapFactory.sort_images_by_type` — was `(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.unpack_albedo_transparency` — was `(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.unpack_metallic_smoothness` — was `(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.unpack_mrao_texture` — was `(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.unpack_msao_texture` — was `(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.unpack_orm_texture` — was `(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]`
+- `img_utils/map_factory/_map_factory.py::MapFactory.unpack_specular_gloss` — was `(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]`
+- `img_utils/map_factory/conversions.py::ConversionRegistry` — was `(class)`
+- `img_utils/map_factory/conversions.py::ConversionRegistry.add_plugin` — was `(self, cls)`
+- `img_utils/map_factory/conversions.py::ConversionRegistry.get_conversions_for` — was `(self, target_type: str) -> List[MapConversion]`
+- `img_utils/map_factory/conversions.py::ConversionRegistry.register` — was `(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)`
+- `img_utils/map_factory/conversions.py::ConversionRegistry.register_from_class` — was `(self, cls)`
+- `img_utils/map_factory/conversions.py::MapConversion` — was `(class)`
+- `img_utils/map_factory/handlers.py::BaseColorHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::BaseColorHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::BaseColorHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::BaseColorHandler.process` — was `(self, context: TextureProcessor) -> Optional[str]`
+- `img_utils/map_factory/handlers.py::MRAOMapHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::MRAOMapHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::MRAOMapHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::MRAOMapHandler.process` — was `(self, context: TextureProcessor) -> Optional[str]`
+- `img_utils/map_factory/handlers.py::MaskMapHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::MaskMapHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::MaskMapHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::MaskMapHandler.process` — was `(self, context: TextureProcessor) -> Optional[str]`
+- `img_utils/map_factory/handlers.py::MetallicSmoothnessHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::MetallicSmoothnessHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::MetallicSmoothnessHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::MetallicSmoothnessHandler.process` — was `(self, context: TextureProcessor) -> Optional[str]`
+- `img_utils/map_factory/handlers.py::NormalMapHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::NormalMapHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::NormalMapHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::NormalMapHandler.process` — was `(self, context: TextureProcessor) -> Optional[str]`
+- `img_utils/map_factory/handlers.py::ORMMapHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::ORMMapHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::ORMMapHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::ORMMapHandler.process` — was `(self, context: TextureProcessor) -> Optional[str]`
+- `img_utils/map_factory/handlers.py::OutputFallbackHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::OutputFallbackHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::OutputFallbackHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::OutputFallbackHandler.process` — was `(self, context: TextureProcessor) -> List[str]`
+- `img_utils/map_factory/handlers.py::SeparateMetallicRoughnessHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::SeparateMetallicRoughnessHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::SeparateMetallicRoughnessHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::SeparateMetallicRoughnessHandler.process` — was `(self, context: TextureProcessor) -> List[str]`
+- `img_utils/map_factory/handlers.py::WorkflowHandler` — was `(class)`
+- `img_utils/map_factory/handlers.py::WorkflowHandler.can_handle` — was `(self, context: TextureProcessor) -> bool`
+- `img_utils/map_factory/handlers.py::WorkflowHandler.get_consumed_types` — was `(self) -> List[str]`
+- `img_utils/map_factory/handlers.py::WorkflowHandler.is_explicitly_requested` — was `(self, context: TextureProcessor, map_type: str) -> bool`
+- `img_utils/map_factory/handlers.py::WorkflowHandler.process` — was `(self, context: TextureProcessor) -> Optional[str]`
+- `img_utils/map_factory/processor.py::TextureProcessor` — was `(class)`
+- `img_utils/map_factory/processor.py::TextureProcessor.convert_bump_to_normal` — was `(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.convert_dx_to_gl` — was `(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.convert_gl_to_dx` — was `(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.convert_roughness_to_smoothness` — was `(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.convert_smoothness_to_roughness` — was `(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.convert_specular_to_metallic` — was `(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.convert_specular_to_roughness` — was `(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.copy_map` — was `(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.create_mask_map` — was `(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.create_metallic_smoothness_map` — was `(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.create_mrao_map` — was `(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.create_orm_map` — was `(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.extract_gloss_from_spec` — was `(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_ao_from_mrao` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_ao_from_msao` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_ao_from_orm` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_base_color_from_albedo_transparency` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_cached_image` — was `(self, path: str) -> 'Image.Image'`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_metallic_from_mrao` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_metallic_from_msao` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_metallic_from_orm` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_metallic_from_packed` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_opacity_from_albedo_transparency` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_roughness_from_mrao` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_roughness_from_msao` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_roughness_from_orm` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_roughness_from_packed` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_smoothness_from_mrao` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_smoothness_from_msao` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_smoothness_from_orm` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.get_smoothness_from_packed` — was `(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `img_utils/map_factory/processor.py::TextureProcessor.mark_used` — was `(self, *map_types: str)`
+- `img_utils/map_factory/processor.py::TextureProcessor.resolve_map` — was `(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]`
+- `img_utils/map_factory/processor.py::TextureProcessor.save_map` — was `(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str`
+- `img_utils/map_factory/processor.py::TextureProcessor.unpack_albedo_transparency` — was `(self, source_path: Union[str, 'Image.Image']) -> None`
+- `img_utils/map_factory/processor.py::TextureProcessor.unpack_metallic_smoothness` — was `(self, source_path: Union[str, 'Image.Image']) -> None`
+- `img_utils/map_factory/processor.py::TextureProcessor.unpack_mrao` — was `(self, source_path: Union[str, 'Image.Image']) -> None`
+- `img_utils/map_factory/processor.py::TextureProcessor.unpack_msao` — was `(self, source_path: Union[str, 'Image.Image']) -> None`
+- `img_utils/map_factory/processor.py::TextureProcessor.unpack_orm` — was `(self, source_path: Union[str, 'Image.Image']) -> None`
+- `img_utils/map_optimizer.py::MapOptimizer` — was `(class)`
+- `img_utils/map_optimizer.py::MapOptimizer.apply` — was `(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'`
+- `img_utils/map_optimizer.py::MapOptimizer.assess` — was `(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]`
+- `img_utils/map_optimizer.py::MapOptimizer.batch_optimize_maps` — was `(cls, directory: str, **kwargs)`
+- `img_utils/map_optimizer.py::MapOptimizer.optimize_map` — was `(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str`
+- `img_utils/map_optimizer.py::MapOptimizer.plan` — was `(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]`
+- `img_utils/map_optimizer.py::Op` — was `(class)`
+- `img_utils/map_registry.py::MapRegistry` — was `(class)`
+- `img_utils/map_registry.py::MapRegistry.get` — was `(self, name: str) -> Optional[MapType]`
+- `img_utils/map_registry.py::MapRegistry.get_fallbacks` — was `(self) -> Dict[str, Tuple[str, ...]]`
+- `img_utils/map_registry.py::MapRegistry.get_map_backgrounds` — was `(self) -> Dict[str, Tuple[int, int, int, int]]`
+- `img_utils/map_registry.py::MapRegistry.get_map_modes` — was `(self) -> Dict[str, str]`
+- `img_utils/map_registry.py::MapRegistry.get_map_types` — was `(self) -> Dict[str, Tuple[str, ...]]`
+- `img_utils/map_registry.py::MapRegistry.get_output_fallbacks` — was `(self) -> Dict[str, Tuple[str, ...]]`
+- `img_utils/map_registry.py::MapRegistry.get_passthrough_maps` — was `(self) -> List[str]`
+- `img_utils/map_registry.py::MapRegistry.get_precedence_rules` — was `(self) -> Dict[str, List[str]]`
+- `img_utils/map_registry.py::MapRegistry.get_resolution_critical_types` — was `(self) -> List[str]`
+- `img_utils/map_registry.py::MapRegistry.get_scale_as_mask_types` — was `(self) -> List[str]`
+- `img_utils/map_registry.py::MapRegistry.get_suffix_strip_pattern` — was `(self) -> Optional[str]`
+- `img_utils/map_registry.py::MapRegistry.get_workflow_presets` — was `(self) -> Dict[str, Dict[str, Any]]`
+- `img_utils/map_registry.py::MapRegistry.is_resolution_critical` — was `(self, name: str) -> bool`
+- `img_utils/map_registry.py::MapRegistry.resolve_config` — was `(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
+- `img_utils/map_registry.py::MapRegistry.resolve_type_from_path` — was `(self, path: str) -> Optional[str]`
+- `img_utils/map_registry.py::MapType` — was `(class)`
+- `img_utils/map_registry.py::WF` — was `(class)`
+- `img_utils/mat_report.py::MatReport` — was `(class)`
+- `img_utils/mat_report.py::MatReport.format_mat_info_html` — was `(cls, records: List[Dict[str, Any]]) -> str`
+- `img_utils/mat_report.py::MatReport.format_mat_info_text` — was `(cls, records: List[Dict[str, Any]]) -> str`
+- `img_utils/mat_report.py::MatReport.format_texture_info_html` — was `(cls, info_list: List[Dict[str, Any]]) -> str`
+- `img_utils/mat_report.py::MatReport.format_texture_info_text` — was `(cls, info_list: List[Dict[str, Any]]) -> str`
+- `img_utils/output_template.py::OutputSpec` — was `(class)`
+- `img_utils/output_template.py::OutputSpec.from_dict` — was `(cls, d: dict) -> 'OutputSpec'`
+- `img_utils/output_template.py::OutputSpec.to_dict` — was `(self) -> dict`
+- `img_utils/output_template.py::OutputTemplate` — was `(class)`
+- `img_utils/output_template.py::OutputTemplate.from_dict` — was `(cls, d: dict) -> 'OutputTemplate'`
+- `img_utils/output_template.py::OutputTemplate.resolve` — was `(self, map_type: Optional[str]) -> OutputSpec`
+- `img_utils/output_template.py::OutputTemplate.to_dict` — was `(self) -> dict`
+- `img_utils/output_template.py::OutputTemplates` — was `(class)`
+- `img_utils/output_template.py::OutputTemplates.get` — was `(cls, profile: Optional[str]) -> OutputTemplate`
+- `img_utils/output_template.py::OutputTemplates.resolve` — was `(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec`
+
+## Added (314)
+
+- `core_utils/engines/instancing/assembly_sorter.py::AssemblySorter(class)`
+- `core_utils/engines/instancing/assembly_sorter.py::AssemblySorter.sort(self, parts: List[Dict[str, Any]]) -> List[List[int]]`
+- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`
+- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]`
+- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]`
+- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::resolve_keys(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::templates() -> TemplateSet`
+- `core_utils/engines/shots/manifest/behaviors/_spec.py::BehaviorSpec(class)`
+- `core_utils/engines/shots/manifest/behaviors/_spec.py::format_markdown() -> str`
+- `core_utils/engines/shots/manifest/behaviors/_spec.py::validate_attributes(value: Any) -> List[str]`
+- `core_utils/engines/shots/manifest/behaviors/_spec.py::validate_duration(value: Any) -> List[str]`
+- `core_utils/engines/shots/manifest/behaviors/_spec.py::validate_verify(value: Any) -> List[str]`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest(class)`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.apply_behaviors(self) -> Dict[str, list]`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.assess(self, steps: List[BuilderStep], exists_fn: Optional[Callable[[str], bool]] = None, verify_fn: Optional[Callable] = None, keyframe_range_fn: Optional[Callable[[str], Optional[Tuple[float, float]]]] = None, audio_exists_fn: Optional[Callable[[str], bool]] = None, skip_scene_discovery: bool = False) -> List[StepStatus]`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.from_csv(cls, filepath: str, store: Optional[ShotStore] = None, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> Tuple['ShotManifest', List[BuilderStep]]`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.rewire_audio(self, tracks: Optional[List[str]] = None) -> Dict[str, List[str]]`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.sync(self, steps: List[BuilderStep], apply_behaviors: bool = True, ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH, skip_scene_discovery: bool = False) -> Tuple[Dict[str, str], Dict[str, list], List[StepStatus]]`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.update(self, steps: List[BuilderStep], ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH) -> Dict[str, str]`
+- `core_utils/engines/shots/manifest/manifest_engine.py::resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]`
+- `core_utils/engines/shots/manifest/manifest_model.py::BuilderObject(class)`
+- `core_utils/engines/shots/manifest/manifest_model.py::BuilderStep(class)`
+- `core_utils/engines/shots/manifest/manifest_model.py::BuilderStep.display_text(self) -> str`
+- `core_utils/engines/shots/manifest/manifest_model.py::BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]`
+- `core_utils/engines/shots/manifest/manifest_model.py::ColumnMap(class)`
+- `core_utils/engines/shots/manifest/manifest_model.py::ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'`
+- `core_utils/engines/shots/manifest/manifest_model.py::ColumnMap.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/shots/manifest/manifest_model.py::ObjectStatus(class)`
+- `core_utils/engines/shots/manifest/manifest_model.py::PlannedShot(class)`
+- `core_utils/engines/shots/manifest/manifest_model.py::StepStatus(class)`
+- `core_utils/engines/shots/manifest/manifest_model.py::StepStatus.missing_count(self) -> int`
+- `core_utils/engines/shots/manifest/manifest_model.py::StepStatus.status(self) -> str`
+- `core_utils/engines/shots/manifest/manifest_model.py::StepStatus.total_count(self) -> int`
+- `core_utils/engines/shots/manifest/manifest_model.py::detect_behaviors(text: str) -> List[str]`
+- `core_utils/engines/shots/manifest/manifest_model.py::parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]`
+- `core_utils/engines/shots/manifest/mapping/_mapping.py::discover(directory: Optional[str] = None) -> List[str]`
+- `core_utils/engines/shots/manifest/mapping/_mapping.py::load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]`
+- `core_utils/engines/shots/manifest/mapping/_mapping.py::resolve(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]`
+- `core_utils/engines/shots/manifest/mapping/_mapping.py::templates() -> TemplateSet`
+- `core_utils/engines/shots/manifest/mapping/_spec.py::AudioMethod(class)`
+- `core_utils/engines/shots/manifest/mapping/_spec.py::MappingSpec(class)`
+- `core_utils/engines/shots/manifest/mapping/_spec.py::format_markdown() -> str`
+- `core_utils/engines/shots/manifest/mapping/_spec.py::validate_audio_resolve(value: Any) -> List[str]`
+- `core_utils/engines/shots/manifest/mapping/_spec.py::validate_default_behaviors(value: Any) -> List[str]`
+- `core_utils/engines/shots/manifest/range_resolver.py::prune_to_top_boundaries(region_starts: List[float], n_steps: int) -> List[float]`
+- `core_utils/engines/shots/manifest/range_resolver.py::resolve_ranges(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], gap_starts: List[float], gap_end_map: Dict[float, float], gap: float, use_selected_keys: bool, last_resolved: List[Tuple[str, float, Optional[float], bool]], from_step_idx: int = 0, default_duration: float = 0, duration_fn: Optional[Callable[..., float]] = None) -> List[Tuple[str, float, Optional[float], bool]]`
+- `core_utils/engines/shots/shot_apply.py::apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None`
+- `core_utils/engines/shots/shot_detection.py::boundaries_from_key_entries(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_detection.py::cluster_segments_by_gap(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_model.py::ActiveShotChanged(class)`
+- `core_utils/engines/shots/shot_model.py::BatchComplete(class)`
+- `core_utils/engines/shots/shot_model.py::ScenePersistence(class)`
+- `core_utils/engines/shots/shot_model.py::ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_model.py::ScenePersistence.save(self, data: Dict[str, Any]) -> None`
+- `core_utils/engines/shots/shot_model.py::SettingsChanged(class)`
+- `core_utils/engines/shots/shot_model.py::ShotBlock(class)`
+- `core_utils/engines/shots/shot_model.py::ShotBlock.classify_objects(self) -> Dict[str, str]`
+- `core_utils/engines/shots/shot_model.py::ShotBlock.duration(self) -> float`
+- `core_utils/engines/shots/shot_model.py::ShotDefined(class)`
+- `core_utils/engines/shots/shot_model.py::ShotRemoved(class)`
+- `core_utils/engines/shots/shot_model.py::ShotStore(class)`
+- `core_utils/engines/shots/shot_model.py::ShotStore.active(cls) -> 'ShotStore'`
+- `core_utils/engines/shots/shot_model.py::ShotStore.active_shot_id(self) -> Optional[int]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.add_invalidation_listener(cls, callback: Callable[['StoreInvalidated'], None]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.add_listener(self, callback: Callable[[StoreEvent], None]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.append_shot(self, name: str, duration: float, gap: float = 0, start_frame: Optional[float] = None, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock`
+- `core_utils/engines/shots/shot_model.py::ShotStore.assess(self) -> Dict[int, str]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.batch_update(self)`
+- `core_utils/engines/shots/shot_model.py::ShotStore.clear_active(cls) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.compute_gap(self) -> float`
+- `core_utils/engines/shots/shot_model.py::ShotStore.define_shot(self, name: str, start: float, end: float, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock`
+- `core_utils/engines/shots/shot_model.py::ShotStore.detect_and_define(self, overwrite: bool = False) -> List[ShotBlock]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.detect_regions(self) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.disable_auto_export(cls) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.enable_auto_export(cls) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.from_dict(cls, data: Dict[str, Any]) -> 'ShotStore'`
+- `core_utils/engines/shots/shot_model.py::ShotStore.has_animation() -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.is_detection_relevant(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.is_gap_locked(self, left_id: str, right_id: str) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.is_object_hidden(self, obj_name: str) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.is_object_pinned(self, obj_name: str) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.lock_all_gaps(self) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.lock_gap(self, left_id: int, right_id: int) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.mark_dirty(self) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.notify_settings_changed(self) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.publish_export_view(self, strategy: Optional[str] = None) -> Optional[str]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.refresh_export_view(cls) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.remove_invalidation_listener(cls, callback: Callable[['StoreInvalidated'], None]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.remove_listener(self, callback: Callable[[StoreEvent], None]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.remove_object_from_shots(self, obj_name: str) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.remove_shot(self, shot_id: int) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.rescale_to_fps(self, new_fps: float) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.save(self) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.set_active(cls, store: 'ShotStore') -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.set_active_shot(self, shot_id: Optional[int]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.set_object_hidden(self, obj_name: str, hidden: bool = True) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.set_object_pinned(self, obj_name: str, pinned: bool = True) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.set_persistence(cls, backend: Optional[ScenePersistence]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.shot_by_id(self, shot_id: int) -> Optional[ShotBlock]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.shot_by_name(self, name: str) -> Optional[ShotBlock]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.snap(self, frame: float) -> float`
+- `core_utils/engines/shots/shot_model.py::ShotStore.sorted_shots(self) -> List[ShotBlock]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.to_export_view(self, strategy: str = 'name') -> Dict[str, Any]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.unlock_all_gaps(self) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.unlock_gap(self, left_id: int, right_id: int) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.update_shot(self, shot_id: int, *, start: Optional[float] = None, end: Optional[float] = None, name: Optional[str] = None, objects: Optional[List[str]] = None, description: Optional[str] = None, locked: Optional[bool] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[ShotBlock]`
+- `core_utils/engines/shots/shot_model.py::ShotUpdated(class)`
+- `core_utils/engines/shots/shot_model.py::StoreEvent(class)`
+- `core_utils/engines/shots/shot_model.py::StoreInvalidated(class)`
+- `core_utils/engines/shots/shot_model.py::leaf_name(node) -> str`
+- `core_utils/engines/shots/shot_model.py::resolve_clip_specs(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]`
+- `core_utils/engines/shots/shot_plan.py::MovePlan(class)`
+- `core_utils/engines/shots/shot_plan.py::ShotMove(class)`
+- `core_utils/engines/shots/shot_plan.py::ShotMove.delta(self) -> float`
+- `core_utils/engines/shots/shot_plan.py::ShotMove.moves(self) -> bool`
+- `core_utils/engines/shots/shot_plan.py::plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan`
+- `core_utils/engines/shots/shot_plan.py::plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan`
+- `core_utils/engines/shots/shot_plan.py::plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan`
+- `core_utils/engines/shots/shot_plan.py::plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan`
+- `core_utils/engines/textures/map_compositor.py::BatchResult(class)`
+- `core_utils/engines/textures/map_compositor.py::MapCompositor(class)`
+- `core_utils/engines/textures/map_compositor.py::MapCompositor.apply_output_template(self, output_dir: str) -> List[str]`
+- `core_utils/engines/textures/map_compositor.py::MapCompositor.composite_images(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages`
+- `core_utils/engines/textures/map_compositor.py::MapCompositor.process_batch(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult`
+- `core_utils/engines/textures/map_compositor.py::MapCompositor.removeNormalMap(self) -> bool`
+- `core_utils/engines/textures/map_compositor.py::MapCompositor.reset(self) -> None`
+- `core_utils/engines/textures/map_compositor.py::MapCompositor.retry_failed(self, failed: SortedImages, name: str) -> SortedImages`
+- `core_utils/engines/textures/map_compositor.py::NormalOutputMode(class)`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory(class)`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.contains_map_types(cls, files, map_types)`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.convert_base_color_to_albedo(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.convert_bump_to_normal(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.convert_normal_map_format(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.convert_roughness_to_smoothness(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.convert_smoothness_to_roughness(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.convert_spec_gloss_to_pbr(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.create_base_color_from_spec(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.create_metallic_from_spec(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.create_roughness_from_spec(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.detect_normal_map_format(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.extract_gloss_from_spec(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.filter_images_by_type(cls, files, types='')`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, List[str]], config: Dict[str, Any] = None) -> None`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.get_converted_map(map_type: str, available: dict) -> Optional[Any]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.get_map_fallbacks(cls, map_type: str) -> Tuple[str, ...]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.get_precedence_rules(cls) -> Dict[str, List[str]]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.group_textures_by_set(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.is_normal_map(cls, file)`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.pack_mrao_texture(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.pack_msao_texture(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.pack_orm_texture(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.pack_smoothness_into_metallic(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.pack_transparency_into_albedo(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.register_conversion(cls, conversion: MapConversion)`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.register_conversions(cls, registry: ConversionRegistry)`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.register_handler(cls, handler_class: Type[WorkflowHandler])`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.resolve_color_space(cls, file: str, default: str = 'Linear') -> str`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.resolve_texture_filename(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.sort_images_by_type(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.unpack_albedo_transparency(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.unpack_metallic_smoothness(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.unpack_mrao_texture(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.unpack_msao_texture(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.unpack_orm_texture(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.unpack_specular_gloss(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]`
+- `core_utils/engines/textures/map_factory/conversions.py::ConversionRegistry(class)`
+- `core_utils/engines/textures/map_factory/conversions.py::ConversionRegistry.add_plugin(self, cls)`
+- `core_utils/engines/textures/map_factory/conversions.py::ConversionRegistry.get_conversions_for(self, target_type: str) -> List[MapConversion]`
+- `core_utils/engines/textures/map_factory/conversions.py::ConversionRegistry.register(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)`
+- `core_utils/engines/textures/map_factory/conversions.py::ConversionRegistry.register_from_class(self, cls)`
+- `core_utils/engines/textures/map_factory/conversions.py::MapConversion(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::BaseColorHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::BaseColorHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::MRAOMapHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::MRAOMapHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::MaskMapHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::MaskMapHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::MetallicSmoothnessHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::NormalMapHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::NormalMapHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::ORMMapHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::ORMMapHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::OutputFallbackHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::OutputFallbackHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::SeparateMetallicRoughnessHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::WorkflowHandler(class)`
+- `core_utils/engines/textures/map_factory/handlers.py::WorkflowHandler.can_handle(self, context: TextureProcessor) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::WorkflowHandler.get_consumed_types(self) -> List[str]`
+- `core_utils/engines/textures/map_factory/handlers.py::WorkflowHandler.is_explicitly_requested(self, context: TextureProcessor, map_type: str) -> bool`
+- `core_utils/engines/textures/map_factory/handlers.py::WorkflowHandler.process(self, context: TextureProcessor) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor(class)`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.convert_bump_to_normal(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.convert_dx_to_gl(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.convert_gl_to_dx(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.convert_roughness_to_smoothness(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.convert_smoothness_to_roughness(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.convert_specular_to_metallic(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.convert_specular_to_roughness(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.copy_map(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.create_mask_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.create_metallic_smoothness_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.create_mrao_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.create_orm_map(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.extract_gloss_from_spec(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_ao_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_ao_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_ao_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_base_color_from_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_cached_image(self, path: str) -> 'Image.Image'`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_metallic_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_metallic_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_metallic_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_metallic_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_opacity_from_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_roughness_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_roughness_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_roughness_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_roughness_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_smoothness_from_mrao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_smoothness_from_msao(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_smoothness_from_orm(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.get_smoothness_from_packed(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.mark_used(self, *map_types: str)`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.resolve_map(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.save_map(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.unpack_albedo_transparency(self, source_path: Union[str, 'Image.Image']) -> None`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.unpack_metallic_smoothness(self, source_path: Union[str, 'Image.Image']) -> None`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.unpack_mrao(self, source_path: Union[str, 'Image.Image']) -> None`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.unpack_msao(self, source_path: Union[str, 'Image.Image']) -> None`
+- `core_utils/engines/textures/map_factory/processor.py::TextureProcessor.unpack_orm(self, source_path: Union[str, 'Image.Image']) -> None`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer(class)`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]`
+- `core_utils/engines/textures/map_optimizer.py::Op(class)`
+- `core_utils/engines/textures/map_registry.py::MapRegistry(class)`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get(self, name: str) -> Optional[MapType]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_fallbacks(self) -> Dict[str, Tuple[str, ...]]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_map_modes(self) -> Dict[str, str]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_map_types(self) -> Dict[str, Tuple[str, ...]]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_output_fallbacks(self) -> Dict[str, Tuple[str, ...]]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_passthrough_maps(self) -> List[str]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_precedence_rules(self) -> Dict[str, List[str]]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_resolution_critical_types(self) -> List[str]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_scale_as_mask_types(self) -> List[str]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_suffix_strip_pattern(self) -> Optional[str]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.is_resolution_critical(self, name: str) -> bool`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.resolve_config(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
+- `core_utils/engines/textures/map_registry.py::MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]`
+- `core_utils/engines/textures/map_registry.py::MapType(class)`
+- `core_utils/engines/textures/map_registry.py::WF(class)`
+- `core_utils/engines/textures/mat_report.py::MatReport(class)`
+- `core_utils/engines/textures/mat_report.py::MatReport.format_mat_info_html(cls, records: List[Dict[str, Any]]) -> str`
+- `core_utils/engines/textures/mat_report.py::MatReport.format_mat_info_text(cls, records: List[Dict[str, Any]]) -> str`
+- `core_utils/engines/textures/mat_report.py::MatReport.format_texture_info_html(cls, info_list: List[Dict[str, Any]]) -> str`
+- `core_utils/engines/textures/mat_report.py::MatReport.format_texture_info_text(cls, info_list: List[Dict[str, Any]]) -> str`
+- `core_utils/engines/textures/output_template.py::OutputSpec(class)`
+- `core_utils/engines/textures/output_template.py::OutputSpec.from_dict(cls, d: dict) -> 'OutputSpec'`
+- `core_utils/engines/textures/output_template.py::OutputSpec.to_dict(self) -> dict`
+- `core_utils/engines/textures/output_template.py::OutputTemplate(class)`
+- `core_utils/engines/textures/output_template.py::OutputTemplate.from_dict(cls, d: dict) -> 'OutputTemplate'`
+- `core_utils/engines/textures/output_template.py::OutputTemplate.resolve(self, map_type: Optional[str]) -> OutputSpec`
+- `core_utils/engines/textures/output_template.py::OutputTemplate.to_dict(self) -> dict`
+- `core_utils/engines/textures/output_template.py::OutputTemplates(class)`
+- `core_utils/engines/textures/output_template.py::OutputTemplates.get(cls, profile: Optional[str]) -> OutputTemplate`
+- `core_utils/engines/textures/output_template.py::OutputTemplates.resolve(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec`
+- `core_utils/process_stream.py::LogTailer(class)`
+- `core_utils/process_stream.py::LogTailer.run(self) -> None`
+- `core_utils/process_stream.py::LogTailer.stop(self) -> None`
+- `core_utils/process_stream.py::OutputStream(class)`
+- `core_utils/process_stream.py::OutputStream.clear_history(self) -> None`
+- `core_utils/process_stream.py::OutputStream.close(self) -> None`
+- `core_utils/process_stream.py::OutputStream.closed(self) -> bool`
+- `core_utils/process_stream.py::OutputStream.history(self) -> List[Tuple[str, str]]`
+- `core_utils/process_stream.py::OutputStream.push(self, line: str, source: str = '') -> None`
+- `core_utils/process_stream.py::OutputStream.subscribe(self, callback: Callable[[str, str], None], replay_history: bool = False) -> Callable[[], None]`
+- `core_utils/process_stream.py::OutputStream.wait_for(self, pattern: Union[str, Pattern], timeout: Optional[float] = None, source: Optional[str] = None, include_history: bool = True) -> Optional[Tuple[str, str]]`
+- `core_utils/process_stream.py::ProcessReader(class)`
+- `core_utils/process_stream.py::ProcessReader.run(self) -> None`
+- `core_utils/task_factory.py::TaskFactory(class)`
+- `core_utils/task_factory.py::TaskFactory.run_tasks(self, tasks: Dict[str, Any]) -> bool`
+- `core_utils/task_factory.py::TaskFactory.run_tasks_by_category(self, task_definitions: Dict[str, Any], check_definitions: Dict[str, Any]) -> bool`
+- `geo_utils/rail_surface.py::RailSurface(class)`
+- `geo_utils/rail_surface.py::RailSurface.grid_points(self, displace: Displace) -> Tuple[int, int, List[Vec]]`
+- `math_utils/weights.py::Weights(class)`
+- `math_utils/weights.py::Weights.frame_to_weight(cls, frame: int, start_frame: int, end_frame: int) -> float`
+- `math_utils/weights.py::Weights.generate_weights(cls, count: int, weight_range: Tuple[float, float] = (0.0, 1.0), include_endpoints: bool = False) -> List[float]`
+- `math_utils/weights.py::Weights.round_weight(cls, weight: float) -> float`

@@ -25,7 +25,7 @@ from PIL import Image
 
 from pythontk import FileUtils, ImgUtils, MapFactory as TextureMapFactory
 from pythontk.img_utils._img_utils import ImageFormat
-from pythontk.img_utils.map_optimizer import MapOptimizer
+from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer
 
 from conftest import BaseTestCase
 

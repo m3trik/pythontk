@@ -941,7 +941,7 @@ class ImgUtils(HelpMixin):
         # SingletonMixin so the import + lookup are cheap; the deferred
         # import keeps _img_utils.py free of module-load-time coupling to
         # the map cluster.
-        from pythontk.img_utils.map_registry import MapRegistry
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
         map_modes = MapRegistry().get_map_modes()
         if map_type in map_modes:
@@ -2320,7 +2320,7 @@ class ImgUtils(HelpMixin):
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
 
-        from pythontk.img_utils.map_registry import MapRegistry
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
         # Canonical suffix pattern lives on the registry (the alias owner) so
         # this and MapFactory.get_base_texture_name can never drift apart.

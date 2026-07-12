@@ -1,0 +1,10 @@
+{
+  "description": "Place audio clip spanning the shot; stop-key silences at shot end.",
+  "kind": [
+    "audio"
+  ],
+  "duration": "from_source",
+  "verify": {
+    "mode": "audio_clip"
+  }
+}

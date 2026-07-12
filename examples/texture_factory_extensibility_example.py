@@ -22,7 +22,7 @@ import os
 from typing import List, Optional
 
 from pythontk import ImgUtils
-from pythontk.img_utils.map_factory import (
+from pythontk.core_utils.engines.textures.map_factory import (
     MapFactory,
     MapConversion,
     TextureProcessor,

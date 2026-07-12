@@ -11,8 +11,10 @@ Architecture (split out of the original single-file module):
     handlers     -- ``WorkflowHandler`` strategies (ORM, MRAO, mask, ...)
     _map_factory -- ``MapFactory`` orchestrator (the public entry point)
 
-Public surface is unchanged: ``from pythontk import MapFactory`` and
-``from pythontk.img_utils.map_factory import MapFactory`` resolve as before.
+Public API is unchanged: ``from pythontk import MapFactory`` resolves through the
+lazy root exactly as before. The engine was relocated from ``img_utils`` into the
+``core_utils/engines/textures`` domain-engine namespace, so the *internal* path is
+now ``from pythontk.core_utils.engines.textures.map_factory import MapFactory``.
 """
 from .conversions import MapConversion, ConversionRegistry
 from .processor import TextureProcessor

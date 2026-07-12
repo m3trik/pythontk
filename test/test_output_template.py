@@ -8,7 +8,7 @@ Run with:
 import unittest
 
 from pythontk import OutputSpec, OutputTemplate, OutputTemplates
-from pythontk.img_utils.map_registry import WF
+from pythontk.core_utils.engines.textures.map_registry import WF
 
 
 class OutputSpecTest(unittest.TestCase):

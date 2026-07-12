@@ -2,11 +2,13 @@
 # coding=utf-8
 """``MapFactory`` -- the texture-map workflow orchestrator.
 
-Public surface is unchanged: ``from pythontk import MapFactory`` and
-``from pythontk.img_utils.map_factory import MapFactory`` resolve here via the
-package ``__init__``. Split out of the original single-file module; the
-conversion registry, processing context, and workflow handlers now live in
-sibling modules.
+Public API is unchanged: ``from pythontk import MapFactory`` resolves through the
+lazy root as before; the internal path is now
+``from pythontk.core_utils.engines.textures.map_factory import MapFactory`` (relocated
+from ``img_utils`` into the ``core_utils/engines/textures`` engine namespace),
+resolving here via the package ``__init__``. Split out of the original single-file
+module; the conversion registry, processing context, and workflow handlers now
+live in sibling modules.
 """
 import os
 from typing import (
@@ -39,7 +41,7 @@ from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.iter_utils._iter_utils import IterUtils
 from pythontk.str_utils._str_utils import StrUtils
-from pythontk.img_utils.map_registry import MapRegistry
+from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 from .conversions import MapConversion, ConversionRegistry
 from .processor import TextureProcessor, DEFAULT_EXTENSION, ALPHA_EXTENSION
 from .handlers import (

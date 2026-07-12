@@ -4,12 +4,12 @@
 
 Separates *delivery format* (container, bit depth, optional GPU compression) from
 *content correctness* (color space, channels, normal convention), which lives on
-:class:`~pythontk.img_utils.map_registry.MapType`. A template maps each map type to
+:class:`~pythontk.core_utils.engines.textures.map_registry.MapType`. A template maps each map type to
 an :class:`OutputSpec` for a target profile — the per-map export preset you'd see in
 Substance Painter.
 
 :class:`OutputTemplates` owns the built-in catalogue (keyed by
-:class:`~pythontk.img_utils.map_registry.WF` profile) and resolution — the read-only
+:class:`~pythontk.core_utils.engines.textures.map_registry.WF` profile) and resolution — the read-only
 tier. The templates are deliberately plain data (``to_dict``/``from_dict``) so a future
 user-editable layer (``pythontk.PresetStore`` built-in + user tiers) can wrap them
 without rework.
@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-from pythontk.img_utils.map_registry import WF
+from pythontk.core_utils.engines.textures.map_registry import WF
 
 
 @dataclass(frozen=True)
@@ -82,7 +82,7 @@ class OutputTemplate:
 class OutputTemplates:
     """Registry of the built-in per-profile output templates and their resolution.
 
-    Owns the read-only built-in tier — the per-:class:`~pythontk.img_utils.map_registry.WF`
+    Owns the read-only built-in tier — the per-:class:`~pythontk.core_utils.engines.textures.map_registry.WF`
     catalogue plus the lookup helpers — so there is a single surface a future
     user-editable layer (``pythontk.PresetStore`` built-in + user tiers) can wrap.
     The plain-data :class:`OutputSpec` / :class:`OutputTemplate` above carry the
