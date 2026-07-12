@@ -14,7 +14,7 @@ from typing import List, Optional
 
 # From this package:
 from pythontk.img_utils._img_utils import ImgUtils
-from pythontk.img_utils.map_registry import MapRegistry
+from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 from .processor import TextureProcessor
 
 # Late-bound by the package __init__ to break the runtime import cycle

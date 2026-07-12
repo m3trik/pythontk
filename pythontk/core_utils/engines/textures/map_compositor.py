@@ -155,7 +155,7 @@ class MapCompositor(ptk.LoggingMixin):
         """Post-process composited output for a target workflow.
 
         No-op when ``output_template`` is unset. Otherwise loads the named
-        pythontk workflow preset (see :class:`pythontk.img_utils.map_registry.WF`)
+        pythontk workflow preset (see :class:`pythontk.core_utils.engines.textures.map_registry.WF`)
         and runs :meth:`pythontk.MapFactory.prepare_maps` on the files just
         written to ``output_dir``. The composited files stay on disk; the
         workflow adds packed / format-converted siblings alongside them.

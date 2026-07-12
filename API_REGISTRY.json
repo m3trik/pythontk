@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-07-10",
+  "generated_at": "2026-07-12",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -927,6 +927,2769 @@
               "signature": "(cls) -> 'Palette'",
               "summary": "Comparison / diff palette for dark-theme tree views.",
               "line": 420,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/instancing/assembly_sorter.py",
+      "summary": "Sort separated mesh parts into repeated-assembly copies.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "AssemblySorter",
+          "summary": "Cluster separated parts into copies of repeated assemblies.",
+          "line": 37,
+          "bases": [],
+          "members": [
+            {
+              "name": "sort",
+              "qualname": "AssemblySorter.sort",
+              "kind": "method",
+              "signature": "(self, parts: List[Dict[str, Any]]) -> List[List[int]]",
+              "summary": "Sort *parts* into assembly groups;",
+              "line": 63,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/shots/manifest/behaviors/_behaviors.py",
+      "summary": "Behaviors — load JSON keying recipes and resolve them to keyframe math.",
+      "functions": [
+        {
+          "name": "templates",
+          "qualname": "templates",
+          "kind": "function",
+          "signature": "() -> TemplateSet",
+          "summary": "The shared :class:`~pythontk.TemplateSet` backing behavior discovery.",
+          "line": 48,
+          "deprecated": false
+        },
+        {
+          "name": "load_behavior",
+          "qualname": "load_behavior",
+          "kind": "function",
+          "signature": "(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]",
+          "summary": "Load a JSON behavior template by stem name.",
+          "line": 71,
+          "deprecated": false
+        },
+        {
+          "name": "list_behaviors",
+          "qualname": "list_behaviors",
+          "kind": "function",
+          "signature": "(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]",
+          "summary": "Return stem names of all available behavior templates.",
+          "line": 124,
+          "deprecated": false
+        },
+        {
+          "name": "resolve_keys",
+          "qualname": "resolve_keys",
+          "kind": "function",
+          "signature": "(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]",
+          "summary": "Resolve an ``in`` or ``out`` block to absolute keyframe dicts.",
+          "line": 173,
+          "deprecated": false
+        },
+        {
+          "name": "compute_duration",
+          "qualname": "compute_duration",
+          "kind": "function",
+          "signature": "(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float",
+          "summary": "Derive duration from the behavior templates referenced in *behavior_entries*.",
+          "line": 229,
+          "deprecated": false
+        }
+      ],
+      "classes": []
+    },
+    {
+      "relpath": "core_utils/engines/shots/manifest/behaviors/_spec.py",
+      "summary": "Schema for a *behavior* template file, defined as a dataclass.",
+      "functions": [
+        {
+          "name": "validate_duration",
+          "qualname": "validate_duration",
+          "kind": "function",
+          "signature": "(value: Any) -> List[str]",
+          "summary": "``duration`` is a frame count or the literal ``\"from_source\"``.",
+          "line": 29,
+          "deprecated": false
+        },
+        {
+          "name": "validate_verify",
+          "qualname": "validate_verify",
+          "kind": "function",
+          "signature": "(value: Any) -> List[str]",
+          "summary": "",
+          "line": 38,
+          "deprecated": false
+        },
+        {
+          "name": "validate_attributes",
+          "qualname": "validate_attributes",
+          "kind": "function",
+          "signature": "(value: Any) -> List[str]",
+          "summary": "``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}.",
+          "line": 47,
+          "deprecated": false
+        },
+        {
+          "name": "format_markdown",
+          "qualname": "format_markdown",
+          "kind": "function",
+          "signature": "() -> str",
+          "summary": "Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.",
+          "line": 111,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "BehaviorSpec",
+          "summary": "Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``).",
+          "line": 69,
+          "bases": [
+            "SchemaSpec"
+          ],
+          "members": []
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/shots/manifest/manifest_engine.py",
+      "summary": "Shot Manifest engine — pure planning/orchestration core with scene hooks.",
+      "functions": [
+        {
+          "name": "resolve_duration",
+          "qualname": "resolve_duration",
+          "kind": "function",
+          "signature": "(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]",
+          "summary": "Compute final shot duration for *step* under the given fit policy.",
+          "line": 48,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "ShotManifest",
+          "summary": "Creates shot store entries from parsed steps and applies behaviors.",
+          "line": 172,
+          "bases": [],
+          "members": [
+            {
+              "name": "rewire_audio",
+              "qualname": "ShotManifest.rewire_audio",
+              "kind": "method",
+              "signature": "(self, tracks: Optional[List[str]] = None) -> Dict[str, List[str]]",
+              "summary": "Reconcile managed audio nodes with keyed track state (hook).",
+              "line": 290,
+              "deprecated": false
+            },
+            {
+              "name": "apply_behaviors",
+              "qualname": "ShotManifest.apply_behaviors",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, list]",
+              "summary": "Apply detected behaviors to the store's shots (hook).",
+              "line": 310,
+              "deprecated": false
+            },
+            {
+              "name": "sync",
+              "qualname": "ShotManifest.sync",
+              "kind": "method",
+              "signature": "(self, steps: List[BuilderStep], apply_behaviors: bool = True, ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH, skip_scene_discovery: bool = False) -> Tuple[Dict[str, str], Dict[str, list], List[StepStatus]]",
+              "summary": "Full build pipeline: plan -> commit -> apply behaviors -> assess.",
+              "line": 383,
+              "deprecated": false
+            },
+            {
+              "name": "update",
+              "qualname": "ShotManifest.update",
+              "kind": "method",
+              "signature": "(self, steps: List[BuilderStep], ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH) -> Dict[str, str]",
+              "summary": "Sync parsed steps to the ShotStore (data only, no behaviors).",
+              "line": 442,
+              "deprecated": false
+            },
+            {
+              "name": "assess",
+              "qualname": "ShotManifest.assess",
+              "kind": "method",
+              "signature": "(self, steps: List[BuilderStep], exists_fn: Optional[Callable[[str], bool]] = None, verify_fn: Optional[Callable] = None, keyframe_range_fn: Optional[Callable[[str], Optional[Tuple[float, float]]]] = None, audio_exists_fn: Optional[Callable[[str], bool]] = None, skip_scene_discovery: bool = False) -> List[StepStatus]",
+              "summary": "Compare parsed steps against the current store state.",
+              "line": 862,
+              "deprecated": false
+            },
+            {
+              "name": "from_csv",
+              "qualname": "ShotManifest.from_csv",
+              "kind": "classmethod",
+              "signature": "(cls, filepath: str, store: Optional[ShotStore] = None, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> Tuple['ShotManifest', List[BuilderStep]]",
+              "summary": "Convenience: parse a CSV and return a ready-to-build engine.",
+              "line": 1110,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/shots/manifest/manifest_model.py",
+      "summary": "Pure Shot Manifest data model + CSV parser.",
+      "functions": [
+        {
+          "name": "detect_behaviors",
+          "qualname": "detect_behaviors",
+          "kind": "function",
+          "signature": "(text: str) -> List[str]",
+          "summary": "Return behavior names inferred from descriptive *text*.",
+          "line": 227,
+          "deprecated": false
+        },
+        {
+          "name": "parse_csv",
+          "qualname": "parse_csv",
+          "kind": "function",
+          "signature": "(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]",
+          "summary": "Parse a structured CSV into a list of :class:`BuilderStep`.",
+          "line": 418,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "BuilderObject",
+          "summary": "One asset within a step.",
+          "line": 46,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "BuilderStep",
+          "summary": "One step (= one future sequencer shot).",
+          "line": 56,
+          "bases": [],
+          "members": [
+            {
+              "name": "display_text",
+              "qualname": "BuilderStep.display_text",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "Text shown in the tree Description column.",
+              "line": 70,
+              "deprecated": false
+            },
+            {
+              "name": "from_detection",
+              "qualname": "BuilderStep.from_detection",
+              "kind": "classmethod",
+              "signature": "(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]",
+              "summary": "Convert detection candidates to BuilderSteps + pre-filled ranges.",
+              "line": 75,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "PlannedShot",
+          "summary": "Immutable build instruction computed before any store mutation.",
+          "line": 126,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "ObjectStatus",
+          "summary": "Assessment result for one object within a step.",
+          "line": 165,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "StepStatus",
+          "summary": "Assessment result for one step.",
+          "line": 181,
+          "bases": [],
+          "members": [
+            {
+              "name": "status",
+              "qualname": "StepStatus.status",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "Worst-of-children rollup.",
+              "line": 192,
+              "deprecated": false
+            },
+            {
+              "name": "missing_count",
+              "qualname": "StepStatus.missing_count",
+              "kind": "property",
+              "signature": "(self) -> int",
+              "summary": "",
+              "line": 209,
+              "deprecated": false
+            },
+            {
+              "name": "total_count",
+              "qualname": "StepStatus.total_count",
+              "kind": "property",
+              "signature": "(self) -> int",
+              "summary": "",
+              "line": 213,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ColumnMap",
+          "summary": "Maps logical fields to CSV header names (case-insensitive).",
+          "line": 246,
+          "bases": [
+            "SchemaSpec"
+          ],
+          "members": [
+            {
+              "name": "to_dict",
+              "qualname": "ColumnMap.to_dict",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "Serialise to a JSON-safe dict (tuples → lists).",
+              "line": 294,
+              "deprecated": false
+            },
+            {
+              "name": "from_dict",
+              "qualname": "ColumnMap.from_dict",
+              "kind": "classmethod",
+              "signature": "(cls, data: Dict[str, Any]) -> 'ColumnMap'",
+              "summary": "Reconstruct from a dict produced by :meth:`to_dict`.",
+              "line": 308,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/shots/manifest/mapping/_mapping.py",
+      "summary": "CSV mapping resolver — interprets JSON mapping files.",
+      "functions": [
+        {
+          "name": "templates",
+          "qualname": "templates",
+          "kind": "function",
+          "signature": "() -> TemplateSet",
+          "summary": "The shared :class:`~pythontk.TemplateSet` backing mapping discovery.",
+          "line": 80,
+          "deprecated": false
+        },
+        {
+          "name": "discover",
+          "qualname": "discover",
+          "kind": "function",
+          "signature": "(directory: Optional[str] = None) -> List[str]",
+          "summary": "List available mapping names (without ``.json``).",
+          "line": 103,
+          "deprecated": false
+        },
+        {
+          "name": "load_mapping",
+          "qualname": "load_mapping",
+          "kind": "function",
+          "signature": "(name: str, directory: Optional[str] = None) -> Dict[str, Any]",
+          "summary": "Read a mapping JSON by *name*, validate it, and return the parsed dict.",
+          "line": 126,
+          "deprecated": false
+        },
+        {
+          "name": "resolve",
+          "qualname": "resolve",
+          "kind": "function",
+          "signature": "(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]",
+          "summary": "Parse a CSV through a mapping and return fully resolved steps.",
+          "line": 175,
+          "deprecated": false
+        }
+      ],
+      "classes": []
+    },
+    {
+      "relpath": "core_utils/engines/shots/manifest/mapping/_spec.py",
+      "summary": "Schema for a CSV *mapping* file, defined as a dataclass.",
+      "functions": [
+        {
+          "name": "validate_audio_resolve",
+          "qualname": "validate_audio_resolve",
+          "kind": "function",
+          "signature": "(value: Any) -> List[str]",
+          "summary": "Validate the polymorphic ``audio_resolve`` block.",
+          "line": 76,
+          "deprecated": false
+        },
+        {
+          "name": "validate_default_behaviors",
+          "qualname": "validate_default_behaviors",
+          "kind": "function",
+          "signature": "(value: Any) -> List[str]",
+          "summary": "Validate the ``default_behaviors`` block ({kind: [behavior names]}).",
+          "line": 89,
+          "deprecated": false
+        },
+        {
+          "name": "format_markdown",
+          "qualname": "format_markdown",
+          "kind": "function",
+          "signature": "() -> str",
+          "summary": "Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.",
+          "line": 123,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "AudioMethod",
+          "summary": "Descriptor for one ``audio_resolve`` strategy (drives validate/docs).",
+          "line": 28,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "MappingSpec",
+          "summary": "Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).",
+          "line": 101,
+          "bases": [
+            "SchemaSpec"
+          ],
+          "members": []
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/shots/manifest/range_resolver.py",
+      "summary": "Range resolution algorithm for the Shot Manifest.",
+      "functions": [
+        {
+          "name": "prune_to_top_boundaries",
+          "qualname": "prune_to_top_boundaries",
+          "kind": "function",
+          "signature": "(region_starts: List[float], n_steps: int) -> List[float]",
+          "summary": "Keep only *n_steps* region starts by selecting the largest gaps.",
+          "line": 16,
+          "deprecated": false
+        },
+        {
+          "name": "resolve_ranges",
+          "qualname": "resolve_ranges",
+          "kind": "function",
+          "signature": "(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], gap_starts: List[float], gap_end_map: Dict[float, float], gap: float, use_selected_keys: bool, last_resolved: List[Tuple[str, float, Optional[float], bool]], from_step_idx: int = 0, default_duration: float = 0, duration_fn: Optional[Callable[..., float]] = None) -> List[Tuple[str, float, Optional[float], bool]]",
+          "summary": "Compute a resolved ``(start, end)`` for every step.",
+          "line": 37,
+          "deprecated": false
+        }
+      ],
+      "classes": []
+    },
+    {
+      "relpath": "core_utils/engines/shots/shot_apply.py",
+      "summary": "Commit a resolved :class:`MovePlan` via injected writer callables.",
+      "functions": [
+        {
+          "name": "apply",
+          "qualname": "apply",
+          "kind": "function",
+          "signature": "(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None",
+          "summary": "Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).",
+          "line": 43,
+          "deprecated": false
+        }
+      ],
+      "classes": []
+    },
+    {
+      "relpath": "core_utils/engines/shots/shot_detection.py",
+      "summary": "Pure shot-boundary detection math.",
+      "functions": [
+        {
+          "name": "cluster_segments_by_gap",
+          "qualname": "cluster_segments_by_gap",
+          "kind": "function",
+          "signature": "(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]",
+          "summary": "Cluster per-object animation segments into shot-region candidates.",
+          "line": 46,
+          "deprecated": false
+        },
+        {
+          "name": "boundaries_from_key_entries",
+          "qualname": "boundaries_from_key_entries",
+          "kind": "function",
+          "signature": "(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]",
+          "summary": "Build shot-region candidates from ``(time, value, object)`` key entries.",
+          "line": 108,
+          "deprecated": false
+        }
+      ],
+      "classes": []
+    },
+    {
+      "relpath": "core_utils/engines/shots/shot_model.py",
+      "summary": "DCC-agnostic shot data model and persistent store.",
+      "functions": [
+        {
+          "name": "leaf_name",
+          "qualname": "leaf_name",
+          "kind": "function",
+          "signature": "(node) -> str",
+          "summary": "Leaf name with namespace preserved: ``\"|grp|ns:obj\"`` -> ``\"ns:obj\"``.",
+          "line": 39,
+          "deprecated": false
+        },
+        {
+          "name": "resolve_clip_specs",
+          "qualname": "resolve_clip_specs",
+          "kind": "function",
+          "signature": "(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]",
+          "summary": "Resolve ``[(clip_name, start, end), …]`` — the single source of truth for",
+          "line": 192,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "ScenePersistence",
+          "summary": "Interface for saving / loading ShotStore data.",
+          "line": 71,
+          "bases": [
+            "Protocol"
+          ],
+          "members": [
+            {
+              "name": "save",
+              "qualname": "ScenePersistence.save",
+              "kind": "method",
+              "signature": "(self, data: Dict[str, Any]) -> None",
+              "summary": "",
+              "line": 74,
+              "deprecated": false
+            },
+            {
+              "name": "load",
+              "qualname": "ScenePersistence.load",
+              "kind": "method",
+              "signature": "(self) -> Optional[Dict[str, Any]]",
+              "summary": "",
+              "line": 76,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ShotBlock",
+          "summary": "Represents a single shot (contiguous animation range).",
+          "line": 108,
+          "bases": [],
+          "members": [
+            {
+              "name": "duration",
+              "qualname": "ShotBlock.duration",
+              "kind": "property",
+              "signature": "(self) -> float",
+              "summary": "",
+              "line": 133,
+              "deprecated": false
+            },
+            {
+              "name": "classify_objects",
+              "qualname": "ShotBlock.classify_objects",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, str]",
+              "summary": "Return ``{obj_name: status_key}`` using stored metadata.",
+              "line": 136,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "StoreEvent",
+          "summary": "Base class for typed :class:`ShotStore` events.",
+          "line": 220,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "ShotDefined",
+          "summary": "A new shot was created and added to the store.",
+          "line": 232,
+          "bases": [
+            "StoreEvent"
+          ],
+          "members": []
+        },
+        {
+          "name": "ShotUpdated",
+          "summary": "An existing shot's fields were modified.",
+          "line": 240,
+          "bases": [
+            "StoreEvent"
+          ],
+          "members": []
+        },
+        {
+          "name": "ShotRemoved",
+          "summary": "A shot was removed from the store.",
+          "line": 248,
+          "bases": [
+            "StoreEvent"
+          ],
+          "members": []
+        },
+        {
+          "name": "ActiveShotChanged",
+          "summary": "The active (selected) shot changed.",
+          "line": 256,
+          "bases": [
+            "StoreEvent"
+          ],
+          "members": []
+        },
+        {
+          "name": "SettingsChanged",
+          "summary": "Detection-relevant settings were modified.",
+          "line": 264,
+          "bases": [
+            "StoreEvent"
+          ],
+          "members": []
+        },
+        {
+          "name": "BatchComplete",
+          "summary": "A :meth:`ShotStore.batch_update` context has exited.",
+          "line": 271,
+          "bases": [
+            "StoreEvent"
+          ],
+          "members": []
+        },
+        {
+          "name": "StoreInvalidated",
+          "summary": "The active store was discarded (scene change / new scene).",
+          "line": 278,
+          "bases": [
+            "StoreEvent"
+          ],
+          "members": []
+        },
+        {
+          "name": "ShotStore",
+          "summary": "Central store for shot data with pluggable persistence.",
+          "line": 294,
+          "bases": [],
+          "members": [
+            {
+              "name": "has_animation",
+              "qualname": "ShotStore.has_animation",
+              "kind": "staticmethod",
+              "signature": "() -> bool",
+              "summary": "Return whether the scene contains animation (overridable hook).",
+              "line": 373,
+              "deprecated": false
+            },
+            {
+              "name": "detect_regions",
+              "qualname": "ShotStore.detect_regions",
+              "kind": "method",
+              "signature": "(self) -> List[Dict[str, Any]]",
+              "summary": "Detect shot-region candidates from the scene (overridable hook).",
+              "line": 384,
+              "deprecated": false
+            },
+            {
+              "name": "assess",
+              "qualname": "ShotStore.assess",
+              "kind": "method",
+              "signature": "(self) -> Dict[int, str]",
+              "summary": "Assess whether each shot's objects exist in the scene (hook).",
+              "line": 398,
+              "deprecated": false
+            },
+            {
+              "name": "publish_export_view",
+              "qualname": "ShotStore.publish_export_view",
+              "kind": "method",
+              "signature": "(self, strategy: Optional[str] = None) -> Optional[str]",
+              "summary": "Project the export view onto a DCC carrier (overridable hook).",
+              "line": 421,
+              "deprecated": false
+            },
+            {
+              "name": "active_shot_id",
+              "qualname": "ShotStore.active_shot_id",
+              "kind": "property",
+              "signature": "(self) -> Optional[int]",
+              "summary": "The currently selected shot, or ``None``.",
+              "line": 443,
+              "deprecated": false
+            },
+            {
+              "name": "set_active_shot",
+              "qualname": "ShotStore.set_active_shot",
+              "kind": "method",
+              "signature": "(self, shot_id: Optional[int]) -> None",
+              "summary": "Set the active shot and notify listeners.",
+              "line": 447,
+              "deprecated": false
+            },
+            {
+              "name": "notify_settings_changed",
+              "qualname": "ShotStore.notify_settings_changed",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Fire a ``\"settings_changed\"`` event.",
+              "line": 456,
+              "deprecated": false
+            },
+            {
+              "name": "add_listener",
+              "qualname": "ShotStore.add_listener",
+              "kind": "method",
+              "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
+              "summary": "Register a listener called on store mutations.",
+              "line": 465,
+              "deprecated": false
+            },
+            {
+              "name": "remove_listener",
+              "qualname": "ShotStore.remove_listener",
+              "kind": "method",
+              "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
+              "summary": "Remove a previously registered listener.",
+              "line": 482,
+              "deprecated": false
+            },
+            {
+              "name": "batch_update",
+              "qualname": "ShotStore.batch_update",
+              "kind": "method",
+              "signature": "(self)",
+              "summary": "Defer listener notifications until the block exits.",
+              "line": 503,
+              "deprecated": false
+            },
+            {
+              "name": "is_gap_locked",
+              "qualname": "ShotStore.is_gap_locked",
+              "kind": "method",
+              "signature": "(self, left_id: str, right_id: str) -> bool",
+              "summary": "Return whether the gap between two adjacent shots is locked.",
+              "line": 534,
+              "deprecated": false
+            },
+            {
+              "name": "lock_gap",
+              "qualname": "ShotStore.lock_gap",
+              "kind": "method",
+              "signature": "(self, left_id: int, right_id: int) -> None",
+              "summary": "Lock a gap so its width is preserved during global respace.",
+              "line": 538,
+              "deprecated": false
+            },
+            {
+              "name": "unlock_gap",
+              "qualname": "ShotStore.unlock_gap",
+              "kind": "method",
+              "signature": "(self, left_id: int, right_id: int) -> None",
+              "summary": "Unlock a gap so it follows the global gap value.",
+              "line": 545,
+              "deprecated": false
+            },
+            {
+              "name": "lock_all_gaps",
+              "qualname": "ShotStore.lock_all_gaps",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Lock every adjacent gap.",
+              "line": 551,
+              "deprecated": false
+            },
+            {
+              "name": "unlock_all_gaps",
+              "qualname": "ShotStore.unlock_all_gaps",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Unlock every gap.",
+              "line": 562,
+              "deprecated": false
+            },
+            {
+              "name": "set_persistence",
+              "qualname": "ShotStore.set_persistence",
+              "kind": "classmethod",
+              "signature": "(cls, backend: Optional[ScenePersistence]) -> None",
+              "summary": "Set the persistence backend used by :meth:`active` and :meth:`save`.",
+              "line": 571,
+              "deprecated": false
+            },
+            {
+              "name": "active",
+              "qualname": "ShotStore.active",
+              "kind": "classmethod",
+              "signature": "(cls) -> 'ShotStore'",
+              "summary": "Return the current active store, creating one if needed.",
+              "line": 580,
+              "deprecated": false
+            },
+            {
+              "name": "set_active",
+              "qualname": "ShotStore.set_active",
+              "kind": "classmethod",
+              "signature": "(cls, store: 'ShotStore') -> None",
+              "summary": "Replace the active store instance.",
+              "line": 610,
+              "deprecated": false
+            },
+            {
+              "name": "clear_active",
+              "qualname": "ShotStore.clear_active",
+              "kind": "classmethod",
+              "signature": "(cls) -> None",
+              "summary": "Reset the active store and persistence backend.",
+              "line": 615,
+              "deprecated": false
+            },
+            {
+              "name": "add_invalidation_listener",
+              "qualname": "ShotStore.add_invalidation_listener",
+              "kind": "classmethod",
+              "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
+              "summary": "Register a callback fired when the active store is discarded.",
+              "line": 633,
+              "deprecated": false
+            },
+            {
+              "name": "remove_invalidation_listener",
+              "qualname": "ShotStore.remove_invalidation_listener",
+              "kind": "classmethod",
+              "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
+              "summary": "Remove a previously registered invalidation listener.",
+              "line": 646,
+              "deprecated": false
+            },
+            {
+              "name": "snap",
+              "qualname": "ShotStore.snap",
+              "kind": "method",
+              "signature": "(self, frame: float) -> float",
+              "summary": "Return *frame* rounded to the nearest integer when snapping is on.",
+              "line": 749,
+              "deprecated": false
+            },
+            {
+              "name": "compute_gap",
+              "qualname": "ShotStore.compute_gap",
+              "kind": "method",
+              "signature": "(self) -> float",
+              "summary": "Derive the predominant inter-shot gap from current shot positions.",
+              "line": 762,
+              "deprecated": false
+            },
+            {
+              "name": "sorted_shots",
+              "qualname": "ShotStore.sorted_shots",
+              "kind": "method",
+              "signature": "(self) -> List[ShotBlock]",
+              "summary": "Return shots ordered by start time.",
+              "line": 783,
+              "deprecated": false
+            },
+            {
+              "name": "shot_by_id",
+              "qualname": "ShotStore.shot_by_id",
+              "kind": "method",
+              "signature": "(self, shot_id: int) -> Optional[ShotBlock]",
+              "summary": "",
+              "line": 787,
+              "deprecated": false
+            },
+            {
+              "name": "shot_by_name",
+              "qualname": "ShotStore.shot_by_name",
+              "kind": "method",
+              "signature": "(self, name: str) -> Optional[ShotBlock]",
+              "summary": "Return the first shot whose name matches *name*, or ``None``.",
+              "line": 793,
+              "deprecated": false
+            },
+            {
+              "name": "define_shot",
+              "qualname": "ShotStore.define_shot",
+              "kind": "method",
+              "signature": "(self, name: str, start: float, end: float, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
+              "summary": "Create a new shot and add it to the store.",
+              "line": 800,
+              "deprecated": false
+            },
+            {
+              "name": "update_shot",
+              "qualname": "ShotStore.update_shot",
+              "kind": "method",
+              "signature": "(self, shot_id: int, *, start: Optional[float] = None, end: Optional[float] = None, name: Optional[str] = None, objects: Optional[List[str]] = None, description: Optional[str] = None, locked: Optional[bool] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[ShotBlock]",
+              "summary": "Update fields on an existing shot.",
+              "line": 845,
+              "deprecated": false
+            },
+            {
+              "name": "remove_shot",
+              "qualname": "ShotStore.remove_shot",
+              "kind": "method",
+              "signature": "(self, shot_id: int) -> bool",
+              "summary": "Remove a shot by ID.",
+              "line": 888,
+              "deprecated": false
+            },
+            {
+              "name": "append_shot",
+              "qualname": "ShotStore.append_shot",
+              "kind": "method",
+              "signature": "(self, name: str, duration: float, gap: float = 0, start_frame: Optional[float] = None, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
+              "summary": "Append a shot after the last existing shot, with gap-aware placement.",
+              "line": 898,
+              "deprecated": false
+            },
+            {
+              "name": "is_object_hidden",
+              "qualname": "ShotStore.is_object_hidden",
+              "kind": "method",
+              "signature": "(self, obj_name: str) -> bool",
+              "summary": "Return True if *obj_name* is hidden in the sequencer UI.",
+              "line": 939,
+              "deprecated": false
+            },
+            {
+              "name": "set_object_hidden",
+              "qualname": "ShotStore.set_object_hidden",
+              "kind": "method",
+              "signature": "(self, obj_name: str, hidden: bool = True) -> None",
+              "summary": "Show or hide *obj_name* in the sequencer UI.",
+              "line": 943,
+              "deprecated": false
+            },
+            {
+              "name": "is_object_pinned",
+              "qualname": "ShotStore.is_object_pinned",
+              "kind": "method",
+              "signature": "(self, obj_name: str) -> bool",
+              "summary": "Return True if *obj_name* is pinned (kept even when missing).",
+              "line": 955,
+              "deprecated": false
+            },
+            {
+              "name": "set_object_pinned",
+              "qualname": "ShotStore.set_object_pinned",
+              "kind": "method",
+              "signature": "(self, obj_name: str, pinned: bool = True) -> None",
+              "summary": "Pin or unpin *obj_name*.",
+              "line": 959,
+              "deprecated": false
+            },
+            {
+              "name": "remove_object_from_shots",
+              "qualname": "ShotStore.remove_object_from_shots",
+              "kind": "method",
+              "signature": "(self, obj_name: str) -> None",
+              "summary": "Remove *obj_name* from every shot's object list.",
+              "line": 976,
+              "deprecated": false
+            },
+            {
+              "name": "to_dict",
+              "qualname": "ShotStore.to_dict",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "Serialise shots and settings to a plain dict.",
+              "line": 994,
+              "deprecated": false
+            },
+            {
+              "name": "to_export_view",
+              "qualname": "ShotStore.to_export_view",
+              "kind": "method",
+              "signature": "(self, strategy: str = 'name') -> Dict[str, Any]",
+              "summary": "Build the FBX/Unity export view from the current shots.",
+              "line": 1028,
+              "deprecated": false
+            },
+            {
+              "name": "refresh_export_view",
+              "qualname": "ShotStore.refresh_export_view",
+              "kind": "classmethod",
+              "signature": "(cls) -> None",
+              "summary": "Republish the active store's export view when it has shots.",
+              "line": 1055,
+              "deprecated": false
+            },
+            {
+              "name": "enable_auto_export",
+              "qualname": "ShotStore.enable_auto_export",
+              "kind": "classmethod",
+              "signature": "(cls) -> None",
+              "summary": "Opt every export this session into carrying the active store's shots.",
+              "line": 1072,
+              "deprecated": false
+            },
+            {
+              "name": "disable_auto_export",
+              "qualname": "ShotStore.disable_auto_export",
+              "kind": "classmethod",
+              "signature": "(cls) -> None",
+              "summary": "Remove the before-export preparer for the rest of the session.",
+              "line": 1085,
+              "deprecated": false
+            },
+            {
+              "name": "from_dict",
+              "qualname": "ShotStore.from_dict",
+              "kind": "classmethod",
+              "signature": "(cls, data: Dict[str, Any]) -> 'ShotStore'",
+              "summary": "Restore from serialised data.",
+              "line": 1116,
+              "deprecated": false
+            },
+            {
+              "name": "rescale_to_fps",
+              "qualname": "ShotStore.rescale_to_fps",
+              "kind": "method",
+              "signature": "(self, new_fps: float) -> None",
+              "summary": "Scale all shot timings from the current ``scene_fps`` to *new_fps*.",
+              "line": 1181,
+              "deprecated": false
+            },
+            {
+              "name": "mark_dirty",
+              "qualname": "ShotStore.mark_dirty",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Flag the store as needing a save.",
+              "line": 1206,
+              "deprecated": false
+            },
+            {
+              "name": "save",
+              "qualname": "ShotStore.save",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Persist via the configured backend (no-op if none set).",
+              "line": 1224,
+              "deprecated": false
+            },
+            {
+              "name": "is_detection_relevant",
+              "qualname": "ShotStore.is_detection_relevant",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "True when detection settings are actionable.",
+              "line": 1249,
+              "deprecated": false
+            },
+            {
+              "name": "detect_and_define",
+              "qualname": "ShotStore.detect_and_define",
+              "kind": "method",
+              "signature": "(self, overwrite: bool = False) -> List[ShotBlock]",
+              "summary": "Detect shot regions and define them in the store.",
+              "line": 1266,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/shots/shot_plan.py",
+      "summary": "Pure planning layer for multi-shot topology transformations.",
+      "functions": [
+        {
+          "name": "plan_respace",
+          "qualname": "plan_respace",
+          "kind": "function",
+          "signature": "(store: ShotStore, gap: float, start_frame: float) -> MovePlan",
+          "summary": "Build a plan that lays shots out sequentially with uniform gaps.",
+          "line": 209,
+          "deprecated": false
+        },
+        {
+          "name": "plan_ripple_downstream",
+          "qualname": "plan_ripple_downstream",
+          "kind": "function",
+          "signature": "(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan",
+          "summary": "Build a plan that shifts every shot starting at or after",
+          "line": 249,
+          "deprecated": false
+        },
+        {
+          "name": "plan_reorder",
+          "qualname": "plan_reorder",
+          "kind": "function",
+          "signature": "(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan",
+          "summary": "Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.",
+          "line": 285,
+          "deprecated": false
+        },
+        {
+          "name": "plan_ripple_upstream",
+          "qualname": "plan_ripple_upstream",
+          "kind": "function",
+          "signature": "(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan",
+          "summary": "Build a plan that shifts every shot ending at or before",
+          "line": 359,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "ShotMove",
+          "summary": "A single shot's source and destination ranges.",
+          "line": 35,
+          "bases": [],
+          "members": [
+            {
+              "name": "delta",
+              "qualname": "ShotMove.delta",
+              "kind": "property",
+              "signature": "(self) -> float",
+              "summary": "",
+              "line": 54,
+              "deprecated": false
+            },
+            {
+              "name": "moves",
+              "qualname": "ShotMove.moves",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 58,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "MovePlan",
+          "summary": "Resolved multi-shot timeline mutation.",
+          "line": 63,
+          "bases": [],
+          "members": []
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/map_compositor.py",
+      "summary": "Pure image-compositing engine — alpha-composite layered texture maps",
+      "functions": [],
+      "classes": [
+        {
+          "name": "BatchResult",
+          "summary": "Outcome of a full composite + retry-with-mask cycle.",
+          "line": 27,
+          "bases": [
+            "Enum"
+          ],
+          "members": []
+        },
+        {
+          "name": "NormalOutputMode",
+          "summary": "How the engine handles DirectX/OpenGL normal-map output.",
+          "line": 35,
+          "bases": [
+            "Enum"
+          ],
+          "members": []
+        },
+        {
+          "name": "MapCompositor",
+          "summary": "Alpha-composite layered texture maps and auto-generate the",
+          "line": 55,
+          "bases": [
+            "ptk.LoggingMixin"
+          ],
+          "members": [
+            {
+              "name": "removeNormalMap",
+              "qualname": "MapCompositor.removeNormalMap",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 108,
+              "deprecated": false
+            },
+            {
+              "name": "reset",
+              "qualname": "MapCompositor.reset",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Clear per-session state (masks, progress counters).",
+              "line": 115,
+              "deprecated": false
+            },
+            {
+              "name": "process_batch",
+              "qualname": "MapCompositor.process_batch",
+              "kind": "method",
+              "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult",
+              "summary": "Drive a full composite → retry-with-mask → re-composite cycle.",
+              "line": 126,
+              "deprecated": false
+            },
+            {
+              "name": "apply_output_template",
+              "qualname": "MapCompositor.apply_output_template",
+              "kind": "method",
+              "signature": "(self, output_dir: str) -> List[str]",
+              "summary": "Post-process composited output for a target workflow.",
+              "line": 154,
+              "deprecated": false
+            },
+            {
+              "name": "composite_images",
+              "qualname": "MapCompositor.composite_images",
+              "kind": "method",
+              "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages",
+              "summary": "Composite each map type and write the result.",
+              "line": 223,
+              "deprecated": false
+            },
+            {
+              "name": "retry_failed",
+              "qualname": "MapCompositor.retry_failed",
+              "kind": "method",
+              "signature": "(self, failed: SortedImages, name: str) -> SortedImages",
+              "summary": "Fill the masked area of each failed layer with the map-type's",
+              "line": 240,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/map_factory/_map_factory.py",
+      "summary": "``MapFactory`` -- the texture-map workflow orchestrator.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MapFactory",
+          "summary": "Refactored factory with pluggable workflow system.",
+          "line": 60,
+          "bases": [
+            "LoggingMixin"
+          ],
+          "members": [
+            {
+              "name": "register_conversions",
+              "qualname": "MapFactory.register_conversions",
+              "kind": "classmethod",
+              "signature": "(cls, registry: ConversionRegistry)",
+              "summary": "Register all standard PBR conversions.",
+              "line": 112,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_map_type",
+              "qualname": "MapFactory.resolve_map_type",
+              "kind": "classmethod",
+              "signature": "(cls, file: str, key: bool = True, validate: str = None) -> str",
+              "summary": "Resolves the map type from a filename or alias using `map_types`.",
+              "line": 477,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_color_space",
+              "qualname": "MapFactory.resolve_color_space",
+              "kind": "classmethod",
+              "signature": "(cls, file: str, default: str = 'Linear') -> str",
+              "summary": "Resolve the working color space (\"sRGB\" or \"Linear\") for a texture by filename.",
+              "line": 533,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_texture_filename",
+              "qualname": "MapFactory.resolve_texture_filename",
+              "kind": "classmethod",
+              "signature": "(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str",
+              "summary": "Generates a correctly formatted filename while preserving the original suffix and file extension.",
+              "line": 553,
+              "deprecated": false
+            },
+            {
+              "name": "get_base_texture_name",
+              "qualname": "MapFactory.get_base_texture_name",
+              "kind": "classmethod",
+              "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
+              "summary": "Extracts the base texture name from a filename or path,",
+              "line": 627,
+              "deprecated": false
+            },
+            {
+              "name": "group_textures_by_set",
+              "qualname": "MapFactory.group_textures_by_set",
+              "kind": "classmethod",
+              "signature": "(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]",
+              "summary": "Groups texture maps into sets based on matching base names.",
+              "line": 672,
+              "deprecated": false
+            },
+            {
+              "name": "filter_images_by_type",
+              "qualname": "MapFactory.filter_images_by_type",
+              "kind": "classmethod",
+              "signature": "(cls, files, types='')",
+              "summary": "Parameters:",
+              "line": 775,
+              "deprecated": false
+            },
+            {
+              "name": "sort_images_by_type",
+              "qualname": "MapFactory.sort_images_by_type",
+              "kind": "classmethod",
+              "signature": "(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]",
+              "summary": "Sort image files by map type based on the input format.",
+              "line": 790,
+              "deprecated": false
+            },
+            {
+              "name": "contains_map_types",
+              "qualname": "MapFactory.contains_map_types",
+              "kind": "classmethod",
+              "signature": "(cls, files, map_types)",
+              "summary": "Check if the given images contain the given map types.",
+              "line": 825,
+              "deprecated": false
+            },
+            {
+              "name": "is_normal_map",
+              "qualname": "MapFactory.is_normal_map",
+              "kind": "classmethod",
+              "signature": "(cls, file)",
+              "summary": "Check the map type for one of the normal values in map_types.",
+              "line": 852,
+              "deprecated": false
+            },
+            {
+              "name": "register_handler",
+              "qualname": "MapFactory.register_handler",
+              "kind": "classmethod",
+              "signature": "(cls, handler_class: Type[WorkflowHandler])",
+              "summary": "Register a custom workflow handler (extensibility).",
+              "line": 871,
+              "deprecated": false
+            },
+            {
+              "name": "register_conversion",
+              "qualname": "MapFactory.register_conversion",
+              "kind": "classmethod",
+              "signature": "(cls, conversion: MapConversion)",
+              "summary": "Register a custom map conversion (extensibility).",
+              "line": 876,
+              "deprecated": false
+            },
+            {
+              "name": "get_map_fallbacks",
+              "qualname": "MapFactory.get_map_fallbacks",
+              "kind": "classmethod",
+              "signature": "(cls, map_type: str) -> Tuple[str, ...]",
+              "summary": "Get fallback map types for a given map type.",
+              "line": 881,
+              "deprecated": false
+            },
+            {
+              "name": "get_precedence_rules",
+              "qualname": "MapFactory.get_precedence_rules",
+              "kind": "classmethod",
+              "signature": "(cls) -> Dict[str, List[str]]",
+              "summary": "Returns a dictionary of map precedence rules.",
+              "line": 893,
+              "deprecated": false
+            },
+            {
+              "name": "filter_redundant_maps",
+              "qualname": "MapFactory.filter_redundant_maps",
+              "kind": "classmethod",
+              "signature": "(cls, sorted_maps: Dict[str, List[str]], config: Dict[str, Any] = None) -> None",
+              "summary": "Resolve packed/loose map redundancy in-place.",
+              "line": 901,
+              "deprecated": false
+            },
+            {
+              "name": "prepare_maps",
+              "qualname": "MapFactory.prepare_maps",
+              "kind": "classmethod",
+              "signature": "(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]",
+              "summary": "Main factory method.",
+              "line": 964,
+              "deprecated": false
+            },
+            {
+              "name": "pack_transparency_into_albedo",
+              "qualname": "MapFactory.pack_transparency_into_albedo",
+              "kind": "classmethod",
+              "signature": "(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']",
+              "summary": "Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…",
+              "line": 1331,
+              "deprecated": false
+            },
+            {
+              "name": "pack_smoothness_into_metallic",
+              "qualname": "MapFactory.pack_smoothness_into_metallic",
+              "kind": "classmethod",
+              "signature": "(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
+              "summary": "Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.",
+              "line": 1389,
+              "deprecated": false
+            },
+            {
+              "name": "detect_normal_map_format",
+              "qualname": "MapFactory.detect_normal_map_format",
+              "kind": "classmethod",
+              "signature": "(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]",
+              "summary": "Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.",
+              "line": 1443,
+              "deprecated": false
+            },
+            {
+              "name": "convert_normal_map_format",
+              "qualname": "MapFactory.convert_normal_map_format",
+              "kind": "classmethod",
+              "signature": "(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
+              "summary": "Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.",
+              "line": 1516,
+              "deprecated": false
+            },
+            {
+              "name": "convert_bump_to_normal",
+              "qualname": "MapFactory.convert_bump_to_normal",
+              "kind": "classmethod",
+              "signature": "(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
+              "summary": "Convert a bump/height map to a tangent-space normal map.",
+              "line": 1590,
+              "deprecated": false
+            },
+            {
+              "name": "extract_gloss_from_spec",
+              "qualname": "MapFactory.extract_gloss_from_spec",
+              "kind": "classmethod",
+              "signature": "(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]",
+              "summary": "Extracts gloss from a specific channel in the specular map.",
+              "line": 1749,
+              "deprecated": false
+            },
+            {
+              "name": "convert_spec_gloss_to_pbr",
+              "qualname": "MapFactory.convert_spec_gloss_to_pbr",
+              "kind": "classmethod",
+              "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]",
+              "summary": "Converts Specular/Glossiness maps to PBR Metal/Rough.",
+              "line": 1783,
+              "deprecated": false
+            },
+            {
+              "name": "create_base_color_from_spec",
+              "qualname": "MapFactory.create_base_color_from_spec",
+              "kind": "classmethod",
+              "signature": "(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'",
+              "summary": "Computes Base Color from Specular workflow with better metal handling.",
+              "line": 1875,
+              "deprecated": false
+            },
+            {
+              "name": "create_metallic_from_spec",
+              "qualname": "MapFactory.create_metallic_from_spec",
+              "kind": "classmethod",
+              "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'",
+              "summary": "Creates a metallic map from a specular (and optional glossiness) map.",
+              "line": 1931,
+              "deprecated": false
+            },
+            {
+              "name": "create_roughness_from_spec",
+              "qualname": "MapFactory.create_roughness_from_spec",
+              "kind": "classmethod",
+              "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'",
+              "summary": "Estimates roughness from a specular map.",
+              "line": 1976,
+              "deprecated": false
+            },
+            {
+              "name": "convert_base_color_to_albedo",
+              "qualname": "MapFactory.convert_base_color_to_albedo",
+              "kind": "classmethod",
+              "signature": "(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'",
+              "summary": "Converts a Base Color map to a true Albedo map by:",
+              "line": 2024,
+              "deprecated": false
+            },
+            {
+              "name": "get_converted_map",
+              "qualname": "MapFactory.get_converted_map",
+              "kind": "staticmethod",
+              "signature": "(map_type: str, available: dict) -> Optional[Any]",
+              "summary": "Get the converted map based on the given map type and available maps.",
+              "line": 2066,
+              "deprecated": false
+            },
+            {
+              "name": "pack_orm_texture",
+              "qualname": "MapFactory.pack_orm_texture",
+              "kind": "classmethod",
+              "signature": "(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
+              "summary": "Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.",
+              "line": 2114,
+              "deprecated": false
+            },
+            {
+              "name": "pack_msao_texture",
+              "qualname": "MapFactory.pack_msao_texture",
+              "kind": "classmethod",
+              "signature": "(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']",
+              "summary": "Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.",
+              "line": 2186,
+              "deprecated": false
+            },
+            {
+              "name": "pack_mrao_texture",
+              "qualname": "MapFactory.pack_mrao_texture",
+              "kind": "classmethod",
+              "signature": "(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']",
+              "summary": "Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.",
+              "line": 2288,
+              "deprecated": false
+            },
+            {
+              "name": "convert_smoothness_to_roughness",
+              "qualname": "MapFactory.convert_smoothness_to_roughness",
+              "kind": "classmethod",
+              "signature": "(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
+              "summary": "Convert a Smoothness map to a Roughness map by inverting the grayscale values.",
+              "line": 2390,
+              "deprecated": false
+            },
+            {
+              "name": "convert_roughness_to_smoothness",
+              "qualname": "MapFactory.convert_roughness_to_smoothness",
+              "kind": "classmethod",
+              "signature": "(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
+              "summary": "Convert a Roughness map to a Smoothness map by inverting the grayscale values.",
+              "line": 2443,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_orm_texture",
+              "qualname": "MapFactory.unpack_orm_texture",
+              "kind": "classmethod",
+              "signature": "(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
+              "summary": "Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.",
+              "line": 2496,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_msao_texture",
+              "qualname": "MapFactory.unpack_msao_texture",
+              "kind": "classmethod",
+              "signature": "(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
+              "summary": "Unpack Metallic, AO, and Smoothness from a combined MSAO texture.",
+              "line": 2531,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_mrao_texture",
+              "qualname": "MapFactory.unpack_mrao_texture",
+              "kind": "classmethod",
+              "signature": "(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
+              "summary": "Unpack Metallic, Roughness, and AO from a combined MRAO texture.",
+              "line": 2586,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_albedo_transparency",
+              "qualname": "MapFactory.unpack_albedo_transparency",
+              "kind": "classmethod",
+              "signature": "(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
+              "summary": "Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.",
+              "line": 2641,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_metallic_smoothness",
+              "qualname": "MapFactory.unpack_metallic_smoothness",
+              "kind": "classmethod",
+              "signature": "(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
+              "summary": "Unpacks Metallic (RGB) and Smoothness (A) from a combined map.",
+              "line": 2662,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_specular_gloss",
+              "qualname": "MapFactory.unpack_specular_gloss",
+              "kind": "classmethod",
+              "signature": "(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
+              "summary": "Unpacks Specular (RGB) and Glossiness (A) from a combined map.",
+              "line": 2684,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/map_factory/conversions.py",
+      "summary": "Map-conversion registry primitives for the texture MapFactory.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MapConversion",
+          "summary": "Defines a single map conversion operation.",
+          "line": 17,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "ConversionRegistry",
+          "summary": "Central registry for all map type conversions.",
+          "line": 26,
+          "bases": [],
+          "members": [
+            {
+              "name": "add_plugin",
+              "qualname": "ConversionRegistry.add_plugin",
+              "kind": "method",
+              "signature": "(self, cls)",
+              "summary": "Register a class to be scanned for conversions later.",
+              "line": 37,
+              "deprecated": false
+            },
+            {
+              "name": "register",
+              "qualname": "ConversionRegistry.register",
+              "kind": "method",
+              "signature": "(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)",
+              "summary": "Register a new conversion strategy.",
+              "line": 51,
+              "deprecated": false
+            },
+            {
+              "name": "register_from_class",
+              "qualname": "ConversionRegistry.register_from_class",
+              "kind": "method",
+              "signature": "(self, cls)",
+              "summary": "Register all decorated conversion methods from a class.",
+              "line": 95,
+              "deprecated": false
+            },
+            {
+              "name": "get_conversions_for",
+              "qualname": "ConversionRegistry.get_conversions_for",
+              "kind": "method",
+              "signature": "(self, target_type: str) -> List[MapConversion]",
+              "summary": "Get all conversions that can produce target type.",
+              "line": 115,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/map_factory/handlers.py",
+      "summary": "Workflow handlers (Strategy pattern) for the texture MapFactory.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "WorkflowHandler",
+          "summary": "Abstract base for workflow-specific map processing.",
+          "line": 25,
+          "bases": [
+            "ABC"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "WorkflowHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "Check if this handler should process the workflow.",
+              "line": 29,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "WorkflowHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "Process and return the output map path.",
+              "line": 34,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "WorkflowHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "Return list of map types this handler consumes.",
+              "line": 39,
+              "deprecated": false
+            },
+            {
+              "name": "is_explicitly_requested",
+              "qualname": "WorkflowHandler.is_explicitly_requested",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor, map_type: str) -> bool",
+              "summary": "Check if a map type is explicitly requested in the config.",
+              "line": 43,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ORMMapHandler",
+          "summary": "Handles Unreal Engine / glTF ORM packing.",
+          "line": 56,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "ORMMapHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 59,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "ORMMapHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 76,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "ORMMapHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 132,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "MRAOMapHandler",
+          "summary": "Handles MRAO packing (Metallic R, Roughness G, AO B by default).",
+          "line": 145,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "MRAOMapHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 153,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "MRAOMapHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 168,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "MRAOMapHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 241,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "MaskMapHandler",
+          "summary": "Handles Unity HDRP Mask Map (MSAO).",
+          "line": 256,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "MaskMapHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 259,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "MaskMapHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 274,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "MaskMapHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 353,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "MetallicSmoothnessHandler",
+          "summary": "Handles packed Metallic+Smoothness.",
+          "line": 366,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "MetallicSmoothnessHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 369,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "MetallicSmoothnessHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 395,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "MetallicSmoothnessHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 441,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "SeparateMetallicRoughnessHandler",
+          "summary": "Handles separate metallic and roughness maps.",
+          "line": 452,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "SeparateMetallicRoughnessHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 455,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "SeparateMetallicRoughnessHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> List[str]",
+              "summary": "Returns list since this produces multiple maps.",
+              "line": 459,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "SeparateMetallicRoughnessHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 485,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "BaseColorHandler",
+          "summary": "Handles base color / albedo with optional packing.",
+          "line": 489,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "BaseColorHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 492,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "BaseColorHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 495,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "BaseColorHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 619,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "NormalMapHandler",
+          "summary": "Handles normal map format conversion.",
+          "line": 630,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "NormalMapHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 633,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "NormalMapHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> Optional[str]",
+              "summary": "",
+              "line": 636,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "NormalMapHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 789,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "OutputFallbackHandler",
+          "summary": "Handles outputting fallback maps for failed requests.",
+          "line": 797,
+          "bases": [
+            "WorkflowHandler"
+          ],
+          "members": [
+            {
+              "name": "can_handle",
+              "qualname": "OutputFallbackHandler.can_handle",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> bool",
+              "summary": "",
+              "line": 800,
+              "deprecated": false
+            },
+            {
+              "name": "process",
+              "qualname": "OutputFallbackHandler.process",
+              "kind": "method",
+              "signature": "(self, context: TextureProcessor) -> List[str]",
+              "summary": "",
+              "line": 803,
+              "deprecated": false
+            },
+            {
+              "name": "get_consumed_types",
+              "qualname": "OutputFallbackHandler.get_consumed_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "",
+              "line": 856,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/map_factory/processor.py",
+      "summary": "``TextureProcessor`` -- shared processing context for the MapFactory.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TextureProcessor",
+          "summary": "Shared context and processor for all map operations.",
+          "line": 43,
+          "bases": [],
+          "members": [
+            {
+              "name": "get_cached_image",
+              "qualname": "TextureProcessor.get_cached_image",
+              "kind": "method",
+              "signature": "(self, path: str) -> 'Image.Image'",
+              "summary": "Load an image with caching to avoid redundant disk I/O.",
+              "line": 60,
+              "deprecated": false
+            },
+            {
+              "name": "save_map",
+              "qualname": "TextureProcessor.save_map",
+              "kind": "method",
+              "signature": "(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str",
+              "summary": "Saves and optimizes a map, enforcing mode and naming conventions.",
+              "line": 78,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_map",
+              "qualname": "TextureProcessor.resolve_map",
+              "kind": "method",
+              "signature": "(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]",
+              "summary": "Intelligently resolve a map from inventory with fallback conversions.",
+              "line": 381,
+              "deprecated": false
+            },
+            {
+              "name": "mark_used",
+              "qualname": "TextureProcessor.mark_used",
+              "kind": "method",
+              "signature": "(self, *map_types: str)",
+              "summary": "Mark map types as consumed.",
+              "line": 446,
+              "deprecated": false
+            },
+            {
+              "name": "convert_specular_to_metallic",
+              "qualname": "TextureProcessor.convert_specular_to_metallic",
+              "kind": "method",
+              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 450,
+              "deprecated": false
+            },
+            {
+              "name": "convert_smoothness_to_roughness",
+              "qualname": "TextureProcessor.convert_smoothness_to_roughness",
+              "kind": "method",
+              "signature": "(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 464,
+              "deprecated": false
+            },
+            {
+              "name": "convert_roughness_to_smoothness",
+              "qualname": "TextureProcessor.convert_roughness_to_smoothness",
+              "kind": "method",
+              "signature": "(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 480,
+              "deprecated": false
+            },
+            {
+              "name": "convert_specular_to_roughness",
+              "qualname": "TextureProcessor.convert_specular_to_roughness",
+              "kind": "method",
+              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 496,
+              "deprecated": false
+            },
+            {
+              "name": "convert_dx_to_gl",
+              "qualname": "TextureProcessor.convert_dx_to_gl",
+              "kind": "method",
+              "signature": "(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 510,
+              "deprecated": false
+            },
+            {
+              "name": "convert_gl_to_dx",
+              "qualname": "TextureProcessor.convert_gl_to_dx",
+              "kind": "method",
+              "signature": "(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 524,
+              "deprecated": false
+            },
+            {
+              "name": "convert_bump_to_normal",
+              "qualname": "TextureProcessor.convert_bump_to_normal",
+              "kind": "method",
+              "signature": "(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 538,
+              "deprecated": false
+            },
+            {
+              "name": "extract_gloss_from_spec",
+              "qualname": "TextureProcessor.extract_gloss_from_spec",
+              "kind": "method",
+              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
+              "summary": "",
+              "line": 554,
+              "deprecated": false
+            },
+            {
+              "name": "copy_map",
+              "qualname": "TextureProcessor.copy_map",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']",
+              "summary": "Simple copy/rename for compatible maps (e.g.",
+              "line": 571,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_metallic_smoothness",
+              "qualname": "TextureProcessor.unpack_metallic_smoothness",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack and cache results.",
+              "line": 581,
+              "deprecated": false
+            },
+            {
+              "name": "get_metallic_from_packed",
+              "qualname": "TextureProcessor.get_metallic_from_packed",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 601,
+              "deprecated": false
+            },
+            {
+              "name": "get_smoothness_from_packed",
+              "qualname": "TextureProcessor.get_smoothness_from_packed",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 607,
+              "deprecated": false
+            },
+            {
+              "name": "get_roughness_from_packed",
+              "qualname": "TextureProcessor.get_roughness_from_packed",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 613,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_msao",
+              "qualname": "TextureProcessor.unpack_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack MSAO and cache results.",
+              "line": 624,
+              "deprecated": false
+            },
+            {
+              "name": "get_metallic_from_msao",
+              "qualname": "TextureProcessor.get_metallic_from_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 647,
+              "deprecated": false
+            },
+            {
+              "name": "get_smoothness_from_msao",
+              "qualname": "TextureProcessor.get_smoothness_from_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 653,
+              "deprecated": false
+            },
+            {
+              "name": "get_roughness_from_msao",
+              "qualname": "TextureProcessor.get_roughness_from_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 659,
+              "deprecated": false
+            },
+            {
+              "name": "get_ao_from_msao",
+              "qualname": "TextureProcessor.get_ao_from_msao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 669,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_mrao",
+              "qualname": "TextureProcessor.unpack_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack MRAO and cache results.",
+              "line": 675,
+              "deprecated": false
+            },
+            {
+              "name": "get_metallic_from_mrao",
+              "qualname": "TextureProcessor.get_metallic_from_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 702,
+              "deprecated": false
+            },
+            {
+              "name": "get_roughness_from_mrao",
+              "qualname": "TextureProcessor.get_roughness_from_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 708,
+              "deprecated": false
+            },
+            {
+              "name": "get_smoothness_from_mrao",
+              "qualname": "TextureProcessor.get_smoothness_from_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 714,
+              "deprecated": false
+            },
+            {
+              "name": "get_ao_from_mrao",
+              "qualname": "TextureProcessor.get_ao_from_mrao",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 722,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_orm",
+              "qualname": "TextureProcessor.unpack_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack ORM and cache results.",
+              "line": 728,
+              "deprecated": false
+            },
+            {
+              "name": "get_ao_from_orm",
+              "qualname": "TextureProcessor.get_ao_from_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 751,
+              "deprecated": false
+            },
+            {
+              "name": "get_roughness_from_orm",
+              "qualname": "TextureProcessor.get_roughness_from_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 757,
+              "deprecated": false
+            },
+            {
+              "name": "get_smoothness_from_orm",
+              "qualname": "TextureProcessor.get_smoothness_from_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 763,
+              "deprecated": false
+            },
+            {
+              "name": "get_metallic_from_orm",
+              "qualname": "TextureProcessor.get_metallic_from_orm",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 770,
+              "deprecated": false
+            },
+            {
+              "name": "unpack_albedo_transparency",
+              "qualname": "TextureProcessor.unpack_albedo_transparency",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
+              "summary": "Helper to unpack Albedo+Transparency and cache results.",
+              "line": 776,
+              "deprecated": false
+            },
+            {
+              "name": "get_base_color_from_albedo_transparency",
+              "qualname": "TextureProcessor.get_base_color_from_albedo_transparency",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 795,
+              "deprecated": false
+            },
+            {
+              "name": "get_opacity_from_albedo_transparency",
+              "qualname": "TextureProcessor.get_opacity_from_albedo_transparency",
+              "kind": "method",
+              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
+              "summary": "",
+              "line": 801,
+              "deprecated": false
+            },
+            {
+              "name": "create_orm_map",
+              "qualname": "TextureProcessor.create_orm_map",
+              "kind": "method",
+              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
+              "summary": "Create ORM map from components.",
+              "line": 807,
+              "deprecated": false
+            },
+            {
+              "name": "create_mrao_map",
+              "qualname": "TextureProcessor.create_mrao_map",
+              "kind": "method",
+              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
+              "summary": "Create MRAO (Metallic R / Roughness G / AO B) map from components.",
+              "line": 833,
+              "deprecated": false
+            },
+            {
+              "name": "create_mask_map",
+              "qualname": "TextureProcessor.create_mask_map",
+              "kind": "method",
+              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
+              "summary": "Create Mask Map (MSAO) from components.",
+              "line": 884,
+              "deprecated": false
+            },
+            {
+              "name": "create_metallic_smoothness_map",
+              "qualname": "TextureProcessor.create_metallic_smoothness_map",
+              "kind": "method",
+              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
+              "summary": "Create Metallic-Smoothness map from components.",
+              "line": 936,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/map_optimizer.py",
+      "summary": "Plan, assess, and apply map (texture) optimizations.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Op",
+          "summary": "One operation in an optimization plan.",
+          "line": 67,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "MapOptimizer",
+          "summary": "Plan, assess, and apply map (texture) optimizations.",
+          "line": 80,
+          "bases": [
+            "HelpMixin"
+          ],
+          "members": [
+            {
+              "name": "plan",
+              "qualname": "MapOptimizer.plan",
+              "kind": "classmethod",
+              "signature": "(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]",
+              "summary": "Return the ordered list of operations :meth:`apply` would run.",
+              "line": 95,
+              "deprecated": false
+            },
+            {
+              "name": "apply",
+              "qualname": "MapOptimizer.apply",
+              "kind": "classmethod",
+              "signature": "(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'",
+              "summary": "Execute ``plan`` against ``image``.",
+              "line": 273,
+              "deprecated": false
+            },
+            {
+              "name": "optimize_map",
+              "qualname": "MapOptimizer.optimize_map",
+              "kind": "classmethod",
+              "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str",
+              "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
+              "line": 299,
+              "deprecated": false
+            },
+            {
+              "name": "batch_optimize_maps",
+              "qualname": "MapOptimizer.batch_optimize_maps",
+              "kind": "classmethod",
+              "signature": "(cls, directory: str, **kwargs)",
+              "summary": "Batch optimizes all maps in a directory.",
+              "line": 438,
+              "deprecated": false
+            },
+            {
+              "name": "assess",
+              "qualname": "MapOptimizer.assess",
+              "kind": "classmethod",
+              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]",
+              "summary": "Predict whether :meth:`optimize_map` would change ``texture_path``.",
+              "line": 454,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/map_registry.py",
+      "summary": "",
+      "functions": [],
+      "classes": [
+        {
+          "name": "WF",
+          "summary": "Workflow identifiers.",
+          "line": 8,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "MapType",
+          "summary": "Defines the properties of a texture map type.",
+          "line": 45,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "MapRegistry",
+          "summary": "Central registry for map type definitions.",
+          "line": 71,
+          "bases": [
+            "SingletonMixin"
+          ],
+          "members": [
+            {
+              "name": "get",
+              "qualname": "MapRegistry.get",
+              "kind": "method",
+              "signature": "(self, name: str) -> Optional[MapType]",
+              "summary": "Get a map type by name.",
+              "line": 555,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_type_from_path",
+              "qualname": "MapRegistry.resolve_type_from_path",
+              "kind": "method",
+              "signature": "(self, path: str) -> Optional[str]",
+              "summary": "Resolve the map type key from a file path.",
+              "line": 572,
+              "deprecated": false
+            },
+            {
+              "name": "get_suffix_strip_pattern",
+              "qualname": "MapRegistry.get_suffix_strip_pattern",
+              "kind": "method",
+              "signature": "(self) -> Optional[str]",
+              "summary": "Regex matching one trailing map-type suffix (any registered alias).",
+              "line": 617,
+              "deprecated": false
+            },
+            {
+              "name": "get_workflow_presets",
+              "qualname": "MapRegistry.get_workflow_presets",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Dict[str, Any]]",
+              "summary": "Generate the workflow presets dictionary.",
+              "line": 673,
+              "deprecated": false
+            },
+            {
+              "name": "get_map_types",
+              "qualname": "MapRegistry.get_map_types",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Tuple[str, ...]]",
+              "summary": "Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.",
+              "line": 697,
+              "deprecated": false
+            },
+            {
+              "name": "get_fallbacks",
+              "qualname": "MapRegistry.get_fallbacks",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Tuple[str, ...]]",
+              "summary": "Generate the input fallback dictionary.",
+              "line": 701,
+              "deprecated": false
+            },
+            {
+              "name": "get_output_fallbacks",
+              "qualname": "MapRegistry.get_output_fallbacks",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Tuple[str, ...]]",
+              "summary": "Generate the output fallback dictionary.",
+              "line": 709,
+              "deprecated": false
+            },
+            {
+              "name": "get_precedence_rules",
+              "qualname": "MapRegistry.get_precedence_rules",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, List[str]]",
+              "summary": "Generate the precedence rules dictionary.",
+              "line": 717,
+              "deprecated": false
+            },
+            {
+              "name": "get_scale_as_mask_types",
+              "qualname": "MapRegistry.get_scale_as_mask_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "Get list of map types that should be scaled as masks.",
+              "line": 725,
+              "deprecated": false
+            },
+            {
+              "name": "get_resolution_critical_types",
+              "qualname": "MapRegistry.get_resolution_critical_types",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "Get list of map types whose surface detail requires full resolution.",
+              "line": 729,
+              "deprecated": false
+            },
+            {
+              "name": "is_resolution_critical",
+              "qualname": "MapRegistry.is_resolution_critical",
+              "kind": "method",
+              "signature": "(self, name: str) -> bool",
+              "summary": "True when surface detail for ``name`` requires full resolution.",
+              "line": 733,
+              "deprecated": false
+            },
+            {
+              "name": "get_passthrough_maps",
+              "qualname": "MapRegistry.get_passthrough_maps",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "Get list of maps that should be passed through if not consumed.",
+              "line": 742,
+              "deprecated": false
+            },
+            {
+              "name": "get_map_backgrounds",
+              "qualname": "MapRegistry.get_map_backgrounds",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Tuple[int, int, int, int]]",
+              "summary": "Generate the map backgrounds dictionary.",
+              "line": 747,
+              "deprecated": false
+            },
+            {
+              "name": "get_map_modes",
+              "qualname": "MapRegistry.get_map_modes",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, str]",
+              "summary": "Generate the map modes dictionary.",
+              "line": 755,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_config",
+              "qualname": "MapRegistry.resolve_config",
+              "kind": "method",
+              "signature": "(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]",
+              "summary": "Resolve configuration from presets, dicts, and kwargs.",
+              "line": 759,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/mat_report.py",
+      "summary": "DCC-agnostic formatters for material / texture info reports.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MatReport",
+          "summary": "Pure record→text/HTML formatters for material & texture info reports.",
+          "line": 24,
+          "bases": [],
+          "members": [
+            {
+              "name": "format_texture_info_text",
+              "qualname": "MatReport.format_texture_info_text",
+              "kind": "classmethod",
+              "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
+              "summary": "Render ``get_texture_info`` output as a plain-text report.",
+              "line": 63,
+              "deprecated": false
+            },
+            {
+              "name": "format_texture_info_html",
+              "qualname": "MatReport.format_texture_info_html",
+              "kind": "classmethod",
+              "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
+              "summary": "Render ``get_texture_info`` output as styled HTML.",
+              "line": 81,
+              "deprecated": false
+            },
+            {
+              "name": "format_mat_info_text",
+              "qualname": "MatReport.format_mat_info_text",
+              "kind": "classmethod",
+              "signature": "(cls, records: List[Dict[str, Any]]) -> str",
+              "summary": "Render ``get_mat_info`` output as a plain-text report.",
+              "line": 94,
+              "deprecated": false
+            },
+            {
+              "name": "format_mat_info_html",
+              "qualname": "MatReport.format_mat_info_html",
+              "kind": "classmethod",
+              "signature": "(cls, records: List[Dict[str, Any]]) -> str",
+              "summary": "Render ``get_mat_info`` output as styled HTML.",
+              "line": 135,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/engines/textures/output_template.py",
+      "summary": "Per-map output-format templates — the \"export preset\" layer.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "OutputSpec",
+          "summary": "How a single map is written to disk.",
+          "line": 26,
+          "bases": [],
+          "members": [
+            {
+              "name": "to_dict",
+              "qualname": "OutputSpec.to_dict",
+              "kind": "method",
+              "signature": "(self) -> dict",
+              "summary": "",
+              "line": 41,
+              "deprecated": false
+            },
+            {
+              "name": "from_dict",
+              "qualname": "OutputSpec.from_dict",
+              "kind": "classmethod",
+              "signature": "(cls, d: dict) -> 'OutputSpec'",
+              "summary": "",
+              "line": 45,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "OutputTemplate",
+          "summary": "A profile's per-map output formats: a default spec + per-map-type overrides.",
+          "line": 54,
+          "bases": [],
+          "members": [
+            {
+              "name": "resolve",
+              "qualname": "OutputTemplate.resolve",
+              "kind": "method",
+              "signature": "(self, map_type: Optional[str]) -> OutputSpec",
+              "summary": "Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).",
+              "line": 60,
+              "deprecated": false
+            },
+            {
+              "name": "to_dict",
+              "qualname": "OutputTemplate.to_dict",
+              "kind": "method",
+              "signature": "(self) -> dict",
+              "summary": "",
+              "line": 66,
+              "deprecated": false
+            },
+            {
+              "name": "from_dict",
+              "qualname": "OutputTemplate.from_dict",
+              "kind": "classmethod",
+              "signature": "(cls, d: dict) -> 'OutputTemplate'",
+              "summary": "",
+              "line": 73,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "OutputTemplates",
+          "summary": "Registry of the built-in per-profile output templates and their resolution.",
+          "line": 82,
+          "bases": [],
+          "members": [
+            {
+              "name": "get",
+              "qualname": "OutputTemplates.get",
+              "kind": "classmethod",
+              "signature": "(cls, profile: Optional[str]) -> OutputTemplate",
+              "summary": "Return the built-in template for *profile* (a ``WF`` key), or the default.",
+              "line": 119,
+              "deprecated": false
+            },
+            {
+              "name": "resolve",
+              "qualname": "OutputTemplates.resolve",
+              "kind": "classmethod",
+              "signature": "(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec",
+              "summary": "Resolve the :class:`OutputSpec` for *map_type* under *profile*.",
+              "line": 126,
               "deprecated": false
             }
           ]
@@ -2498,6 +5261,131 @@
       ]
     },
     {
+      "relpath": "core_utils/process_stream.py",
+      "summary": "App-agnostic line-stream primitives for launched processes and log files.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "OutputStream",
+          "summary": "Thread-safe, multi-consumer text stream with bounded history.",
+          "line": 37,
+          "bases": [],
+          "members": [
+            {
+              "name": "push",
+              "qualname": "OutputStream.push",
+              "kind": "method",
+              "signature": "(self, line: str, source: str = '') -> None",
+              "summary": "Append a line.",
+              "line": 60,
+              "deprecated": false
+            },
+            {
+              "name": "subscribe",
+              "qualname": "OutputStream.subscribe",
+              "kind": "method",
+              "signature": "(self, callback: Callable[[str, str], None], replay_history: bool = False) -> Callable[[], None]",
+              "summary": "Register ``callback(source, line)``.",
+              "line": 73,
+              "deprecated": false
+            },
+            {
+              "name": "history",
+              "qualname": "OutputStream.history",
+              "kind": "method",
+              "signature": "(self) -> List[Tuple[str, str]]",
+              "summary": "Snapshot the current history buffer.",
+              "line": 107,
+              "deprecated": false
+            },
+            {
+              "name": "clear_history",
+              "qualname": "OutputStream.clear_history",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Drop buffered lines.",
+              "line": 112,
+              "deprecated": false
+            },
+            {
+              "name": "wait_for",
+              "qualname": "OutputStream.wait_for",
+              "kind": "method",
+              "signature": "(self, pattern: Union[str, Pattern], timeout: Optional[float] = None, source: Optional[str] = None, include_history: bool = True) -> Optional[Tuple[str, str]]",
+              "summary": "Block until a line matches *pattern*, or *timeout* expires.",
+              "line": 133,
+              "deprecated": false
+            },
+            {
+              "name": "close",
+              "qualname": "OutputStream.close",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Mark the stream closed.",
+              "line": 186,
+              "deprecated": false
+            },
+            {
+              "name": "closed",
+              "qualname": "OutputStream.closed",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 191,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ProcessReader",
+          "summary": "Reads a subprocess pipe line-by-line into an :class:`OutputStream`.",
+          "line": 195,
+          "bases": [
+            "threading.Thread"
+          ],
+          "members": [
+            {
+              "name": "run",
+              "qualname": "ProcessReader.run",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "",
+              "line": 209,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "LogTailer",
+          "summary": "Tails a log file from its current size forward.",
+          "line": 223,
+          "bases": [
+            "threading.Thread"
+          ],
+          "members": [
+            {
+              "name": "stop",
+              "qualname": "LogTailer.stop",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "",
+              "line": 246,
+              "deprecated": false
+            },
+            {
+              "name": "run",
+              "qualname": "LogTailer.run",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "",
+              "line": 256,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "core_utils/qc_log.py",
       "summary": "Structured run logs and threshold-based acceptance gates for pipeline",
       "functions": [],
@@ -2834,6 +5722,39 @@
               "signature": "(self) -> str",
               "summary": "Render the full-registry class-member bullet.",
               "line": 63,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "core_utils/task_factory.py",
+      "summary": "Generic task/check pipeline primitive -- host- and Qt-free.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TaskFactory",
+          "summary": "A factory class for managing and executing tasks in a scene export pipeline.",
+          "line": 23,
+          "bases": [],
+          "members": [
+            {
+              "name": "run_tasks",
+              "qualname": "TaskFactory.run_tasks",
+              "kind": "method",
+              "signature": "(self, tasks: Dict[str, Any]) -> bool",
+              "summary": "Run tasks and checks, returning True if all checks pass, False if any fail.",
+              "line": 136,
+              "deprecated": false
+            },
+            {
+              "name": "run_tasks_by_category",
+              "qualname": "TaskFactory.run_tasks_by_category",
+              "kind": "method",
+              "signature": "(self, task_definitions: Dict[str, Any], check_definitions: Dict[str, Any]) -> bool",
+              "summary": "Alternative method to run tasks and checks separately with better organization.",
+              "line": 148,
               "deprecated": false
             }
           ]
@@ -3431,74 +6352,6 @@
       ]
     },
     {
-      "relpath": "geo_utils/assembly_sorter.py",
-      "summary": "Sort separated mesh parts into repeated-assembly copies.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "AssemblySorter",
-          "summary": "Cluster separated parts into copies of repeated assemblies.",
-          "line": 37,
-          "bases": [],
-          "members": [
-            {
-              "name": "sort",
-              "qualname": "AssemblySorter.sort",
-              "kind": "method",
-              "signature": "(self, parts: List[Dict[str, Any]]) -> List[List[int]]",
-              "summary": "Sort *parts* into assembly groups;",
-              "line": 63,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "geo_utils/drape.py",
-      "summary": "Procedural draped-cloth (curtain) generator — pure geometry, no DCC.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "CurtainDrape",
-          "summary": "Drape a grid into a pleated, gravity-sagged curtain — pure math.",
-          "line": 63,
-          "bases": [
-            "LoggingMixin"
-          ],
-          "members": [
-            {
-              "name": "prepare",
-              "qualname": "CurtainDrape.prepare",
-              "kind": "method",
-              "signature": "(self) -> Tuple[int, int, List[Tuple[Vec, Vec, Vec]]]",
-              "summary": "Precompute the per-build state and return ``(u_segs, v_segs, frames)``.",
-              "line": 178,
-              "deprecated": false
-            },
-            {
-              "name": "grid_points",
-              "qualname": "CurtainDrape.grid_points",
-              "kind": "method",
-              "signature": "(self) -> Tuple[int, int, List[Vec]]",
-              "summary": "The full draped grid: ``(u_segs, v_segs, points)``.",
-              "line": 204,
-              "deprecated": false
-            },
-            {
-              "name": "drape",
-              "qualname": "CurtainDrape.drape",
-              "kind": "method",
-              "signature": "(self, u, v, pos, tan, normal) -> Vec",
-              "summary": "Place one cloth vertex.",
-              "line": 253,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
       "relpath": "geo_utils/pointcloud.py",
       "summary": "Point-cloud geometry — analyze and group unordered sets of points.",
       "functions": [],
@@ -3666,6 +6519,30 @@
               "signature": "(points: Sequence[Vec], segments: int, closed: bool, up: Vec = (0.0, 1.0, 0.0)) -> List[Tuple[Vec, Vec, Vec]]",
               "summary": "Resample to ``segments + 1`` even points with a local frame at each.",
               "line": 375,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "geo_utils/rail_surface.py",
+      "summary": "Rail-driven parametric surface — a general geometry primitive.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "RailSurface",
+          "summary": "A parametric grid spanning from a rail, displaced by a caller field.",
+          "line": 40,
+          "bases": [],
+          "members": [
+            {
+              "name": "grid_points",
+              "qualname": "RailSurface.grid_points",
+              "kind": "method",
+              "signature": "(self, displace: Displace) -> Tuple[int, int, List[Vec]]",
+              "summary": "Return ``(u_segs, v_segs, points)`` — the displaced grid, row-major.",
+              "line": 74,
               "deprecated": false
             }
           ]
@@ -4233,1471 +7110,6 @@
       ]
     },
     {
-      "relpath": "img_utils/map_compositor.py",
-      "summary": "Pure image-compositing engine — alpha-composite layered texture maps",
-      "functions": [],
-      "classes": [
-        {
-          "name": "BatchResult",
-          "summary": "Outcome of a full composite + retry-with-mask cycle.",
-          "line": 27,
-          "bases": [
-            "Enum"
-          ],
-          "members": []
-        },
-        {
-          "name": "NormalOutputMode",
-          "summary": "How the engine handles DirectX/OpenGL normal-map output.",
-          "line": 35,
-          "bases": [
-            "Enum"
-          ],
-          "members": []
-        },
-        {
-          "name": "MapCompositor",
-          "summary": "Alpha-composite layered texture maps and auto-generate the",
-          "line": 55,
-          "bases": [
-            "ptk.LoggingMixin"
-          ],
-          "members": [
-            {
-              "name": "removeNormalMap",
-              "qualname": "MapCompositor.removeNormalMap",
-              "kind": "property",
-              "signature": "(self) -> bool",
-              "summary": "",
-              "line": 108,
-              "deprecated": false
-            },
-            {
-              "name": "reset",
-              "qualname": "MapCompositor.reset",
-              "kind": "method",
-              "signature": "(self) -> None",
-              "summary": "Clear per-session state (masks, progress counters).",
-              "line": 115,
-              "deprecated": false
-            },
-            {
-              "name": "process_batch",
-              "qualname": "MapCompositor.process_batch",
-              "kind": "method",
-              "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult",
-              "summary": "Drive a full composite → retry-with-mask → re-composite cycle.",
-              "line": 126,
-              "deprecated": false
-            },
-            {
-              "name": "apply_output_template",
-              "qualname": "MapCompositor.apply_output_template",
-              "kind": "method",
-              "signature": "(self, output_dir: str) -> List[str]",
-              "summary": "Post-process composited output for a target workflow.",
-              "line": 154,
-              "deprecated": false
-            },
-            {
-              "name": "composite_images",
-              "qualname": "MapCompositor.composite_images",
-              "kind": "method",
-              "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages",
-              "summary": "Composite each map type and write the result.",
-              "line": 223,
-              "deprecated": false
-            },
-            {
-              "name": "retry_failed",
-              "qualname": "MapCompositor.retry_failed",
-              "kind": "method",
-              "signature": "(self, failed: SortedImages, name: str) -> SortedImages",
-              "summary": "Fill the masked area of each failed layer with the map-type's",
-              "line": 240,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/map_factory/_map_factory.py",
-      "summary": "``MapFactory`` -- the texture-map workflow orchestrator.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "MapFactory",
-          "summary": "Refactored factory with pluggable workflow system.",
-          "line": 58,
-          "bases": [
-            "LoggingMixin"
-          ],
-          "members": [
-            {
-              "name": "register_conversions",
-              "qualname": "MapFactory.register_conversions",
-              "kind": "classmethod",
-              "signature": "(cls, registry: ConversionRegistry)",
-              "summary": "Register all standard PBR conversions.",
-              "line": 110,
-              "deprecated": false
-            },
-            {
-              "name": "resolve_map_type",
-              "qualname": "MapFactory.resolve_map_type",
-              "kind": "classmethod",
-              "signature": "(cls, file: str, key: bool = True, validate: str = None) -> str",
-              "summary": "Resolves the map type from a filename or alias using `map_types`.",
-              "line": 475,
-              "deprecated": false
-            },
-            {
-              "name": "resolve_color_space",
-              "qualname": "MapFactory.resolve_color_space",
-              "kind": "classmethod",
-              "signature": "(cls, file: str, default: str = 'Linear') -> str",
-              "summary": "Resolve the working color space (\"sRGB\" or \"Linear\") for a texture by filename.",
-              "line": 531,
-              "deprecated": false
-            },
-            {
-              "name": "resolve_texture_filename",
-              "qualname": "MapFactory.resolve_texture_filename",
-              "kind": "classmethod",
-              "signature": "(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str",
-              "summary": "Generates a correctly formatted filename while preserving the original suffix and file extension.",
-              "line": 551,
-              "deprecated": false
-            },
-            {
-              "name": "get_base_texture_name",
-              "qualname": "MapFactory.get_base_texture_name",
-              "kind": "classmethod",
-              "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
-              "summary": "Extracts the base texture name from a filename or path,",
-              "line": 625,
-              "deprecated": false
-            },
-            {
-              "name": "group_textures_by_set",
-              "qualname": "MapFactory.group_textures_by_set",
-              "kind": "classmethod",
-              "signature": "(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]",
-              "summary": "Groups texture maps into sets based on matching base names.",
-              "line": 670,
-              "deprecated": false
-            },
-            {
-              "name": "filter_images_by_type",
-              "qualname": "MapFactory.filter_images_by_type",
-              "kind": "classmethod",
-              "signature": "(cls, files, types='')",
-              "summary": "Parameters:",
-              "line": 773,
-              "deprecated": false
-            },
-            {
-              "name": "sort_images_by_type",
-              "qualname": "MapFactory.sort_images_by_type",
-              "kind": "classmethod",
-              "signature": "(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]",
-              "summary": "Sort image files by map type based on the input format.",
-              "line": 788,
-              "deprecated": false
-            },
-            {
-              "name": "contains_map_types",
-              "qualname": "MapFactory.contains_map_types",
-              "kind": "classmethod",
-              "signature": "(cls, files, map_types)",
-              "summary": "Check if the given images contain the given map types.",
-              "line": 823,
-              "deprecated": false
-            },
-            {
-              "name": "is_normal_map",
-              "qualname": "MapFactory.is_normal_map",
-              "kind": "classmethod",
-              "signature": "(cls, file)",
-              "summary": "Check the map type for one of the normal values in map_types.",
-              "line": 850,
-              "deprecated": false
-            },
-            {
-              "name": "register_handler",
-              "qualname": "MapFactory.register_handler",
-              "kind": "classmethod",
-              "signature": "(cls, handler_class: Type[WorkflowHandler])",
-              "summary": "Register a custom workflow handler (extensibility).",
-              "line": 869,
-              "deprecated": false
-            },
-            {
-              "name": "register_conversion",
-              "qualname": "MapFactory.register_conversion",
-              "kind": "classmethod",
-              "signature": "(cls, conversion: MapConversion)",
-              "summary": "Register a custom map conversion (extensibility).",
-              "line": 874,
-              "deprecated": false
-            },
-            {
-              "name": "get_map_fallbacks",
-              "qualname": "MapFactory.get_map_fallbacks",
-              "kind": "classmethod",
-              "signature": "(cls, map_type: str) -> Tuple[str, ...]",
-              "summary": "Get fallback map types for a given map type.",
-              "line": 879,
-              "deprecated": false
-            },
-            {
-              "name": "get_precedence_rules",
-              "qualname": "MapFactory.get_precedence_rules",
-              "kind": "classmethod",
-              "signature": "(cls) -> Dict[str, List[str]]",
-              "summary": "Returns a dictionary of map precedence rules.",
-              "line": 891,
-              "deprecated": false
-            },
-            {
-              "name": "filter_redundant_maps",
-              "qualname": "MapFactory.filter_redundant_maps",
-              "kind": "classmethod",
-              "signature": "(cls, sorted_maps: Dict[str, List[str]], config: Dict[str, Any] = None) -> None",
-              "summary": "Resolve packed/loose map redundancy in-place.",
-              "line": 899,
-              "deprecated": false
-            },
-            {
-              "name": "prepare_maps",
-              "qualname": "MapFactory.prepare_maps",
-              "kind": "classmethod",
-              "signature": "(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]",
-              "summary": "Main factory method.",
-              "line": 962,
-              "deprecated": false
-            },
-            {
-              "name": "pack_transparency_into_albedo",
-              "qualname": "MapFactory.pack_transparency_into_albedo",
-              "kind": "classmethod",
-              "signature": "(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']",
-              "summary": "Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…",
-              "line": 1329,
-              "deprecated": false
-            },
-            {
-              "name": "pack_smoothness_into_metallic",
-              "qualname": "MapFactory.pack_smoothness_into_metallic",
-              "kind": "classmethod",
-              "signature": "(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
-              "summary": "Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.",
-              "line": 1387,
-              "deprecated": false
-            },
-            {
-              "name": "detect_normal_map_format",
-              "qualname": "MapFactory.detect_normal_map_format",
-              "kind": "classmethod",
-              "signature": "(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]",
-              "summary": "Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.",
-              "line": 1441,
-              "deprecated": false
-            },
-            {
-              "name": "convert_normal_map_format",
-              "qualname": "MapFactory.convert_normal_map_format",
-              "kind": "classmethod",
-              "signature": "(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
-              "summary": "Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.",
-              "line": 1514,
-              "deprecated": false
-            },
-            {
-              "name": "convert_bump_to_normal",
-              "qualname": "MapFactory.convert_bump_to_normal",
-              "kind": "classmethod",
-              "signature": "(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
-              "summary": "Convert a bump/height map to a tangent-space normal map.",
-              "line": 1588,
-              "deprecated": false
-            },
-            {
-              "name": "extract_gloss_from_spec",
-              "qualname": "MapFactory.extract_gloss_from_spec",
-              "kind": "classmethod",
-              "signature": "(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]",
-              "summary": "Extracts gloss from a specific channel in the specular map.",
-              "line": 1747,
-              "deprecated": false
-            },
-            {
-              "name": "convert_spec_gloss_to_pbr",
-              "qualname": "MapFactory.convert_spec_gloss_to_pbr",
-              "kind": "classmethod",
-              "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]",
-              "summary": "Converts Specular/Glossiness maps to PBR Metal/Rough.",
-              "line": 1781,
-              "deprecated": false
-            },
-            {
-              "name": "create_base_color_from_spec",
-              "qualname": "MapFactory.create_base_color_from_spec",
-              "kind": "classmethod",
-              "signature": "(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'",
-              "summary": "Computes Base Color from Specular workflow with better metal handling.",
-              "line": 1873,
-              "deprecated": false
-            },
-            {
-              "name": "create_metallic_from_spec",
-              "qualname": "MapFactory.create_metallic_from_spec",
-              "kind": "classmethod",
-              "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'",
-              "summary": "Creates a metallic map from a specular (and optional glossiness) map.",
-              "line": 1929,
-              "deprecated": false
-            },
-            {
-              "name": "create_roughness_from_spec",
-              "qualname": "MapFactory.create_roughness_from_spec",
-              "kind": "classmethod",
-              "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'",
-              "summary": "Estimates roughness from a specular map.",
-              "line": 1974,
-              "deprecated": false
-            },
-            {
-              "name": "convert_base_color_to_albedo",
-              "qualname": "MapFactory.convert_base_color_to_albedo",
-              "kind": "classmethod",
-              "signature": "(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'",
-              "summary": "Converts a Base Color map to a true Albedo map by:",
-              "line": 2022,
-              "deprecated": false
-            },
-            {
-              "name": "get_converted_map",
-              "qualname": "MapFactory.get_converted_map",
-              "kind": "staticmethod",
-              "signature": "(map_type: str, available: dict) -> Optional[Any]",
-              "summary": "Get the converted map based on the given map type and available maps.",
-              "line": 2064,
-              "deprecated": false
-            },
-            {
-              "name": "pack_orm_texture",
-              "qualname": "MapFactory.pack_orm_texture",
-              "kind": "classmethod",
-              "signature": "(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
-              "summary": "Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.",
-              "line": 2112,
-              "deprecated": false
-            },
-            {
-              "name": "pack_msao_texture",
-              "qualname": "MapFactory.pack_msao_texture",
-              "kind": "classmethod",
-              "signature": "(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']",
-              "summary": "Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.",
-              "line": 2184,
-              "deprecated": false
-            },
-            {
-              "name": "pack_mrao_texture",
-              "qualname": "MapFactory.pack_mrao_texture",
-              "kind": "classmethod",
-              "signature": "(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']",
-              "summary": "Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.",
-              "line": 2286,
-              "deprecated": false
-            },
-            {
-              "name": "convert_smoothness_to_roughness",
-              "qualname": "MapFactory.convert_smoothness_to_roughness",
-              "kind": "classmethod",
-              "signature": "(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
-              "summary": "Convert a Smoothness map to a Roughness map by inverting the grayscale values.",
-              "line": 2388,
-              "deprecated": false
-            },
-            {
-              "name": "convert_roughness_to_smoothness",
-              "qualname": "MapFactory.convert_roughness_to_smoothness",
-              "kind": "classmethod",
-              "signature": "(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
-              "summary": "Convert a Roughness map to a Smoothness map by inverting the grayscale values.",
-              "line": 2441,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_orm_texture",
-              "qualname": "MapFactory.unpack_orm_texture",
-              "kind": "classmethod",
-              "signature": "(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
-              "summary": "Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.",
-              "line": 2494,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_msao_texture",
-              "qualname": "MapFactory.unpack_msao_texture",
-              "kind": "classmethod",
-              "signature": "(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
-              "summary": "Unpack Metallic, AO, and Smoothness from a combined MSAO texture.",
-              "line": 2529,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_mrao_texture",
-              "qualname": "MapFactory.unpack_mrao_texture",
-              "kind": "classmethod",
-              "signature": "(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
-              "summary": "Unpack Metallic, Roughness, and AO from a combined MRAO texture.",
-              "line": 2584,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_albedo_transparency",
-              "qualname": "MapFactory.unpack_albedo_transparency",
-              "kind": "classmethod",
-              "signature": "(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
-              "summary": "Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.",
-              "line": 2639,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_metallic_smoothness",
-              "qualname": "MapFactory.unpack_metallic_smoothness",
-              "kind": "classmethod",
-              "signature": "(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
-              "summary": "Unpacks Metallic (RGB) and Smoothness (A) from a combined map.",
-              "line": 2660,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_specular_gloss",
-              "qualname": "MapFactory.unpack_specular_gloss",
-              "kind": "classmethod",
-              "signature": "(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
-              "summary": "Unpacks Specular (RGB) and Glossiness (A) from a combined map.",
-              "line": 2682,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/map_factory/conversions.py",
-      "summary": "Map-conversion registry primitives for the texture MapFactory.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "MapConversion",
-          "summary": "Defines a single map conversion operation.",
-          "line": 17,
-          "bases": [],
-          "members": []
-        },
-        {
-          "name": "ConversionRegistry",
-          "summary": "Central registry for all map type conversions.",
-          "line": 26,
-          "bases": [],
-          "members": [
-            {
-              "name": "add_plugin",
-              "qualname": "ConversionRegistry.add_plugin",
-              "kind": "method",
-              "signature": "(self, cls)",
-              "summary": "Register a class to be scanned for conversions later.",
-              "line": 37,
-              "deprecated": false
-            },
-            {
-              "name": "register",
-              "qualname": "ConversionRegistry.register",
-              "kind": "method",
-              "signature": "(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)",
-              "summary": "Register a new conversion strategy.",
-              "line": 51,
-              "deprecated": false
-            },
-            {
-              "name": "register_from_class",
-              "qualname": "ConversionRegistry.register_from_class",
-              "kind": "method",
-              "signature": "(self, cls)",
-              "summary": "Register all decorated conversion methods from a class.",
-              "line": 95,
-              "deprecated": false
-            },
-            {
-              "name": "get_conversions_for",
-              "qualname": "ConversionRegistry.get_conversions_for",
-              "kind": "method",
-              "signature": "(self, target_type: str) -> List[MapConversion]",
-              "summary": "Get all conversions that can produce target type.",
-              "line": 115,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/map_factory/handlers.py",
-      "summary": "Workflow handlers (Strategy pattern) for the texture MapFactory.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "WorkflowHandler",
-          "summary": "Abstract base for workflow-specific map processing.",
-          "line": 25,
-          "bases": [
-            "ABC"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "WorkflowHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "Check if this handler should process the workflow.",
-              "line": 29,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "WorkflowHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "Process and return the output map path.",
-              "line": 34,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "WorkflowHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "Return list of map types this handler consumes.",
-              "line": 39,
-              "deprecated": false
-            },
-            {
-              "name": "is_explicitly_requested",
-              "qualname": "WorkflowHandler.is_explicitly_requested",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor, map_type: str) -> bool",
-              "summary": "Check if a map type is explicitly requested in the config.",
-              "line": 43,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "ORMMapHandler",
-          "summary": "Handles Unreal Engine / glTF ORM packing.",
-          "line": 56,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "ORMMapHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 59,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "ORMMapHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 76,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "ORMMapHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 132,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "MRAOMapHandler",
-          "summary": "Handles MRAO packing (Metallic R, Roughness G, AO B by default).",
-          "line": 145,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "MRAOMapHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 153,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "MRAOMapHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 168,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "MRAOMapHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 241,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "MaskMapHandler",
-          "summary": "Handles Unity HDRP Mask Map (MSAO).",
-          "line": 256,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "MaskMapHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 259,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "MaskMapHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 274,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "MaskMapHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 353,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "MetallicSmoothnessHandler",
-          "summary": "Handles packed Metallic+Smoothness.",
-          "line": 366,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "MetallicSmoothnessHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 369,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "MetallicSmoothnessHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 395,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "MetallicSmoothnessHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 441,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "SeparateMetallicRoughnessHandler",
-          "summary": "Handles separate metallic and roughness maps.",
-          "line": 452,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "SeparateMetallicRoughnessHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 455,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "SeparateMetallicRoughnessHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> List[str]",
-              "summary": "Returns list since this produces multiple maps.",
-              "line": 459,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "SeparateMetallicRoughnessHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 485,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "BaseColorHandler",
-          "summary": "Handles base color / albedo with optional packing.",
-          "line": 489,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "BaseColorHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 492,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "BaseColorHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 495,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "BaseColorHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 619,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "NormalMapHandler",
-          "summary": "Handles normal map format conversion.",
-          "line": 630,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "NormalMapHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 633,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "NormalMapHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> Optional[str]",
-              "summary": "",
-              "line": 636,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "NormalMapHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 789,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "OutputFallbackHandler",
-          "summary": "Handles outputting fallback maps for failed requests.",
-          "line": 797,
-          "bases": [
-            "WorkflowHandler"
-          ],
-          "members": [
-            {
-              "name": "can_handle",
-              "qualname": "OutputFallbackHandler.can_handle",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> bool",
-              "summary": "",
-              "line": 800,
-              "deprecated": false
-            },
-            {
-              "name": "process",
-              "qualname": "OutputFallbackHandler.process",
-              "kind": "method",
-              "signature": "(self, context: TextureProcessor) -> List[str]",
-              "summary": "",
-              "line": 803,
-              "deprecated": false
-            },
-            {
-              "name": "get_consumed_types",
-              "qualname": "OutputFallbackHandler.get_consumed_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "",
-              "line": 856,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/map_factory/processor.py",
-      "summary": "``TextureProcessor`` -- shared processing context for the MapFactory.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "TextureProcessor",
-          "summary": "Shared context and processor for all map operations.",
-          "line": 43,
-          "bases": [],
-          "members": [
-            {
-              "name": "get_cached_image",
-              "qualname": "TextureProcessor.get_cached_image",
-              "kind": "method",
-              "signature": "(self, path: str) -> 'Image.Image'",
-              "summary": "Load an image with caching to avoid redundant disk I/O.",
-              "line": 60,
-              "deprecated": false
-            },
-            {
-              "name": "save_map",
-              "qualname": "TextureProcessor.save_map",
-              "kind": "method",
-              "signature": "(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str",
-              "summary": "Saves and optimizes a map, enforcing mode and naming conventions.",
-              "line": 78,
-              "deprecated": false
-            },
-            {
-              "name": "resolve_map",
-              "qualname": "TextureProcessor.resolve_map",
-              "kind": "method",
-              "signature": "(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]",
-              "summary": "Intelligently resolve a map from inventory with fallback conversions.",
-              "line": 381,
-              "deprecated": false
-            },
-            {
-              "name": "mark_used",
-              "qualname": "TextureProcessor.mark_used",
-              "kind": "method",
-              "signature": "(self, *map_types: str)",
-              "summary": "Mark map types as consumed.",
-              "line": 446,
-              "deprecated": false
-            },
-            {
-              "name": "convert_specular_to_metallic",
-              "qualname": "TextureProcessor.convert_specular_to_metallic",
-              "kind": "method",
-              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 450,
-              "deprecated": false
-            },
-            {
-              "name": "convert_smoothness_to_roughness",
-              "qualname": "TextureProcessor.convert_smoothness_to_roughness",
-              "kind": "method",
-              "signature": "(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 464,
-              "deprecated": false
-            },
-            {
-              "name": "convert_roughness_to_smoothness",
-              "qualname": "TextureProcessor.convert_roughness_to_smoothness",
-              "kind": "method",
-              "signature": "(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 480,
-              "deprecated": false
-            },
-            {
-              "name": "convert_specular_to_roughness",
-              "qualname": "TextureProcessor.convert_specular_to_roughness",
-              "kind": "method",
-              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 496,
-              "deprecated": false
-            },
-            {
-              "name": "convert_dx_to_gl",
-              "qualname": "TextureProcessor.convert_dx_to_gl",
-              "kind": "method",
-              "signature": "(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 510,
-              "deprecated": false
-            },
-            {
-              "name": "convert_gl_to_dx",
-              "qualname": "TextureProcessor.convert_gl_to_dx",
-              "kind": "method",
-              "signature": "(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 524,
-              "deprecated": false
-            },
-            {
-              "name": "convert_bump_to_normal",
-              "qualname": "TextureProcessor.convert_bump_to_normal",
-              "kind": "method",
-              "signature": "(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 538,
-              "deprecated": false
-            },
-            {
-              "name": "extract_gloss_from_spec",
-              "qualname": "TextureProcessor.extract_gloss_from_spec",
-              "kind": "method",
-              "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
-              "summary": "",
-              "line": 554,
-              "deprecated": false
-            },
-            {
-              "name": "copy_map",
-              "qualname": "TextureProcessor.copy_map",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']",
-              "summary": "Simple copy/rename for compatible maps (e.g.",
-              "line": 571,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_metallic_smoothness",
-              "qualname": "TextureProcessor.unpack_metallic_smoothness",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack and cache results.",
-              "line": 581,
-              "deprecated": false
-            },
-            {
-              "name": "get_metallic_from_packed",
-              "qualname": "TextureProcessor.get_metallic_from_packed",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 601,
-              "deprecated": false
-            },
-            {
-              "name": "get_smoothness_from_packed",
-              "qualname": "TextureProcessor.get_smoothness_from_packed",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 607,
-              "deprecated": false
-            },
-            {
-              "name": "get_roughness_from_packed",
-              "qualname": "TextureProcessor.get_roughness_from_packed",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 613,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_msao",
-              "qualname": "TextureProcessor.unpack_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack MSAO and cache results.",
-              "line": 624,
-              "deprecated": false
-            },
-            {
-              "name": "get_metallic_from_msao",
-              "qualname": "TextureProcessor.get_metallic_from_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 647,
-              "deprecated": false
-            },
-            {
-              "name": "get_smoothness_from_msao",
-              "qualname": "TextureProcessor.get_smoothness_from_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 653,
-              "deprecated": false
-            },
-            {
-              "name": "get_roughness_from_msao",
-              "qualname": "TextureProcessor.get_roughness_from_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 659,
-              "deprecated": false
-            },
-            {
-              "name": "get_ao_from_msao",
-              "qualname": "TextureProcessor.get_ao_from_msao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 669,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_mrao",
-              "qualname": "TextureProcessor.unpack_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack MRAO and cache results.",
-              "line": 675,
-              "deprecated": false
-            },
-            {
-              "name": "get_metallic_from_mrao",
-              "qualname": "TextureProcessor.get_metallic_from_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 702,
-              "deprecated": false
-            },
-            {
-              "name": "get_roughness_from_mrao",
-              "qualname": "TextureProcessor.get_roughness_from_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 708,
-              "deprecated": false
-            },
-            {
-              "name": "get_smoothness_from_mrao",
-              "qualname": "TextureProcessor.get_smoothness_from_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 714,
-              "deprecated": false
-            },
-            {
-              "name": "get_ao_from_mrao",
-              "qualname": "TextureProcessor.get_ao_from_mrao",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 722,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_orm",
-              "qualname": "TextureProcessor.unpack_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack ORM and cache results.",
-              "line": 728,
-              "deprecated": false
-            },
-            {
-              "name": "get_ao_from_orm",
-              "qualname": "TextureProcessor.get_ao_from_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 751,
-              "deprecated": false
-            },
-            {
-              "name": "get_roughness_from_orm",
-              "qualname": "TextureProcessor.get_roughness_from_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 757,
-              "deprecated": false
-            },
-            {
-              "name": "get_smoothness_from_orm",
-              "qualname": "TextureProcessor.get_smoothness_from_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 763,
-              "deprecated": false
-            },
-            {
-              "name": "get_metallic_from_orm",
-              "qualname": "TextureProcessor.get_metallic_from_orm",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 770,
-              "deprecated": false
-            },
-            {
-              "name": "unpack_albedo_transparency",
-              "qualname": "TextureProcessor.unpack_albedo_transparency",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
-              "summary": "Helper to unpack Albedo+Transparency and cache results.",
-              "line": 776,
-              "deprecated": false
-            },
-            {
-              "name": "get_base_color_from_albedo_transparency",
-              "qualname": "TextureProcessor.get_base_color_from_albedo_transparency",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 795,
-              "deprecated": false
-            },
-            {
-              "name": "get_opacity_from_albedo_transparency",
-              "qualname": "TextureProcessor.get_opacity_from_albedo_transparency",
-              "kind": "method",
-              "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
-              "summary": "",
-              "line": 801,
-              "deprecated": false
-            },
-            {
-              "name": "create_orm_map",
-              "qualname": "TextureProcessor.create_orm_map",
-              "kind": "method",
-              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
-              "summary": "Create ORM map from components.",
-              "line": 807,
-              "deprecated": false
-            },
-            {
-              "name": "create_mrao_map",
-              "qualname": "TextureProcessor.create_mrao_map",
-              "kind": "method",
-              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
-              "summary": "Create MRAO (Metallic R / Roughness G / AO B) map from components.",
-              "line": 833,
-              "deprecated": false
-            },
-            {
-              "name": "create_mask_map",
-              "qualname": "TextureProcessor.create_mask_map",
-              "kind": "method",
-              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
-              "summary": "Create Mask Map (MSAO) from components.",
-              "line": 884,
-              "deprecated": false
-            },
-            {
-              "name": "create_metallic_smoothness_map",
-              "qualname": "TextureProcessor.create_metallic_smoothness_map",
-              "kind": "method",
-              "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
-              "summary": "Create Metallic-Smoothness map from components.",
-              "line": 936,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/map_optimizer.py",
-      "summary": "Plan, assess, and apply map (texture) optimizations.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "Op",
-          "summary": "One operation in an optimization plan.",
-          "line": 67,
-          "bases": [],
-          "members": []
-        },
-        {
-          "name": "MapOptimizer",
-          "summary": "Plan, assess, and apply map (texture) optimizations.",
-          "line": 80,
-          "bases": [
-            "HelpMixin"
-          ],
-          "members": [
-            {
-              "name": "plan",
-              "qualname": "MapOptimizer.plan",
-              "kind": "classmethod",
-              "signature": "(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]",
-              "summary": "Return the ordered list of operations :meth:`apply` would run.",
-              "line": 95,
-              "deprecated": false
-            },
-            {
-              "name": "apply",
-              "qualname": "MapOptimizer.apply",
-              "kind": "classmethod",
-              "signature": "(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'",
-              "summary": "Execute ``plan`` against ``image``.",
-              "line": 273,
-              "deprecated": false
-            },
-            {
-              "name": "optimize_map",
-              "qualname": "MapOptimizer.optimize_map",
-              "kind": "classmethod",
-              "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str",
-              "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
-              "line": 299,
-              "deprecated": false
-            },
-            {
-              "name": "batch_optimize_maps",
-              "qualname": "MapOptimizer.batch_optimize_maps",
-              "kind": "classmethod",
-              "signature": "(cls, directory: str, **kwargs)",
-              "summary": "Batch optimizes all maps in a directory.",
-              "line": 438,
-              "deprecated": false
-            },
-            {
-              "name": "assess",
-              "qualname": "MapOptimizer.assess",
-              "kind": "classmethod",
-              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]",
-              "summary": "Predict whether :meth:`optimize_map` would change ``texture_path``.",
-              "line": 454,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/map_registry.py",
-      "summary": "",
-      "functions": [],
-      "classes": [
-        {
-          "name": "WF",
-          "summary": "Workflow identifiers.",
-          "line": 8,
-          "bases": [],
-          "members": []
-        },
-        {
-          "name": "MapType",
-          "summary": "Defines the properties of a texture map type.",
-          "line": 45,
-          "bases": [],
-          "members": []
-        },
-        {
-          "name": "MapRegistry",
-          "summary": "Central registry for map type definitions.",
-          "line": 71,
-          "bases": [
-            "SingletonMixin"
-          ],
-          "members": [
-            {
-              "name": "get",
-              "qualname": "MapRegistry.get",
-              "kind": "method",
-              "signature": "(self, name: str) -> Optional[MapType]",
-              "summary": "Get a map type by name.",
-              "line": 555,
-              "deprecated": false
-            },
-            {
-              "name": "resolve_type_from_path",
-              "qualname": "MapRegistry.resolve_type_from_path",
-              "kind": "method",
-              "signature": "(self, path: str) -> Optional[str]",
-              "summary": "Resolve the map type key from a file path.",
-              "line": 572,
-              "deprecated": false
-            },
-            {
-              "name": "get_suffix_strip_pattern",
-              "qualname": "MapRegistry.get_suffix_strip_pattern",
-              "kind": "method",
-              "signature": "(self) -> Optional[str]",
-              "summary": "Regex matching one trailing map-type suffix (any registered alias).",
-              "line": 617,
-              "deprecated": false
-            },
-            {
-              "name": "get_workflow_presets",
-              "qualname": "MapRegistry.get_workflow_presets",
-              "kind": "method",
-              "signature": "(self) -> Dict[str, Dict[str, Any]]",
-              "summary": "Generate the workflow presets dictionary.",
-              "line": 673,
-              "deprecated": false
-            },
-            {
-              "name": "get_map_types",
-              "qualname": "MapRegistry.get_map_types",
-              "kind": "method",
-              "signature": "(self) -> Dict[str, Tuple[str, ...]]",
-              "summary": "Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.",
-              "line": 697,
-              "deprecated": false
-            },
-            {
-              "name": "get_fallbacks",
-              "qualname": "MapRegistry.get_fallbacks",
-              "kind": "method",
-              "signature": "(self) -> Dict[str, Tuple[str, ...]]",
-              "summary": "Generate the input fallback dictionary.",
-              "line": 701,
-              "deprecated": false
-            },
-            {
-              "name": "get_output_fallbacks",
-              "qualname": "MapRegistry.get_output_fallbacks",
-              "kind": "method",
-              "signature": "(self) -> Dict[str, Tuple[str, ...]]",
-              "summary": "Generate the output fallback dictionary.",
-              "line": 709,
-              "deprecated": false
-            },
-            {
-              "name": "get_precedence_rules",
-              "qualname": "MapRegistry.get_precedence_rules",
-              "kind": "method",
-              "signature": "(self) -> Dict[str, List[str]]",
-              "summary": "Generate the precedence rules dictionary.",
-              "line": 717,
-              "deprecated": false
-            },
-            {
-              "name": "get_scale_as_mask_types",
-              "qualname": "MapRegistry.get_scale_as_mask_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "Get list of map types that should be scaled as masks.",
-              "line": 725,
-              "deprecated": false
-            },
-            {
-              "name": "get_resolution_critical_types",
-              "qualname": "MapRegistry.get_resolution_critical_types",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "Get list of map types whose surface detail requires full resolution.",
-              "line": 729,
-              "deprecated": false
-            },
-            {
-              "name": "is_resolution_critical",
-              "qualname": "MapRegistry.is_resolution_critical",
-              "kind": "method",
-              "signature": "(self, name: str) -> bool",
-              "summary": "True when surface detail for ``name`` requires full resolution.",
-              "line": 733,
-              "deprecated": false
-            },
-            {
-              "name": "get_passthrough_maps",
-              "qualname": "MapRegistry.get_passthrough_maps",
-              "kind": "method",
-              "signature": "(self) -> List[str]",
-              "summary": "Get list of maps that should be passed through if not consumed.",
-              "line": 742,
-              "deprecated": false
-            },
-            {
-              "name": "get_map_backgrounds",
-              "qualname": "MapRegistry.get_map_backgrounds",
-              "kind": "method",
-              "signature": "(self) -> Dict[str, Tuple[int, int, int, int]]",
-              "summary": "Generate the map backgrounds dictionary.",
-              "line": 747,
-              "deprecated": false
-            },
-            {
-              "name": "get_map_modes",
-              "qualname": "MapRegistry.get_map_modes",
-              "kind": "method",
-              "signature": "(self) -> Dict[str, str]",
-              "summary": "Generate the map modes dictionary.",
-              "line": 755,
-              "deprecated": false
-            },
-            {
-              "name": "resolve_config",
-              "qualname": "MapRegistry.resolve_config",
-              "kind": "method",
-              "signature": "(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]",
-              "summary": "Resolve configuration from presets, dicts, and kwargs.",
-              "line": 759,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
       "relpath": "img_utils/mask_generator.py",
       "summary": "Background mask generation via rembg (optional dependency).",
       "functions": [],
@@ -5724,151 +7136,6 @@
               "signature": "(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]",
               "summary": "Generate alpha-channel masks for every image in ``input_dir``.",
               "line": 54,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/mat_report.py",
-      "summary": "DCC-agnostic formatters for material / texture info reports.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "MatReport",
-          "summary": "Pure record→text/HTML formatters for material & texture info reports.",
-          "line": 24,
-          "bases": [],
-          "members": [
-            {
-              "name": "format_texture_info_text",
-              "qualname": "MatReport.format_texture_info_text",
-              "kind": "classmethod",
-              "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
-              "summary": "Render ``get_texture_info`` output as a plain-text report.",
-              "line": 63,
-              "deprecated": false
-            },
-            {
-              "name": "format_texture_info_html",
-              "qualname": "MatReport.format_texture_info_html",
-              "kind": "classmethod",
-              "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
-              "summary": "Render ``get_texture_info`` output as styled HTML.",
-              "line": 81,
-              "deprecated": false
-            },
-            {
-              "name": "format_mat_info_text",
-              "qualname": "MatReport.format_mat_info_text",
-              "kind": "classmethod",
-              "signature": "(cls, records: List[Dict[str, Any]]) -> str",
-              "summary": "Render ``get_mat_info`` output as a plain-text report.",
-              "line": 94,
-              "deprecated": false
-            },
-            {
-              "name": "format_mat_info_html",
-              "qualname": "MatReport.format_mat_info_html",
-              "kind": "classmethod",
-              "signature": "(cls, records: List[Dict[str, Any]]) -> str",
-              "summary": "Render ``get_mat_info`` output as styled HTML.",
-              "line": 135,
-              "deprecated": false
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "relpath": "img_utils/output_template.py",
-      "summary": "Per-map output-format templates — the \"export preset\" layer.",
-      "functions": [],
-      "classes": [
-        {
-          "name": "OutputSpec",
-          "summary": "How a single map is written to disk.",
-          "line": 26,
-          "bases": [],
-          "members": [
-            {
-              "name": "to_dict",
-              "qualname": "OutputSpec.to_dict",
-              "kind": "method",
-              "signature": "(self) -> dict",
-              "summary": "",
-              "line": 41,
-              "deprecated": false
-            },
-            {
-              "name": "from_dict",
-              "qualname": "OutputSpec.from_dict",
-              "kind": "classmethod",
-              "signature": "(cls, d: dict) -> 'OutputSpec'",
-              "summary": "",
-              "line": 45,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "OutputTemplate",
-          "summary": "A profile's per-map output formats: a default spec + per-map-type overrides.",
-          "line": 54,
-          "bases": [],
-          "members": [
-            {
-              "name": "resolve",
-              "qualname": "OutputTemplate.resolve",
-              "kind": "method",
-              "signature": "(self, map_type: Optional[str]) -> OutputSpec",
-              "summary": "Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).",
-              "line": 60,
-              "deprecated": false
-            },
-            {
-              "name": "to_dict",
-              "qualname": "OutputTemplate.to_dict",
-              "kind": "method",
-              "signature": "(self) -> dict",
-              "summary": "",
-              "line": 66,
-              "deprecated": false
-            },
-            {
-              "name": "from_dict",
-              "qualname": "OutputTemplate.from_dict",
-              "kind": "classmethod",
-              "signature": "(cls, d: dict) -> 'OutputTemplate'",
-              "summary": "",
-              "line": 73,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "OutputTemplates",
-          "summary": "Registry of the built-in per-profile output templates and their resolution.",
-          "line": 82,
-          "bases": [],
-          "members": [
-            {
-              "name": "get",
-              "qualname": "OutputTemplates.get",
-              "kind": "classmethod",
-              "signature": "(cls, profile: Optional[str]) -> OutputTemplate",
-              "summary": "Return the built-in template for *profile* (a ``WF`` key), or the default.",
-              "line": 119,
-              "deprecated": false
-            },
-            {
-              "name": "resolve",
-              "qualname": "OutputTemplates.resolve",
-              "kind": "classmethod",
-              "signature": "(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec",
-              "summary": "Resolve the :class:`OutputSpec` for *map_type* under *profile*.",
-              "line": 126,
               "deprecated": false
             }
           ]
@@ -6563,6 +7830,48 @@
               "signature": "(cls, calculation_mode: str, num_samples: int = 100, weight_bias: float = 0.5, weight_curve: float = 1.0) -> List[float]",
               "summary": "Generate a list of samples from a curve for visualization or analysis.",
               "line": 306,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "math_utils/weights.py",
+      "summary": "Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Weights",
+          "summary": "Blend-weight calculations with consistent rounding precision.",
+          "line": 12,
+          "bases": [],
+          "members": [
+            {
+              "name": "round_weight",
+              "qualname": "Weights.round_weight",
+              "kind": "classmethod",
+              "signature": "(cls, weight: float) -> float",
+              "summary": "Round a weight to the shared precision (:data:`PRECISION` decimal places).",
+              "line": 18,
+              "deprecated": false
+            },
+            {
+              "name": "frame_to_weight",
+              "qualname": "Weights.frame_to_weight",
+              "kind": "classmethod",
+              "signature": "(cls, frame: int, start_frame: int, end_frame: int) -> float",
+              "summary": "Convert frame number to blendShape weight.",
+              "line": 23,
+              "deprecated": false
+            },
+            {
+              "name": "generate_weights",
+              "qualname": "Weights.generate_weights",
+              "kind": "classmethod",
+              "signature": "(cls, count: int, weight_range: Tuple[float, float] = (0.0, 1.0), include_endpoints: bool = False) -> List[float]",
+              "summary": "Generate ``count`` evenly spaced weights within ``weight_range``.",
+              "line": 35,
               "deprecated": false
             }
           ]

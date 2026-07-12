@@ -4,7 +4,7 @@
 import unittest
 
 from pythontk import StrUtils, ImgUtils
-from pythontk.img_utils.map_factory import MapFactory
+from pythontk.core_utils.engines.textures.map_factory import MapFactory
 
 
 class TestStripKnownAffix(unittest.TestCase):

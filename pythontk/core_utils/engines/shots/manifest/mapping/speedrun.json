@@ -1,0 +1,17 @@
+{
+    "columns": {
+        "step_id": ["Step"],
+        "description": ["Step Contents", "Contents"],
+        "assets": ["Asset Names", "Asset"],
+        "audio": ["Voice Support", "Voice"],
+        "exclude_steps": ["SETUP"],
+        "exclude_values": {"assets": ["N/A"]}
+    },
+    "audio_resolve": {
+        "method": "derive",
+        "words": 3
+    },
+    "default_behaviors": {
+        "audio": ["set_clip"]
+    }
+}

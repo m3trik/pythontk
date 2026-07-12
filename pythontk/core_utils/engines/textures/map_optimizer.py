@@ -31,9 +31,9 @@ except ImportError as e:
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.img_utils._img_utils import ImgUtils
-from pythontk.img_utils.map_factory import MapFactory
-from pythontk.img_utils.map_registry import MapRegistry
-from pythontk.img_utils.output_template import OutputTemplates
+from pythontk.core_utils.engines.textures.map_factory import MapFactory
+from pythontk.core_utils.engines.textures.map_registry import MapRegistry
+from pythontk.core_utils.engines.textures.output_template import OutputTemplates
 
 
 # Map-type-driven mode coercion rules. Mirrors the tolerated-mode lists in

@@ -1,0 +1,168 @@
+# coding=utf-8
+"""Schema for a CSV *mapping* file, defined as a dataclass.
+
+:class:`MappingSpec` is the single source of truth for the shape of a mapping
+``.json``: it validates a loaded file, generates a copy-me skeleton, and powers
+the generated ``MAPPING_FORMAT.md`` reference — all from one definition, so the
+docs and the enforced shape can never drift.
+
+The ``audio_resolve`` block is polymorphic (its required keys depend on
+``method``), so the available methods live in one :data:`AUDIO_METHODS` registry
+that drives validation, the skeleton example, and the docs.  The runtime
+*builders* that turn a method into a resolver callable live alongside it in
+:mod:`._mapping`, keyed by the same names (see ``_AUDIO_BUILDERS``) — adding a
+method is a single registry entry on each side (OCP).
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+from pythontk import SchemaSpec, spec_field
+
+from pythontk.core_utils.engines.shots.manifest.manifest_model import ColumnMap
+
+
+@dataclass(frozen=True)
+class AudioMethod:
+    """Descriptor for one ``audio_resolve`` strategy (drives validate/docs)."""
+
+    required: Tuple[str, ...]
+    optional: Tuple[str, ...]
+    example: Dict[str, Any]
+    help: str
+
+
+# Single source of truth for the available audio_resolve methods. The matching
+# resolver *builders* are keyed by the same names in ``_mapping._AUDIO_BUILDERS``;
+# a test asserts the two key sets stay in lock-step.
+AUDIO_METHODS: Dict[str, AudioMethod] = {
+    "prefix": AudioMethod(
+        required=(),
+        optional=("directory", "extensions"),
+        example={
+            "method": "prefix",
+            "directory": "//server/project/audio",
+            "extensions": [".wav", ".mp3"],
+        },
+        help="Match files named `{step_id}_*` in `directory`.",
+    ),
+    "regex": AudioMethod(
+        required=("pattern",),
+        optional=("directory", "extensions"),
+        example={
+            "method": "regex",
+            "pattern": "voice_{step_id}_.*",
+            "directory": "//server/project/audio",
+        },
+        help="Match files against `pattern` (a `{step_id}` placeholder is substituted).",
+    ),
+    "map": AudioMethod(
+        required=("clips",),
+        optional=(),
+        example={"method": "map", "clips": {"A01": "welcome", "A02": "intro"}},
+        help="Explicit `{step_id: clip_stem}` lookup table.",
+    ),
+    "derive": AudioMethod(
+        required=(),
+        optional=("words", "separator", "directory", "extensions"),
+        example={"method": "derive", "words": 3},
+        help="Build the clip name from `step_id` + first N words of the audio text.",
+    ),
+}
+
+
+def validate_audio_resolve(value: Any) -> List[str]:
+    """Validate the polymorphic ``audio_resolve`` block. Returns error strings."""
+    if not isinstance(value, dict):
+        return ["expected a mapping"]
+    method = value.get("method")
+    if method is None:
+        return ["missing 'method'"]
+    spec = AUDIO_METHODS.get(method)
+    if spec is None:
+        return [f"method {method!r} is not one of {sorted(AUDIO_METHODS)}"]
+    return [f"method {method!r} requires {req!r}" for req in spec.required if req not in value]
+
+
+def validate_default_behaviors(value: Any) -> List[str]:
+    """Validate the ``default_behaviors`` block ({kind: [behavior names]})."""
+    if not isinstance(value, dict):
+        return ["expected a mapping of {kind: [behavior names]}"]
+    errs: List[str] = []
+    for kind, names in value.items():
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            errs.append(f"{kind!r} must be a list of behavior-name strings")
+    return errs
+
+
+@dataclass
+class MappingSpec(SchemaSpec):
+    """Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``)."""
+
+    columns: ColumnMap = spec_field(
+        help="Maps CSV header names to step fields.",
+        nested=ColumnMap,
+        default_factory=ColumnMap,
+    )
+    audio_resolve: Optional[Dict[str, Any]] = spec_field(
+        help="How to find or derive an audio clip for each step (optional).",
+        validate=validate_audio_resolve,
+        example=AUDIO_METHODS["prefix"].example,
+        default=None,
+    )
+    default_behaviors: Optional[Dict[str, List[str]]] = spec_field(
+        help='Default behaviors per object kind, e.g. {"audio": ["set_clip"]} (optional).',
+        validate=validate_default_behaviors,
+        example={"audio": ["set_clip"], "scene": ["fade_in"]},
+        default=None,
+    )
+
+
+def format_markdown() -> str:
+    """Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT."""
+    methods_rows = "\n".join(
+        f"| `{name}` | {', '.join(m.required) or '—'} | "
+        f"{', '.join(m.optional) or '—'} | {m.help} |"
+        for name, m in AUDIO_METHODS.items()
+    )
+    skeleton = json.dumps(MappingSpec.skeleton(), indent=2)
+    return f"""<!-- GENERATED by mapping/_spec.py:format_markdown() — do not edit by hand. -->
+# Shot Manifest — CSV Mapping File Format
+
+A *mapping* is a small `.json` file that tells the Shot Manifest how to read a
+particular CSV layout: which header columns mean what, which rows/values to
+skip, how to resolve audio clips, and which default behaviors to attach.
+
+## Adding your own
+
+Built-in mappings ship read-only with the tool. **Your own** mappings live in
+your writable templates folder — open it from the Shot Manifest header menu
+with the *Open folder* button on the *CSV Mapping* row. The first time you open
+an empty folder it's seeded with `example.json` (the skeleton at the bottom of
+this page) and a copy of this reference, so you start with a model to copy and a
+spec to read. Edit a renamed copy to match your CSV, then click *Refresh* to
+pick it up — files are discovered automatically and appear in the mapping combo,
+tagged by source. A user mapping whose name matches a built-in's **shadows** it,
+so you can override a shipped mapping with one of your own.
+
+{MappingSpec.to_markdown(title="Top-level keys")}
+
+## `audio_resolve` methods
+
+`audio_resolve.method` selects a strategy; each has its own required/optional keys:
+
+| method | required | optional | description |
+|---|---|---|---|
+{methods_rows}
+
+`extensions` defaults to `[".wav", ".mp3"]`; `directory` is scanned for matches
+(`map` needs no directory — it names clips directly).
+
+## Skeleton (seeded as `example.json`)
+
+```json
+{skeleton}
+```
+"""

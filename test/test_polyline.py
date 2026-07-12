@@ -1,8 +1,10 @@
 # !/usr/bin/python
 # coding=utf-8
 """Tests for pythontk.geo_utils.polyline (Polyline) — the pure polyline/curve
-geometry primitive (generate / measure / resample / frame). DCC-free; the curtain
-drape that consumes it is pinned separately in test_drape.py.
+geometry primitive (generate / measure / resample / frame). DCC-free; the
+rail-surface primitive that frames it is pinned in test_rail_surface.py and the
+curtain drape that consumes both in mayatk's test_curtain_drape.py (vendored
+mayatk/blendertk, drift-guarded by extapps' test_vendor_sync.py).
 """
 
 import math

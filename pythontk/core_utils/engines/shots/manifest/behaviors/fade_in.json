@@ -1,0 +1,23 @@
+{
+  "description": "Fade objects in at shot start via visibility.",
+  "kind": [
+    "scene"
+  ],
+  "verify": {
+    "mode": "values_in_range"
+  },
+  "attributes": {
+    "visibility": {
+      "in": {
+        "anchor": "start",
+        "offset": 0,
+        "duration": 15,
+        "values": [
+          0.0,
+          1.0
+        ],
+        "tangent": "linear"
+      }
+    }
+  }
+}

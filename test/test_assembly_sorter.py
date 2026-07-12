@@ -1,14 +1,14 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Tests for pythontk.geo_utils.assembly_sorter (AssemblySorter) — the
-DCC-neutral clustering behind auto-instancing's separate_combined flow.
-Scenarios mirror mayatk's TestAssemblySorting regression class, built here
-from synthetic part-feature dicts instead of Maya scenes.
+"""Tests for pythontk.core_utils.engines.instancing.assembly_sorter
+(AssemblySorter) — the DCC-neutral clustering behind auto-instancing's
+separate_combined flow. Scenarios mirror mayatk's TestAssemblySorting regression
+class, built here from synthetic part-feature dicts instead of Maya scenes.
 """
 
 import unittest
 
-from pythontk.geo_utils.assembly_sorter import AssemblySorter
+from pythontk import AssemblySorter
 
 try:
     import numpy as np

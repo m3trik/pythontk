@@ -4,7 +4,7 @@
 Tests for MapRegistry ambiguity resolution and alias handling.
 """
 import unittest
-from pythontk.img_utils.map_registry import MapRegistry
+from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
 
 class TestMapRegistryAmbiguity(unittest.TestCase):

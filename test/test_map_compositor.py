@@ -16,7 +16,7 @@ from typing import List
 import numpy as np
 from PIL import Image
 
-from pythontk.img_utils.map_compositor import BatchResult, MapCompositor, NormalOutputMode
+from pythontk.core_utils.engines.textures.map_compositor import BatchResult, MapCompositor, NormalOutputMode
 
 
 class _CapturingHandler(logging.Handler):
@@ -63,7 +63,7 @@ class TestEnginePurity(unittest.TestCase):
     """The engine module must not import Qt."""
 
     def test_no_qt_imports(self):
-        import pythontk.img_utils.map_compositor as eng
+        import pythontk.core_utils.engines.textures.map_compositor as eng
 
         forbidden = {"qtpy", "PySide2", "PySide6", "PyQt5", "PyQt6"}
         with open(eng.__file__, "r", encoding="utf-8") as f:
@@ -449,7 +449,7 @@ class TestSeedMasks(unittest.TestCase, _LoggerCaptureMixin):
 
 class TestMapInfoBundle(unittest.TestCase):
     def test_mapinfo_is_frozen(self):
-        from pythontk.img_utils.map_compositor import _MapInfo
+        from pythontk.core_utils.engines.textures.map_compositor import _MapInfo
 
         info = _MapInfo(
             mode="RGB", bit_depth="24bit (8x3)", ext="png", width=4, height=4
