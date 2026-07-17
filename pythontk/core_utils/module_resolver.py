@@ -832,26 +832,23 @@ def create_namespace_aliases(
 
     Args:
         module_globals: The package's globals() dict (same as passed to bootstrap_package)
-        aliases: Dict mapping alias name -> module key or class list
-            Examples:
-                {"Instancing": "core_utils.auto_instancer"}  # Use classes from include_spec
-                {"MyAlias": ["ClassA", "ClassB", "ClassC"]}  # Explicit class list
+        aliases: Dict mapping alias name -> module key or explicit class list.
+            The grouped classes are fused by multiple inheritance, so they must be
+            co-inheritable (mixins, or plain classes with no conflicting instance
+            layout — value types with ``__slots__``/namedtuple bases will raise a
+            "layout conflict"). Examples:
+                {"MyMixins": "some_pkg.mixins"}         # class list from include_spec[key]
+                {"MyMixins": ["FooMixin", "BarMixin"]}  # explicit class list
         include_spec: Optional DEFAULT_INCLUDE dict to lookup module keys.
                      If not provided, will try to use module_globals.get('_INCLUDE_SPEC')
 
     Example:
-        DEFAULT_INCLUDE = {
-            "core_utils.auto_instancer": ["AutoInstancer", "InstanceSeparator", ...],
-        }
-
-        bootstrap_package(globals(), include=DEFAULT_INCLUDE)
-
+        # After bootstrap_package(), fuse related mixins into one namespace class:
         create_namespace_aliases(globals(), {
-            "Instancing": "core_utils.auto_instancer",  # Creates pkg.Instancing
-        }, include_spec=DEFAULT_INCLUDE)
+            "MyMixins": ["FooMixin", "BarMixin"],
+        })
 
-        # Now you can use:
-        inst = pkg.Instancing()  # Has all methods from all classes
+        obj = pkg.MyMixins()  # one instance exposing FooMixin's and BarMixin's methods
 
     Raises:
         ValueError: If module key not found in include_spec

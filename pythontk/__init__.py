@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.88"
+__version__ = "0.8.90"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -21,6 +21,18 @@ DEFAULT_INCLUDE = {
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",
     "file_utils.mesh_convert._mesh_convert": "MeshConvert",
+    # Zero-dep USD primitives: sniffing, spec-compliant USDZ packaging, and a
+    # usda mesh author + OBJ converters (the no-DCC publish path). DCC-native
+    # USD I/O lives downstream in mayatk/blendertk ``env_utils.usd``.
+    "file_utils.usd": [
+        "USD_EXTENSIONS",
+        "is_usd_file",
+        "UsdFile",
+        "UsdzPackager",
+        "UsdMeshWriter",
+        "obj_to_usd",
+        "obj_to_usdz",
+    ],
     "file_utils.temp_artifacts": "TempArtifacts",
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
@@ -226,6 +238,13 @@ __all__ = [
     "Metadata",
     "MeshConvert",
     "TempArtifacts",
+    "USD_EXTENSIONS",
+    "is_usd_file",
+    "UsdFile",
+    "UsdzPackager",
+    "UsdMeshWriter",
+    "obj_to_usd",
+    "obj_to_usdz",
     "ImgUtils",
     "MapCompositor",
     "BatchResult",

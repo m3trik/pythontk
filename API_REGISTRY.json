@@ -6429,6 +6429,137 @@
       ]
     },
     {
+      "relpath": "file_utils/usd.py",
+      "summary": "Zero-dependency USD (OpenUSD) file utilities.",
+      "functions": [
+        {
+          "name": "is_usd_file",
+          "qualname": "is_usd_file",
+          "kind": "function",
+          "signature": "(path: str) -> bool",
+          "summary": "Return True when *path* looks like a USD layer/package.",
+          "line": 58,
+          "deprecated": false
+        },
+        {
+          "name": "obj_to_usd",
+          "qualname": "obj_to_usd",
+          "kind": "function",
+          "signature": "(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str",
+          "summary": "Convert an OBJ to a ``.usda`` layer beside it (or at *output_path*).",
+          "line": 717,
+          "deprecated": false
+        },
+        {
+          "name": "obj_to_usdz",
+          "qualname": "obj_to_usdz",
+          "kind": "function",
+          "signature": "(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str",
+          "summary": "Convert an OBJ (+ MTL textures) to a self-contained ``.usdz``.",
+          "line": 740,
+          "deprecated": false
+        }
+      ],
+      "classes": [
+        {
+          "name": "UsdFile",
+          "summary": "Format sniffing + USDZ package inspection (pure Python, no ``pxr``).",
+          "line": 67,
+          "bases": [],
+          "members": [
+            {
+              "name": "sniff",
+              "qualname": "UsdFile.sniff",
+              "kind": "staticmethod",
+              "signature": "(path: str) -> Optional[str]",
+              "summary": "Classify *path* as ``'usda'`` / ``'usdc'`` / ``'usdz'``, or ``None``.",
+              "line": 71,
+              "deprecated": false
+            },
+            {
+              "name": "list_package",
+              "qualname": "UsdFile.list_package",
+              "kind": "staticmethod",
+              "signature": "(path: str) -> List[str]",
+              "summary": "Return the entry names of a ``.usdz`` package, in archive order.",
+              "line": 105,
+              "deprecated": false
+            },
+            {
+              "name": "default_layer",
+              "qualname": "UsdFile.default_layer",
+              "kind": "staticmethod",
+              "signature": "(path: str) -> Optional[str]",
+              "summary": "The package's default (first) layer name, or ``None`` if the first",
+              "line": 111,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "UsdzPackager",
+          "summary": "Write and verify spec-compliant ``.usdz`` packages.",
+          "line": 122,
+          "bases": [],
+          "members": [
+            {
+              "name": "package",
+              "qualname": "UsdzPackager.package",
+              "kind": "classmethod",
+              "signature": "(cls, files: Sequence[Union[str, Tuple[str, str]]], output_path: str, default_layer: Optional[str] = None) -> str",
+              "summary": "Package *files* into a ``.usdz`` at *output_path*.",
+              "line": 142,
+              "deprecated": false
+            },
+            {
+              "name": "from_layer",
+              "qualname": "UsdzPackager.from_layer",
+              "kind": "classmethod",
+              "signature": "(cls, layer_path: str, output_path: str) -> str",
+              "summary": "Build a self-contained ``.usdz`` from a ``.usda`` text layer.",
+              "line": 235,
+              "deprecated": false
+            },
+            {
+              "name": "verify",
+              "qualname": "UsdzPackager.verify",
+              "kind": "staticmethod",
+              "signature": "(path: str) -> Dict[str, Any]",
+              "summary": "Structurally verify a ``.usdz``;",
+              "line": 309,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "UsdMeshWriter",
+          "summary": "Author a single textured mesh as a ``.usda`` text layer (no ``pxr``).",
+          "line": 344,
+          "bases": [],
+          "members": [
+            {
+              "name": "write",
+              "qualname": "UsdMeshWriter.write",
+              "kind": "classmethod",
+              "signature": "(cls, path: str, points: Sequence[Sequence[float]], face_vertex_counts: Sequence[int], face_vertex_indices: Sequence[int], uvs: Optional[Sequence[Sequence[float]]] = None, normals: Optional[Sequence[Sequence[float]]] = None, textures: Optional[Dict[str, str]] = None, name: str = 'Model', up_axis: str = 'Y', meters_per_unit: float = 1.0, double_sided: bool = False) -> str",
+              "summary": "Write the mesh to *path* as a ``.usda`` layer;",
+              "line": 371,
+              "deprecated": false
+            },
+            {
+              "name": "from_obj",
+              "qualname": "UsdMeshWriter.from_obj",
+              "kind": "classmethod",
+              "signature": "(cls, obj_path: str) -> Dict[str, Any]",
+              "summary": "Parse a Wavefront OBJ (+ its MTL) into :meth:`write` kwargs.",
+              "line": 557,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "geo_utils/pointcloud.py",
       "summary": "Point-cloud geometry — analyze and group unordered sets of points.",
       "functions": [],
