@@ -1,5 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
+import re
 from typing import Union, List, Optional, Dict, Tuple, Callable, Iterable
 
 # from this package:
@@ -7,8 +8,36 @@ from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.iter_utils._iter_utils import IterUtils
 
 
+# ANSI/VT100 control sequences: CSI (``ESC [ … final-byte`` — covers SGR color) and the
+# two-character escapes. Compiled at module scope because strip_ansi runs per console
+# write, on a streaming hot path.
+ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
 class StrUtils(CoreUtils):
     """ """
+
+    @staticmethod
+    def strip_ansi(string: str) -> str:
+        """Remove ANSI escape sequences (color/cursor codes) from a string.
+
+        A process teeing a TTY stream picks these up whether or not it wants them:
+        CPython emits colored tracebacks when ``sys.stderr.isatty()``, and a tee that
+        delegates ``isatty`` keeps that True. Consumers that render text but don't
+        interpret VT100 (a Qt view, a log file) then show the raw bytes.
+
+        Parameters:
+            string (str): The text to scrub. Non-str input is returned unchanged.
+
+        Returns:
+            (str) The text with escape sequences removed.
+
+        Example:
+            strip_ansi("\\x1b[35mFile\\x1b[0m") --> 'File'
+        """
+        if not string or not isinstance(string, str):
+            return string
+        return ANSI_ESCAPE_RE.sub("", string)
 
     @staticmethod
     def sanitize(

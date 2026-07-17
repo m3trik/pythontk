@@ -68,7 +68,15 @@ class AppLauncher:
             return None
 
     @staticmethod
-    def run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None):
+    def run(
+        app_identifier,
+        args=None,
+        cwd=None,
+        timeout=None,
+        output_file=None,
+        env=None,
+        hide_window=False,
+    ):
         """Execute an application synchronously and return its result.
 
         Unlike :meth:`launch` (fire-and-forget), this method blocks until the
@@ -85,6 +93,10 @@ class AppLauncher:
                         ``stdout``/``stderr`` are then ``None``). Otherwise output
                         is captured and returned as decoded text.
         :param env: Optional environment mapping for the child (else inherits).
+        :param hide_window: Windows only — suppress the console window Windows
+                        would otherwise pop for a console-subsystem child when
+                        the parent is a GUI app (e.g. mayapy run from a DCC).
+                        No effect on the captured/redirected output.
         :return: A ``subprocess.CompletedProcess`` with *returncode* and, unless
                  *output_file* is set, *stdout*/*stderr* (decoded text).
         :raises FileNotFoundError: If the application cannot be found.
@@ -101,6 +113,9 @@ class AppLauncher:
             elif isinstance(args, (list, tuple)):
                 cmd.extend(args)
 
+        creationflags = (
+            subprocess.CREATE_NO_WINDOW if hide_window and os.name == "nt" else 0
+        )
         logger.debug(f"Running (blocking): {cmd}")
         if output_file:
             with open(output_file, "w", encoding="utf-8", errors="replace") as fh:
@@ -113,6 +128,7 @@ class AppLauncher:
                     timeout=timeout,
                     shell=False,
                     env=env,
+                    creationflags=creationflags,
                 )
         return subprocess.run(
             cmd,
@@ -122,6 +138,7 @@ class AppLauncher:
             timeout=timeout,
             shell=False,
             env=env,
+            creationflags=creationflags,
         )
 
     # ------------------------------------------------------------------ sessions

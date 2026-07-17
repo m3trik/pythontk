@@ -23,6 +23,16 @@ import sys
 import unittest
 from pathlib import Path
 
+# cp1252 consoles can't encode characters test docstrings legitimately use
+# ("→"); unittest's printErrors then dies MID-REPORT, eating the failure list
+# and the summary (bitten in uitk's runner). Degrade gracefully instead.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(errors="replace")
+        except (ValueError, OSError):
+            pass
+
 # Ensure Qt binding selection is explicit for qtpy-based modules
 if "QT_API" not in os.environ:
     os.environ["QT_API"] = "pyside6"

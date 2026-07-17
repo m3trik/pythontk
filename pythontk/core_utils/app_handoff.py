@@ -24,9 +24,6 @@ resolves headlessly.
 """
 from __future__ import annotations
 
-import os
-import tempfile
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -245,11 +242,19 @@ class HandoffBridge(LoggingMixin):
         return self.deliverer.deliver(self, payload, request)
 
     def _make_payload_path(self, extension: str = ".fbx") -> str:
-        """Return a unique temp payload path (``<payload_prefix>_<tag><extension>``)."""
-        tag = f"{time.time_ns():x}"
-        return os.path.join(
-            tempfile.gettempdir(), f"{self.payload_prefix}_{tag}{extension}"
-        )
+        """Return a unique temp payload path (``<payload_prefix>_<tag><extension>``).
+
+        Detached policy: the launched app reads the payload after we return, so
+        there is no deterministic delete — allocation instead sweeps *stale*
+        same-prefix payloads from prior sessions (see :class:`TempArtifacts`).
+        """
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        cached = getattr(self, "_payload_artifacts", None)
+        if cached is None or cached.prefix != self.payload_prefix:
+            cached = TempArtifacts(self.payload_prefix, policy="detached")
+            self._payload_artifacts = cached
+        return cached.path(extension=extension)
 
     # ------------------ Subclass hooks --------------------------------------
     def _resolve_objects(self, objects):  # pragma: no cover - subclass contract

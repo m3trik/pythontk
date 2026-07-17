@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-15_
+_Generated: 2026-07-17_
 
 ## Index
 
@@ -55,6 +55,7 @@ _Generated: 2026-07-15_
 - [`core_utils/process_stream.py`](#core_utils--process_stream) — App-agnostic line-stream primitives for launched processes and log files.
 - [`core_utils/qc_log.py`](#core_utils--qc_log) — Structured run logs and threshold-based acceptance gates for pipeline
 - [`core_utils/schema_spec.py`](#core_utils--schema_spec) — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
+- [`core_utils/script_run.py`](#core_utils--script_run) — Run a script in an external app, block until it exits, and collect an artifact.
 - [`core_utils/script_template.py`](#core_utils--script_template) — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
 - [`core_utils/symbol_record.py`](#core_utils--symbol_record) — SymbolRecord - the shared public-API symbol shape.
@@ -65,6 +66,7 @@ _Generated: 2026-07-15_
 - [`file_utils/mesh_cleaner.py`](#file_utils--mesh_cleaner) — Mesh repair / cleanup via PyMeshLab (optional dependency).
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
 - [`file_utils/metadata.py`](#file_utils--metadata)
+- [`file_utils/temp_artifacts.py`](#file_utils--temp_artifacts) — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
@@ -128,26 +130,26 @@ _Generated: 2026-07-15_
 
 Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
-- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L44)** — Declarative target-application executable-discovery config (data, not code).
+- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L41)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
   - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
-- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L75)** — The unit of work threaded through the skeleton.
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L72)** — The unit of work threaded through the skeleton.
   - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
-- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L95)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
-- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L110)** — Strategy: hand a produced :class:`Payload` to the target app.
+- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L92)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L107)** — Strategy: hand a produced :class:`Payload` to the target app.
   - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
-- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L131)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L128)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
   - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L268)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L284)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L273)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L289)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L377)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L382)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context (subclass hook).
   - `ScriptLaunchBridge.render_template(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]` — Render *template*'s body with *payload_path* + *params* (no launch).
   - `ScriptLaunchBridge.list_template_modes(self) -> List[Tuple[str, str]]` — ``[(stem, mode), ...]`` for the bridge's template directory.
@@ -165,7 +167,7 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
 - **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L13)** — A utility class for launching applications on Windows and Linux.
   - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
-  - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None)` *(static)* — Execute an application synchronously and return its result.
+  - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False)` *(static)* — Execute an application synchronously and return its result.
   - `AppLauncher.current_session_id()` *(static)* — Windows session id of the *current* process.
   - `AppLauncher.active_console_session_id()` *(static)* — Session id of the physically logged-in console (interactive desktop).
   - `AppLauncher.is_interactive_session()` *(static)* — True if the current process is in an interactive session (non-zero —
@@ -936,6 +938,14 @@ Declarative schema for JSON/YAML *template* files, defined as a dataclass.
   - `SchemaSpec.describe(cls) -> List[FieldDoc]` *(class)* — Structured field-by-field reference (powers :meth:`to_markdown`).
   - `SchemaSpec.to_markdown(cls, title: Optional[str] = None, _level: int = 2) -> str` *(class)* — Markdown reference for this schema, recursing into nested schemas.
 
+<a id="core_utils--script_run"></a>
+### `core_utils/script_run.py`
+
+Run a script in an external app, block until it exits, and collect an artifact.
+
+- [`run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None) -> ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L51) — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L32)** — What a successful :func:`run_script_to_artifact` returns.
+
 <a id="core_utils--script_template"></a>
 ### `core_utils/script_template.py`
 
@@ -1063,6 +1073,17 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 - **[`class Metadata(MetadataInternal)`](pythontk/pythontk/file_utils/metadata.py#L409)** — Public interface for metadata operations.
   - `Metadata.get(cls, file_path: Any, *keys: str, mode: str = 'metadata') -> Any` *(class)* — Unified get method for metadata and tags.
   - `Metadata.set(cls, file_path: Any, mode: str = 'metadata', **kwargs) -> None` *(class)* — Unified set method for metadata and tags.
+
+<a id="file_utils--temp_artifacts"></a>
+### `file_utils/temp_artifacts.py`
+
+Prefix-scoped temp artifacts with an explicit lifetime policy.
+
+- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L36)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files in one directory.
+  - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
+  - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
+  - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
+  - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
 
 <a id="geo_utils--pointcloud"></a>
 ### `geo_utils/pointcloud.py`
@@ -1349,7 +1370,8 @@ One-shot batch pipeline over :class:`RpcClient`.
 <a id="str_utils--_str_utils"></a>
 ### `str_utils/_str_utils.py`
 
-- **[`class StrUtils(CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L10)**
+- **[`class StrUtils(CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L17)**
+  - `StrUtils.strip_ansi(string: str) -> str` *(static)* — Remove ANSI escape sequences (color/cursor codes) from a string.
   - `StrUtils.sanitize(text: Union[str, List[str]], replacement_char: str = '_', char_map: Optional[Dict[str, str]] = None, preserve_trailing: bool = False, preserve_case: bool = False, allow_consecutive: bool = False, return_original: bool = False) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]` *(static)* — Sanitizes a string or a list of strings by replacing invalid characters.
   - `StrUtils.replace_placeholders(text: str, **kwargs) -> str` *(static)* — Replace placeholders in a string with provided values.
   - `StrUtils.replace_delimited(text: str, context: dict, prefix: str = '__', suffix: str = '__') -> str` *(static)* — Replace delimited placeholders in *text* using *context*.

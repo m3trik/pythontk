@@ -168,6 +168,38 @@ class CoreTest(BaseTestCase):
 
         self.assertEqual(to_str([0, 1]), ["0", "1"])
 
+    def test_listify_threading_runs_scalar_calls_inline(self):
+        """A scalar call must not build a thread pool; a real batch still may.
+
+        There is nothing to parallelize when mapping a single item, and the cost
+        isn't merely a slow call: ``threading=True`` sits on hot pure-CPU helpers
+        (``format_path``, ``truncate``, …) that callers hit per path/string, so a
+        worker thread was being spun up and torn down every call. Sustained, that
+        churn aborts the interpreter inside ``Thread.start()`` — it took down
+        tentacle's full test suite mid-run, in a ``format_path(one_path)`` under
+        the .ui loader. Pinning the batch half too, so this can't be "fixed" by
+        dropping the parallelism the flag asks for.
+        """
+        import threading
+
+        main_thread = threading.current_thread()
+        ran_on = []
+
+        @CoreUtils.listify(threading=True)
+        def record(n):
+            ran_on.append(threading.current_thread())
+            return n
+
+        self.assertEqual(record(0), 0)
+        self.assertEqual(ran_on, [main_thread], "scalar call left the calling thread")
+
+        ran_on.clear()
+        self.assertEqual(record([0, 1]), [0, 1])
+        self.assertTrue(
+            ran_on and all(t is not main_thread for t in ran_on),
+            "a multi-item call should still fan out to worker threads",
+        )
+
     def test_listify_function_with_arg_name(self):
         """Test listify with explicit arg_name parameter."""
 

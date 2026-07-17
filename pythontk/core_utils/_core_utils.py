@@ -98,7 +98,14 @@ class CoreUtils(HelpMixin):
                     *(new_args[:arg_index] + (x,) + new_args[arg_index + 1 :]), **kwargs
                 )
 
-            if threading:
+            # A scalar call has nothing to parallelize, so building a pool to map
+            # one item through it is pure overhead — and not merely slow: spinning
+            # a worker thread up and down per call, on a hot path like
+            # ``format_path(one_path)``, eventually aborts the interpreter at
+            # ``Thread.start()``. Gate on the flag rather than ``len(arg_list)``:
+            # a genuine iterable may be lazy (generator/zip/map), which
+            # ``executor.map`` accepts but ``len`` would raise on.
+            if threading and not is_single_item:
                 with ThreadPoolExecutor() as executor:
                     results = list(executor.map(apply_func, arg_list))
             else:
