@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-07-12_
+_Generated: 2026-07-17_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -312,6 +312,10 @@ _Generated: 2026-07-12_
 - `class SchemaSpec`
   - methods: from_dict, to_dict, validate, skeleton, describe, to_markdown
 
+### `core_utils/script_run.py` — Run a script in an external app, block until it exits, and collect an artifact.
+- `run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None) -> ScriptRunResult`
+- `class ScriptRunResult`
+
 ### `core_utils/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - `list_templates(template_dir, extension: str = '.py') -> List[Path]`
 - `template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]`
@@ -355,6 +359,10 @@ _Generated: 2026-07-12_
 - `class MetadataInternal`
 - `class Metadata(MetadataInternal)`
   - methods: get, set
+
+### `file_utils/temp_artifacts.py` — Prefix-scoped temp artifacts with an explicit lifetime policy.
+- `class TempArtifacts(LoggingMixin)`
+  - methods: path, register, cleanup, sweep_stale
 
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`
@@ -432,7 +440,7 @@ _Generated: 2026-07-12_
 
 ### `str_utils/_str_utils.py`
 - `class StrUtils(CoreUtils)`
-  - methods: sanitize, replace_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, truncate, get_trailing_integers, find_str, find_str_and_format, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: strip_ansi, sanitize, replace_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, truncate, get_trailing_integers, find_str, find_str_and_format, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`

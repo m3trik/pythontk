@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.86"
+__version__ = "0.8.88"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -21,6 +21,7 @@ DEFAULT_INCLUDE = {
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",
     "file_utils.mesh_convert._mesh_convert": "MeshConvert",
+    "file_utils.temp_artifacts": "TempArtifacts",
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
     "math_utils.progression": "ProgressionCurves",
@@ -125,6 +126,9 @@ DEFAULT_INCLUDE = {
         "HandoffRequest",
         "Payload",
     ],
+    # Blocking run-script-collect-artifact counterpart of ScriptLaunchDeliverer
+    # (backs pull-direction bridges, e.g. blendertk's Maya-scene import).
+    "core_utils.script_run": ["ScriptRunResult", "run_script_to_artifact"],
     # Process/log line-stream primitives (composed by the app-specific
     # connection shells in mayatk/blendertk, e.g. SubstanceConnection).
     "core_utils.process_stream": ["OutputStream", "ProcessReader", "LogTailer"],
@@ -183,6 +187,8 @@ __all__ = [
     "Deliverer",
     "HandoffRequest",
     "Payload",
+    "ScriptRunResult",
+    "run_script_to_artifact",
     "OutputStream",
     "ProcessReader",
     "LogTailer",
@@ -219,6 +225,7 @@ __all__ = [
     "FileUtils",
     "Metadata",
     "MeshConvert",
+    "TempArtifacts",
     "ImgUtils",
     "MapCompositor",
     "BatchResult",

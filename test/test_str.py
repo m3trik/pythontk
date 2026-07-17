@@ -347,6 +347,60 @@ class StrTest(BaseTestCase):
         self.assertEqual(StrUtils.insert("hello", "", " "), "hello")
 
     # -------------------------------------------------------------------------
+    # strip_ansi Tests
+    # -------------------------------------------------------------------------
+
+    def test_strip_ansi_removes_sgr_color(self):
+        """SGR color codes are removed, the visible text is kept verbatim."""
+        self.assertEqual(StrUtils.strip_ansi("\x1b[35mFile\x1b[0m"), "File")
+        self.assertEqual(StrUtils.strip_ansi("\x1b[1;31mbold red\x1b[0m"), "bold red")
+
+    def test_strip_ansi_python_colored_traceback(self):
+        """CPython emits this shape whenever stderr is a TTY; a tee inherits it."""
+        line = (
+            '  File \x1b[35m"space_view3d.py"\x1b[0m, line \x1b[35m5560\x1b[0m, '
+            "in \x1b[35mdraw\x1b[0m"
+        )
+        self.assertEqual(
+            StrUtils.strip_ansi(line), '  File "space_view3d.py", line 5560, in draw'
+        )
+        self.assertNotIn("\x1b", StrUtils.strip_ansi(line))
+
+    def test_strip_ansi_preserves_indentation_and_newlines(self):
+        """Block formatting downstream keys off leading whitespace — it must survive."""
+        self.assertEqual(
+            StrUtils.strip_ansi("    arm = \x1b[1;31mx.data\x1b[0m\n"),
+            "    arm = x.data\n",
+        )
+
+    def test_strip_ansi_non_sgr_sequences(self):
+        """Cursor/erase sequences and two-character escapes go too, not just color."""
+        self.assertEqual(StrUtils.strip_ansi("a\x1b[2J\x1b[Hb"), "ab")  # erase + home
+        self.assertEqual(StrUtils.strip_ansi("a\x1bDb"), "ab")  # ESC Fe (index)
+
+    def test_strip_ansi_leaves_a_bare_escape_alone(self):
+        """Scope is CSI + the ESC Fe range (0x40-0x5F) — the sequences a color-capable
+        stream actually emits. An ESC that opens nothing recognizable is left as-is
+        rather than swallowing the character after it."""
+        self.assertEqual(StrUtils.strip_ansi("a\x1bb"), "a\x1bb")
+
+    def test_strip_ansi_passes_clean_text_through(self):
+        """Maya's reporter carries no escapes — its text must be untouched."""
+        text = "// Error: line 1 //\n"
+        self.assertEqual(StrUtils.strip_ansi(text), text)
+
+    def test_strip_ansi_is_idempotent(self):
+        """Stripped at ingest AND at the widget; the second pass must be a no-op."""
+        once = StrUtils.strip_ansi("\x1b[35mx\x1b[0m")
+        self.assertEqual(StrUtils.strip_ansi(once), once)
+
+    def test_strip_ansi_edge_inputs(self):
+        """Empty/non-str input returns unchanged rather than raising."""
+        self.assertEqual(StrUtils.strip_ansi(""), "")
+        self.assertIsNone(StrUtils.strip_ansi(None))
+        self.assertEqual(StrUtils.strip_ansi(42), 42)
+
+    # -------------------------------------------------------------------------
     # rreplace Tests
     # -------------------------------------------------------------------------
 
