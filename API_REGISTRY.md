@@ -67,6 +67,7 @@ _Generated: 2026-07-17_
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`file_utils/temp_artifacts.py`](#file_utils--temp_artifacts) — Prefix-scoped temp artifacts with an explicit lifetime policy.
+- [`file_utils/usd.py`](#file_utils--usd) — Zero-dependency USD (OpenUSD) file utilities.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
@@ -1084,6 +1085,26 @@ Prefix-scoped temp artifacts with an explicit lifetime policy.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
+
+<a id="file_utils--usd"></a>
+### `file_utils/usd.py`
+
+Zero-dependency USD (OpenUSD) file utilities.
+
+- [`is_usd_file(path: str) -> bool`](pythontk/pythontk/file_utils/usd.py#L58) — Return True when *path* looks like a USD layer/package.
+- [`obj_to_usd(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str`](pythontk/pythontk/file_utils/usd.py#L717) — Convert an OBJ to a ``.usda`` layer beside it (or at *output_path*).
+- [`obj_to_usdz(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str`](pythontk/pythontk/file_utils/usd.py#L740) — Convert an OBJ (+ MTL textures) to a self-contained ``.usdz``.
+- **[`class UsdFile`](pythontk/pythontk/file_utils/usd.py#L67)** — Format sniffing + USDZ package inspection (pure Python, no ``pxr``).
+  - `UsdFile.sniff(path: str) -> Optional[str]` *(static)* — Classify *path* as ``'usda'`` / ``'usdc'`` / ``'usdz'``, or ``None``.
+  - `UsdFile.list_package(path: str) -> List[str]` *(static)* — Return the entry names of a ``.usdz`` package, in archive order.
+  - `UsdFile.default_layer(path: str) -> Optional[str]` *(static)* — The package's default (first) layer name, or ``None`` if the first
+- **[`class UsdzPackager`](pythontk/pythontk/file_utils/usd.py#L122)** — Write and verify spec-compliant ``.usdz`` packages.
+  - `UsdzPackager.package(cls, files: Sequence[Union[str, Tuple[str, str]]], output_path: str, default_layer: Optional[str] = None) -> str` *(class)* — Package *files* into a ``.usdz`` at *output_path*.
+  - `UsdzPackager.from_layer(cls, layer_path: str, output_path: str) -> str` *(class)* — Build a self-contained ``.usdz`` from a ``.usda`` text layer.
+  - `UsdzPackager.verify(path: str) -> Dict[str, Any]` *(static)* — Structurally verify a ``.usdz``;
+- **[`class UsdMeshWriter`](pythontk/pythontk/file_utils/usd.py#L344)** — Author a single textured mesh as a ``.usda`` text layer (no ``pxr``).
+  - `UsdMeshWriter.write(cls, path: str, points: Sequence[Sequence[float]], face_vertex_counts: Sequence[int], face_vertex_indices: Sequence[int], uvs: Optional[Sequence[Sequence[float]]] = None, normals: Optional[Sequence[Sequence[float]]] = None, textures: Optional[Dict[str, str]] = None, name: str = 'Model', up_axis: str = 'Y', meters_per_unit: float = 1.0, double_sided: bool = False) -> str` *(class)* — Write the mesh to *path* as a ``.usda`` layer;
+  - `UsdMeshWriter.from_obj(cls, obj_path: str) -> Dict[str, Any]` *(class)* — Parse a Wavefront OBJ (+ its MTL) into :meth:`write` kwargs.
 
 <a id="geo_utils--pointcloud"></a>
 ### `geo_utils/pointcloud.py`

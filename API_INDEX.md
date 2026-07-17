@@ -364,6 +364,17 @@ _Generated: 2026-07-17_
 - `class TempArtifacts(LoggingMixin)`
   - methods: path, register, cleanup, sweep_stale
 
+### `file_utils/usd.py` — Zero-dependency USD (OpenUSD) file utilities.
+- `is_usd_file(path: str) -> bool`
+- `obj_to_usd(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str`
+- `obj_to_usdz(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str`
+- `class UsdFile`
+  - methods: sniff, list_package, default_layer
+- `class UsdzPackager`
+  - methods: package, from_layer, verify
+- `class UsdMeshWriter`
+  - methods: write, from_obj
+
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`
   - methods: pca_transform, nn_query, match_clouds, pca_basis, pca_eigenvalue_signature, cluster_by_distance, hash_points
