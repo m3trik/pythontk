@@ -255,28 +255,32 @@ class AppInstaller:
         except Exception as exc:
             raise RuntimeError(f"Download failed for {url}: {exc}") from exc
 
-        total = int(response.headers.get("Content-Length", 0))
-        downloaded = 0
-        chunk_size = 8192
-        use_stdout = progress_callback is None and total > 1_048_576
+        # Close the response (and its underlying socket) deterministically,
+        # including on the partial-read/exception path — GC finalization is
+        # not guaranteed to reclaim the file descriptor promptly.
+        with response:
+            total = int(response.headers.get("Content-Length", 0))
+            downloaded = 0
+            chunk_size = 8192
+            use_stdout = progress_callback is None and total > 1_048_576
 
-        with open(dest, "wb") as fh:
-            while True:
-                chunk = response.read(chunk_size)
-                if not chunk:
-                    break
-                fh.write(chunk)
-                downloaded += len(chunk)
-                if progress_callback:
-                    progress_callback(downloaded, total)
-                elif use_stdout:
-                    pct = f"{downloaded * 100 // total}%" if total else "?"
-                    mb = downloaded / 1_048_576
-                    sys.stdout.write(f"\r  downloading … {mb:.1f} MB ({pct})")
-                    sys.stdout.flush()
+            with open(dest, "wb") as fh:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback:
+                        progress_callback(downloaded, total)
+                    elif use_stdout:
+                        pct = f"{downloaded * 100 // total}%" if total else "?"
+                        mb = downloaded / 1_048_576
+                        sys.stdout.write(f"\r  downloading … {mb:.1f} MB ({pct})")
+                        sys.stdout.flush()
 
-        if use_stdout:
-            sys.stdout.write("\n")
+            if use_stdout:
+                sys.stdout.write("\n")
 
     @staticmethod
     def _verify_hash(file_path: str, expected: str) -> None:

@@ -151,11 +151,45 @@ class VidUtils(HelpMixin):
             if tbr_match:
                 return float(tbr_match.group("tbr"))
 
-        error_excerpt = result.stderr.strip().splitlines()[-1] if result.stderr else ""
+        _lines = result.stderr.strip().splitlines()
+        error_excerpt = _lines[-1] if _lines else ""
         raise RuntimeError(
             "Could not determine frame rate of the video. "
             f"FFmpeg last message: {error_excerpt}"
         )
+
+    @classmethod
+    def get_sequence_start_number(cls, input_filepath: str) -> Optional[int]:
+        """Find the first frame number of a printf-style image sequence on disk.
+
+        ffmpeg's image2 demuxer only auto-detects start numbers in the 0-4
+        range; a sequence beginning at any other frame (e.g. a playblast of
+        frames 101-150) needs an explicit ``-start_number``. This scans the
+        pattern's directory for matching files and returns the lowest number.
+
+        Parameters:
+            input_filepath: A printf-style pattern such as ``shot.%04d.png``.
+
+        Returns:
+            int | None: The lowest frame number found, or None when the
+            pattern contains no ``%`` token or no files match.
+        """
+        directory, basename = os.path.split(input_filepath)
+        token = re.search(r"%0?\d*d", basename)
+        if not token:
+            return None
+        regex = re.compile(
+            re.escape(basename[: token.start()])
+            + r"(\d+)"
+            + re.escape(basename[token.end():])
+            + r"$"
+        )
+        try:
+            entries = os.listdir(directory or ".")
+        except OSError:
+            return None
+        numbers = [int(m.group(1)) for f in entries for m in [regex.match(f)] if m]
+        return min(numbers) if numbers else None
 
     @classmethod
     def compress_video(
@@ -164,16 +198,27 @@ class VidUtils(HelpMixin):
         output_filepath: str = None,
         frame_rate: Union[float, int] = None,
         delete_original: bool = False,
+        start_number: Optional[int] = None,
+        audio_filepath: Optional[str] = None,
+        audio_offset: float = 0.0,
         **ffmpeg_options,
     ) -> Union[str, None]:
-        """Compresses a video file using FFmpeg.
+        """Compresses a video file or image sequence using FFmpeg.
 
         Parameters:
-            input_filepath (str): Path of the video to compress.
+            input_filepath (str): Path of the video to compress, or a
+                printf-style image-sequence pattern (e.g. ``shot.%04d.png``).
             output_filepath (str): Path for the compressed video, defaults to .mp4 version of input.
             frame_rate (float | int): Frame rate for output video. Defaults to original video frame rate.
             delete_original (bool): Deletes original file after compression if True.
-            **ffmpeg_options: Additional FFmpeg command options like codec, crf, and preset.
+            start_number (int): First frame number of an image-sequence input.
+                Defaults to auto-detection from the files on disk (ffmpeg
+                itself only detects sequences starting near 0).
+            audio_filepath (str): Optional audio file to mux into the output
+                (AAC-encoded, clamped to the shorter stream).
+            audio_offset (float): Audio placement in seconds relative to the
+                video start: positive delays the audio, negative skips into it.
+            **ffmpeg_options: Additional FFmpeg output options like codec, crf, and preset.
 
         Returns:
             str | None: The path to the compressed video if successful, None otherwise.
@@ -206,14 +251,27 @@ class VidUtils(HelpMixin):
 
         ffmpeg_cmd = [ffmpeg_path, "-y"]
 
-        # If input is a sequence, specify the framerate to ensure correct duration
-        if frame_rate is not None and "%" in input_filepath:
-            ffmpeg_cmd.extend(["-framerate", str(frame_rate)])
+        is_sequence = "%" in os.path.basename(input_filepath)
+        if is_sequence:
+            # Input options must precede -i to apply to the sequence demuxer.
+            if frame_rate is not None:
+                ffmpeg_cmd.extend(["-framerate", str(frame_rate)])
+            if start_number is None:
+                start_number = cls.get_sequence_start_number(input_filepath)
+            if start_number is not None:
+                ffmpeg_cmd.extend(["-start_number", str(start_number)])
+
+        ffmpeg_cmd.extend(["-i", input_filepath])
+
+        if audio_filepath:
+            if audio_offset > 0:
+                ffmpeg_cmd.extend(["-itsoffset", str(audio_offset)])
+            elif audio_offset < 0:
+                ffmpeg_cmd.extend(["-ss", str(-audio_offset)])
+            ffmpeg_cmd.extend(["-i", audio_filepath])
 
         ffmpeg_cmd.extend(
             [
-                "-i",
-                input_filepath,
                 "-c:v",
                 ffmpeg_options.get("codec", "libx264"),
                 "-crf",
@@ -222,15 +280,33 @@ class VidUtils(HelpMixin):
                 ffmpeg_options.get("preset", "slow"),
                 "-pix_fmt",
                 ffmpeg_options.get("pixel_format", "yuv420p"),
-                "-r",
-                str(frame_rate),
-                output_filepath,
             ]
         )
 
+        if audio_filepath:
+            # Explicit maps: without them ffmpeg picks a single "best" input.
+            # apad pads short audio with silence so -shortest is bounded by
+            # the VIDEO — bare -shortest would truncate the video to a
+            # shorter audio track.
+            ffmpeg_cmd.extend(
+                [
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-c:a", "aac",
+                    "-af", "apad",
+                    "-shortest",
+                ]
+            )
+
+        ffmpeg_cmd.extend(["-r", str(frame_rate)])
+
+        # Remaining options are output options — they must precede the
+        # output path (trailing args would be parsed as another output).
         for option, value in ffmpeg_options.items():
             if option not in {"codec", "crf", "preset", "pixel_format"}:
                 ffmpeg_cmd.extend([f"-{option}", str(value)])
+
+        ffmpeg_cmd.append(output_filepath)
 
         logger.info(f"Running FFmpeg: {' '.join(ffmpeg_cmd)}")
 

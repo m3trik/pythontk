@@ -24,6 +24,10 @@ from pythontk import VidUtils
 
 from conftest import BaseTestCase
 
+# Managed installs count too (resolve_ffmpeg falls back to them); a bare
+# shutil.which() under-reports availability on machines without PATH ffmpeg.
+FFMPEG_AVAILABLE = VidUtils.resolve_ffmpeg(required=False) is not None
+
 
 class VidTest(BaseTestCase):
     """Video utilities test class with comprehensive edge case coverage."""
@@ -215,6 +219,27 @@ class VidTest(BaseTestCase):
     # Edge Case Tests
     # -------------------------------------------------------------------------
 
+    def test_get_video_frame_rate_whitespace_stderr_raises_runtimeerror(self):
+        """Regression: a managed ffmpeg whose -i output has no fps/tbr token and
+        only blank lines used to raise IndexError from
+        ``''.splitlines()[-1]`` — the ``if result.stderr`` guard passed on a
+        truthy-but-blank string, then ``.strip().splitlines()`` yielded ``[]``.
+        compress_video only catches RuntimeError, so the IndexError escaped and
+        aborted compression. The excerpt extraction must guard the empty split
+        and still raise the intended RuntimeError.
+        """
+        from unittest import mock
+        import types
+
+        fake = types.SimpleNamespace(stderr="\n\n   \n")
+        with mock.patch.object(
+            VidUtils, "resolve_ffmpeg", return_value="ffmpeg"
+        ), mock.patch(
+            "pythontk.vid_utils._vid_utils.subprocess.run", return_value=fake
+        ):
+            with self.assertRaises(RuntimeError):
+                VidUtils.get_video_frame_rate("dummy.mp4")
+
     def test_vidutils_import(self):
         """Test VidUtils can be imported."""
         from pythontk import VidUtils
@@ -251,6 +276,132 @@ class VidTest(BaseTestCase):
             _ = VidUtils.compress_video
         except AttributeError as e:
             self.fail(f"VidUtils methods should be accessible: {e}")
+
+
+class CompressVideoSequenceTest(BaseTestCase):
+    """Image-sequence inputs: start-number detection, option placement, audio mux.
+
+    Regressions from the 2026-07 playblast-exporter overhaul:
+    - ffmpeg's image2 demuxer only auto-detects sequences starting at frame
+      0-4, so encoding a playblast of e.g. frames 101-150 failed with
+      "No such file or directory" unless -start_number was passed — and
+      compress_video had no way to pass it as an *input* option.
+    - Extra **ffmpeg_options were appended AFTER the output path, where
+      ffmpeg parses them as a second (invalid) output — so options like
+      movflags never worked.
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _write_sequence(self, prefix="seq", start=101, count=5, padding=4):
+        import numpy as np
+        import cv2 as _cv2
+
+        for i in range(start, start + count):
+            arr = np.full((64, 64, 3), (i * 40) % 255, dtype=np.uint8)
+            _cv2.imwrite(
+                os.path.join(self.temp_dir, f"{prefix}.{i:0{padding}d}.png"), arr
+            )
+        return os.path.join(self.temp_dir, f"{prefix}.%0{padding}d.png")
+
+    def test_get_sequence_start_number(self):
+        """Pure detection — no ffmpeg needed."""
+        for i in (101, 102, 150):
+            open(os.path.join(self.temp_dir, f"shot.{i:04d}.png"), "w").close()
+        pattern = os.path.join(self.temp_dir, "shot.%04d.png")
+        self.assertEqual(VidUtils.get_sequence_start_number(pattern), 101)
+        # Non-pattern input and empty matches return None.
+        self.assertIsNone(VidUtils.get_sequence_start_number("plain.mp4"))
+        self.assertIsNone(
+            VidUtils.get_sequence_start_number(
+                os.path.join(self.temp_dir, "missing.%04d.png")
+            )
+        )
+
+    def test_get_sequence_start_number_unpadded_token(self):
+        """%d (no zero-padding) patterns must also resolve."""
+        for i in (7, 8):
+            open(os.path.join(self.temp_dir, f"f.{i}.png"), "w").close()
+        pattern = os.path.join(self.temp_dir, "f.%d.png")
+        self.assertEqual(VidUtils.get_sequence_start_number(pattern), 7)
+
+    @unittest.skipUnless(
+        FFMPEG_AVAILABLE and __import__("importlib").util.find_spec("cv2"),
+        "FFmpeg/cv2 not installed",
+    )
+    def test_sequence_not_starting_at_zero_encodes_all_frames(self):
+        """A 101-based sequence must produce a video with every frame."""
+        import cv2 as _cv2
+
+        pattern = self._write_sequence(start=101, count=5)
+        out = os.path.join(self.temp_dir, "out.mp4")
+        result = VidUtils.compress_video(pattern, out, frame_rate=24)
+        self.assertEqual(result, out)
+        cap = _cv2.VideoCapture(out)
+        self.assertEqual(int(cap.get(_cv2.CAP_PROP_FRAME_COUNT)), 5)
+        cap.release()
+
+    @unittest.skipUnless(
+        FFMPEG_AVAILABLE and __import__("importlib").util.find_spec("cv2"),
+        "FFmpeg/cv2 not installed",
+    )
+    def test_extra_ffmpeg_options_precede_output(self):
+        """movflags (or any extra option) used to land after the output path
+        and abort the encode; it must now apply cleanly."""
+        pattern = self._write_sequence(start=1, count=3)
+        out = os.path.join(self.temp_dir, "faststart.mp4")
+        result = VidUtils.compress_video(
+            pattern, out, frame_rate=24, movflags="+faststart"
+        )
+        self.assertEqual(result, out)
+        self.assertGreater(os.path.getsize(out), 0)
+
+    @unittest.skipUnless(
+        FFMPEG_AVAILABLE and __import__("importlib").util.find_spec("cv2"),
+        "FFmpeg/cv2 not installed",
+    )
+    def test_audio_mux_adds_audio_stream(self):
+        """Muxes audio in — and a SHORT audio track must not truncate the
+        video (bare -shortest did; apad pads the audio to video length)."""
+        import struct
+        import subprocess
+        import wave
+
+        pattern = self._write_sequence(start=1, count=12)  # 0.5s at 24fps
+        wav_path = os.path.join(self.temp_dir, "tone.wav")
+        with wave.open(wav_path, "w") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(8000)
+            wav.writeframes(  # 0.25s — half the video's duration
+                b"".join(
+                    struct.pack("<h", 8000 if (i // 20) % 2 else -8000)
+                    for i in range(2000)
+                )
+            )
+        out = os.path.join(self.temp_dir, "with_audio.mp4")
+        result = VidUtils.compress_video(
+            pattern, out, frame_rate=24, audio_filepath=wav_path
+        )
+        self.assertEqual(result, out)
+        probe = subprocess.run(
+            [VidUtils.resolve_ffmpeg(), "-i", out],
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("Audio:", probe.stderr, "muxed output carries no audio stream")
+        import cv2 as _cv2
+
+        cap = _cv2.VideoCapture(out)
+        frame_count = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        self.assertEqual(
+            frame_count, 12, "short audio truncated the video (-shortest w/o apad)"
+        )
 
 
 class FrameExtractorSmartTest(BaseTestCase):

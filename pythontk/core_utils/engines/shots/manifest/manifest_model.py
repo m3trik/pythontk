@@ -343,17 +343,6 @@ def _resolve_columns(header: List[str], col_map: ColumnMap) -> _ResolvedColumns:
     """
     normalized = [c.strip().lower() for c in header]
 
-    def _find(aliases: Tuple[str, ...], field_name: str) -> int:
-        for alias in aliases:
-            try:
-                return normalized.index(alias.lower())
-            except ValueError:
-                continue
-        raise ValueError(
-            f"Column '{field_name}' not found in header row. "
-            f"Expected one of {aliases!r}, got {header}"
-        )
-
     def _find_optional(aliases: Tuple[str, ...]) -> Optional[int]:
         for alias in aliases:
             try:
@@ -361,6 +350,15 @@ def _resolve_columns(header: List[str], col_map: ColumnMap) -> _ResolvedColumns:
             except ValueError:
                 continue
         return None
+
+    def _find(aliases: Tuple[str, ...], field_name: str) -> int:
+        idx = _find_optional(aliases)
+        if idx is None:
+            raise ValueError(
+                f"Column '{field_name}' not found in header row. "
+                f"Expected one of {aliases!r}, got {header}"
+            )
+        return idx
 
     resolved = _ResolvedColumns(
         step_id=_find(col_map.step_id, "step_id"),

@@ -952,20 +952,29 @@ class ImgUtils(HelpMixin):
         if image.mode in ("RGB", "RGBA", "L", "1", "P"):
             return image
 
-        # Adjust bit depth
-        bit_depth_mapping = {v: k for k, v in cls.bit_depth.items()}
+        # Adjust bit depth. Map the source's total bit depth to a standard,
+        # widely-convertible mode. The previous {v: k for k, v in bit_depth}
+        # inversion was order-dependent and kept only the LAST mode per bit
+        # count (16->'PA', 24->'HSV', 32->'I;32LS'), so exotic inputs such as
+        # 'LA'/'F'/'YCbCr' converted to nonsensical targets — raising
+        # ValueError ('F'->'I;32LS') or silently corrupting pixels
+        # ('YCbCr'->'HSV'). A fixed canonical map avoids that.
+        canonical = {1: "1", 8: "L", 16: "I;16", 24: "RGB", 32: "RGBA"}
         depth = cls.bit_depth.get(image.mode, 8)
+        target = canonical.get(depth, "RGB")
 
-        if depth not in bit_depth_mapping:
-            raise ValueError(f"Unsupported bit depth: {depth}")
-
-        if image.mode != bit_depth_mapping[depth]:
-            image = image.convert(bit_depth_mapping[depth])
-
-        # Handle unsupported modes specifically
-        unsupported_modes = ["HSV", "LAB", "CMYK", "YCbCr"]
-        if image.mode in unsupported_modes:
-            image = image.convert("RGB" if image.mode != "CMYK" else "RGBA")
+        if image.mode != target:
+            try:
+                image = image.convert(target)
+            except (ValueError, OSError):
+                # Not every source mode converts to every canonical target on
+                # every PIL build (notably 16-bit -> 'I;16'); fall back to a
+                # universally-supported color mode — never re-running the exact
+                # conversion that just failed (depth>=32's target IS 'RGBA',
+                # which made this fallback dead and let the error escape; the
+                # same held for 24-bit's 'RGB' target).
+                fallback = "RGB" if target != "RGB" else "RGBA"
+                image = image.convert(fallback)
 
         return image
 
@@ -996,40 +1005,31 @@ class ImgUtils(HelpMixin):
         im = cls.ensure_image(image)
         split_channels = im.split()
 
-        # Dictionary to hold the inverted channels
-        inverted_channels = {}
+        # Use the image's real band names (e.g. ('L','A'), ('R','G','B','A')) so
+        # channels map correctly for every mode instead of the fixed "RGBA"[:n]
+        # labels, which mislabel LA's alpha as 'G' and crash on merge.
+        bands = im.getbands()
+        requested = channels.upper()
 
-        # Loop through each channel in the image
-        for i, channel in enumerate("RGBA"[: len(split_channels)]):
-            if channel.upper() in channels.upper():
-                inverted_channels[channel] = ImageChops.invert(split_channels[i])
-            else:
-                inverted_channels[channel] = split_channels[i]
+        def _is_requested(name: str) -> bool:
+            name = name.upper()
+            # A single-band image's lone band carries the value data whatever
+            # its mode label (L, P, I, F, 1), so it responds to an L/R/G/B
+            # request — preserving the historical default where a grayscale
+            # image is inverted. Keying on the 'L' label alone silently
+            # no-opped paletted/bilevel/deep single-band images.
+            if len(bands) == 1:
+                return any(c in requested for c in "LRGB")
+            return name in requested
 
-        # Handling different image modes
-        if len(split_channels) == 1:  # Grayscale image
-            return inverted_channels["R"]  # 'R' channel holds the grayscale data
-        elif len(split_channels) == 2:  # Grayscale image with alpha
-            return Image.merge("LA", (inverted_channels["R"], inverted_channels["A"]))
-        elif len(split_channels) == 3:  # RGB image
-            return Image.merge(
-                "RGB",
-                (
-                    inverted_channels["R"],
-                    inverted_channels["G"],
-                    inverted_channels["B"],
-                ),
-            )
-        else:  # RGBA image
-            return Image.merge(
-                "RGBA",
-                (
-                    inverted_channels["R"],
-                    inverted_channels["G"],
-                    inverted_channels["B"],
-                    inverted_channels.get("A", split_channels[-1]),
-                ),
-            )
+        inverted = [
+            ImageChops.invert(band) if _is_requested(name) else band
+            for name, band in zip(bands, split_channels)
+        ]
+
+        if len(inverted) == 1:  # Single-band (e.g. grayscale) image
+            return inverted[0]
+        return Image.merge(im.mode, tuple(inverted))
 
     @classmethod
     def swizzle_channels(cls, image, mapping):
@@ -1306,11 +1306,13 @@ class ImgUtils(HelpMixin):
         im = cls.ensure_image(image)
         if channel and im.mode in ("RGBA", "LA"):
             bands = list(im.split())
-            idx = {"R": 0, "G": 1, "B": 2, "A": 3}.get(channel.upper())
-            if idx is None or idx >= len(bands):
+            band_names = im.getbands()  # ('L','A') or ('R','G','B','A')
+            ch = channel.upper()
+            if ch not in band_names:
                 raise ValueError(
                     f"Channel {channel!r} not present in image mode {im.mode!r}"
                 )
+            idx = band_names.index(ch)
             bands[idx] = bands[idx].filter(ImageFilter.GaussianBlur(radius=radius))
             return Image.merge(im.mode, bands)
         return im.filter(ImageFilter.GaussianBlur(radius=radius))
@@ -1322,7 +1324,10 @@ class ImgUtils(HelpMixin):
         """Numpy-array blur. Uses PIL when present (avoids pulling in scipy/cv2); falls back to a
         pure-numpy separable Gaussian when PIL is unavailable, so dependency-light callers (e.g.
         ``rasterize_silhouette`` under Blender's PIL-less Python) keep working."""
-        if Image is None:
+        # Non-uint8 arrays (float [0,1]/HDR, uint16, …) must not be truncated to
+        # uint8 for the PIL path; route them to the range-agnostic pure-numpy
+        # blur which preserves their values.
+        if Image is None or arr.dtype != np.uint8:
             return ImgUtils._gaussian_blur_array_numpy(arr, radius, channel)
         # 2D grayscale
         if arr.ndim == 2:
@@ -1342,11 +1347,13 @@ class ImgUtils(HelpMixin):
             )
             if channel and mode in ("RGBA", "LA"):
                 bands = list(src.split())
-                idx = {"R": 0, "G": 1, "B": 2, "A": 3}.get(channel.upper())
-                if idx is None or idx >= len(bands):
+                band_names = src.getbands()  # ('L','A') or ('R','G','B','A')
+                ch = channel.upper()
+                if ch not in band_names:
                     raise ValueError(
                         f"Channel {channel!r} not present in mode {mode!r}"
                     )
+                idx = band_names.index(ch)
                 bands[idx] = bands[idx].filter(ImageFilter.GaussianBlur(radius=radius))
                 blurred = Image.merge(mode, bands)
             else:
@@ -1389,8 +1396,12 @@ class ImgUtils(HelpMixin):
             return cast(blur2d(arr))
         if arr.ndim == 3:
             chans = arr.shape[2]
-            idx = {"R": 0, "G": 1, "B": 2, "A": 3}.get(channel.upper()) if channel else None
-            targets = [idx] if (idx is not None and idx < chans) else range(chans)
+            # Derive the channel index from the array's real band layout so 'A'
+            # maps to index 1 on a 2-channel LA array (not 3, which the fixed
+            # RGBA map produced -- silently blurring every channel instead).
+            band_names = {1: "L", 2: "LA", 3: "RGB", 4: "RGBA"}.get(chans, "")
+            idx = band_names.find(channel.upper()) if channel else -1  # -1 = absent/none
+            targets = [idx] if idx >= 0 else range(chans)
             out = arr.astype(np.float64, copy=True)
             for c in targets:
                 out[:, :, c] = blur2d(arr[:, :, c])
@@ -2159,7 +2170,10 @@ class ImgUtils(HelpMixin):
         """
         arr = np.array(img, dtype=np.float32)
         if img.mode in ("L", "RGB", "RGBA"):
-            lin = cls._srgb_to_linear_np(arr)
+            # Normalize to [0,1] (incl. alpha) before the helper so its
+            # `a.max() > 1.0` re-normalization gate never trips on the RGB
+            # slice and leaves alpha at 0-255 (which then clips to 255).
+            lin = cls._srgb_to_linear_np(arr / 255.0)
             lin_8 = np.clip(lin * 255.0, 0, 255).astype(np.uint8)
             return Image.fromarray(lin_8, mode=img.mode)
         # For other modes, fall back to converting to RGB

@@ -154,9 +154,9 @@ class ProgressionCurves:
             float: Ease-in-out progression value
         """
         if x < 0.5:
-            return 2 * (x**weight_curve) / (2 ** (weight_curve - 1))
+            return (2 ** (weight_curve - 1)) * (x**weight_curve)
         else:
-            return 1 - 2 * ((1 - x) ** weight_curve) / (2 ** (weight_curve - 1))
+            return 1 - (2 ** (weight_curve - 1)) * ((1 - x) ** weight_curve)
 
     @staticmethod
     def smooth_step(
@@ -322,6 +322,12 @@ class ProgressionCurves:
             List[float]: List of curve values
         """
         curve_func = cls.get_curve_function(calculation_mode)
+        if num_samples <= 1:
+            return (
+                [curve_func(0.0, weight_curve, weight_bias)]
+                if num_samples == 1
+                else []
+            )
         return [
             curve_func(i / (num_samples - 1), weight_curve, weight_bias)
             for i in range(num_samples)

@@ -2,36 +2,38 @@
 # coding=utf-8
 from typing import Dict, List, Any, Callable
 
+from .hierarchy_path import HierarchyPath
+
 
 class HierarchyIndexer:
     """Generic utilities for building and querying tree indices."""
 
+    # --- Deprecated private aliases -------------------------------------------------------
+    # Path-string primitives now live publicly on HierarchyPath; these shims
+    # remain because released downstream code (mayatk hierarchy-sync) called
+    # them before the public API existed. Use HierarchyPath directly.
+
     @staticmethod
     def _clean_namespace(name: str, separator: str = ":") -> str:
-        """Remove namespace prefix from a name."""
-        return name.split(separator)[-1] if separator in name else name
+        """Deprecated — use :meth:`HierarchyPath.clean_namespace`."""
+        return HierarchyPath.clean_namespace(name, separator)
 
     @staticmethod
     def _split_hierarchy_path(path: str, separator: str = "|") -> List[str]:
-        """Split a hierarchy path into components."""
-        return path.split(separator) if path else []
+        """Deprecated — use :meth:`HierarchyPath.split`."""
+        return HierarchyPath.split(path, separator)
 
     @staticmethod
     def _join_hierarchy_path(components: List[str], separator: str = "|") -> str:
-        """Join path components into a hierarchy path."""
-        return separator.join(components)
+        """Deprecated — use :meth:`HierarchyPath.join`."""
+        return HierarchyPath.join(components, separator)
 
     @staticmethod
     def _clean_hierarchy_path(
         path: str, path_separator: str = "|", namespace_separator: str = ":"
     ) -> str:
-        """Clean namespaces from all components of a hierarchy path."""
-        components = HierarchyIndexer._split_hierarchy_path(path, path_separator)
-        cleaned_components = [
-            HierarchyIndexer._clean_namespace(comp, namespace_separator)
-            for comp in components
-        ]
-        return HierarchyIndexer._join_hierarchy_path(cleaned_components, path_separator)
+        """Deprecated — use :meth:`HierarchyPath.strip_namespaces`."""
+        return HierarchyPath.strip_namespaces(path, path_separator, namespace_separator)
 
     @staticmethod
     def _normalize_path(
@@ -40,15 +42,12 @@ class HierarchyIndexer:
         path_separator: str = "|",
         namespace_separator: str = ":",
     ) -> str:
-        """Normalize a hierarchy path by cleaning and standardizing it."""
-        if not path:
-            return ""
-        if clean_namespaces:
-            return HierarchyIndexer._clean_hierarchy_path(
-                path, path_separator, namespace_separator
-            )
-        else:
-            return path
+        """Deprecated — use :meth:`HierarchyPath.normalize`."""
+        return HierarchyPath.normalize(
+            path, clean_namespaces, path_separator, namespace_separator
+        )
+
+    # --- Index building / querying --------------------------------------------------------
 
     @staticmethod
     def build_path_index(
@@ -58,7 +57,7 @@ class HierarchyIndexer:
         clean_namespaces: bool = True,
         namespace_separator: str = ":",
     ) -> Dict[str, List[Any]]:
-        """Build an index mapping cleaned paths to items.
+        """Build an index mapping normalized paths to items.
 
         Args:
             items: List of tree items to index
@@ -70,17 +69,15 @@ class HierarchyIndexer:
         Returns:
             Dictionary mapping normalized paths to lists of items
         """
-        index = {}
+        index: Dict[str, List[Any]] = {}
 
         for item in items:
             raw_path = get_path_func(item)
             if raw_path:
-                normalized_path = HierarchyIndexer._normalize_path(
+                normalized_path = HierarchyPath.normalize(
                     raw_path, clean_namespaces, path_separator, namespace_separator
                 )
-                if normalized_path not in index:
-                    index[normalized_path] = []
-                index[normalized_path].append(item)
+                index.setdefault(normalized_path, []).append(item)
 
         return index
 
@@ -104,7 +101,7 @@ class HierarchyIndexer:
         Returns:
             List of items matching the path
         """
-        normalized_path = HierarchyIndexer._normalize_path(
+        normalized_path = HierarchyPath.normalize(
             target_path, clean_namespaces, path_separator, namespace_separator
         )
         return index.get(normalized_path, [])
@@ -130,19 +127,17 @@ class HierarchyIndexer:
         matches = []
 
         for path, items in index.items():
-            components = HierarchyIndexer._split_hierarchy_path(path, path_separator)
-            tail_components = components[-num_components:] if components else []
-            path_tail = HierarchyIndexer._join_hierarchy_path(
-                tail_components, path_separator
-            )
-            if path_tail == target_tail:
+            if HierarchyPath.tail(path, num_components, path_separator) == target_tail:
                 matches.extend(items)
 
         return matches
 
     @staticmethod
     def get_path_components_index(
-        items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = "|"
+        items: List[Any],
+        get_path_func: Callable[[Any], str],
+        path_separator: str = "|",
+        namespace_separator: str = ":",
     ) -> Dict[str, List[Any]]:
         """Build an index mapping individual path components to items.
 
@@ -150,24 +145,24 @@ class HierarchyIndexer:
             items: List of tree items to index
             get_path_func: Function to extract path from an item
             path_separator: Character separating path components
+            namespace_separator: Character separating namespace from name
 
         Returns:
-            Dictionary mapping component names to lists of items
+            Dictionary mapping namespace-cleaned component names to lists
+            of items whose paths contain that component
         """
-        index = {}
+        index: Dict[str, List[Any]] = {}
 
         for item in items:
             path = get_path_func(item)
             if path:
-                components = HierarchyIndexer._split_hierarchy_path(
-                    path, path_separator
-                )
-                for component in components:
-                    clean_component = HierarchyIndexer._clean_namespace(component)
-                    if clean_component not in index:
-                        index[clean_component] = []
-                    if item not in index[clean_component]:
-                        index[clean_component].append(item)
+                for component in HierarchyPath.split(path, path_separator):
+                    clean_component = HierarchyPath.clean_namespace(
+                        component, namespace_separator
+                    )
+                    bucket = index.setdefault(clean_component, [])
+                    if item not in bucket:
+                        bucket.append(item)
 
         return index
 
@@ -185,17 +180,13 @@ class HierarchyIndexer:
         Returns:
             Dictionary mapping depths (int) to lists of items
         """
-        index = {}
+        index: Dict[int, List[Any]] = {}
 
         for item in items:
             path = get_path_func(item)
             if path:
-                depth = len(
-                    HierarchyIndexer._split_hierarchy_path(path, path_separator)
-                )
-                if depth not in index:
-                    index[depth] = []
-                index[depth].append(item)
+                depth = HierarchyPath.depth(path, path_separator)
+                index.setdefault(depth, []).append(item)
 
         return index
 

@@ -1,33 +1,103 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import List, Dict, Any, Optional
 import json
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional
+
+from .hierarchy_path import HierarchyPath
+from .hierarchy_analyzer import DifferenceType, HierarchyDifference
 
 
+@dataclass
 class HierarchyDiff:
-    """Generic data class to hold hierarchical difference results.
+    """Generic, JSON-serializable container for hierarchy difference results.
 
     This class can be used for any hierarchical structure comparison,
-    not just scene hierarchies. Examples include file systems, XML/JSON structures,
-    organizational charts, etc.
+    not just scene hierarchies. Examples include file systems, XML/JSON
+    structures, organizational charts, etc.
+
+    It is the serialization-friendly counterpart of the analyzer's
+    ``List[HierarchyDifference]`` records — build one from analyzer output
+    with :meth:`from_differences`.
     """
 
-    def __init__(self):
-        """Initialize empty diff result."""
-        self.missing: List[str] = []
-        self.extra: List[str] = []
-        self.renamed: List[str] = []
-        self.reparented: List[str] = []
-        self.fuzzy_matches: List[Dict[str, str]] = []
-        self.metadata: Dict[str, Any] = {}
+    missing: List[str] = field(default_factory=list)
+    extra: List[str] = field(default_factory=list)
+    renamed: List[str] = field(default_factory=list)
+    reparented: List[str] = field(default_factory=list)
+    modified: List[str] = field(default_factory=list)
+    fuzzy_matches: List[Dict[str, Any]] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_differences(
+        cls,
+        differences: Iterable[HierarchyDifference],
+        path_separator: str = "|",
+    ) -> "HierarchyDiff":
+        """Build a diff container from analyzer difference records.
+
+        Routing: MISSING -> ``missing``, EXTRA -> ``extra``, MODIFIED ->
+        ``modified``. A MOVED record (see
+        :meth:`HierarchyAnalyzer.detect_moved_items`) contributes its
+        ``from_path`` to ``renamed`` when both paths share a parent,
+        otherwise to ``reparented`` (a move that also renames counts as
+        reparented), and its pairing is preserved in ``fuzzy_matches`` as
+        ``{"from", "to", "similarity"}``. MISSING/EXTRA records whose path
+        is consumed by a MOVED pairing are dropped — the move supersedes
+        them. Paths are compared verbatim; normalize upstream if needed.
+
+        Parameters:
+            differences: Analyzer difference records.
+            path_separator: Character separating path components.
+
+        Returns:
+            A populated HierarchyDiff.
+        """
+        differences = list(differences)
+        result = cls()
+
+        moved_from = set()
+        moved_to = set()
+        for record in differences:
+            if record.type is not DifferenceType.MOVED:
+                continue
+            from_path = record.details.get("from_path", record.path)
+            to_path = record.details.get("to_path", "")
+            moved_from.add(from_path)
+            moved_to.add(to_path)
+
+            same_parent = HierarchyPath.parent(
+                from_path, path_separator
+            ) == HierarchyPath.parent(to_path, path_separator)
+            (result.renamed if same_parent else result.reparented).append(from_path)
+            result.fuzzy_matches.append(
+                {
+                    "from": from_path,
+                    "to": to_path,
+                    "similarity": record.details.get("similarity"),
+                }
+            )
+
+        for record in differences:
+            if record.type is DifferenceType.MISSING and record.path not in moved_from:
+                result.missing.append(record.path)
+            elif record.type is DifferenceType.EXTRA and record.path not in moved_to:
+                result.extra.append(record.path)
+            elif record.type is DifferenceType.MODIFIED:
+                result.modified.append(record.path)
+
+        return result
 
     def is_valid(self) -> bool:
         """Check if hierarchy has no significant differences.
 
         Returns:
-            True if no missing, renamed, or reparented items exist
+            True if no missing, renamed, reparented, or modified items
+            exist (extra items alone do not invalidate)
         """
-        return not (self.missing or self.renamed or self.reparented)
+        return not (self.missing or self.renamed or self.reparented or self.modified)
 
     def has_differences(self) -> bool:
         """Check if any differences exist (including extra items).
@@ -35,7 +105,13 @@ class HierarchyDiff:
         Returns:
             True if any differences exist
         """
-        return bool(self.missing or self.extra or self.renamed or self.reparented)
+        return bool(
+            self.missing
+            or self.extra
+            or self.renamed
+            or self.reparented
+            or self.modified
+        )
 
     def total_issues(self) -> int:
         """Get total count of all issues.
@@ -48,9 +124,10 @@ class HierarchyDiff:
             + len(self.extra)
             + len(self.renamed)
             + len(self.reparented)
+            + len(self.modified)
         )
 
-    def as_dict(self) -> Dict[str, List[str]]:
+    def as_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation.
 
         Returns:
@@ -61,6 +138,7 @@ class HierarchyDiff:
             "extra": self.extra,
             "renamed": self.renamed,
             "reparented": self.reparented,
+            "modified": self.modified,
             "fuzzy_matches": self.fuzzy_matches,
             "metadata": self.metadata,
         }
@@ -99,15 +177,15 @@ class HierarchyDiff:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        result = cls()
-        result.missing = data.get("missing", [])
-        result.extra = data.get("extra", [])
-        result.renamed = data.get("renamed", [])
-        result.reparented = data.get("reparented", [])
-        result.fuzzy_matches = data.get("fuzzy_matches", [])
-        result.metadata = data.get("metadata", {})
-
-        return result
+        return cls(
+            missing=data.get("missing", []),
+            extra=data.get("extra", []),
+            renamed=data.get("renamed", []),
+            reparented=data.get("reparented", []),
+            modified=data.get("modified", []),
+            fuzzy_matches=data.get("fuzzy_matches", []),
+            metadata=data.get("metadata", {}),
+        )
 
     def clear(self) -> None:
         """Clear all diff results."""
@@ -115,6 +193,7 @@ class HierarchyDiff:
         self.extra.clear()
         self.renamed.clear()
         self.reparented.clear()
+        self.modified.clear()
         self.fuzzy_matches.clear()
         self.metadata.clear()
 
@@ -128,6 +207,7 @@ class HierarchyDiff:
         self.extra.extend(other.extra)
         self.renamed.extend(other.renamed)
         self.reparented.extend(other.reparented)
+        self.modified.extend(other.modified)
         self.fuzzy_matches.extend(other.fuzzy_matches)
         self.metadata.update(other.metadata)
 
@@ -142,6 +222,7 @@ class HierarchyDiff:
             "extra": len(self.extra),
             "renamed": len(self.renamed),
             "reparented": len(self.reparented),
+            "modified": len(self.modified),
             "fuzzy_matches": len(self.fuzzy_matches),
             "total_issues": self.total_issues(),
         }
@@ -156,8 +237,6 @@ class HierarchyDiff:
         Returns:
             List of items matching the pattern
         """
-        import re
-
         field_data = getattr(self, field, [])
         if isinstance(field_data, list):
             return [item for item in field_data if re.search(pattern, item)]
@@ -178,12 +257,10 @@ class HierarchyDiff:
         return (
             f"HierarchyDiff(missing={summary['missing']}, "
             f"extra={summary['extra']}, renamed={summary['renamed']}, "
-            f"reparented={summary['reparented']})"
+            f"reparented={summary['reparented']}, modified={summary['modified']})"
         )
 
-    def __repr__(self) -> str:
-        """Detailed string representation."""
-        return self.__str__()
+    __repr__ = __str__
 
 
 # --------------------------------------------------------------------------------------------
@@ -192,38 +269,18 @@ if __name__ == "__main__":
     # Example usage
     print("=== HierarchyDiff Example ===")
 
-    # Create a diff result
-    diff = HierarchyDiff()
-    diff.missing = ["item1", "item2"]
-    diff.extra = ["item3"]
-    diff.renamed = ["item4"]
-    diff.add_metadata("analysis_time", "2024-08-02T10:30:00")
+    diff = HierarchyDiff(missing=["item1", "item2"], extra=["item3"])
     diff.add_metadata("source", "test_hierarchy")
 
     print(f"Diff summary: {diff}")
     print(f"Is valid: {diff.is_valid()}")
-    print(f"Has differences: {diff.has_differences()}")
     print(f"Total issues: {diff.total_issues()}")
-
-    # JSON export/import
-    json_str = diff.as_json()
-    print(f"\nJSON representation:\n{json_str}")
-
-    # Save and load example
-    # diff.save_to_file("hierarchy_diff.json")
-    # loaded_diff = HierarchyDiff.load_from_file("hierarchy_diff.json")
+    print(f"\nJSON representation:\n{diff.as_json()}")
 
 # --------------------------------------------------------------------------------------------
 # Notes
 # --------------------------------------------------------------------------------------------
-# This module provides a general-purpose data structure for hierarchy difference analysis.
-# It can be used for:
-#
-# - File system comparison
-# - Database schema comparison
-# - XML/JSON structure comparison
-# - Scene hierarchy comparison
-# - Any hierarchical data structure analysis
-#
-# The class includes utilities for JSON serialization, filtering, and metadata management.
+# General-purpose serializable container for hierarchy difference analysis:
+# file systems, database schemas, XML/JSON structures, scene hierarchies.
+# Compose with HierarchyAnalyzer via HierarchyDiff.from_differences().
 # --------------------------------------------------------------------------------------------

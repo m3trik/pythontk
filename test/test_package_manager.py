@@ -267,5 +267,78 @@ class PkgVersionUtilsTest(BaseTestCase):
             os.unlink(filepath)
 
 
+class PackageManagerTomllibImportTest(BaseTestCase):
+    """Regression: module must import on Python < 3.11 (no stdlib ``tomllib``).
+
+    Previously a module-level ``import tomllib`` (Python 3.11+ only) crashed
+    ``import pythontk.core_utils.package_manager`` on Metashape's bundled 3.9/3.10.
+    """
+
+    def test_module_imports_without_tomllib(self):
+        """Importing the module must succeed when ``tomllib`` is unavailable.
+
+        Simulated in a fresh interpreter by blocking both ``tomllib`` and
+        ``tomli`` (the <3.11 fallback) before importing.
+        """
+        import subprocess
+
+        code = (
+            "import sys\n"
+            "sys.modules['tomllib'] = None\n"  # simulate Python < 3.11
+            "sys.modules['tomli'] = None\n"  # no fallback available either
+            "import pythontk.core_utils.package_manager as pm\n"
+            "assert hasattr(pm, 'PackageManager')\n"
+            "print('IMPORT_OK')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"module import failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        )
+        self.assertIn("IMPORT_OK", result.stdout)
+
+    def test_get_local_dependency_order_sorts_dependencies_first(self):
+        """The toml parser is resolved locally and deps are ordered before dependents."""
+        import textwrap
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg_a = os.path.join(tmp, "pkg_a")
+            pkg_b = os.path.join(tmp, "pkg_b")
+            os.makedirs(pkg_a)
+            os.makedirs(pkg_b)
+            # pkg_a depends on pkg_b -> pkg_b must be ordered first.
+            with open(os.path.join(pkg_a, "pyproject.toml"), "w") as f:
+                f.write(
+                    textwrap.dedent(
+                        """
+                        [project]
+                        name = "pkg_a"
+                        dependencies = ["pkg_b>=1.0"]
+                        """
+                    )
+                )
+            with open(os.path.join(pkg_b, "pyproject.toml"), "w") as f:
+                f.write(
+                    textwrap.dedent(
+                        """
+                        [project]
+                        name = "pkg_b"
+                        dependencies = []
+                        """
+                    )
+                )
+
+            order = PackageManager.get_local_dependency_order([pkg_a, pkg_b])
+            names = [p.name for p in order]
+            self.assertIn("pkg_a", names)
+            self.assertIn("pkg_b", names)
+            self.assertLess(names.index("pkg_b"), names.index("pkg_a"))
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

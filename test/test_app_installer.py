@@ -171,6 +171,23 @@ class TestAppInstaller(unittest.TestCase):
         last_dl, total = progress_calls[-1]
         self.assertEqual(last_dl, total)
 
+    def test_download_closes_response(self):
+        """Regression: _download must release the urlopen response (its
+        underlying socket) deterministically via a context manager instead
+        of leaving it dangling until GC finalizes the HTTPResponse."""
+        zip_path = self._make_zip("bin/y.exe")
+        resp = self._mock_urlopen(zip_path)
+
+        dest = os.path.join(self.tmp, "closed.zip")
+        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+            AppInstaller._download("https://example.com/y.zip", dest)
+
+        # The response object is entered and exited as a context manager,
+        # so its socket is closed immediately rather than on GC.
+        resp.__enter__.assert_called_once()
+        resp.__exit__.assert_called_once()
+        self.assertTrue(os.path.isfile(dest))
+
     # ------------------------------------------------------------------
     # Catalog
     # ------------------------------------------------------------------

@@ -4,7 +4,6 @@ import sys
 import re
 import json
 import subprocess
-import tomllib
 from pathlib import Path
 from typing import List, Union
 from pythontk.core_utils import help_mixin
@@ -453,12 +452,11 @@ class PackageManager(
 
     def _get_startupinfo(self):
         """Prepare startup information for subprocess on Windows."""
-        if sys.platform == "win32":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            return startupinfo
-        return None
+        from pythontk.core_utils.execution_monitor._execution_monitor import (
+            ExecutionMonitor,
+        )
+
+        return ExecutionMonitor._hidden_startupinfo()
 
     def pip(self, command, output_as_string=False):
         """Execute a pip command and return the output."""
@@ -551,6 +549,11 @@ class PackageManager(
         Returns:
             List of Path objects sorted topologically (dependents last).
         """
+        try:
+            import tomllib  # Python 3.11+
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib
+
         paths = [Path(p).resolve() for p in paths]
 
         # Map package name to path

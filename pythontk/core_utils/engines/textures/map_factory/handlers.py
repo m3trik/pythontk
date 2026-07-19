@@ -52,14 +52,20 @@ class WorkflowHandler(ABC):
 
         return context.config.get(key, False) or context.config.get(key_map, False)
 
+    def packing_enabled(self, context: TextureProcessor) -> bool:
+        """Whether packed-map generation is enabled for this run.
+
+        Legacy support: 'convert' implies packing.
+        New support: 'pack' explicitly controls packing.
+        """
+        return bool(context.config.get("pack", context.config.get("convert", True)))
+
 
 class ORMMapHandler(WorkflowHandler):
     """Handles Unreal Engine / glTF ORM packing."""
 
     def can_handle(self, context: TextureProcessor) -> bool:
-        # Legacy support: 'convert' implies packing
-        # New support: 'pack' explicitly controls packing
-        if not context.config.get("pack", context.config.get("convert", True)):
+        if not self.packing_enabled(context):
             return False
 
         # Explicitly disabled?
@@ -74,6 +80,14 @@ class ORMMapHandler(WorkflowHandler):
         return False
 
     def process(self, context: TextureProcessor) -> Optional[str]:
+        # An ORM already in the inventory passes through verbatim (mirrors
+        # MRAO/MaskMap). Re-deriving would round-trip through the conversion
+        # registry — and because the AO lookup below runs before the unpack
+        # caches its channels, the repack would silently replace AO with white.
+        existing = context.inventory.get("ORM")
+        if existing:
+            return context.save_map(existing, "ORM", source_images=[existing])
+
         # Resolve required components with smart fallbacks
         ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
         roughness = context.resolve_map("Roughness", allow_conversion=True)
@@ -151,9 +165,7 @@ class MRAOMapHandler(WorkflowHandler):
     """
 
     def can_handle(self, context: TextureProcessor) -> bool:
-        # Legacy support: 'convert' implies packing
-        # New support: 'pack' explicitly controls packing
-        if not context.config.get("pack", context.config.get("convert", True)):
+        if not self.packing_enabled(context):
             return False
 
         # Explicitly disabled?
@@ -166,31 +178,16 @@ class MRAOMapHandler(WorkflowHandler):
         return False
 
     def process(self, context: TextureProcessor) -> Optional[str]:
-        if "MRAO" in context.inventory:
-            return context.save_map(context.inventory["MRAO"], "MRAO")
+        existing = context.inventory.get("MRAO")
+        if existing:
+            return context.save_map(existing, "MRAO", source_images=[existing])
 
         # Request the target type only — the conversion registry derives it
         # (e.g. Specular -> Metallic). Listing "Specular" as a preferred type
         # would return the raw spec file verbatim as metallic data.
         metallic = context.resolve_map("Metallic", allow_conversion=True)
         ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
-
-        # Resolve roughness with inversion tracking
-        roughness = None
-        invert = False
-        roughness_map = context.resolve_map("Roughness", allow_conversion=False)
-        if roughness_map:
-            roughness = roughness_map
-        else:
-            smoothness = context.resolve_map(
-                "Smoothness", "Glossiness", allow_conversion=False
-            )
-            if smoothness:
-                roughness = smoothness
-                invert = True
-            else:
-                # Last resort: derive via the broader conversion system
-                roughness = context.resolve_map("Roughness", allow_conversion=True)
+        roughness, invert = context.resolve_roughness_channel()
 
         if not any([metallic, roughness, ao]):
             return None
@@ -257,9 +254,7 @@ class MaskMapHandler(WorkflowHandler):
     """Handles Unity HDRP Mask Map (MSAO)."""
 
     def can_handle(self, context: TextureProcessor) -> bool:
-        # Legacy support: 'convert' implies packing
-        # New support: 'pack' explicitly controls packing
-        if not context.config.get("pack", context.config.get("convert", True)):
+        if not self.packing_enabled(context):
             return False
 
         # Explicit Logic: Config requests Mask Map
@@ -272,8 +267,9 @@ class MaskMapHandler(WorkflowHandler):
         return False
 
     def process(self, context: TextureProcessor) -> Optional[str]:
-        if "MSAO" in context.inventory:
-            return context.save_map(context.inventory["MSAO"], "MSAO")
+        existing = context.inventory.get("MSAO")
+        if existing:
+            return context.save_map(existing, "MSAO", source_images=[existing])
 
         # Request the target type only — the conversion registry derives it
         # (e.g. Specular -> Metallic). Listing "Specular" as a preferred type
@@ -281,24 +277,11 @@ class MaskMapHandler(WorkflowHandler):
         metallic = context.resolve_map("Metallic", allow_conversion=True)
         ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
 
-        # Get smoothness with inversion tracking
-        smoothness = None
-        invert = False
-
-        # Try to resolve smoothness/roughness explicitly. When neither exists,
-        # leave None — pack_msao_texture fills the alpha with neutral white;
-        # substituting another map's data (e.g. metallic) would bake wrong
-        # smoothness values into the Mask Map.
-        smoothness_map = context.resolve_map(
-            "Smoothness", "Glossiness", allow_conversion=False
-        )
-        if smoothness_map:
-            smoothness = smoothness_map
-        else:
-            roughness_map = context.resolve_map("Roughness", allow_conversion=True)
-            if roughness_map:
-                smoothness = roughness_map
-                invert = True
+        # Resolve the smoothness channel with inversion tracking. When nothing
+        # resolves, leave None — pack_msao_texture fills the alpha with neutral
+        # white; substituting another map's data (e.g. metallic) would bake
+        # wrong smoothness values into the Mask Map.
+        smoothness, invert = context.resolve_smoothness_channel()
 
         # Ensure we have at least one component
         if not any([metallic, ao, smoothness]):
@@ -367,9 +350,7 @@ class MetallicSmoothnessHandler(WorkflowHandler):
     """Handles packed Metallic+Smoothness."""
 
     def can_handle(self, context: TextureProcessor) -> bool:
-        # Legacy support: 'convert' implies packing
-        # New support: 'pack' explicitly controls packing
-        if not context.config.get("pack", context.config.get("convert", True)):
+        if not self.packing_enabled(context):
             return False
 
         # Explicitly disabled?
@@ -393,9 +374,10 @@ class MetallicSmoothnessHandler(WorkflowHandler):
         return False
 
     def process(self, context: TextureProcessor) -> Optional[str]:
-        if "Metallic_Smoothness" in context.inventory:
+        existing = context.inventory.get("Metallic_Smoothness")
+        if existing:
             return context.save_map(
-                context.inventory["Metallic_Smoothness"], "Metallic_Smoothness"
+                existing, "Metallic_Smoothness", source_images=[existing]
             )
 
         # Target type only — conversions derive Metallic from Specular etc.;
@@ -404,19 +386,7 @@ class MetallicSmoothnessHandler(WorkflowHandler):
         if not metallic:
             return None
 
-        # Get smoothness/roughness with inversion tracking
-        alpha_map = None
-        invert = False
-        smoothness = context.resolve_map(
-            "Smoothness", "Glossiness", allow_conversion=False
-        )
-        if smoothness:
-            alpha_map = smoothness
-        else:
-            roughness = context.resolve_map("Roughness", allow_conversion=True)
-            if roughness:
-                alpha_map = roughness
-                invert = True
+        alpha_map, invert = context.resolve_smoothness_channel()
 
         if not alpha_map:
             return context.save_map(metallic, "Metallic", source_images=[metallic])
@@ -572,6 +542,17 @@ class BaseColorHandler(WorkflowHandler):
                             f"Error packing transparency: {str(e)}",
                             extra={"preset": "error"},
                         )
+                    # Packing failed, but the caller explicitly requested an
+                    # Albedo_Transparency output. Preserve that output contract
+                    # by saving the un-packed base color under the requested
+                    # slot instead of silently falling through to a plain
+                    # Base_Color map (wrong filename, no signal). Opacity is left
+                    # un-marked so a separate Opacity map still passes through to
+                    # its own slot.
+                    context.mark_used("Base_Color", "Diffuse", "Albedo_Transparency")
+                    return context.save_map(
+                        base_color, "Albedo_Transparency", source_images=[base_color]
+                    )
             else:
                 # Base color already has alpha, just save it as Albedo_Transparency
                 # Practical Lens: We only rename Base_Color to Albedo_Transparency if it

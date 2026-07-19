@@ -1034,5 +1034,103 @@ class TestTextureProcessorLogic(unittest.TestCase):
         ctx.convert_bump_to_normal.assert_called_once_with("bump.png")
 
 
+class TestMapFactoryImageInputRegressions(unittest.TestCase):
+    """Regression tests for caller-supplied Image / path handling in MapFactory."""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="map_factory_img_regress_")
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_detect_normal_map_format_does_not_mutate_input_image(self):
+        """Regression: detect_normal_map_format() thumbnailed a caller-supplied
+        RGB Image in place (ensure_image returns the same object, the mode
+        already matched so no copy was made), silently downsizing it to 512px.
+        It must operate on its own copy and leave the caller's Image untouched."""
+        from PIL import Image
+
+        img = Image.new("RGB", (1024, 768))
+        original_size = img.size
+        MapFactory.detect_normal_map_format(img)
+        self.assertEqual(img.size, original_size)
+
+    def test_convert_spec_gloss_write_files_rejects_image_specular(self):
+        """Regression: convert_spec_gloss_to_pbr(write_files=True) with a PIL
+        Image specular_map raised an obscure TypeError from resolve_texture_filename's
+        assert_pathlike. It must raise a clear ValueError at the write boundary."""
+        from PIL import Image
+
+        spec = Image.new("RGB", (8, 8), (128, 128, 128))
+        gloss = Image.new("L", (8, 8), 128)
+        with self.assertRaises(ValueError):
+            MapFactory.convert_spec_gloss_to_pbr(
+                specular_map=spec,
+                glossiness_map=gloss,
+                write_files=True,
+            )
+
+    def test_get_converted_map_normal_branch_accepts_path(self):
+        """Regression: get_converted_map's `available` values are source file
+        paths (its docstring falsely claimed images). The Normal_OpenGL<->DirectX
+        branches call convert_normal_map_format, which requires a path; passing a
+        path per the corrected contract must return a converted Image."""
+        from PIL import Image
+
+        normal_gl = os.path.join(self.test_dir, "mat_Normal_OpenGL.png")
+        ImgUtils.save_image(
+            ImgUtils.create_image("RGB", (8, 8), (128, 128, 255)), normal_gl
+        )
+        result = MapFactory.get_converted_map(
+            "Normal_DirectX", {"Normal_OpenGL": normal_gl}
+        )
+        self.assertIsInstance(result, Image.Image)
+
+
+class TestRegisterHandlerIdempotent(unittest.TestCase):
+    """register_handler must replace (not duplicate) a handler re-registered
+    after a module reload, where the class object identity changes but the
+    module+qualname does not."""
+
+    def setUp(self):
+        self._saved_handlers = list(MapFactory._workflow_handlers)
+
+    def tearDown(self):
+        MapFactory._workflow_handlers[:] = self._saved_handlers
+
+    def _make_handler_class(self):
+        from pythontk.core_utils.engines.textures.map_factory import WorkflowHandler
+
+        class ProbeHandler(WorkflowHandler):
+            def can_handle(self, context):
+                return False
+
+            def process(self, context):
+                return None
+
+            def get_consumed_types(self):
+                return []
+
+        # Same module+qualname each call, new class object — a reload stand-in.
+        ProbeHandler.__module__ = "test_map_factory_probe"
+        ProbeHandler.__qualname__ = "ProbeHandler"
+        return ProbeHandler
+
+    def test_reload_reregistration_replaces_in_place(self):
+        first = self._make_handler_class()
+        MapFactory.register_handler(first)
+        count_after_first = len(MapFactory._workflow_handlers)
+        position = MapFactory._workflow_handlers.index(first)
+
+        reloaded = self._make_handler_class()
+        self.assertIsNot(reloaded, first)
+        MapFactory.register_handler(reloaded)
+
+        self.assertEqual(len(MapFactory._workflow_handlers), count_after_first)
+        self.assertIs(MapFactory._workflow_handlers[position], reloaded)
+        self.assertNotIn(first, MapFactory._workflow_handlers)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -116,6 +116,19 @@ def resolve_ranges(
     cursor = 0.0 if use_default else 1.0  # start at 0 for default ranges
     cursor_forced = False  # True once a user range advances cursor
 
+    def _step_duration(objs: List) -> float:
+        """Content duration under the active sizing policy.
+
+        In use_default mode audio steps still consult *duration_fn* so clips
+        render at their real length; purely template-driven steps take the
+        uniform default so authoring isn't penalised for declaring behaviors.
+        """
+        if use_default:
+            if any(getattr(o, "kind", "") == "audio" for o in objs):
+                return duration_fn(objs, fallback=default_duration)
+            return default_duration
+        return duration_fn(objs)
+
     # Frozen prefix: reuse last-resolved values for steps before
     # from_step_idx.  last_resolved may be sparse (selected-keys mode
     # skips unresolved steps), so entries are matched by step_id —
@@ -181,23 +194,10 @@ def resolve_ranges(
             if use_selected_keys:
                 continue
             # Sequential placement from cursor.  In use_default mode the
-            # caller opts into uniform sizing.  Audio steps still consult
-            # duration_fn so clips render at their real length; purely
-            # template-driven steps (e.g. fade_in/out) take the uniform
-            # default so authoring isn't penalised for declaring behaviors.
+            # caller opts into uniform sizing (see _step_duration).
             start = cursor
-            if use_default:
-                has_audio = any(
-                    getattr(o, "kind", "") == "audio" for o in step.objects
-                )
-                if has_audio:
-                    dur = duration_fn(step.objects, fallback=default_duration)
-                else:
-                    dur = default_duration
-            else:
-                dur = duration_fn(step.objects)
             resolved.append((step.step_id, start, None, False))
-            cursor = start + dur + gap
+            cursor = start + _step_duration(step.objects) + gap
 
     # Second pass: resolve None ends as next_start - gap (or last key)
     step_by_id = {s.step_id: s for s in steps}
@@ -211,16 +211,7 @@ def resolve_ranges(
             else:
                 step_obj = step_by_id.get(step_id)
                 objs = step_obj.objects if step_obj else []
-                if use_default:
-                    has_audio = any(
-                        getattr(o, "kind", "") == "audio" for o in objs
-                    )
-                    if has_audio:
-                        end = start + duration_fn(objs, fallback=default_duration)
-                    else:
-                        end = start + default_duration
-                else:
-                    end = start + duration_fn(objs)
+                end = start + _step_duration(objs)
         resolved[i] = (step_id, start, end, is_user)
 
     return resolved

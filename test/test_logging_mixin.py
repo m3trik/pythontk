@@ -158,10 +158,15 @@ class LoggerExtTest(BaseTestCase):
         self.assertIn("[SUFFIX]", output)
 
     def test_add_stream_handler(self):
-        """Test adding stream handler."""
+        """Test adding a stream handler for a new target stream.
+
+        (patch() already attached the default stderr handler; a repeat
+        add_stream_handler() for the SAME stream is deduplicated — see
+        test_add_stream_handler_deduplicates_same_stream.)
+        """
         LoggerExt.patch(self.logger)
         initial_count = len(self.logger.handlers)
-        self.logger.add_stream_handler()
+        self.logger.add_stream_handler(stream=io.StringIO())
 
         self.assertGreater(len(self.logger.handlers), initial_count)
 
@@ -439,10 +444,6 @@ class LogBoxTest(BaseTestCase):
         # Raw CSS color form
         self.logger.log_box("TITLE2", ["item"], bg="#222", level="SUCCESS")
 
-        import time
-
-        time.sleep(0.1)
-
         self.assertEqual(len(widget.messages), 2)
 
         first = widget.messages[0]
@@ -531,10 +532,6 @@ class LogBoxTest(BaseTestCase):
         self.logger.handlers = [handler]
 
         self.logger.log_box("TITLE", ["item1"])
-        # Give the threading.Timer a moment to fire
-        import time
-
-        time.sleep(0.1)
 
         self.assertEqual(
             len(widget.messages),
@@ -618,10 +615,6 @@ class LogGroupTest(BaseTestCase):
         self.logger.addHandler(DefaultTextLogHandler(widget))
 
         self.logger.log_group("Header:", ["a", "b", "c"])
-        # DefaultTextLogHandler uses a Timer; pump it.
-        import time
-
-        time.sleep(0.05)
         # Exactly one append() call — the whole group is one message.
         self.assertEqual(
             len(widget.messages),
@@ -802,6 +795,335 @@ class FileTeeAndBufferTest(BaseTestCase):
         self.assertIn("r4", text)
         self.assertIn("r3", text)
         self.assertNotIn("r0", text)
+
+
+class LoggingMixinBugfixRegressionTest(BaseTestCase):
+    """Regression tests for logging_mixin bug fixes (audit pass 2)."""
+
+    def _fresh_logger(self):
+        logger = logging.Logger("regr_logger", logging.DEBUG)
+        logger.handlers = []
+        LoggerExt.patch(logger)
+        return logger
+
+    def test_should_log_error_surfaces_suppressed_count_after_window(self):
+        """Suppression count is emitted on the first genuine emission after the
+        cache window expires — not silently discarded on the drop path.
+
+        Bug: the ' (suppressed N similar errors)' suffix was returned only with
+        should_log=False, which both callers ignore, so the count never
+        reached any output.
+        """
+        logger = self._fresh_logger()
+
+        # First occurrence is emitted with no suffix and seeds the cache.
+        should_log, suffix = LoggerExt._should_log_error(logger, "boom")
+        self.assertTrue(should_log)
+        self.assertEqual(suffix, "")
+
+        # Two more within the window are suppressed silently (empty suffix).
+        for _ in range(2):
+            should_log, suffix = LoggerExt._should_log_error(logger, "boom")
+            self.assertFalse(should_log)
+            self.assertEqual(suffix, "")
+
+        # Cache now holds (t, 3): one emitted + two suppressed. Force the
+        # window to expire by backdating the entry.
+        (key,) = tuple(logger._error_cache)
+        _t, count = logger._error_cache[key]
+        self.assertEqual(count, 3)
+        logger._error_cache[key] = (0.0, count)  # 0.0 == long-expired
+
+        # Next genuine emission surfaces the two suppressed occurrences.
+        should_log, suffix = LoggerExt._should_log_error(logger, "boom")
+        self.assertTrue(should_log)
+        self.assertEqual(suffix, " (suppressed 2 similar errors)")
+
+    def test_should_log_error_singular_suppressed_count_grammar(self):
+        """A single suppressed occurrence uses the singular 'error'."""
+        logger = self._fresh_logger()
+        LoggerExt._should_log_error(logger, "x")  # emit + seed
+        LoggerExt._should_log_error(logger, "x")  # one suppressed -> count 2
+        (key,) = tuple(logger._error_cache)
+        _t, count = logger._error_cache[key]
+        self.assertEqual(count, 2)
+        logger._error_cache[key] = (0.0, count)  # expire window
+
+        should_log, suffix = LoggerExt._should_log_error(logger, "x")
+        self.assertTrue(should_log)
+        self.assertEqual(suffix, " (suppressed 1 similar error)")
+
+    def test_set_log_level_resolves_custom_level_names(self):
+        """set_log_level('SUCCESS'/'PROGRESS'/...) resolves the custom level
+        rather than falling back to WARNING.
+
+        Bug: getattr(logging, 'SUCCESS', WARNING) returned WARNING (logging has
+        no SUCCESS attribute; custom levels live in _nameToLevel), silently
+        disabling PROGRESS/SUCCESS/RESULT/NOTICE the caller asked to enable.
+        """
+        for name, expected in (
+            ("SUCCESS", LoggerExt.SUCCESS),
+            ("PROGRESS", LoggerExt.PROGRESS),
+            ("RESULT", LoggerExt.RESULT),
+            ("NOTICE", LoggerExt.NOTICE),
+        ):
+
+            class TestClass(LoggingMixin):
+                pass
+
+            TestClass.set_log_level(name)
+            self.assertEqual(
+                TestClass.logger.level,
+                expected,
+                f"{name} should resolve to {expected}, got {TestClass.logger.level}",
+            )
+            # Handler levels must be synced too.
+            for handler in TestClass.logger.handlers:
+                self.assertEqual(handler.level, expected)
+
+    def test_set_log_level_standard_names_still_work(self):
+        """Standard level names are unaffected by the custom-level fix."""
+
+        class TestClass(LoggingMixin):
+            pass
+
+        TestClass.set_log_level("DEBUG")
+        self.assertEqual(TestClass.logger.level, logging.DEBUG)
+        TestClass.set_log_level("ERROR")
+        self.assertEqual(TestClass.logger.level, logging.ERROR)
+
+    def test_format_table_narrow_column_truncation_no_overflow(self):
+        """Row cells in proportionally-shrunk (w<=3) columns are hard-cut to
+        fit, not overflowed by the `val[:w-3]+'...'` under-run.
+
+        Bug: for w==2 the row path produced `val[:-1]+'...'` (longer than the
+        original), and `{:<w}` never truncates, so the cell overflowed and the
+        table misaligned. The header path already guarded with `if w > 3`.
+        """
+        from pythontk.core_utils.logging_mixin import TableMixin
+
+        mixin = TableMixin()
+        headers = ["h1", "h2", "h3", "h4"]
+        data = [["x" * 10, "x" * 10, "x" * 10, "x" * 10]]
+        out = mixin.format_table(data, headers, max_width=20)
+        lines = out.split("\n")
+
+        header_len = len(lines[0])
+        for ln in lines:
+            self.assertLessEqual(
+                len(ln),
+                header_len,
+                f"row overflows narrow column: {ln!r} ({len(ln)} > {header_len})",
+            )
+
+
+class LoggingMixinQualityPassRegressionTest(BaseTestCase):
+    """Regression tests for the logging_mixin quality pass (2026-07-18)."""
+
+    def _fresh_logger(self, name="quality_logger"):
+        logger = logging.Logger(name, logging.DEBUG)
+        logger.handlers = []
+        LoggerExt.patch(logger)
+        return logger
+
+    def test_default_text_handler_appends_synchronously_in_order(self):
+        """Widget appends are synchronous and preserve record order.
+
+        Bug: emit() deferred every append to a fresh threading.Timer thread —
+        one OS thread per record, scheduler-ordered, so bursts could arrive
+        out of order and nothing was delivered by the time emit() returned.
+        GUI-thread marshaling is the registered custom handler's job (uitk's
+        TextEditLogHandler); the default handler must be plain and ordered.
+        """
+        import threading
+
+        emit_thread = threading.current_thread()
+        append_threads = []
+
+        class ThreadAwareWidget(MockTextWidget):
+            def append(self, text):
+                append_threads.append(threading.current_thread())
+                super().append(text)
+
+        logger = self._fresh_logger()
+        widget = ThreadAwareWidget()
+        handler = DefaultTextLogHandler(widget, use_html=False)
+        handler.setLevel(logging.DEBUG)
+        logger.handlers = [handler]
+
+        for i in range(50):
+            logger.info("msg%03d", i)
+
+        # No sleep: all 50 must already be delivered, in emission order,
+        # on the emitting thread (no per-record worker threads).
+        self.assertEqual(widget.messages, [f"msg{i:03d}" for i in range(50)])
+        self.assertTrue(all(t is emit_thread for t in append_threads))
+
+    def test_patch_leaves_global_logger_class_untouched(self):
+        """patch() must not install descriptors on logging.Logger itself.
+
+        Bug: ``logger.__class__.log_timestamp = property(...)`` mutated the
+        GLOBAL Logger class, so assigning ``.log_timestamp`` on any foreign,
+        unpatched logger ran our setter and silently replaced that logger's
+        handler formatters with LevelAwareFormatter.
+        """
+        logger = self._fresh_logger()
+        self.assertNotIn("log_timestamp", vars(logging.Logger))
+        # The property still works on the patched logger itself.
+        self.assertIsNone(logger.log_timestamp)
+
+        # A foreign, unpatched logger is unaffected by the attribute.
+        foreign = logging.Logger("foreign_unpatched")
+        stream = io.StringIO()
+        fh = logging.StreamHandler(stream)
+        marker = logging.Formatter("MARKER %(message)s")
+        fh.setFormatter(marker)
+        foreign.addHandler(fh)
+        foreign.log_timestamp = "%H:%M:%S"  # plain attribute, no side effects
+        self.assertIs(fh.formatter, marker)
+
+    def test_log_timestamp_property_prepends_timestamp(self):
+        """Behavior pin: the per-logger property keeps working after the
+        global-class fix — assigning it re-renders with a timestamp prefix."""
+        logger = self._fresh_logger()
+        logger.handlers = []
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(LevelAwareFormatter(logger=logger, strip_html=True))
+        logger.addHandler(handler)
+
+        logger.log_timestamp = "%H:%M:%S"
+        logger.info("stamped")
+        out = stream.getvalue()
+        self.assertRegex(out, r"^\[\d{2}:\d{2}:\d{2}\] ")
+        self.assertIn("stamped", out)
+
+    def test_add_stream_handler_deduplicates_same_stream(self):
+        """Bug: file and text-widget handlers deduplicated, stream handlers
+        didn't — repeated add_stream_handler() calls stacked duplicate
+        console output."""
+        logger = self._fresh_logger()
+        # patch() already added the default stderr stream handler.
+        count = len(logger.handlers)
+        logger.add_stream_handler()
+        logger.add_stream_handler()
+        self.assertEqual(len(logger.handlers), count)
+
+        # Distinct target stream → one (and only one) new handler.
+        stream = io.StringIO()
+        logger.add_stream_handler(stream=stream)
+        logger.add_stream_handler(stream=stream)
+        matching = [h for h in logger.handlers if getattr(h, "stream", None) is stream]
+        self.assertEqual(len(matching), 1)
+
+    def test_set_log_level_preserves_explicit_file_tee_level(self):
+        """Bug: setLevel synced EVERY handler to the logger level, clobbering
+        the explicitly-requested level of the managed file tee (an
+        errors-only log file started receiving DEBUG floods)."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        fd, path = tempfile.mkstemp(suffix=".log")
+        os.close(fd)
+        try:
+            Foo.set_log_file(path, level="ERROR")
+            Foo.set_log_level("DEBUG")
+            tee = Foo.logger._managed_file_handler
+            self.assertEqual(tee.level, logging.ERROR)
+            # Unpinned handlers (the default stream handler) still track.
+            for other in Foo.logger.handlers:
+                if other is not tee:
+                    self.assertEqual(other.level, logging.DEBUG)
+
+            # A tee attached WITHOUT an explicit level keeps tracking.
+            Foo.set_log_file(path)
+            Foo.set_log_level("INFO")
+            self.assertEqual(Foo.logger._managed_file_handler.level, logging.INFO)
+        finally:
+            Foo.set_log_file(None)
+            os.unlink(path)
+
+    def test_set_log_level_preserves_explicit_buffer_level(self):
+        """Same pin for the ring buffer: an explicit capture level survives
+        later set_log_level calls."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        Foo.enable_log_buffer(level="WARNING")
+        Foo.set_log_level("DEBUG")
+        self.assertEqual(Foo.logger._ring_buffer_handler.level, logging.WARNING)
+        Foo.disable_log_buffer()
+
+    def test_custom_level_methods_accept_preset_and_color(self):
+        """Bug: success/result/notice/progress passed preset=/color= straight
+        into stdlib Logger.log → TypeError. They now route through
+        _log_custom like info/debug/warning/error/critical."""
+        logger = self._fresh_logger()
+        logger.handlers = []
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(LevelAwareFormatter(logger=logger, strip_html=True))
+        logger.addHandler(handler)
+        logger.setLevel("DEBUG")
+
+        logger.success("done", preset="bold")  # raised TypeError before
+        logger.progress("halfway", color="INFO")
+        out = stream.getvalue()
+        self.assertIn("done", out)
+        self.assertIn("halfway", out)
+        self.assertNotIn("<span", out)  # stream output stays stripped
+
+    def test_disabled_level_skips_styling_work(self):
+        """preset=/color= HTML formatting is skipped entirely when the record's
+        level is disabled (it previously ran before the enabled check)."""
+        from unittest.mock import MagicMock, patch as mock_patch
+
+        logger = self._fresh_logger()
+        logger.setLevel(logging.ERROR)
+        with mock_patch.object(
+            LoggerExt, "format_message_as_html", MagicMock(return_value="X")
+        ) as mocked:
+            logger.info("hidden", preset="bold")
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_log_table_emits_single_record(self):
+        """Bug: log_table pushed one record per table line → paragraph
+        spacing and a proportional font broke alignment in Qt widget
+        handlers. It now mirrors log_box/log_group: one raw record."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget, use_html=False)
+        handler.setLevel(logging.DEBUG)
+        Foo.logger.handlers = [handler]
+
+        Foo().log_table(
+            [["alpha", 1], ["beta", 2]], headers=["name", "count"], title="Totals"
+        )
+        self.assertEqual(len(widget.messages), 1)
+        msg = widget.messages[0]
+        for token in ("Totals", "name", "count", "alpha", "beta"):
+            self.assertIn(token, msg)
+
+    def test_format_table_display_width_alignment(self):
+        """Bug: format_table measured cells with len() — an emoji/CJK cell
+        (display width 2, len 1) misaligned every column after it."""
+        from pythontk.core_utils.logging_mixin import TableMixin
+
+        mixin = TableMixin()
+        out = mixin.format_table([["✅", "ok"], ["x", "yy"]], headers=["s", "msg"])
+        widths = {LoggerExt._display_width(ln) for ln in out.split("\n")}
+        self.assertEqual(
+            len(widths),
+            1,
+            f"misaligned lines (display widths {sorted(widths)}):\n{out}",
+        )
 
 
 if __name__ == "__main__":

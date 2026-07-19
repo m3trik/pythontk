@@ -75,7 +75,10 @@ def resolve_duration(
         ``(duration, behavior_span, audio_span)`` — the resolved shot
         length plus the individual content measurements that drove it.
     """
-    from pythontk.core_utils.engines.shots.manifest.behaviors import load_behavior
+    from pythontk.core_utils.engines.shots.manifest.behaviors import (
+        load_behavior,
+        phase_durations,
+    )
 
     audio_span = 0.0
     max_obj_total = 0.0
@@ -93,19 +96,11 @@ def resolve_duration(
                 tmpl = load_behavior(b)
             except FileNotFoundError:
                 continue
-            dur_field = tmpl.get("duration")
-            if dur_field == "from_source":
+            if tmpl.get("duration") == "from_source":
                 continue  # handled via audio_span below
-            for _attr_name, attr_def in tmpl.get("attributes", {}).items():
-                for phase in ("in", "out"):
-                    block = attr_def.get(phase)
-                    if not block:
-                        continue
-                    d = float(block.get("duration", 0) or 0)
-                    if phase == "in":
-                        obj_in += d
-                    else:
-                        obj_out += d
+            d_in, d_out = phase_durations(tmpl)
+            obj_in += d_in
+            obj_out += d_out
         max_obj_total = max(max_obj_total, obj_in + obj_out)
         global_max_in = max(global_max_in, obj_in)
         global_max_out = max(global_max_out, obj_out)
@@ -718,6 +713,26 @@ class ShotManifest:
 
         return plan
 
+    @staticmethod
+    def _reposition_kwargs(existing, ps: PlannedShot) -> Dict[str, Any]:
+        """``start``/``end`` kwargs when the plan displaced *existing*, else empty."""
+        if (
+            abs(existing.start - ps.start) > 1e-6
+            or abs(existing.end - ps.end) > 1e-6
+        ):
+            return {"start": ps.start, "end": ps.end}
+        return {}
+
+    @staticmethod
+    def _content_kwargs(existing, ps: PlannedShot) -> Dict[str, Any]:
+        """``metadata``/``description`` kwargs where the CSV differs from the store."""
+        kwargs: Dict[str, Any] = {}
+        if existing.metadata != ps.metadata:
+            kwargs["metadata"] = ps.metadata
+        if existing.description != ps.description:
+            kwargs["description"] = ps.description
+        return kwargs
+
     def _execute_plan(
         self,
         plan: List[PlannedShot],
@@ -764,63 +779,27 @@ class ShotManifest:
                         self.store.set_object_pinned(n)
                     actions[ps.step.step_id] = "created"
 
-                elif ps.action == "locked":
-                    # Locked shots are content-protected, but still need
-                    # repositioning if an upstream ripple displaced them.
-                    if ps.existing_shot_id is not None:
-                        existing = self._find_shot(ps.existing_shot_id)
-                        if existing and (
-                            abs(existing.start - ps.start) > 1e-6
-                            or abs(existing.end - ps.end) > 1e-6
-                        ):
-                            self.store.update_shot(
-                                existing.shot_id,
-                                start=ps.start,
-                                end=ps.end,
-                            )
-                    actions[ps.step.step_id] = "locked"
-
-                elif ps.action == "skipped":
-                    # Still update metadata/description from CSV, and
-                    # reposition if an upstream ripple displaced this shot.
+                elif ps.action in ("locked", "skipped", "patched"):
                     # All writes go through update_shot so the store is
                     # dirtied/notified (direct attribute writes are
-                    # silently lost on save).
-                    if ps.existing_shot_id is not None:
-                        existing = self._find_shot(ps.existing_shot_id)
-                        if existing:
-                            kwargs = {}
-                            if (
-                                abs(existing.start - ps.start) > 1e-6
-                                or abs(existing.end - ps.end) > 1e-6
-                            ):
-                                kwargs.update(start=ps.start, end=ps.end)
-                            if existing.metadata != ps.metadata:
-                                kwargs["metadata"] = ps.metadata
-                            if existing.description != ps.description:
-                                kwargs["description"] = ps.description
-                            if kwargs:
-                                self.store.update_shot(existing.shot_id, **kwargs)
-                    actions[ps.step.step_id] = "skipped"
+                    # silently lost on save).  Positions are absolute —
+                    # the plan already computed final positions for every
+                    # shot, so no ripple pass is needed here.
+                    existing = (
+                        self.store.shot_by_id(ps.existing_shot_id)
+                        if ps.existing_shot_id is not None
+                        else None
+                    )
+                    if existing is not None:
+                        # Every action repositions if an upstream ripple
+                        # displaced the shot; locked shots are content-
+                        # protected, so metadata/description stay untouched.
+                        kwargs = self._reposition_kwargs(existing, ps)
+                        if ps.action != "locked":
+                            kwargs.update(self._content_kwargs(existing, ps))
 
-                elif ps.action == "patched":
-                    if ps.existing_shot_id is not None:
-                        existing = self._find_shot(ps.existing_shot_id)
-                        if existing:
-                            kwargs = {}
-                            # Apply absolute position from plan — no
-                            # ripple pass needed because the plan already
-                            # computed final positions for every shot.
-                            if (
-                                abs(existing.start - ps.start) > 1e-6
-                                or abs(existing.end - ps.end) > 1e-6
-                            ):
-                                kwargs.update(start=ps.start, end=ps.end)
-                            if existing.metadata != ps.metadata:
-                                kwargs["metadata"] = ps.metadata
-                            if existing.description != ps.description:
-                                kwargs["description"] = ps.description
-
+                        csv_resolved: List[str] = []
+                        if ps.action == "patched":
                             # Merge CSV objects with scene-discovered
                             # extras.  Resolve the CSV names; missing
                             # objects keep their CSV form so pinning can
@@ -841,21 +820,15 @@ class ShotManifest:
                             merged = sorted(set(csv_resolved) | scene_objs)
                             if set(existing.objects) != set(merged):
                                 kwargs["objects"] = merged
-                            # Route every write through update_shot so
-                            # the store is dirtied/notified.
-                            if kwargs:
-                                self.store.update_shot(existing.shot_id, **kwargs)
 
-                            for n in csv_resolved:
-                                self.store.set_object_pinned(n)
+                        if kwargs:
+                            self.store.update_shot(existing.shot_id, **kwargs)
+                        for n in csv_resolved:
+                            self.store.set_object_pinned(n)
 
-                    actions[ps.step.step_id] = "patched"
+                    actions[ps.step.step_id] = ps.action
 
         return actions
-
-    def _find_shot(self, shot_id: int):
-        """Return the ShotBlock with *shot_id*, or None."""
-        return self.store.shot_by_id(shot_id)
 
     # ---- assess ----------------------------------------------------------
 
@@ -960,7 +933,7 @@ class ShotManifest:
                         ]
                         status = "missing_behavior" if broken else "valid"
                     else:
-                        status = "valid" if exists else "missing_object"
+                        status = "valid"
                     obj_statuses.append(
                         ObjectStatus(
                             name=obj.name,

@@ -1189,5 +1189,43 @@ class TestFormatProbeUsesOnDiskSource(unittest.TestCase, _LoggerCaptureMixin):
         )
 
 
+class TestModelessPackedTypeComposite(unittest.TestCase, _LoggerCaptureMixin):
+    """Packed map types with ``mode=None`` (MSAO/MRAO) are filtered out of
+    ``MapRegistry.get_map_modes()``. ``_composite_type`` must not subscript
+    that dict directly — the mode-less key raises ``KeyError`` and crashes
+    the whole batch. It must fall back to the image's natural mode instead.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mc_modeless_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, typ: str) -> str:
+        # Solid, uniform, fully-opaque bg → composites on the first pass.
+        img = _solid_rgba((4, 4), (10, 20, 30, 255))
+        path = os.path.join(self.tmp, f"src_{typ}.png")
+        img.save(path)
+
+        engine = MapCompositor()
+        cap = self.attach_capture(engine)
+        # Must not raise KeyError on the mode-less packed key.
+        failed = engine.composite_images(
+            {typ: [(path, _load(path))]}, self.tmp, name="mat"
+        )
+        self.assertEqual(failed, {})
+        self.assertNotIn("ERROR", cap.levels())
+        return os.path.join(self.tmp, f"mat_{typ}.png")
+
+    def test_msao_composites_without_keyerror(self):
+        out = self._run("MSAO")
+        self.assertTrue(os.path.exists(out))
+
+    def test_mrao_composites_without_keyerror(self):
+        out = self._run("MRAO")
+        self.assertTrue(os.path.exists(out))
+
+
 if __name__ == "__main__":
     unittest.main()

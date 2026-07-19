@@ -733,9 +733,12 @@ class IterTest(BaseTestCase):
         self.assertEqual(IterUtils.split_list(lB, "range"), [[1, 3], [5], ["7", 9]])
 
     def test_split_list_empty(self):
-        """Test split_list with empty list raises ValueError (division by zero in range)."""
-        with self.assertRaises(ValueError):
-            IterUtils.split_list([], "2parts")
+        """Empty list yields [] in the parts branch instead of raising.
+
+        Regression: n collapsed to 0 for an empty list, making range()'s step
+        zero (ValueError). Clamped to >= 1, matching the parts+ branch.
+        """
+        self.assertEqual(IterUtils.split_list([], "2parts"), [])
 
     def test_split_list_single_element(self):
         """Test split_list with single element."""
@@ -745,6 +748,39 @@ class IterTest(BaseTestCase):
         """Test split_list with two elements."""
         result = IterUtils.split_list([1, 2], "2parts")
         self.assertEqual(len(result), 2)
+
+    # -------------------------------------------------------------------------
+    # Regression Tests
+    # -------------------------------------------------------------------------
+
+    def test_split_list_parts_plus_shorter_than_n(self):
+        """Regression: '<n>parts+' where n exceeds element count must not crash.
+
+        Previously len(lst) // n floored to 0, producing range(0, 1, 0) ->
+        ValueError. The divisor is now clamped to >= 1.
+        """
+        self.assertEqual(IterUtils.split_list([42], "2parts+"), [[42]])
+        # Empty list should yield [] rather than raising in the parts+ branch.
+        self.assertEqual(IterUtils.split_list([], "2parts+"), [])
+
+    def test_filter_results_dict_forwards_inc_exc(self):
+        """Regression: @filter_results must forward inc/exc to filter_dict.
+
+        Previously inc/exc were consumed by the list-arg extraction and never
+        reached filter_dict, so decorated functions returning a dict came back
+        unfiltered.
+        """
+
+        @IterUtils.filter_results
+        def get_map():
+            return {"a.png": 1, "b.jpg": 2}
+
+        # Inclusion filter on keys.
+        self.assertEqual(get_map(inc="*.png", keys=True), {"a.png": 1})
+        # Exclusion filter on keys.
+        self.assertEqual(get_map(exc="*.jpg", keys=True), {"a.png": 1})
+        # No filter args -> full dict unchanged.
+        self.assertEqual(get_map(keys=True), {"a.png": 1, "b.jpg": 2})
 
 
 if __name__ == "__main__":

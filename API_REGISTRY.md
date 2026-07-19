@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-17_
+_Generated: 2026-07-18_
 
 ## Index
 
@@ -45,7 +45,8 @@ _Generated: 2026-07-17_
 - [`core_utils/hierarchy_utils/hierarchy_diff.py`](#core_utils--hierarchy_utils--hierarchy_diff)
 - [`core_utils/hierarchy_utils/hierarchy_indexer.py`](#core_utils--hierarchy_utils--hierarchy_indexer)
 - [`core_utils/hierarchy_utils/hierarchy_matching.py`](#core_utils--hierarchy_utils--hierarchy_matching)
-- [`core_utils/logging_mixin.py`](#core_utils--logging_mixin)
+- [`core_utils/hierarchy_utils/hierarchy_path.py`](#core_utils--hierarchy_utils--hierarchy_path) — Pure string primitives for delimited hierarchy paths.
+- [`core_utils/logging_mixin.py`](#core_utils--logging_mixin) — Class-scoped logging toolkit.
 - [`core_utils/module_reloader.py`](#core_utils--module_reloader) — Helpers for hot-reloading packages and their submodules.
 - [`core_utils/module_resolver.py`](#core_utils--module_resolver) — Reusable module attribute resolver for package-style imports.
 - [`core_utils/namedtuple_container.py`](#core_utils--namedtuple_container)
@@ -68,6 +69,7 @@ _Generated: 2026-07-17_
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`file_utils/temp_artifacts.py`](#file_utils--temp_artifacts) — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - [`file_utils/usd.py`](#file_utils--usd) — Zero-dependency USD (OpenUSD) file utilities.
+- [`file_utils/workspace.py`](#file_utils--workspace) — Shared project-workspace model + ``workspace.mel`` codec.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
@@ -245,7 +247,8 @@ Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - [`load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L71) — Load a JSON behavior template by stem name.
 - [`list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L124) — Return stem names of all available behavior templates.
 - [`resolve_keys(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L173) — Resolve an ``in`` or ``out`` block to absolute keyframe dicts.
-- [`compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L229) — Derive duration from the behavior templates referenced in *behavior_entries*.
+- [`phase_durations(tmpl: Dict[str, Any]) -> Tuple[float, float]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L229) — Sum a template's ``in`` / ``out`` phase durations across all attributes.
+- [`compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L258) — Derive duration from the behavior templates referenced in *behavior_entries*.
 
 <a id="core_utils--engines--shots--manifest--behaviors--_spec"></a>
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py`
@@ -264,7 +267,7 @@ Schema for a *behavior* template file, defined as a dataclass.
 Shot Manifest engine — pure planning/orchestration core with scene hooks.
 
 - [`resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L48) — Compute final shot duration for *step* under the given fit policy.
-- **[`class ShotManifest`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L172)** — Creates shot store entries from parsed steps and applies behaviors.
+- **[`class ShotManifest`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L167)** — Creates shot store entries from parsed steps and applies behaviors.
   - `ShotManifest.rewire_audio(self, tracks: Optional[List[str]] = None) -> Dict[str, List[str]]` — Reconcile managed audio nodes with keyed track state (hook).
   - `ShotManifest.apply_behaviors(self) -> Dict[str, list]` — Apply detected behaviors to the store's shots (hook).
   - `ShotManifest.sync(self, steps: List[BuilderStep], apply_behaviors: bool = True, ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH, skip_scene_discovery: bool = False) -> Tuple[Dict[str, str], Dict[str, list], List[StepStatus]]` — Full build pipeline: plan -> commit -> apply behaviors -> assess.
@@ -278,7 +281,7 @@ Shot Manifest engine — pure planning/orchestration core with scene hooks.
 Pure Shot Manifest data model + CSV parser.
 
 - [`detect_behaviors(text: str) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L227) — Return behavior names inferred from descriptive *text*.
-- [`parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L418) — Parse a structured CSV into a list of :class:`BuilderStep`.
+- [`parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L416) — Parse a structured CSV into a list of :class:`BuilderStep`.
 - **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L46)** — One asset within a step.
 - **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L56)** — One step (= one future sequencer shot).
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
@@ -369,7 +372,7 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.add_listener(self, callback: Callable[[StoreEvent], None]) -> None` — Register a listener called on store mutations.
   - `ShotStore.remove_listener(self, callback: Callable[[StoreEvent], None]) -> None` — Remove a previously registered listener.
   - `ShotStore.batch_update(self)` — Defer listener notifications until the block exits.
-  - `ShotStore.is_gap_locked(self, left_id: str, right_id: str) -> bool` — Return whether the gap between two adjacent shots is locked.
+  - `ShotStore.is_gap_locked(self, left_id: int, right_id: int) -> bool` — Return whether the gap between two adjacent shots is locked.
   - `ShotStore.lock_gap(self, left_id: int, right_id: int) -> None` — Lock a gap so its width is preserved during global respace.
   - `ShotStore.unlock_gap(self, left_id: int, right_id: int) -> None` — Unlock a gap so it follows the global gap value.
   - `ShotStore.lock_all_gaps(self) -> None` — Lock every adjacent gap.
@@ -440,7 +443,11 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 ``MapFactory`` -- the texture-map workflow orchestrator.
 
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L60)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L61)** — Refactored factory with pluggable workflow system.
+  - `MapFactory.map_types(cls) -> Dict[str, Tuple[str, ...]]` — ``{canonical_key: (canonical, *aliases)}`` for every registered map.
+  - `MapFactory.passthrough_maps(cls) -> List[str]` — Maps passed through to the output when no handler consumes them.
+  - `MapFactory.packed_grayscale_maps(cls) -> List[str]` — Maps that scale down by ``mask_map_scale`` (packed/mask data).
+  - `MapFactory.map_fallbacks(cls) -> Dict[str, Tuple[str, ...]]` — Safe input substitutes per map type (e.g.
   - `MapFactory.register_conversions(cls, registry: ConversionRegistry)` *(class)* — Register all standard PBR conversions.
   - `MapFactory.resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str` *(class)* — Resolves the map type from a filename or alias using `map_types`.
   - `MapFactory.resolve_color_space(cls, file: str, default: str = 'Linear') -> str` *(class)* — Resolve the working color space ("sRGB" or "Linear") for a texture by filename.
@@ -503,35 +510,36 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `WorkflowHandler.process(self, context: TextureProcessor) -> Optional[str]` — Process and return the output map path.
   - `WorkflowHandler.get_consumed_types(self) -> List[str]` — Return list of map types this handler consumes.
   - `WorkflowHandler.is_explicitly_requested(self, context: TextureProcessor, map_type: str) -> bool` — Check if a map type is explicitly requested in the config.
-- **[`class ORMMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L56)** — Handles Unreal Engine / glTF ORM packing.
+  - `WorkflowHandler.packing_enabled(self, context: TextureProcessor) -> bool` — Whether packed-map generation is enabled for this run.
+- **[`class ORMMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L64)** — Handles Unreal Engine / glTF ORM packing.
   - `ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `ORMMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L145)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
+- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L159)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
   - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L256)** — Handles Unity HDRP Mask Map (MSAO).
+- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L253)** — Handles Unity HDRP Mask Map (MSAO).
   - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L366)** — Handles packed Metallic+Smoothness.
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L349)** — Handles packed Metallic+Smoothness.
   - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L452)** — Handles separate metallic and roughness maps.
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L422)** — Handles separate metallic and roughness maps.
   - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
   - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L489)** — Handles base color / albedo with optional packing.
+- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L459)** — Handles base color / albedo with optional packing.
   - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L630)** — Handles normal map format conversion.
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L611)** — Handles normal map format conversion.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L797)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L778)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -546,6 +554,8 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `TextureProcessor.save_map(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str` — Saves and optimizes a map, enforcing mode and naming conventions.
   - `TextureProcessor.resolve_map(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]` — Intelligently resolve a map from inventory with fallback conversions.
   - `TextureProcessor.mark_used(self, *map_types: str)` — Mark map types as consumed.
+  - `TextureProcessor.resolve_smoothness_channel(self) -> Tuple[Optional[Union[str, 'Image.Image']], bool]` — Resolve data for a smoothness-oriented channel, tracking inversion.
+  - `TextureProcessor.resolve_roughness_channel(self) -> Tuple[Optional[Union[str, 'Image.Image']], bool]` — Resolve data for a roughness-oriented channel, tracking inversion.
   - `TextureProcessor.convert_specular_to_metallic(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'`
   - `TextureProcessor.convert_smoothness_to_roughness(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
   - `TextureProcessor.convert_roughness_to_smoothness(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'`
@@ -602,10 +612,12 @@ Plan, assess, and apply map (texture) optimizations.
 - **[`class MapType`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L45)** — Defines the properties of a texture map type.
 - **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L71)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
+  - `MapRegistry.register(self, map_type: MapType, overwrite: bool = False) -> MapType` — Register a new map type (or replace an existing one) at runtime.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
   - `MapRegistry.get_suffix_strip_pattern(self) -> Optional[str]` — Regex matching one trailing map-type suffix (any registered alias).
   - `MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]` — Generate the workflow presets dictionary.
   - `MapRegistry.get_map_types(self) -> Dict[str, Tuple[str, ...]]` — Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.
+  - `MapRegistry.get_aliases_by_len_desc(self) -> List[str]` — Every registered canonical name and alias, sorted longest-first.
   - `MapRegistry.get_fallbacks(self) -> Dict[str, Tuple[str, ...]]` — Generate the input fallback dictionary.
   - `MapRegistry.get_output_fallbacks(self) -> Dict[str, Tuple[str, ...]]` — Generate the output fallback dictionary.
   - `MapRegistry.get_precedence_rules(self) -> Dict[str, List[str]]` — Generate the precedence rules dictionary.
@@ -706,25 +718,26 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
 <a id="core_utils--hierarchy_utils--hierarchy_analyzer"></a>
 ### `core_utils/hierarchy_utils/hierarchy_analyzer.py`
 
-- **[`class DifferenceType(Enum)`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_analyzer.py#L8)** — Types of differences that can be found between hierarchies.
-- **[`class HierarchyDifference`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_analyzer.py#L18)** — Represents a single difference between hierarchies.
-- **[`class HierarchyAnalyzer`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_analyzer.py#L30)** — Analyzer for comparing hierarchical structures and identifying differences.
-  - `HierarchyAnalyzer.compare_path_sets(current_paths: Set[str], reference_paths: Set[str], path_separator: str = '|') -> Dict[str, Set[str]]` *(static)* — Compare two sets of hierarchical paths and categorize differences.
-  - `HierarchyAnalyzer.analyze_hierarchy_differences(current_items: List[Any], reference_items: List[Any], path_extractor: Callable[[Any], str], attribute_extractors: Dict[str, Callable[[Any], Any]] = None, path_separator: str = '|') -> List[HierarchyDifference]` *(static)* — Perform comprehensive analysis of differences between hierarchies.
+- **[`class DifferenceType(Enum)`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_analyzer.py#L12)** — Types of differences that can be found between hierarchies.
+- **[`class HierarchyDifference`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_analyzer.py#L22)** — Represents a single difference between hierarchies.
+- **[`class HierarchyAnalyzer`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_analyzer.py#L34)** — Analyzer for comparing hierarchical structures and identifying differences.
+  - `HierarchyAnalyzer.compare_path_sets(current_paths: Set[str], reference_paths: Set[str]) -> Dict[str, Set[str]]` *(static)* — Compare two sets of hierarchical paths and categorize differences.
+  - `HierarchyAnalyzer.analyze_hierarchy_differences(current_items: List[Any], reference_items: List[Any], path_extractor: Callable[[Any], str], attribute_extractors: Optional[Dict[str, Callable[[Any], Any]]] = None) -> List[HierarchyDifference]` *(static)* — Perform comprehensive analysis of differences between hierarchies.
   - `HierarchyAnalyzer.detect_moved_items(differences: List[HierarchyDifference], similarity_threshold: float = 0.8, path_separator: str = '|') -> List[HierarchyDifference]` *(static)* — Detect items that may have been moved rather than deleted/added.
   - `HierarchyAnalyzer.categorize_differences(differences: List[HierarchyDifference], path_separator: str = '|') -> Dict[str, Dict[str, List[HierarchyDifference]]]` *(static)* — Categorize differences by type and hierarchy level.
   - `HierarchyAnalyzer.generate_diff_report(differences: List[HierarchyDifference], include_details: bool = True, max_items_per_category: int = 10) -> str` *(static)* — Generate a human-readable report of differences.
   - `HierarchyAnalyzer.export_differences_to_dict(differences: List[HierarchyDifference]) -> Dict[str, Any]` *(static)* — Export differences to a dictionary format for serialization.
-  - `HierarchyAnalyzer.filter_differences(differences: List[HierarchyDifference], types: List[DifferenceType] = None, path_patterns: List[str] = None, exclude_patterns: List[str] = None) -> List[HierarchyDifference]` *(static)* — Filter differences based on type and path patterns.
+  - `HierarchyAnalyzer.filter_differences(differences: List[HierarchyDifference], types: Optional[List[DifferenceType]] = None, path_patterns: Optional[List[str]] = None, exclude_patterns: Optional[List[str]] = None) -> List[HierarchyDifference]` *(static)* — Filter differences based on type and path patterns.
 
 <a id="core_utils--hierarchy_utils--hierarchy_diff"></a>
 ### `core_utils/hierarchy_utils/hierarchy_diff.py`
 
-- **[`class HierarchyDiff`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_diff.py#L7)** — Generic data class to hold hierarchical difference results.
+- **[`class HierarchyDiff`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_diff.py#L13)** — Generic, JSON-serializable container for hierarchy difference results.
+  - `HierarchyDiff.from_differences(cls, differences: Iterable[HierarchyDifference], path_separator: str = '|') -> 'HierarchyDiff'` *(class)* — Build a diff container from analyzer difference records.
   - `HierarchyDiff.is_valid(self) -> bool` — Check if hierarchy has no significant differences.
   - `HierarchyDiff.has_differences(self) -> bool` — Check if any differences exist (including extra items).
   - `HierarchyDiff.total_issues(self) -> int` — Get total count of all issues.
-  - `HierarchyDiff.as_dict(self) -> Dict[str, List[str]]` — Convert to dictionary representation.
+  - `HierarchyDiff.as_dict(self) -> Dict[str, Any]` — Convert to dictionary representation.
   - `HierarchyDiff.as_json(self, indent: Optional[int] = 2) -> str` — Convert to JSON string.
   - `HierarchyDiff.save_to_file(self, filepath: str, indent: Optional[int] = 2) -> None` — Save diff result to JSON file.
   - `HierarchyDiff.load_from_file(cls, filepath: str) -> 'HierarchyDiff'` *(class)* — Load diff result from JSON file.
@@ -737,46 +750,67 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
 <a id="core_utils--hierarchy_utils--hierarchy_indexer"></a>
 ### `core_utils/hierarchy_utils/hierarchy_indexer.py`
 
-- **[`class HierarchyIndexer`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_indexer.py#L6)** — Generic utilities for building and querying tree indices.
-  - `HierarchyIndexer.build_path_index(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[str, List[Any]]` *(static)* — Build an index mapping cleaned paths to items.
+- **[`class HierarchyIndexer`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_indexer.py#L8)** — Generic utilities for building and querying tree indices.
+  - `HierarchyIndexer.build_path_index(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[str, List[Any]]` *(static)* — Build an index mapping normalized paths to items.
   - `HierarchyIndexer.find_by_path(index: Dict[str, List[Any]], target_path: str, clean_namespaces: bool = True, path_separator: str = '|', namespace_separator: str = ':') -> List[Any]` *(static)* — Find items in index by path.
   - `HierarchyIndexer.find_by_tail_path(index: Dict[str, List[Any]], target_tail: str, num_components: int = 2, path_separator: str = '|') -> List[Any]` *(static)* — Find items by matching the tail portion of their paths.
-  - `HierarchyIndexer.get_path_components_index(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|') -> Dict[str, List[Any]]` *(static)* — Build an index mapping individual path components to items.
+  - `HierarchyIndexer.get_path_components_index(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|', namespace_separator: str = ':') -> Dict[str, List[Any]]` *(static)* — Build an index mapping individual path components to items.
   - `HierarchyIndexer.get_depth_index(items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|') -> Dict[int, List[Any]]` *(static)* — Build an index mapping path depths to items.
 
 <a id="core_utils--hierarchy_utils--hierarchy_matching"></a>
 ### `core_utils/hierarchy_utils/hierarchy_matching.py`
 
-- **[`class HierarchyMatching`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_matching.py#L7)** — Generic matching strategies for hierarchical data.
+- **[`class HierarchyMatching`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_matching.py#L14)** — Generic matching strategies for hierarchical data.
   - `HierarchyMatching.exact_path_match(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[Any, List[Any]]` *(static)* — Find exact path matches between source and target items.
   - `HierarchyMatching.tail_path_match(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], num_components: int = 2, path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':') -> Dict[Any, List[Any]]` *(static)* — Find matches by comparing tail portions of paths.
   - `HierarchyMatching.fuzzy_name_match(source_items: List[Any], target_items: List[Any], get_name_func: Callable[[Any], str], similarity_threshold: float = 0.8) -> Dict[Any, List[Any]]` *(static)* — Find matches using fuzzy string matching on names.
-  - `HierarchyMatching.multi_strategy_match(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], get_name_func: Optional[Callable[[Any], str]] = None, strategies: List[str] = None, path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':', fuzzy_threshold: float = 0.8) -> Dict[Any, List[Any]]` *(static)* — Apply multiple matching strategies in order of preference.
+  - `HierarchyMatching.multi_strategy_match(source_items: List[Any], target_items: List[Any], get_path_func: Callable[[Any], str], get_name_func: Optional[Callable[[Any], str]] = None, strategies: Optional[List[Union[str, MatchStrategy]]] = None, path_separator: str = '|', clean_namespaces: bool = True, namespace_separator: str = ':', fuzzy_threshold: float = 0.8, tail_components: int = 2) -> Dict[Any, List[Any]]` *(static)* — Apply multiple matching strategies in order of preference.
+
+<a id="core_utils--hierarchy_utils--hierarchy_path"></a>
+### `core_utils/hierarchy_utils/hierarchy_path.py`
+
+Pure string primitives for delimited hierarchy paths.
+
+- **[`class HierarchyPath`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_path.py#L25)** — Namespace for pure hierarchy-path string operations.
+  - `HierarchyPath.clean_namespace(name: str, namespace_separator: str = ':') -> str` *(static)* — Remove any namespace prefix from a single component name.
+  - `HierarchyPath.split(path: str, path_separator: str = '|') -> List[str]` *(static)* — Split a hierarchy path into its components.
+  - `HierarchyPath.join(components: List[str], path_separator: str = '|') -> str` *(static)* — Join components into a hierarchy path.
+  - `HierarchyPath.strip_namespaces(path: str, path_separator: str = '|', namespace_separator: str = ':') -> str` *(static)* — Remove namespace prefixes from every component of a path.
+  - `HierarchyPath.normalize(path: str, clean_namespaces: bool = True, path_separator: str = '|', namespace_separator: str = ':') -> str` *(static)* — Normalize a path for comparison, optionally stripping namespaces.
+  - `HierarchyPath.leaf(path: str, path_separator: str = '|') -> str` *(static)* — Return the last component of a path ("" for an empty path).
+  - `HierarchyPath.root(path: str, path_separator: str = '|') -> str` *(static)* — Return the first component of a path ("" for an empty path).
+  - `HierarchyPath.parent(path: str, path_separator: str = '|') -> str` *(static)* — Return the path with its last component removed.
+  - `HierarchyPath.depth(path: str, path_separator: str = '|') -> int` *(static)* — Return the number of components in a path (0 for an empty path).
+  - `HierarchyPath.tail(path: str, num_components: int = 1, path_separator: str = '|') -> str` *(static)* — Return the last N components of a path as a path string.
+  - `HierarchyPath.ends_with(path: str, suffix: str, path_separator: str = '|') -> bool` *(static)* — Check whether a path ends with the given component suffix.
 
 <a id="core_utils--logging_mixin"></a>
 ### `core_utils/logging_mixin.py`
 
-- **[`class StripHtmlFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L14)** — Formatter that strips HTML tags from the message.
+Class-scoped logging toolkit.
+
+- **[`class StripHtmlFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L22)** — Formatter that strips HTML tags from the message.
   - `StripHtmlFormatter.format(self, record)`
-- **[`class LevelAwareFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L36)** — Formatter that dynamically selects format per-record based on log level.
+- **[`class LevelAwareFormatter(internal_logging.Formatter)`](pythontk/pythontk/core_utils/logging_mixin.py#L44)** — Formatter that dynamically selects format per-record based on log level.
   - `LevelAwareFormatter.format(self, record)`
-- **[`class LoggerExt`](pythontk/pythontk/core_utils/logging_mixin.py#L76)**
+- **[`class LoggerExt`](pythontk/pythontk/core_utils/logging_mixin.py#L84)**
   - `LoggerExt.patch(cls, logger: internal_logging.Logger) -> None` *(class)* — Patch the logger with additional methods and setup.
+  - `LoggerExt.strip_html(cls, text: str) -> str` *(class)* — Remove HTML tags from *text*, leaving the visible plain text.
   - `LoggerExt.get_color(cls, level: str) -> str` *(class)* — Get the color code for a given log level.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1290)** — A generic thread-safe logging handler that writes logs to any widget
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1354)** — A generic logging handler that writes logs to any widget supporting
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1342)** — In-memory capped ring buffer of log records.
+- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1411)** — In-memory capped ring buffer of log records.
   - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `RingBufferHandler.clear(self) -> None`
   - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1380)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1449)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1534)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1582)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -792,9 +826,11 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
 
 Helpers for hot-reloading packages and their submodules.
 
-- [`reload_package(package: ModuleRef, **kwargs) -> List[ModuleType]`](pythontk/pythontk/core_utils/module_reloader.py#L274) — Convenience wrapper around :class:`ModuleReloader`.
-- **[`class ModuleReloader`](pythontk/pythontk/core_utils/module_reloader.py#L17)** — Flexible controller for reloading packages and related modules.
-  - `ModuleReloader.reload(self, package: ModuleRef, *, include_submodules: Optional[bool] = None, dependencies_first: Optional[Iterable[ModuleRef]] = None, dependencies_last: Optional[Iterable[ModuleRef]] = None, predicate: Optional[Callable[[ModuleType], bool]] = None, before_reload: Optional[Callable[[ModuleType], None]] = None, after_reload: Optional[Callable[[ModuleType], None]] = None, import_missing: Optional[bool] = None, verbose: Optional[Union[bool, int]] = None, max_passes: Optional[int] = None, exclude_modules: Optional[Iterable[str]] = None) -> List[ModuleType]` — Reload a package and return the modules processed.
+- [`reload_package(package: ModuleRef, **kwargs) -> ReloadReport`](pythontk/pythontk/core_utils/module_reloader.py#L451) — Convenience wrapper around :class:`ModuleReloader`.
+- **[`class ReloadReport(List[ModuleType])`](pythontk/pythontk/core_utils/module_reloader.py#L19)** — List of successfully reloaded modules, with failure/skip details attached.
+  - `ReloadReport.ok(self) -> bool` *(property)* — True when no reload attempt raised.
+- **[`class ModuleReloader`](pythontk/pythontk/core_utils/module_reloader.py#L44)** — Flexible controller for reloading packages and related modules.
+  - `ModuleReloader.reload(self, package: ModuleRef, *, include_submodules: Optional[bool] = None, dependencies_first: Optional[Iterable[ModuleRef]] = None, dependencies_last: Optional[Iterable[ModuleRef]] = None, predicate: Optional[Callable[[ModuleType], bool]] = None, before_reload: Optional[Callable[[ModuleType], None]] = None, after_reload: Optional[Callable[[ModuleType], None]] = None, import_missing: Optional[bool] = None, verbose: Optional[Union[bool, int]] = None, max_passes: Optional[int] = None, exclude_modules: Optional[Iterable[str]] = None) -> ReloadReport` — Reload a package and return the modules processed.
 
 <a id="core_utils--module_resolver"></a>
 ### `core_utils/module_resolver.py`
@@ -822,13 +858,13 @@ Reusable module attribute resolver for package-style imports.
 <a id="core_utils--namedtuple_container"></a>
 ### `core_utils/namedtuple_container.py`
 
-- **[`class NamedTupleContainer(LoggingMixin)`](pythontk/pythontk/core_utils/namedtuple_container.py#L8)** — A generic container class for managing collections of named tuples.
-  - `NamedTupleContainer.extend(self, objects: Union[List[namedtuple], List[tuple], Any], **metadata) -> None` — Extend the container with new objects while handling duplicates properly.
+- **[`class NamedTupleContainer(LoggingMixin)`](pythontk/pythontk/core_utils/namedtuple_container.py#L13)** — A generic container class for managing collections of named tuples.
+  - `NamedTupleContainer.extend(self, objects: Union[List[tuple], Any], **metadata) -> None` — Extend the container with new objects while handling duplicates.
   - `NamedTupleContainer.get(self, return_field: Optional[str] = None, **conditions) -> Union[List[Any], Any, None]` — Query the named tuples based on specified conditions.
-  - `NamedTupleContainer.filter(self, predicate: Callable[[namedtuple], bool]) -> 'NamedTupleContainer'` — Filter the container based on a predicate function.
-  - `NamedTupleContainer.map(self, func: Callable[[namedtuple], namedtuple]) -> 'NamedTupleContainer'` — Apply a function to all named tuples in the container.
-  - `NamedTupleContainer.modify(self, index: int, **kwargs) -> namedtuple` — Modify a named tuple at a specific index within the container.
-  - `NamedTupleContainer.remove(self, index: int) -> namedtuple` — Remove a named tuple at a specific index within the container.
+  - `NamedTupleContainer.filter(self, predicate: Callable[[tuple], bool]) -> 'NamedTupleContainer'` — Filter the container based on a predicate function.
+  - `NamedTupleContainer.map(self, func: Callable[[tuple], tuple]) -> 'NamedTupleContainer'` — Apply a function to all named tuples in the container.
+  - `NamedTupleContainer.modify(self, index: int, **kwargs) -> tuple` — Modify a named tuple at a specific index within the container.
+  - `NamedTupleContainer.remove(self, index: int) -> tuple` — Remove a named tuple at a specific index within the container.
   - `NamedTupleContainer.clear(self) -> None` — Clear all named tuples from the container.
   - `NamedTupleContainer.to_dict_list(self) -> List[Dict[str, Any]]` — Convert all named tuples to a list of dictionaries.
   - `NamedTupleContainer.to_csv(self, filename: str, **kwargs) -> None` — Export the container to a CSV file.
@@ -860,7 +896,7 @@ Reusable module attribute resolver for package-style imports.
 <a id="core_utils--package_manager"></a>
 ### `core_utils/package_manager.py`
 
-- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L424)** — A class that encapsulates package management functionalities using pip.
+- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L423)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
 
@@ -1071,7 +1107,7 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 ### `file_utils/metadata.py`
 
 - **[`class MetadataInternal`](pythontk/pythontk/file_utils/metadata.py#L9)** — Internal utilities for handling file metadata on Windows and Linux.
-- **[`class Metadata(MetadataInternal)`](pythontk/pythontk/file_utils/metadata.py#L409)** — Public interface for metadata operations.
+- **[`class Metadata(MetadataInternal)`](pythontk/pythontk/file_utils/metadata.py#L410)** — Public interface for metadata operations.
   - `Metadata.get(cls, file_path: Any, *keys: str, mode: str = 'metadata') -> Any` *(class)* — Unified get method for metadata and tags.
   - `Metadata.set(cls, file_path: Any, mode: str = 'metadata', **kwargs) -> None` *(class)* — Unified set method for metadata and tags.
 
@@ -1105,6 +1141,26 @@ Zero-dependency USD (OpenUSD) file utilities.
 - **[`class UsdMeshWriter`](pythontk/pythontk/file_utils/usd.py#L344)** — Author a single textured mesh as a ``.usda`` text layer (no ``pxr``).
   - `UsdMeshWriter.write(cls, path: str, points: Sequence[Sequence[float]], face_vertex_counts: Sequence[int], face_vertex_indices: Sequence[int], uvs: Optional[Sequence[Sequence[float]]] = None, normals: Optional[Sequence[Sequence[float]]] = None, textures: Optional[Dict[str, str]] = None, name: str = 'Model', up_axis: str = 'Y', meters_per_unit: float = 1.0, double_sided: bool = False) -> str` *(class)* — Write the mesh to *path* as a ``.usda`` layer;
   - `UsdMeshWriter.from_obj(cls, obj_path: str) -> Dict[str, Any]` *(class)* — Parse a Wavefront OBJ (+ its MTL) into :meth:`write` kwargs.
+
+<a id="file_utils--workspace"></a>
+### `file_utils/workspace.py`
+
+Shared project-workspace model + ``workspace.mel`` codec.
+
+- [`parse_workspace_mel(source: str) -> Dict[str, str]`](pythontk/pythontk/file_utils/workspace.py#L122) — File rules from a ``workspace.mel`` — *source* is a path or the file's text.
+- [`write_workspace_mel(path: str, rules: Dict[str, str], preserve: bool = True, remove: Sequence[str] = ()) -> bool`](pythontk/pythontk/file_utils/workspace.py#L143) — Write / merge file *rules* into the ``workspace.mel`` at *path*.
+- **[`class Workspace`](pythontk/pythontk/file_utils/workspace.py#L214)** — A project workspace: root directory + named file rules.
+  - `Workspace.marker_path(self) -> str` *(property)*
+  - `Workspace.is_marked(self) -> bool` *(property)*
+  - `Workspace.load(cls, root: str) -> 'Workspace'` *(class)* — The workspace at *root* — rules parsed from its marker when present,
+  - `Workspace.save(self, create_dirs: bool = False, remove: Sequence[str] = ()) -> 'Workspace'` — Persist the rules to the marker file (merge-preserving — see
+  - `Workspace.create(cls, root: str, rules: Optional[Dict[str, str]] = None, create_dirs: bool = True) -> 'Workspace'` *(class)* — Create (or promote) *root* as a marked workspace.
+  - `Workspace.resolve(self, *rule_names: str, default: Optional[str] = None) -> Optional[str]` — Absolute directory for the first present rule;
+  - `Workspace.resolve_dir(self, rule_names: Sequence[str], conventions: Sequence[str] = (), default: Optional[str] = None) -> Optional[str]` — Semantic directory lookup: rule → first *existing* conventional
+  - `Workspace.scene_dir(self) -> str` *(property)* — Where scene files live (rule ``scene``/``mayaAscii``/``mayaBinary``,
+  - `Workspace.source_images_dir(self) -> str` *(property)* — Where textures live (rule ``sourceImages``, an existing
+  - `Workspace.find(cls, root_dir: str, recursive: bool = False, scene_exts: Sequence[str] = (), require_marker: bool = False) -> List['Workspace']` *(class)* — Workspaces under *root_dir* (the root itself included).
+  - `Workspace.find_containing(cls, path: str) -> Optional['Workspace']` *(class)* — The nearest marked workspace containing *path* (file or directory),
 
 <a id="geo_utils--pointcloud"></a>
 ### `geo_utils/pointcloud.py`
@@ -1252,7 +1308,7 @@ Background mask generation via rembg (optional dependency).
 ### `math_utils/_math_utils.py`
 
 - **[`class MathUtils(HelpMixin)`](pythontk/pythontk/math_utils/_math_utils.py#L15)**
-  - `MathUtils.eval_expression(expression: str) -> str` *(static)* — Safely evaluate a math expression string (calculator engine).
+  - `MathUtils.eval_expression(expression: str) -> str` *(static)* — Evaluate a math expression string (calculator engine).
   - `MathUtils.convert_length_unit(cls, value: float, from_unit: str, to_unit: str) -> str` *(class)* — Convert a length ``value`` between units (mm, cm, m, km, in, ft, yd, mi).
   - `MathUtils.linear_sum_assignment(cost_matrix: Sequence[Sequence[float]], maximize: bool = False) -> Tuple[List[int], List[int]]` *(static)* — Solve the linear sum assignment problem (Hungarian algorithm).
   - `MathUtils.kmeans_clustering(points: Sequence[Sequence[float]], k: int, max_iterations: int = 30, seed_indices: Optional[List[int]] = None) -> List[List[int]]` *(static)* — Perform K-Means clustering on a set of points.
@@ -1332,7 +1388,7 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 <a id="net_utils--_net_utils"></a>
 ### `net_utils/_net_utils.py`
 
-- **[`class NetUtils`](pythontk/pythontk/net_utils/_net_utils.py#L16)** — General purpose network utilities.
+- **[`class NetUtils`](pythontk/pythontk/net_utils/_net_utils.py#L11)** — General purpose network utilities.
   - `NetUtils.connect_rdp(host: str, username: str = None, password: str = None, width: int = None, height: int = None, fullscreen: bool = True, extra_settings: Dict[str, str] = None, save_credentials: bool = True)` *(static)* — Connect to a remote desktop using Windows RDP (mstsc.exe).
   - `NetUtils.is_port_open(host: str, port: int, timeout: float = 1.0) -> bool` *(static)* — Check if a TCP port is open on a host.
   - `NetUtils.is_port_bindable(port: int, host: str = '127.0.0.1') -> bool` *(static)* — Check whether a NEW server could bind a TCP port on this machine.
@@ -1448,14 +1504,15 @@ Portable hotkey-token helpers shared by the ecosystem's macro managers.
   - `VidUtils.get_frame_rate(cls, value: Union[str, float, int]) -> Union[float, str]` *(class)* — Converts between frame rate names and values.
   - `VidUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Finds FFmpeg executable path in system path or managed installs.
   - `VidUtils.get_video_frame_rate(cls, filepath: str) -> float` *(class)* — Extracts frame rate from a video file using FFmpeg.
-  - `VidUtils.compress_video(cls, input_filepath: str, output_filepath: str = None, frame_rate: Union[float, int] = None, delete_original: bool = False, **ffmpeg_options) -> Union[str, None]` *(class)* — Compresses a video file using FFmpeg.
+  - `VidUtils.get_sequence_start_number(cls, input_filepath: str) -> Optional[int]` *(class)* — Find the first frame number of a printf-style image sequence on disk.
+  - `VidUtils.compress_video(cls, input_filepath: str, output_filepath: str = None, frame_rate: Union[float, int] = None, delete_original: bool = False, start_number: Optional[int] = None, audio_filepath: Optional[str] = None, audio_offset: float = 0.0, **ffmpeg_options) -> Union[str, None]` *(class)* — Compresses a video file or image sequence using FFmpeg.
 
 <a id="vid_utils--frame_extractor"></a>
 ### `vid_utils/frame_extractor.py`
 
 Extract still frames from a video file via OpenCV.
 
-- [`extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]`](pythontk/pythontk/vid_utils/frame_extractor.py#L250) — Convenience wrapper around :meth:`FrameExtractor.extract_frames`.
+- [`extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]`](pythontk/pythontk/vid_utils/frame_extractor.py#L256) — Convenience wrapper around :meth:`FrameExtractor.extract_frames`.
 - **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L25)** — Extract frames from a video file at a configurable step interval.
   - `FrameExtractor.score_sharpness(frame) -> float` *(static)* — Variance-of-Laplacian sharpness score.
   - `FrameExtractor.extract_frames(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]` — Save every ``step``-th frame from ``video_path`` to ``output_folder``.

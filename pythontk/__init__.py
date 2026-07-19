@@ -34,6 +34,17 @@ DEFAULT_INCLUDE = {
         "obj_to_usdz",
     ],
     "file_utils.temp_artifacts": "TempArtifacts",
+    # Shared project-workspace model + workspace.mel codec (zero-dep). One
+    # project folder serves Maya (which parses the marker natively) and
+    # blendertk (whose current-workspace resolver builds on this).
+    "file_utils.workspace": [
+        "WORKSPACE_MARKER",
+        "DEFAULT_FILE_RULES",
+        "RULE_NICE_NAMES",
+        "Workspace",
+        "parse_workspace_mel",
+        "write_workspace_mel",
+    ],
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
     "math_utils.progression": "ProgressionCurves",
@@ -98,7 +109,7 @@ DEFAULT_INCLUDE = {
     # PBR texture engine — map taxonomy / preparation / packaging
     # (mayatk / blendertk material tools + extapps texture apps)
     "core_utils.engines.textures.map_factory": ["MapFactory"],
-    "core_utils.engines.textures.map_registry": "MapRegistry",
+    "core_utils.engines.textures.map_registry": ["MapRegistry", "MapType"],
     "core_utils.engines.textures.output_template": [
         "OutputSpec",
         "OutputTemplate",
@@ -123,7 +134,7 @@ DEFAULT_INCLUDE = {
     "core_utils.color": ["Color", "ColorPair", "Palette"],
     "core_utils.hierarchy_utils.hierarchy_diff": "HierarchyDiff",
     "core_utils.singleton_mixin": "SingletonMixin",
-    "core_utils.module_reloader": ["ModuleReloader", "reload_package"],
+    "core_utils.module_reloader": ["ModuleReloader", "ReloadReport", "reload_package"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
     "core_utils.app_launcher": "AppLauncher",
@@ -163,11 +174,13 @@ DEFAULT_INCLUDE = {
     "core_utils.task_factory": "TaskFactory",
     "core_utils.cli": "CLI",
     # Hierarchy utils
+    "core_utils.hierarchy_utils.hierarchy_path": "HierarchyPath",
     "core_utils.hierarchy_utils.hierarchy_indexer": "HierarchyIndexer",
     "core_utils.hierarchy_utils.hierarchy_matching": "HierarchyMatching",
     "core_utils.hierarchy_utils.hierarchy_analyzer": [
         "HierarchyDifference",
         "HierarchyAnalyzer",
+        "DifferenceType",
     ],
     "net_utils.ssh_client": "SSHClient",
     "net_utils.credentials": "Credentials",
@@ -227,7 +240,14 @@ __all__ = [
     "PackageManager",
     "ClassProperty",
     "HierarchyDiff",
+    "HierarchyPath",
+    "HierarchyIndexer",
+    "HierarchyMatching",
+    "HierarchyAnalyzer",
+    "HierarchyDifference",
+    "DifferenceType",
     "ModuleReloader",
+    "ReloadReport",
     "reload_package",
     "ExecutionMonitor",
     "CLI",

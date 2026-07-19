@@ -1,8 +1,16 @@
 # !/usr/bin/python
 # coding=utf-8
+"""Class-scoped logging toolkit.
+
+``LoggerExt`` patches stdlib loggers with custom levels (PROGRESS/SUCCESS/
+RESULT/NOTICE), HTML color presets, raw block output (boxes, groups,
+dividers, tables), a managed file tee, and a capped in-memory ring buffer.
+``LoggingMixin`` exposes one such patched logger per class.
+"""
 from __future__ import annotations
 
-import threading
+import os
+import sys
 import logging as internal_logging
 import re
 import unicodedata
@@ -23,7 +31,7 @@ class StripHtmlFormatter(internal_logging.Formatter):
             and ">" in original_msg
         ):
             # Strip tags for this formatting operation
-            record.msg = re.sub(r"<[^>]+>", "", original_msg)
+            record.msg = LoggerExt.strip_html(original_msg)
 
         # Format with stripped message
         formatted = super().format(record)
@@ -65,7 +73,7 @@ class LevelAwareFormatter(internal_logging.Formatter):
         if self._strip_html:
             original = record.msg
             if isinstance(original, str) and "<" in original and ">" in original:
-                record.msg = re.sub(r"<[^>]+>", "", original)
+                record.msg = LoggerExt.strip_html(original)
             result = super().format(record)
             record.msg = original
             return result
@@ -163,27 +171,66 @@ class LoggerExt:
         # Patch logger methods
         cls._patch_logger_methods(logger)
 
-        # Initialize log formats and formatter selector
-        logger._formatter_selector = cls._select_formatter.__get__(logger)
+        # Initialize prefix/suffix/timestamp state
         logger.set_log_prefix = cls._set_log_prefix.__get__(logger)
         logger.set_log_suffix = cls._set_log_suffix.__get__(logger)
         logger._log_prefix = ""
         logger._log_suffix = ""
         logger._log_timestamp = None  # "%H:%M:%S" example of time only
 
-        # Add property for log_timestamp that updates formatters
-        def get_log_timestamp(self):
-            return getattr(self, "_log_timestamp", None)
-
-        def set_log_timestamp(self, value):
-            self._log_timestamp = value
-            LoggerExt._update_handler_formatters(self)
-
-        logger.__class__.log_timestamp = property(get_log_timestamp, set_log_timestamp)
+        # ``log_timestamp`` property, scoped to this logger's patched class.
+        cls._install_log_timestamp_property(logger)
 
         # Add default handlers if none exist
         if not logger.handlers:
             cls._add_handler(logger, handler_type="stream")
+
+    # Per-base-class Logger subclasses carrying the ``log_timestamp``
+    # property; all patched loggers of the same base share one subclass.
+    _patched_logger_classes: dict = {}
+
+    @classmethod
+    def _install_log_timestamp_property(cls, logger: internal_logging.Logger) -> None:
+        """Give *logger* a working ``log_timestamp`` property without touching
+        the shared ``logging.Logger`` class.
+
+        The instance is reassigned to a cached per-base subclass carrying the
+        property. Installing the property on ``logger.__class__`` directly
+        (the previous approach) planted a data descriptor on the GLOBAL
+        Logger class, so assigning ``.log_timestamp`` on any foreign,
+        unpatched logger ran our setter and replaced that logger's handler
+        formatters.
+        """
+        base = type(logger)
+        if getattr(base, "_logger_ext_class", False):
+            return  # already a patched class
+        patched = cls._patched_logger_classes.get(base)
+        if patched is None:
+
+            def _get_log_timestamp(self):
+                return getattr(self, "_log_timestamp", None)
+
+            def _set_log_timestamp(self, value):
+                self._log_timestamp = value
+                LoggerExt._update_handler_formatters(self)
+
+            patched = type(
+                f"LoggerExt{base.__name__}",
+                (base,),
+                {
+                    "log_timestamp": property(
+                        _get_log_timestamp, _set_log_timestamp
+                    ),
+                    "_logger_ext_class": True,
+                },
+            )
+            cls._patched_logger_classes[base] = patched
+        try:
+            logger.__class__ = patched
+        except TypeError:
+            # Exotic Logger subclass whose layout forbids __class__
+            # reassignment — fall back to the legacy in-place property.
+            base.log_timestamp = patched.log_timestamp
 
     @staticmethod
     def _register_custom_levels() -> None:
@@ -261,6 +308,9 @@ class LoggerExt:
         substitution whenever an argument happened to match a preset or
         color name like ``"default"`` or ``"error"``.)
         """
+        if not logger.isEnabledFor(level_int):
+            return  # skip styling work for records that will be dropped
+
         preset = kwargs.pop("preset", None)
         color_level = kwargs.pop("color", None)
 
@@ -292,30 +342,6 @@ class LoggerExt:
         LoggerExt._log_custom(logger, internal_logging.CRITICAL, msg, *args, **kwargs)
 
     @staticmethod
-    def _select_formatter(
-        self, level: int, strip_html: bool = False
-    ) -> internal_logging.Formatter:
-        """Select formatter based on the log level."""
-        prefix = getattr(self, "_log_prefix", "")
-        suffix = getattr(self, "_log_suffix", "")
-        base_format = LoggerExt._get_base_format(
-            level, logger=self
-        )  # Pass self as logger here
-        format_string = base_format.replace(
-            "%(message)s", f"{prefix}%(message)s{suffix}"
-        )
-
-        formatter_cls = StripHtmlFormatter if strip_html else internal_logging.Formatter
-
-        log_timestamp = getattr(self, "_log_timestamp", None)
-        if log_timestamp:
-            format_string = "[%(asctime)s] " + format_string
-            formatter = formatter_cls(format_string, datefmt=log_timestamp)
-        else:
-            formatter = formatter_cls(format_string)
-        return formatter
-
-    @staticmethod
     def _get_base_format(level: int, logger=None) -> str:
         """Return the base format string based on the log level."""
         # Get the original format based on level
@@ -330,9 +356,8 @@ class LoggerExt:
         else:
             fmt = LoggerExt.BASE_FORMATS["default"]
 
-        # If we have a logger instance and it has _hide_logger_name set to False,
-        # strip the name from the format
-        if logger and hasattr(logger, "_hide_logger_name") and logger._hide_logger_name:
+        # Strip the logger name from the format when hidden.
+        if logger is not None and getattr(logger, "_hide_logger_name", False):
             fmt = fmt.replace("%(name)s: ", "")
 
         return fmt
@@ -342,25 +367,33 @@ class LoggerExt:
         logger: internal_logging.Logger, handler_type: str, **kwargs
     ) -> None:
         """Add a handler to the logger, skipping if an equivalent one exists."""
-        # Deduplicate: check for existing handler of same type targeting the same widget
+        # Deduplicate: check for an existing handler of the same type
+        # targeting the same widget / file / stream.
         target_widget = kwargs.get("widget")
+        target_stream = kwargs.get("stream")
         for existing in logger.handlers:
             if handler_type == "text_widget" and target_widget is not None:
                 if getattr(existing, "widget", None) is target_widget:
                     return  # already attached
             elif handler_type == "file":
-                import os
-
                 target_file = os.path.abspath(kwargs.get("filename", "logfile.log"))
                 if (
                     isinstance(existing, internal_logging.FileHandler)
                     and getattr(existing, "baseFilename", None) == target_file
                 ):
                     return
+            elif handler_type == "stream":
+                # Exact type check: FileHandler subclasses StreamHandler.
+                resolved = target_stream if target_stream is not None else sys.stderr
+                if (
+                    type(existing) is internal_logging.StreamHandler
+                    and existing.stream is resolved
+                ):
+                    return
 
         handler = None
         if handler_type == "stream":
-            handler = internal_logging.StreamHandler()
+            handler = internal_logging.StreamHandler(stream=target_stream)
         elif handler_type == "file":
             handler = internal_logging.FileHandler(
                 kwargs.get("filename", "logfile.log")
@@ -401,9 +434,17 @@ class LoggerExt:
         )
 
     @staticmethod
-    def _add_stream_handler(self, level: int = internal_logging.WARNING) -> None:
-        """Add a stream handler to the logger."""
-        LoggerExt._add_handler(self, handler_type="stream", level=level)
+    def _add_stream_handler(
+        self,
+        level: int = internal_logging.WARNING,
+        stream: Optional[object] = None,
+    ) -> None:
+        """Add a stream handler (``sys.stderr`` when *stream* is ``None``).
+
+        Deduplicated per target stream — repeat calls do not stack
+        duplicate console output.
+        """
+        LoggerExt._add_handler(self, handler_type="stream", level=level, stream=stream)
 
     @staticmethod
     def _add_text_widget_handler(
@@ -436,11 +477,8 @@ class LoggerExt:
 
     @staticmethod
     def _set_level(self, level: Union[int, str]) -> None:
-        """Set the log level and sync all handler levels."""
-        if isinstance(level, str):
-            level = internal_logging._nameToLevel.get(
-                level.upper(), internal_logging.INFO
-            )
+        """Set the log level and sync all unpinned handler levels."""
+        level = LoggerExt._coerce_level(level, default=internal_logging.INFO)
         self.internal_setLevel(level)  # Call the preserved original method
         # These loggers are built via the Logger() constructor (see the `logger`
         # property), so they are NOT in manager.loggerDict and the stdlib
@@ -450,8 +488,13 @@ class LoggerExt:
         # isEnabledFor was cached False while the level was high stays silently
         # disabled after the level is lowered again.
         self._cache.clear()
-        # Sync handler levels whenever level changes (not on every logger access)
+        # Sync handler levels whenever the level changes — except handlers
+        # whose level was explicitly pinned by the caller (a file tee or
+        # ring buffer given its own level must not start flooding when the
+        # logger is later opened up to DEBUG).
         for handler in self.handlers:
+            if getattr(handler, "_pinned_level", False):
+                continue
             handler.setLevel(level)
 
     @staticmethod
@@ -486,11 +529,16 @@ class LoggerExt:
                         and getattr(formatter, "_strip_html", False)
                     )
                     msg_to_write = (
-                        re.sub(r"<[^>]+>", "", message) if should_strip else message
+                        LoggerExt.strip_html(message) if should_strip else message
                     )
 
-                    stream.write(msg_to_write + "\n")
-                    stream.flush()
+                    # Serialize with concurrent emits on the same handler.
+                    handler.acquire()
+                    try:
+                        stream.write(msg_to_write + "\n")
+                        stream.flush()
+                    finally:
+                        handler.release()
                 except Exception as e:
                     print(f"Logging error (raw write): {e}")
             else:  # For handlers without a stream (e.g., DefaultTextLogHandler), use emit
@@ -504,9 +552,15 @@ class LoggerExt:
                         args=None,
                         exc_info=None,
                     )
-                    record.raw = True  # <-- ADD THIS
-                    handler.emit(record)
-
+                    record.raw = True
+                    # emit() is called directly (raw output bypasses level
+                    # filtering by design) — take the handler lock ourselves,
+                    # as Handler.handle() would for a normal record.
+                    handler.acquire()
+                    try:
+                        handler.emit(record)
+                    finally:
+                        handler.release()
                 except Exception as e:
                     print(f"Logging error (raw emit): {e}")
 
@@ -525,7 +579,7 @@ class LoggerExt:
 
             w = _wcwidth.wcwidth(ch)
             return max(w, 0)
-        except (ImportError, Exception):
+        except Exception:
             pass
 
         cp = ord(ch)
@@ -547,8 +601,18 @@ class LoggerExt:
             return 2
         return 1
 
-    # Regex for stripping HTML tags when measuring visible text width.
+    # Regex for stripping HTML log markup (spans, links, presets).
     _HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+    @classmethod
+    def strip_html(cls, text: str) -> str:
+        """Remove HTML tags from *text*, leaving the visible plain text.
+
+        The single strip used everywhere log markup meets a plain-text
+        sink (stream/file formatters, raw writes, buffer dumps, width
+        measurement).
+        """
+        return cls._HTML_TAG_RE.sub("", text)
 
     @staticmethod
     def _display_width(text: str) -> int:
@@ -557,7 +621,7 @@ class LoggerExt:
         HTML tags (``<span ...>``, ``<a ...>``, etc.) are stripped before
         measuring so that embedded markup does not inflate the count.
         """
-        visible = LoggerExt._HTML_TAG_RE.sub("", text)
+        visible = LoggerExt.strip_html(text)
         return sum(LoggerExt._char_width(ch) for ch in visible)
 
     @staticmethod
@@ -680,6 +744,7 @@ class LoggerExt:
 
         return lines
 
+    @staticmethod
     def _log_box(
         self,
         title: str,
@@ -906,31 +971,24 @@ class LoggerExt:
             width = 60  # fallback default
         LoggerExt._log_raw(self, char * width)
 
-    # Public API for the custom log levels (SUCCESS, RESULT, NOTICE)
+    # Public API for the custom log levels — routed through _log_custom so
+    # they accept the same ``preset=`` / ``color=`` styling kwargs as
+    # info/debug/warning/error/critical.
     @staticmethod
     def _success(self, msg: str, *args, **kwargs) -> None:
-        # Call the original log method to avoid recursion
-        internal_logging.Logger.__dict__["log"](
-            self, LoggerExt.SUCCESS, f"{msg}", *args, **kwargs
-        )
+        LoggerExt._log_custom(self, LoggerExt.SUCCESS, msg, *args, **kwargs)
 
     @staticmethod
     def _result(self, msg: str, *args, **kwargs) -> None:
-        internal_logging.Logger.__dict__["log"](
-            self, LoggerExt.RESULT, f"{msg}", *args, **kwargs
-        )
+        LoggerExt._log_custom(self, LoggerExt.RESULT, msg, *args, **kwargs)
 
     @staticmethod
     def _notice(self, msg: str, *args, **kwargs) -> None:
-        internal_logging.Logger.__dict__["log"](
-            self, LoggerExt.NOTICE, f"{msg}", *args, **kwargs
-        )
+        LoggerExt._log_custom(self, LoggerExt.NOTICE, msg, *args, **kwargs)
 
     @staticmethod
     def _progress(self, msg: str, *args, **kwargs) -> None:
-        internal_logging.Logger.__dict__["log"](
-            self, LoggerExt.PROGRESS, f"{msg}", *args, **kwargs
-        )
+        LoggerExt._log_custom(self, LoggerExt.PROGRESS, msg, *args, **kwargs)
 
     @staticmethod
     def _set_log_prefix(self, prefix: str) -> None:
@@ -960,12 +1018,7 @@ class LoggerExt:
         if isinstance(target, str):
             self.add_file_handler(filename=target, level=level)
         elif hasattr(target, "write"):
-            stream_handler = internal_logging.StreamHandler(stream=target)
-            stream_handler.setLevel(level)
-            stream_handler.setFormatter(
-                LevelAwareFormatter(logger=self, strip_html=True)
-            )
-            self.addHandler(stream_handler)
+            self.add_stream_handler(level=level, stream=target)
         elif hasattr(target, "append"):
             self.add_text_widget_handler(
                 text_widget=target, level=level, monospace=monospace
@@ -1006,8 +1059,6 @@ class LoggerExt:
             try:
                 if not stream.isatty():
                     continue
-                import os
-
                 size = os.get_terminal_size(stream.fileno())
             except (OSError, AttributeError, ValueError):
                 continue
@@ -1050,15 +1101,27 @@ class LoggerExt:
         if cache_key in error_cache:
             last_time, count = error_cache[cache_key]
 
-            # If within cache duration, increment count and skip logging
+            # Within the window: count it and suppress silently. The caller
+            # emits its own brief debug line; the accumulated count is
+            # surfaced later, on the first genuine emission after the window
+            # expires (below), not on this discarded drop path.
             if current_time - last_time < cache_duration:
                 error_cache[cache_key] = (last_time, count + 1)
-                return (
-                    False,
-                    f" (suppressed {count} similar error{'s' if count != 1 else ''})",
-                )
+                return False, ""
 
-        # Log the error and cache it
+            # Window expired: reset the entry and surface how many were
+            # suppressed since the last real emission. The first occurrence
+            # was emitted, so the suppressed total is count - 1.
+            error_cache[cache_key] = (current_time, 1)
+            suppressed = count - 1
+            if suppressed > 0:
+                return True, (
+                    f" (suppressed {suppressed} similar "
+                    f"error{'s' if suppressed != 1 else ''})"
+                )
+            return True, ""
+
+        # First time we've seen this error — log it and cache it.
         error_cache[cache_key] = (current_time, 1)
         return True, ""
 
@@ -1117,12 +1180,13 @@ class LoggerExt:
     # File tee + in-memory ring buffer (optional, off by default)
     # ------------------------------------------------------------------
     @staticmethod
-    def _coerce_level(level: Union[int, str]) -> int:
-        """Map a level name to its int; pass ints through unchanged."""
+    def _coerce_level(
+        level: Union[int, str], default: int = internal_logging.NOTSET
+    ) -> int:
+        """Map a level name to its int (*default* for unknown names);
+        pass ints through unchanged."""
         if isinstance(level, str):
-            return internal_logging._nameToLevel.get(
-                level.upper(), internal_logging.NOTSET
-            )
+            return internal_logging._nameToLevel.get(level.upper(), default)
         return level
 
     @staticmethod
@@ -1139,9 +1203,11 @@ class LoggerExt:
         default — until called there is zero file I/O.
 
         The handler defaults to ``NOTSET`` so it captures whatever passes
-        the logger's level (control verbosity with ``set_log_level``).
-        Output is plain text (HTML stripped), matching the console/file
-        formatter pipeline. Returns the handler (or ``None`` when detached).
+        the logger's level (control verbosity with ``set_log_level``). An
+        explicit *level* is pinned: later ``set_log_level`` calls do not
+        override it. Output is plain text (HTML stripped), matching the
+        console/file formatter pipeline. Returns the handler (or ``None``
+        when detached).
         """
         existing = getattr(logger, "_managed_file_handler", None)
         if existing is not None:
@@ -1154,8 +1220,10 @@ class LoggerExt:
         if filename is None:
             return None
 
+        coerced = LoggerExt._coerce_level(level)
         handler = internal_logging.FileHandler(filename)
-        handler.setLevel(LoggerExt._coerce_level(level))
+        handler.setLevel(coerced)
+        handler._pinned_level = coerced != internal_logging.NOTSET
         handler.setFormatter(LevelAwareFormatter(logger=logger, strip_html=True))
         logger.addHandler(handler)
         logger._managed_file_handler = handler
@@ -1173,19 +1241,21 @@ class LoggerExt:
         reference and rendered only on ``dump_log``), so an enabled buffer
         adds negligible hot-path cost. Oldest records drop once *capacity*
         is exceeded. Re-calling re-sizes in place, preserving the most
-        recent records. Returns the handler.
+        recent records. An explicit *level* is pinned against later
+        ``set_log_level`` syncs. Returns the handler.
         """
+        coerced = LoggerExt._coerce_level(level)
         existing = getattr(logger, "_ring_buffer_handler", None)
         if existing is not None:
             if existing.capacity != capacity:
                 existing.buffer = deque(existing.buffer, maxlen=capacity)
                 existing.capacity = capacity
-            existing.setLevel(LoggerExt._coerce_level(level))
+            existing.setLevel(coerced)
+            existing._pinned_level = coerced != internal_logging.NOTSET
             return existing
 
-        handler = RingBufferHandler(
-            capacity=capacity, level=LoggerExt._coerce_level(level)
-        )
+        handler = RingBufferHandler(capacity=capacity, level=coerced)
+        handler._pinned_level = coerced != internal_logging.NOTSET
         handler.setFormatter(LevelAwareFormatter(logger=logger, strip_html=True))
         logger.addHandler(handler)
         logger._ring_buffer_handler = handler
@@ -1288,9 +1358,17 @@ class LoggerExt:
 
 
 class DefaultTextLogHandler(internal_logging.Handler):
-    """A generic thread-safe logging handler that writes logs to any widget
-    supporting .append(str). Supports raw output, optional HTML color formatting,
+    """A generic logging handler that writes logs to any widget supporting
+    ``.append(str)``. Supports raw output, optional HTML color formatting,
     and optional monospace font styling.
+
+    Appends are synchronous on the emitting thread (serialized by the
+    handler lock, like every stdlib handler) so records arrive in order —
+    never deferred to worker threads, which would surrender delivery order
+    to the OS scheduler. GUI toolkits that require appends on their UI
+    thread should register a marshaling handler class via
+    ``set_text_handler`` instead — e.g. uitk's ``TextEditLogHandler``,
+    which posts cross-thread records through a queued Qt signal.
     """
 
     def __init__(self, widget: object, use_html: bool = True, monospace: bool = False):
@@ -1306,21 +1384,17 @@ class DefaultTextLogHandler(internal_logging.Handler):
                 msg = record.getMessage()
                 if self.monospace:
                     msg = f'<span style="font-family:monospace; white-space:pre;">{msg}</span>'
-                threading.Timer(0, self._safe_append, args=(msg,)).start()
             else:
                 msg = self.format(record)
                 if self.use_html:
                     # Check for preset in extra args
                     preset = getattr(record, "preset", None)
-                    formatted = LoggerExt.format_message_as_html(
+                    msg = LoggerExt.format_message_as_html(
                         msg, record.levelname, preset
                     )
-
                     if self.monospace:
-                        formatted = f'<span style="font-family:monospace; white-space:pre-wrap;">{formatted}</span>'
-                    threading.Timer(0, self._safe_append, args=(formatted,)).start()
-                else:
-                    threading.Timer(0, self._safe_append, args=(msg,)).start()
+                        msg = f'<span style="font-family:monospace; white-space:pre-wrap;">{msg}</span>'
+            self._safe_append(msg)
         except Exception as e:
             print(f"DefaultTextLogHandler emit error: {e}")
 
@@ -1371,7 +1445,7 @@ class RingBufferHandler(internal_logging.Handler):
         lines = []
         for record in list(self.buffer):
             if getattr(record, "raw", False):
-                lines.append(re.sub(r"<[^>]+>", "", record.getMessage()))
+                lines.append(LoggerExt.strip_html(record.getMessage()))
             else:
                 lines.append(fmt.format(record))
         return "\n".join(lines)
@@ -1390,18 +1464,23 @@ class TableMixin:
     ) -> str:
         """Formats a list of lists as an ASCII table.
 
+        Widths are measured in display columns (``LoggerExt._display_width``)
+        rather than ``len()``, so emoji/CJK cells keep the table aligned.
+
         Args:
             data: List of rows, where each row is a list of values.
             headers: List of column headers.
             title: Optional title for the table.
             col_max_width: Maximum width for any single column.
-            max_width: Maximum total table width in characters.
+            max_width: Maximum total table width in display columns.
 
         Returns:
             Formatted table string.
         """
         if not data:
             return ""
+
+        dw = LoggerExt._display_width
 
         # Ensure data matches headers
         num_cols = len(headers)
@@ -1416,10 +1495,10 @@ class TableMixin:
             processed_data.append([str(item) for item in row])
 
         # Calculate column widths
-        col_widths = [len(h) for h in headers]
+        col_widths = [dw(h) for h in headers]
         for row in processed_data:
             for i, val in enumerate(row):
-                col_widths[i] = max(col_widths[i], len(val))
+                col_widths[i] = max(col_widths[i], dw(val))
 
         # Clamp per-column widths
         col_widths = [min(w, col_max_width) for w in col_widths]
@@ -1442,39 +1521,31 @@ class TableMixin:
                 elif col_widths[i % num_cols] > 1:
                     col_widths[i % num_cols] -= 1
 
-        # Create format string
-        # e.g. "{:<20} | {:<10} | {:<10}"
-        fmt = " | ".join([f"{{:<{w}}}" for w in col_widths])
+        def clip(text: str, w: int) -> str:
+            # "..." when the column can afford it; hard-cut when shrunk to
+            # w <= 3 (``_pad`` only pads — an over-long cell would overflow
+            # the column and misalign the table).
+            ellipsis = "..." if w > 3 else ""
+            return LoggerExt._truncate(text, w, ellipsis=ellipsis)
+
+        def render_row(cells: List[str]) -> str:
+            return " | ".join(
+                LoggerExt._pad(clip(c, w), w) for c, w in zip(cells, col_widths)
+            )
 
         lines = []
 
         # Title
         if title:
             table_total = sum(col_widths) + separator_width
-            lines.append(title[:max_width] if len(title) > max_width else title)
-            lines.append("-" * min(len(title), table_total, max_width))
+            lines.append(clip(title, max_width) if dw(title) > max_width else title)
+            lines.append("-" * min(dw(title), table_total, max_width))
 
-        # Header (truncate headers to fit potentially shrunk columns)
-        trunc_headers = []
-        for i, h in enumerate(headers):
-            w = col_widths[i]
-            if len(h) > w:
-                h = h[: w - 3] + "..." if w > 3 else h[:w]
-            trunc_headers.append(h)
-        lines.append(fmt.format(*trunc_headers))
-        lines.append("-+-".join(["-" * w for w in col_widths]))
-
-        # Rows
+        # Header + separator + rows
+        lines.append(render_row(headers))
+        lines.append("-+-".join("-" * w for w in col_widths))
         for row in processed_data:
-            # Truncate values if needed
-            trunc_row = []
-            for i, val in enumerate(row):
-                w = col_widths[i]
-                if len(val) > w:
-                    val = val[: w - 3] + "..."
-                trunc_row.append(val)
-
-            lines.append(fmt.format(*trunc_row))
+            lines.append(render_row(row))
 
         return "\n".join(lines)
 
@@ -1487,6 +1558,11 @@ class TableMixin:
     ) -> None:
         """Logs a formatted table.
 
+        On a LoggerExt-patched logger the whole table goes through a single
+        ``log_raw`` record — one monospace block in widget handlers, exactly
+        like ``log_box``/``log_group`` — instead of one prefixed record per
+        line. *level* applies only on the plain-logger fallback path.
+
         Args:
             data: List of rows.
             headers: List of column headers.
@@ -1497,38 +1573,15 @@ class TableMixin:
         if not table_str:
             return
 
-        # Log each line
-        # Assumes self has a logger property or attribute
         logger = getattr(self, "logger", None)
-
-        if logger:
-            # If logger is a standard python logger
-            log_method = getattr(logger, level.lower(), logger.info)
-
-            # If using LoggerExt custom levels, handle them if passed as string
-            if hasattr(logger, "log_raw"):
-                # Use log_raw if available to avoid prefix duplication if any
-                # But log_raw might not respect level.
-                # Let's stick to standard logging for now, or check if log_raw exists.
-                pass
-
-            # For tables, we often want to print them raw without prefixes if possible,
-            # or just log them line by line.
-
-            # If the logger has a 'log_raw' method (from LoggerExt maybe?), use it?
-            # LoggerExt doesn't seem to have log_raw in the snippet I read,
-            # but SceneDiagnostics uses self.logger.log_raw.
-            # Let's check if log_raw is available.
-            if hasattr(logger, "log_raw"):
-                # We rely on format_table to include the title if provided.
-                lines = table_str.split("\n")
-                for line in lines:
-                    logger.log_raw(line)
-            else:
-                for line in table_str.split("\n"):
-                    log_method(line)
-        else:
+        if logger is None:
             print(table_str)
+        elif hasattr(logger, "log_raw"):
+            logger.log_raw(table_str)
+        else:
+            log_method = getattr(logger, level.lower(), logger.info)
+            for line in table_str.split("\n"):
+                log_method(line)
 
 
 class LoggingMixin(TableMixin):
@@ -1571,7 +1624,7 @@ class LoggingMixin(TableMixin):
     def logger(cls) -> internal_logging.Logger:
         if cls.__dict__.get("_logger") is None:
             name = f"{cls.__module__}.{cls.__qualname__}"
-            logger = internal_logging.Logger(name, internal_logging.NOTSET)  # CHANGED
+            logger = internal_logging.Logger(name, internal_logging.NOTSET)
             logger.propagate = False
             logger.parent = None
             LoggerExt.patch(logger)
@@ -1588,7 +1641,7 @@ class LoggingMixin(TableMixin):
         if cls.__dict__.get("_class_logger") is None:
             name = f"{cls.__module__}.{cls.__name__}.class"
             logger = internal_logging.getLogger(name)
-            logger.setLevel(internal_logging.NOTSET)  # CHANGED
+            logger.setLevel(internal_logging.NOTSET)
             logger.propagate = False
             LoggerExt.patch(logger)
             cls._class_logger = logger
@@ -1601,13 +1654,20 @@ class LoggingMixin(TableMixin):
 
     @classmethod
     def set_log_level(cls, level: int | str):
-        """Set log level for the class logger and its handlers."""
-        if isinstance(level, str):
-            level = getattr(internal_logging, level.upper(), internal_logging.WARNING)
+        """Set log level for the class logger and its handlers.
 
+        Delegates to the patched ``logger.setLevel`` (``LoggerExt._set_level``),
+        which resolves both standard and custom level NAMES
+        (PROGRESS/SUCCESS/RESULT/NOTICE) via ``logging._nameToLevel`` and syncs
+        every handler's level — except handlers whose level was explicitly
+        pinned (``set_log_file`` / ``enable_log_buffer`` with an explicit
+        level). The previous ``getattr(logging, name)`` lookup
+        mapped those custom names to WARNING (the ``logging`` module has no such
+        attributes — they live in ``_nameToLevel``), silently suppressing the
+        very levels the caller asked to enable. Accessing ``cls.logger`` also
+        guarantees the custom levels are registered before name resolution.
+        """
         cls.logger.setLevel(level)
-        for handler in cls.logger.handlers:
-            handler.setLevel(level)
 
     @classmethod
     def set_log_file(

@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-07-17_
+_Generated: 2026-07-18_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -60,6 +60,7 @@ _Generated: 2026-07-17_
 - `load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]`
 - `list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]`
 - `resolve_keys(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]`
+- `phase_durations(tmpl: Dict[str, Any]) -> Tuple[float, float]`
 - `compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`
 
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py` — Schema for a *behavior* template file, defined as a dataclass.
@@ -146,7 +147,7 @@ _Generated: 2026-07-17_
 
 ### `core_utils/engines/textures/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
 - `class MapFactory(LoggingMixin)`
-  - methods: register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
+  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
 
 ### `core_utils/engines/textures/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
 - `class MapConversion`
@@ -155,7 +156,7 @@ _Generated: 2026-07-17_
 
 ### `core_utils/engines/textures/map_factory/handlers.py` — Workflow handlers (Strategy pattern) for the texture MapFactory.
 - `class WorkflowHandler(ABC)`
-  - methods: can_handle, process, get_consumed_types, is_explicitly_requested
+  - methods: can_handle, process, get_consumed_types, is_explicitly_requested, packing_enabled
 - `class ORMMapHandler(WorkflowHandler)`
   - methods: can_handle, process, get_consumed_types
 - `class MRAOMapHandler(WorkflowHandler)`
@@ -175,7 +176,7 @@ _Generated: 2026-07-17_
 
 ### `core_utils/engines/textures/map_factory/processor.py` — ``TextureProcessor`` -- shared processing context for the MapFactory.
 - `class TextureProcessor`
-  - methods: get_cached_image, save_map, resolve_map, mark_used, convert_specular_to_metallic, convert_smoothness_to_roughness, convert_roughness_to_smoothness, convert_specular_to_roughness, convert_dx_to_gl, convert_gl_to_dx, convert_bump_to_normal, extract_gloss_from_spec, copy_map, unpack_metallic_smoothness, get_metallic_from_packed, get_smoothness_from_packed, get_roughness_from_packed, unpack_msao, get_metallic_from_msao, get_smoothness_from_msao, get_roughness_from_msao, get_ao_from_msao, unpack_mrao, get_metallic_from_mrao, get_roughness_from_mrao, get_smoothness_from_mrao, get_ao_from_mrao, unpack_orm, get_ao_from_orm, get_roughness_from_orm, get_smoothness_from_orm, get_metallic_from_orm, unpack_albedo_transparency, get_base_color_from_albedo_transparency, get_opacity_from_albedo_transparency, create_orm_map, create_mrao_map, create_mask_map, create_metallic_smoothness_map
+  - methods: get_cached_image, save_map, resolve_map, mark_used, resolve_smoothness_channel, resolve_roughness_channel, convert_specular_to_metallic, convert_smoothness_to_roughness, convert_roughness_to_smoothness, convert_specular_to_roughness, convert_dx_to_gl, convert_gl_to_dx, convert_bump_to_normal, extract_gloss_from_spec, copy_map, unpack_metallic_smoothness, get_metallic_from_packed, get_smoothness_from_packed, get_roughness_from_packed, unpack_msao, get_metallic_from_msao, get_smoothness_from_msao, get_roughness_from_msao, get_ao_from_msao, unpack_mrao, get_metallic_from_mrao, get_roughness_from_mrao, get_smoothness_from_mrao, get_ao_from_mrao, unpack_orm, get_ao_from_orm, get_roughness_from_orm, get_smoothness_from_orm, get_metallic_from_orm, unpack_albedo_transparency, get_base_color_from_albedo_transparency, get_opacity_from_albedo_transparency, create_orm_map, create_mrao_map, create_mask_map, create_metallic_smoothness_map
 
 ### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
 - `class Op`
@@ -186,7 +187,7 @@ _Generated: 2026-07-17_
 - `class WF`
 - `class MapType`
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
+  - methods: get, register, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`
@@ -229,7 +230,7 @@ _Generated: 2026-07-17_
 
 ### `core_utils/hierarchy_utils/hierarchy_diff.py`
 - `class HierarchyDiff`
-  - methods: is_valid, has_differences, total_issues, as_dict, as_json, save_to_file, load_from_file, clear, merge, get_summary, filter_by_pattern, add_metadata
+  - methods: from_differences, is_valid, has_differences, total_issues, as_dict, as_json, save_to_file, load_from_file, clear, merge, get_summary, filter_by_pattern, add_metadata
 
 ### `core_utils/hierarchy_utils/hierarchy_indexer.py`
 - `class HierarchyIndexer`
@@ -239,13 +240,17 @@ _Generated: 2026-07-17_
 - `class HierarchyMatching`
   - methods: exact_path_match, tail_path_match, fuzzy_name_match, multi_strategy_match
 
-### `core_utils/logging_mixin.py`
+### `core_utils/hierarchy_utils/hierarchy_path.py` — Pure string primitives for delimited hierarchy paths.
+- `class HierarchyPath`
+  - methods: clean_namespace, split, join, strip_namespaces, normalize, leaf, root, parent, depth, tail, ends_with
+
+### `core_utils/logging_mixin.py` — Class-scoped logging toolkit.
 - `class StripHtmlFormatter(internal_logging.Formatter)`
   - methods: format
 - `class LevelAwareFormatter(internal_logging.Formatter)`
   - methods: format
 - `class LoggerExt`
-  - methods: patch, get_color, register_html_preset, get_html_preset, format_message_as_html
+  - methods: patch, strip_html, get_color, register_html_preset, get_html_preset, format_message_as_html
 - `class DefaultTextLogHandler(internal_logging.Handler)`
   - methods: emit, get_color
 - `class RingBufferHandler(internal_logging.Handler)`
@@ -256,7 +261,9 @@ _Generated: 2026-07-17_
   - methods: logger, class_logger, logging, set_log_level, set_log_file, enable_log_buffer, disable_log_buffer, clear_log_buffer, dump_log
 
 ### `core_utils/module_reloader.py` — Helpers for hot-reloading packages and their submodules.
-- `reload_package(package: ModuleRef, **kwargs) -> List[ModuleType]`
+- `reload_package(package: ModuleRef, **kwargs) -> ReloadReport`
+- `class ReloadReport(List[ModuleType])`
+  - methods: ok
 - `class ModuleReloader`
   - methods: reload
 
@@ -375,6 +382,12 @@ _Generated: 2026-07-17_
 - `class UsdMeshWriter`
   - methods: write, from_obj
 
+### `file_utils/workspace.py` — Shared project-workspace model + ``workspace.mel`` codec.
+- `parse_workspace_mel(source: str) -> Dict[str, str]`
+- `write_workspace_mel(path: str, rules: Dict[str, str], preserve: bool = True, remove: Sequence[str] = ()) -> bool`
+- `class Workspace`
+  - methods: marker_path, is_marked, load, save, create, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing
+
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`
   - methods: pca_transform, nn_query, match_clouds, pca_basis, pca_eigenvalue_signature, cluster_by_distance, hash_points
@@ -463,7 +476,7 @@ _Generated: 2026-07-17_
 
 ### `vid_utils/_vid_utils.py`
 - `class VidUtils(HelpMixin)`
-  - methods: get_frame_rate, resolve_ffmpeg, get_video_frame_rate, compress_video
+  - methods: get_frame_rate, resolve_ffmpeg, get_video_frame_rate, get_sequence_start_number, compress_video
 
 ### `vid_utils/frame_extractor.py` — Extract still frames from a video file via OpenCV.
 - `extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]`

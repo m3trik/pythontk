@@ -709,6 +709,109 @@ class TestExecutionMonitor(BaseTestCase):
             mock_kill.assert_not_called()
             mock_exit.assert_not_called()
 
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+    )
+    def test_execution_monitor_dialog_rearms_per_invocation(self, mock_dialog):
+        """The long-execution dialog must show again on a later invocation.
+
+        Bug: ``_dialog_shown`` lived in the decorator-factory scope, so once
+        the dialog appeared for one call, every subsequent call of the same
+        decorated function ran dialog-less for the life of the session.
+        """
+        mock_dialog.return_value = True
+
+        @ExecutionMonitor.execution_monitor(threshold=0.1, message="Testing")
+        def monitored_func():
+            time.sleep(0.3)
+            return "done"
+
+        self.assertEqual(monitored_func(), "done")
+        first_count = mock_dialog.call_count
+        self.assertGreaterEqual(first_count, 1)
+
+        self.assertEqual(monitored_func(), "done")
+        self.assertGreater(
+            mock_dialog.call_count,
+            first_count,
+            "Dialog did not re-arm for the second invocation",
+        )
+
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
+    )
+    def test_escape_cancel_stays_active_after_callback(self, mock_is_escape):
+        """Esc must keep working after the one-shot callback has fired.
+
+        Bug: with ``interval=None`` the monitor thread exited right after the
+        first callback, taking the Esc poll with it — the documented
+        "press-and-hold Esc at any time" contract silently ended at the
+        threshold.
+        """
+        callback_fired = threading.Event()
+
+        def cb():
+            callback_fired.set()
+            return True  # keep waiting, no repeat interval
+
+        # Esc is only "pressed" after the callback has already fired.
+        mock_is_escape.side_effect = lambda: callback_fired.is_set()
+
+        @ExecutionMonitor.on_long_execution(
+            threshold=0.1, callback=cb, interval=None, allow_escape_cancel=True
+        )
+        def escape_after_callback_func():
+            try:
+                for _ in range(50):
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                return "interrupted"
+            return "finished"
+
+        self.assertEqual(escape_after_callback_func(), "interrupted")
+        self.assertTrue(callback_fired.is_set())
+
+    def test_start_heartbeat_writer_stop_joins_writer_thread(self):
+        """stop() must join the writer thread so it cannot recreate the
+        heartbeat file after cleanup deletes it."""
+        with tempfile.TemporaryDirectory() as td:
+            hb = os.path.join(td, "hb.txt")
+            stop = ExecutionMonitor._start_heartbeat_writer(hb, interval=0.05)
+            time.sleep(0.15)
+            stop()
+
+            alive = [
+                t
+                for t in threading.enumerate()
+                if t.name == "ExecutionMonitorHeartbeat" and t.is_alive()
+            ]
+            self.assertEqual(alive, [], "Heartbeat writer thread still alive")
+            self.assertFalse(os.path.exists(hb))
+
+    def test_start_spinner_process_gif_indicator(self):
+        """indicator=<gif path> launches the gif viewer with that gif."""
+        gif = os.path.join(
+            os.path.dirname(
+                sys.modules[self._EM_MOD].__file__
+            ),
+            "task_indicator.gif",
+        )
+        fake_proc = MagicMock()
+        with patch(f"{self._EM_MOD}.subprocess.Popen", return_value=fake_proc) as popen:
+            proc = ExecutionMonitor._start_spinner_process(indicator=gif)
+            self.assertIs(proc, fake_proc)
+            argv = popen.call_args[0][0]
+            self.assertTrue(argv[1].endswith("_gif_viewer.py"), argv)
+            self.assertIn(gif, argv)
+
+    def test_start_spinner_process_bad_gif_falls_back_to_spinner(self):
+        """A nonexistent gif path falls back to the canvas spinner."""
+        fake_proc = MagicMock()
+        with patch(f"{self._EM_MOD}.subprocess.Popen", return_value=fake_proc) as popen:
+            ExecutionMonitor._start_spinner_process(indicator="no_such_file.gif")
+            argv = popen.call_args[0][0]
+            self.assertTrue(argv[1].endswith("_spinner.py"), argv)
+
     def test_force_stop_retries_and_falls_back(self):
         """If PyThreadState_SetAsyncExc fails, fall back to _thread.interrupt_main."""
         with patch("ctypes.pythonapi") as mock_api:

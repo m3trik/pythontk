@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from PIL import Image
 
 # From this package:
+from pythontk.core_utils.class_property import ClassProperty
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.file_utils._file_utils import FileUtils
@@ -91,7 +92,6 @@ class MapFactory(LoggingMixin):
 
     _conversion_registry = ConversionRegistry()
     _map_registry = MapRegistry()
-    map_types = _map_registry.get_map_types()
     _workflow_handlers: List[Type[WorkflowHandler]] = [
         BaseColorHandler,
         NormalMapHandler,
@@ -103,9 +103,28 @@ class MapFactory(LoggingMixin):
         SeparateMetallicRoughnessHandler,
     ]
 
-    passthrough_maps = _map_registry.get_passthrough_maps()
-    packed_grayscale_maps = _map_registry.get_scale_as_mask_types()
-    map_fallbacks = _map_registry.get_fallbacks()
+    # Live views over the registry (not import-time snapshots) so map types
+    # added via MapRegistry.register() are honored everywhere — filename
+    # resolution, inventory building, passthrough, and mask scaling.
+    @ClassProperty
+    def map_types(cls) -> Dict[str, Tuple[str, ...]]:
+        """``{canonical_key: (canonical, *aliases)}`` for every registered map."""
+        return cls._map_registry.get_map_types()
+
+    @ClassProperty
+    def passthrough_maps(cls) -> List[str]:
+        """Maps passed through to the output when no handler consumes them."""
+        return cls._map_registry.get_passthrough_maps()
+
+    @ClassProperty
+    def packed_grayscale_maps(cls) -> List[str]:
+        """Maps that scale down by ``mask_map_scale`` (packed/mask data)."""
+        return cls._map_registry.get_scale_as_mask_types()
+
+    @ClassProperty
+    def map_fallbacks(cls) -> Dict[str, Tuple[str, ...]]:
+        """Safe input substitutes per map type (e.g. Bump -> Normal)."""
+        return cls._map_registry.get_fallbacks()
 
     # Conversion implementations
     @classmethod
@@ -456,22 +475,14 @@ class MapFactory(LoggingMixin):
             priority=8,
         )
 
-    _aliases_by_len_desc: List[str] = None
-
     @classmethod
     def _get_aliases_by_len_desc(cls) -> List[str]:
-        """Cached list of every alias across all map types, sorted longest-first.
+        """Every alias across all map types, longest-first.
 
-        Used by `resolve_map_type(key=False)`; mirrors the caching the registry
-        already does for `key=True`.
+        Used by `resolve_map_type(key=False)`. The cache lives on the registry
+        (the alias owner) so registration invalidates it with the other views.
         """
-        if cls._aliases_by_len_desc is None:
-            cls._aliases_by_len_desc = sorted(
-                {a for v in cls.map_types.values() for a in v},
-                key=len,
-                reverse=True,
-            )
-        return cls._aliases_by_len_desc
+        return cls._map_registry.get_aliases_by_len_desc()
 
     @classmethod
     def resolve_map_type(cls, file: str, key: bool = True, validate: str = None) -> str:
@@ -869,8 +880,20 @@ class MapFactory(LoggingMixin):
 
     @classmethod
     def register_handler(cls, handler_class: Type[WorkflowHandler]):
-        """Register a custom workflow handler (extensibility)."""
-        cls._workflow_handlers.insert(-2, handler_class)  # Before default handlers
+        """Register a custom workflow handler (extensibility).
+
+        Idempotent under re-registration: a handler with the same
+        module+qualname — including the *new* class object a module reload
+        produces — replaces its previous registration in place instead of
+        duplicating it in the pipeline.
+        """
+        key = (handler_class.__module__, handler_class.__qualname__)
+        for i, existing in enumerate(cls._workflow_handlers):
+            if (existing.__module__, existing.__qualname__) == key:
+                cls._workflow_handlers[i] = handler_class
+                return
+        # Before the trailing fallback/default handlers.
+        cls._workflow_handlers.insert(-2, handler_class)
 
     @classmethod
     def register_conversion(cls, conversion: MapConversion):
@@ -1477,9 +1500,10 @@ class MapFactory(LoggingMixin):
             str | None: "OpenGL", "DirectX", or None if indeterminate.
         """
         try:
-            img = ImgUtils.ensure_image(image)
-            if img.mode != "RGB":
-                img = img.convert("RGB")
+            # convert("RGB") always returns our own copy (PIL copies even when
+            # the mode already matches), so the in-place thumbnail() below never
+            # mutates a caller-supplied Image.
+            img = ImgUtils.ensure_image(image).convert("RGB")
 
             # 512x512 is plenty for statistical analysis
             if max(img.size) > 512:
@@ -1851,6 +1875,16 @@ class MapFactory(LoggingMixin):
                 f"The specified output directory '{output_dir}' is not valid."
             )
 
+        # Output filenames are derived from the specular_map path; a PIL Image
+        # has no path, so fail clearly here instead of raising an obscure
+        # TypeError from resolve_texture_filename's assert_pathlike below.
+        if not isinstance(specular_map, (str, os.PathLike)):
+            raise ValueError(
+                "convert_spec_gloss_to_pbr(write_files=True) needs a file-path "
+                "specular_map to derive output filenames; pass path inputs, or "
+                "call with write_files=False to receive Image objects."
+            )
+
         base_color_type = "Albedo" if convert_diffuse_to_albedo else "Base_Color"
         base_color_file = cls.resolve_texture_filename(
             specular_map, base_color_type, ext=output_type
@@ -2069,8 +2103,10 @@ class MapFactory(LoggingMixin):
         Parameters:
             map_type (str): The type of map to convert.
             available (dict): A dictionary of available maps.
-                Keys are map types and values are the corresponding images.
-                Example: {"Base_Color": image, "Roughness": image, ...}
+                Keys are map types and values are the corresponding source
+                file paths. The Normal_OpenGL/Normal_DirectX branches require a
+                path; the grayscale-inversion branches also accept a PIL Image.
+                Example: {"Base_Color": path, "Roughness": path, ...}
         Returns:
             Optional[Any]: The converted map or None if not available.
         """

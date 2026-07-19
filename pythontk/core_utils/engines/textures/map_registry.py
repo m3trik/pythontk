@@ -48,8 +48,8 @@ class MapType:
     name: str
     aliases: List[str]
     color_space: str = "Linear"  # "sRGB" or "Linear"
-    mode: str = "RGB"  # "RGB", "RGBA", "L"
-    default_background: Tuple[int, ...] = (0, 0, 0, 255)  # Default background color
+    mode: Optional[str] = "RGB"  # "RGB", "RGBA", "L"; None = preserve natural mode
+    default_background: Optional[Tuple[int, ...]] = (0, 0, 0, 255)  # Default background color
     is_packed: bool = False  # Is this a packed map (e.g. ORM, MSAO)?
     scale_as_mask: bool = False  # Should this map be scaled down by mask_map_scale?
     resolution_critical: bool = False  # Surface detail depends on full resolution (color, normals, emissive). Others may be downscaled as a fraction.
@@ -251,7 +251,7 @@ class MapRegistry(SingletonMixin):
             output_fallbacks=["Ambient_Occlusion", "Roughness", "Metallic"],
             replaces=["Metallic", "Ambient_Occlusion", "Roughness"],
             config_key="orm_map",
-            workflows=[WF.UE, WF.GLTF],
+            workflows=[WF.UE, WF.GLTF, WF.GODOT],
         ),
         "MSAO": MapType(
             name="MSAO",
@@ -439,7 +439,8 @@ class MapRegistry(SingletonMixin):
         ),
         "Mask": MapType(
             name="Mask",
-            aliases=["Mask"],
+            # The canonical name is always a resolution candidate; no aliases.
+            aliases=[],
             color_space="Linear",
             mode="L",
             default_background=(255, 255, 255, 255),
@@ -546,15 +547,77 @@ class MapRegistry(SingletonMixin):
         ),
     }
 
-    # Pre-computed sorted candidate list for resolve_type_from_path.
-    # Built lazily on first call and cached for the singleton's lifetime.
+    # Derived-view caches. Built lazily on first call and held until the next
+    # register() call invalidates them (see _invalidate_caches).
     _sorted_candidates: Optional[list] = None
     _resolve_cache: Optional[dict] = None
     _suffix_strip_pattern: Optional[str] = None
+    _map_types_cache: Optional[dict] = None
+    _aliases_by_len_desc: Optional[list] = None
 
     def get(self, name: str) -> Optional[MapType]:
         """Get a map type by name."""
         return self._maps.get(name)
+
+    @classmethod
+    def _invalidate_caches(cls) -> None:
+        """Reset every derived-view cache after the map table changes."""
+        cls._sorted_candidates = None
+        cls._resolve_cache = None
+        cls._suffix_strip_pattern = None
+        cls._precedence_rules = None
+        cls._map_types_cache = None
+        cls._aliases_by_len_desc = None
+
+    def register(self, map_type: MapType, overwrite: bool = False) -> MapType:
+        """Register a new map type (or replace an existing one) at runtime.
+
+        The extension point that completes the factory's plug-in story: a
+        custom :class:`MapType` registered here is picked up everywhere the
+        engine consults the taxonomy — filename resolution, base-name suffix
+        stripping, inventory building in ``MapFactory.prepare_maps``, and
+        passthrough — so custom conversions/handlers can receive inputs the
+        built-in table doesn't know about.
+
+        Registration is process-wide (the registry is a singleton backed by
+        class state) and invalidates all derived caches. Longer names/aliases
+        win over shorter ones during filename resolution, exactly as with the
+        built-in types.
+
+        Idempotent under module reload: re-registering a definition equal to
+        the current one is a no-op (dataclass value equality), so module-level
+        ``register()`` calls survive the reload cycles DCC tooling lives by.
+        A *different* definition under an existing name raises unless
+        ``overwrite`` is set, so two tools can't silently fight over a name.
+
+        Parameters:
+            map_type: The map type definition to add.
+            overwrite: Allow replacing an already-registered type of the same
+                name with a different definition.
+
+        Returns:
+            MapType: The registered definition (for chaining).
+
+        Raises:
+            TypeError: ``map_type`` is not a :class:`MapType`.
+            ValueError: A different definition is already registered under
+                this name and ``overwrite`` is False.
+        """
+        if not isinstance(map_type, MapType):
+            raise TypeError(
+                f"Expected a MapType, got {type(map_type).__name__!r}"
+            )
+        existing = self._maps.get(map_type.name)
+        if existing is not None and not overwrite:
+            if existing == map_type:
+                return existing  # no-op: identical definition, caches stay warm
+            raise ValueError(
+                f"Map type {map_type.name!r} is already registered with a "
+                "different definition. Pass overwrite=True to replace it."
+            )
+        self._maps[map_type.name] = map_type
+        self._invalidate_caches()
+        return map_type
 
     def _get_sorted_candidates(self):
         """Return the pre-computed sorted alias→map_name list."""
@@ -678,17 +741,16 @@ class MapRegistry(SingletonMixin):
             # Create preset with defaults
             preset = _WorkflowPreset(**settings)
 
-            # Check maps for this workflow
+            # Enable the flag for every map this workflow uses. config_key is
+            # the SSoT for the flag gating a packed map (e.g. MSAO ->
+            # "mask_map"); loose maps fall back to name inference.
             for m in self._maps.values():
                 if workflow_name in m.workflows:
-                    # Infer config field from map name
-                    name_lower = m.name.lower()
-                    if hasattr(preset, name_lower):
-                        setattr(preset, name_lower, True)
-                    elif hasattr(preset, f"{name_lower}_map"):
-                        setattr(preset, f"{name_lower}_map", True)
-                    elif m.name == "MSAO":
-                        setattr(preset, "mask_map", True)
+                    key = m.config_key or m.name.lower()
+                    if hasattr(preset, key):
+                        setattr(preset, key, True)
+                    elif hasattr(preset, f"{key}_map"):
+                        setattr(preset, f"{key}_map", True)
 
             presets[workflow_name] = preset.to_dict()
 
@@ -696,7 +758,26 @@ class MapRegistry(SingletonMixin):
 
     def get_map_types(self) -> Dict[str, Tuple[str, ...]]:
         """Return ``{canonical_key: (canonical, *aliases)}`` for every registered map."""
-        return {name: tuple([name] + m.aliases) for name, m in self._maps.items()}
+        if self._map_types_cache is None:
+            self.__class__._map_types_cache = {
+                name: tuple([name] + m.aliases) for name, m in self._maps.items()
+            }
+        return self._map_types_cache
+
+    def get_aliases_by_len_desc(self) -> List[str]:
+        """Every registered canonical name and alias, sorted longest-first.
+
+        Cached alongside the other derived views (and invalidated with them);
+        consumed by ``MapFactory.resolve_map_type(key=False)`` for verbatim
+        suffix matching.
+        """
+        if self._aliases_by_len_desc is None:
+            self.__class__._aliases_by_len_desc = sorted(
+                {a for v in self.get_map_types().values() for a in v},
+                key=len,
+                reverse=True,
+            )
+        return self._aliases_by_len_desc
 
     def get_fallbacks(self) -> Dict[str, Tuple[str, ...]]:
         """Generate the input fallback dictionary."""
@@ -717,7 +798,9 @@ class MapRegistry(SingletonMixin):
     def get_precedence_rules(self) -> Dict[str, List[str]]:
         """Generate the precedence rules dictionary."""
         if self._precedence_rules is None:
-            self._precedence_rules = {
+            # Write through the class: an instance attribute would shadow the
+            # class-level cache and survive _invalidate_caches().
+            self.__class__._precedence_rules = {
                 name: m.replaces for name, m in self._maps.items() if m.replaces
             }
         return self._precedence_rules
@@ -780,8 +863,11 @@ class MapRegistry(SingletonMixin):
             if preset_name and preset_name in presets:
                 cfg = presets[preset_name].copy()
 
-            # Apply overrides from dict
-            overrides = {k: v for k, v in config.items() if v is not None}
+            # Apply overrides from dict. "preset" is consumed above — it is
+            # not itself a config option and must not leak into the result.
+            overrides = {
+                k: v for k, v in config.items() if v is not None and k != "preset"
+            }
             cfg.update(overrides)
 
         # Apply kwargs overrides

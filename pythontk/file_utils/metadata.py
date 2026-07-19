@@ -100,12 +100,13 @@ class MetadataInternal:
             except ImportError:
                 return {}
 
+            abs_path = os.path.abspath(file_path)
             shell = win32com.client.Dispatch("Shell.Application")
-            folder = shell.NameSpace(os.path.dirname(file_path))
-            item = folder.ParseName(os.path.basename(file_path))
+            folder = shell.NameSpace(os.path.dirname(abs_path))
+            item = folder.ParseName(os.path.basename(abs_path)) if folder else None
 
             for key in keys:
-                metadata[key] = item.ExtendedProperty(key)
+                metadata[key] = item.ExtendedProperty(key) if item else None
 
             # Overlay sidecar metadata if available
             if cls.enable_sidecar:

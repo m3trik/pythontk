@@ -160,6 +160,38 @@ class ProgressionCurvesTest(BaseTestCase):
             result = func(0.5)
             self.assertIsInstance(result, float)
 
+    def test_ease_in_out_continuous_and_monotonic(self):
+        """Regression: ease_in_out must be continuous/monotonic (was discontinuous).
+
+        Previously the coefficient was inverted, so the midpoint snapped
+        backward: ease_in_out(0.5) returned 0.0 and ease_in_out(0.49) returned
+        0.98. With default weight_curve=1.0 the curve should reduce to identity.
+        """
+        # Midpoint no longer collapses to 0.0.
+        self.assertAlmostEqual(ProgressionCurves.ease_in_out(0.5), 0.5, places=7)
+        # Default weight_curve=1.0 => identity, so it is monotonically increasing.
+        self.assertAlmostEqual(ProgressionCurves.ease_in_out(0.49), 0.49, places=7)
+        self.assertAlmostEqual(ProgressionCurves.ease_in_out(0.51), 0.51, places=7)
+        # No backward jump across the midpoint.
+        samples = [ProgressionCurves.ease_in_out(i / 100.0) for i in range(101)]
+        for prev, curr in zip(samples, samples[1:]):
+            self.assertLessEqual(prev, curr + 1e-9)
+        # weight_curve=2.0 (easeInOutQuad) is also continuous at the midpoint.
+        self.assertAlmostEqual(
+            ProgressionCurves.ease_in_out(0.5, weight_curve=2.0), 0.5, places=7
+        )
+
+    def test_generate_curve_samples_single_sample(self):
+        """Regression: num_samples=1 must not raise ZeroDivisionError."""
+        samples = ProgressionCurves.generate_curve_samples("linear", num_samples=1)
+        self.assertEqual(samples, [ProgressionCurves.linear(0.0)])
+
+    def test_generate_curve_samples_zero_samples(self):
+        """Regression: num_samples<=0 returns an empty list, no crash."""
+        self.assertEqual(
+            ProgressionCurves.generate_curve_samples("linear", num_samples=0), []
+        )
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

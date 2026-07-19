@@ -16,7 +16,7 @@ import functools
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pythontk import Codec, TemplateSet
 
@@ -226,6 +226,35 @@ def resolve_keys(
 # ---------------------------------------------------------------------------
 
 
+def phase_durations(tmpl: Dict[str, Any]) -> Tuple[float, float]:
+    """Sum a template's ``in`` / ``out`` phase durations across all attributes.
+
+    The single source of the phase-walk math shared by
+    :func:`compute_duration` and the engine's ``resolve_duration`` — an
+    object's minimum content length is ``in_total + out_total`` laid out
+    without overlap.
+
+    Parameters:
+        tmpl: A loaded behavior template dict (see :class:`BehaviorSpec`).
+
+    Returns:
+        ``(in_total, out_total)`` in frames.
+    """
+    d_in = 0.0
+    d_out = 0.0
+    for attr_def in tmpl.get("attributes", {}).values():
+        for phase in ("in", "out"):
+            block = attr_def.get(phase)
+            if not block:
+                continue
+            d = float(block.get("duration", 0) or 0)
+            if phase == "in":
+                d_in += d
+            else:
+                d_out += d
+    return d_in, d_out
+
+
 def compute_duration(
     behavior_entries: List[Dict[str, str]],
     fallback: float = 30,
@@ -326,16 +355,10 @@ def compute_duration(
                 continue
 
             has_any = True
-            for _attr_name, attr_def in tmpl.get("attributes", {}).items():
-                for phase in ("in", "out"):
-                    block = attr_def.get(phase)
-                    if block:
-                        d = block.get("duration", 0)
-                        obj_total += d
-                        if phase == "in":
-                            obj_in += d
-                        else:
-                            obj_out += d
+            d_in, d_out = phase_durations(tmpl)
+            obj_total += d_in + d_out
+            obj_in += d_in
+            obj_out += d_out
         if obj_total > max_dur:
             max_dur = obj_total
         global_max_in = max(global_max_in, obj_in)

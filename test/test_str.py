@@ -654,7 +654,7 @@ class StrTest(BaseTestCase):
         lst = ["invertVertexWeights"]
         self.assertEqual(
             StrUtils.find_str_and_format(lst, "prefix_*", "*Weights"),
-            ["prefix_Weights"],
+            ["prefix_"],
         )
         self.assertEqual(
             StrUtils.find_str_and_format(lst, "prefix_**", "*Weights"),
@@ -968,6 +968,71 @@ class StrTest(BaseTestCase):
         )
         self.assertEqual(
             StrUtils.replace_placeholders("{key:.4f}"), "{key:.4f}"
+        )
+
+    # -------------------------------------------------------------------------
+    # Regression tests (audit fixes)
+    # -------------------------------------------------------------------------
+
+    def test_insert_negative_occurrence_inserts_at_last(self):
+        """insert with a negative occurrence must locate the Nth match from the
+        right and insert there. Previously it replaced the delimiter with spaces
+        (a no-op only when the delimiter itself was a space) so any non-space
+        delimiter silently no-oped."""
+        self.assertEqual(StrUtils.insert("a.b.c.d", "X", ".", occurrence=-1), "a.b.c.Xd")
+        # -2 -> second-from-last dot (position 3), insert after it.
+        self.assertEqual(StrUtils.insert("a.b.c.d", "X", ".", occurrence=-2), "a.b.Xc.d")
+        # before=True places the insert ahead of the matched delimiter.
+        self.assertEqual(
+            StrUtils.insert("a.b.c.d", "X", ".", occurrence=-1, before=True),
+            "a.b.cX.d",
+        )
+
+    def test_insert_positive_occurrence_by_position(self):
+        """Positive occurrence is 1-based and selects the Nth match from the left."""
+        self.assertEqual(StrUtils.insert("a.b.c.d", "X", ".", occurrence=1), "a.Xb.c.d")
+        self.assertEqual(StrUtils.insert("a.b.c.d", "X", ".", occurrence=2), "a.b.Xc.d")
+        # Out-of-range occurrence returns the source unchanged.
+        self.assertEqual(StrUtils.insert("a.b.c.d", "X", ".", occurrence=9), "a.b.c.d")
+
+    def test_set_case_none_returns_string_unchanged(self):
+        """set_case(case=None) is the documented 'no transform': the string comes
+        back unchanged instead of raising TypeError from getattr(string, None)."""
+        self.assertEqual(StrUtils.set_case("fooBar", case=None), "fooBar")
+        self.assertEqual(StrUtils.set_case(["fooBar", "baz"], case=None), ["fooBar", "baz"])
+
+    def test_find_str_and_format_replace_prefix_drops_matched_prefix(self):
+        """Case-sensitive replace_prefix must drop the matched prefix, matching the
+        ignore_case branch's behavior (previously it re-embedded the old prefix)."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["oldSuffix"], to="new*", fltr="old*"),
+            ["newSuffix"],
+        )
+        # Parity with the ignore_case path on the same input.
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["oldSuffix"], to="new*", fltr="old*", ignore_case=True
+            ),
+            ["newSuffix"],
+        )
+
+    def test_get_matching_hierarchy_items_multichar_string_delimiter(self):
+        """A multi-char delimiter string (each char a delimiter) must split the
+        target the same way it splits the items; previously the target was left
+        unsplit so nothing matched."""
+        items = ["a.b.c", "a.b", "a"]
+        self.assertEqual(
+            StrUtils.get_matching_hierarchy_items(
+                items, "a.b", downstream=True, delimiters=".|"
+            ),
+            ["a.b.c"],
+        )
+        # The equivalent list form yields the same result.
+        self.assertEqual(
+            StrUtils.get_matching_hierarchy_items(
+                items, "a.b", downstream=True, delimiters=[".", "|"]
+            ),
+            ["a.b.c"],
         )
 
 

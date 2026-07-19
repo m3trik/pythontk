@@ -229,7 +229,7 @@ class FileUtils(HelpMixin):
                                       (valid: 'file'(default), 'filename', 'filepath', 'dir', 'dirpath')
             recursive (bool): When False, return the contents of the root dir only. When True, includes sub-directories.
             num_threads (int): Specifies the number of threads to use for processing directories and files.
-                           A value of 0 (default) means no multithreading, -1 means use all available cores.
+                           A value of 1 (default) or 0 means no multithreading, -1 means use all available cores.
             inc_files (str/list): Include only specific files.
             exc_files (str/list): Exclude specific files.
             inc_dirs (str/list): Include only specific child directories.
@@ -311,9 +311,9 @@ class FileUtils(HelpMixin):
 
         # Recursive mode
         def process_directory(root, dirs, files):
-            # Apply filters only if needed
-            if has_dir_filter:
-                dirs = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
+            # Dir filtering already happened in walk_pruned (which prunes the
+            # walk itself); re-filtering here would wrongly re-drop children
+            # inside an included subtree. Only files still need filtering.
             if has_file_filter:
                 files = IterUtils.filter_list(files, inc_files, exc_files)
 
@@ -332,7 +332,35 @@ class FileUtils(HelpMixin):
 
             return temp_result
 
-        if num_threads > 1:
+        def walk_pruned(base):
+            # Prune excluded/non-included dirs in-place so os.walk (topdown)
+            # never descends into them; otherwise files under a filtered
+            # subtree would still be collected.
+            #
+            # inc_dirs selects SUBTREES: once a directory matches, all of its
+            # descendants are included (only exc_dirs still applies below it).
+            # Re-applying inc at every depth silently dropped everything under
+            # a matched dir whose children didn't also match the pattern.
+            inc_roots: set = set()
+
+            def _under_inc(root):
+                r = os.path.normcase(root)
+                return any(r == p or r.startswith(p + os.sep) for p in inc_roots)
+
+            for root, dirs, files in os.walk(base, topdown=True):
+                if has_dir_filter:
+                    if inc_dirs and _under_inc(root):
+                        dirs[:] = IterUtils.filter_list(dirs, None, exc_dirs)
+                    else:
+                        dirs[:] = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
+                        if inc_dirs:
+                            for d in dirs:
+                                inc_roots.add(
+                                    os.path.normcase(os.path.join(root, d))
+                                )
+                yield root, dirs, files
+
+        if num_threads == -1 or num_threads > 1:
             import multiprocessing
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -340,13 +368,14 @@ class FileUtils(HelpMixin):
                 multiprocessing.cpu_count() if num_threads == -1 else num_threads
             )
             with ThreadPoolExecutor(max_workers=num_cores) as executor:
+                # Pass a copy of dirs so workers never touch the walker's list.
                 futures = {
-                    executor.submit(process_directory, root, dirs, files): (
+                    executor.submit(process_directory, root, list(dirs), files): (
                         root,
                         dirs,
                         files,
                     )
-                    for root, dirs, files in os.walk(path, topdown=True)
+                    for root, dirs, files in walk_pruned(path)
                 }
 
                 for future in as_completed(futures):
@@ -354,7 +383,7 @@ class FileUtils(HelpMixin):
                     for opt in options:
                         grouped_result[opt].extend(data[opt])
         else:
-            for root, dirs, files in os.walk(path, topdown=True):
+            for root, dirs, files in walk_pruned(path):
                 data = process_directory(root, dirs, files)
                 for opt in options:
                     grouped_result[opt].extend(data[opt])
@@ -931,7 +960,6 @@ class FileUtils(HelpMixin):
         from types import ModuleType
         import os
         import inspect
-        import importlib
 
         def fail_msg(obj):
             return ValueError(
@@ -961,6 +989,7 @@ class FileUtils(HelpMixin):
 
             # Attempt to get the module directly
             mod_name = clss.__module__
+            filepath = None  # ensure defined when mod_name is absent from sys.modules
 
             # If module is in sys.modules, retrieve file
             if mod_name in sys.modules:
@@ -973,40 +1002,25 @@ class FileUtils(HelpMixin):
                 if main_file:
                     filepath = main_file
 
-            # If we still don't have a filepath, scan the stack trace
+            # If we still don't have a filepath, scan the call stack for an
+            # already-loaded module that defines this class. Frame globals ARE
+            # each running module's namespace — never import or exec source
+            # files here: executing a caller's file re-runs its side effects
+            # (exec'ing pytest/__main__.py mid-test launched a nested test
+            # session).
             if not filepath:
                 for frame_record in inspect.stack():
-                    frame = frame_record[0]
-                    _filepath = inspect.getframeinfo(frame).filename
-                    mod_name = os.path.splitext(os.path.basename(_filepath))[0]
+                    frame_globals = frame_record[0].f_globals
+                    _filepath = frame_globals.get("__file__")
 
                     # Ignore interactive execution sources
-                    if (
-                        not _filepath
-                        or _filepath.startswith("<")
-                        and _filepath.endswith(">")
+                    if not _filepath or (
+                        _filepath.startswith("<") and _filepath.endswith(">")
                     ):
                         continue
 
-                    if _filepath in sys.modules:
-                        mod = sys.modules[_filepath]
-                    else:
-                        spec = importlib.util.spec_from_file_location(
-                            mod_name, _filepath
-                        )
-                        if not spec or not spec.loader:
-                            continue
-
-                        try:
-                            mod = importlib.util.module_from_spec(spec)
-                            spec.loader.exec_module(mod)
-                            sys.modules[_filepath] = mod  # Cache it for consistency
-                        except Exception:
-                            continue
-
-                    # Try to find the class in the loaded module
-                    class_members = inspect.getmembers(mod, inspect.isclass)
-                    if clss.__name__ in [cls_name for cls_name, _ in class_members]:
+                    candidate = frame_globals.get(clss.__name__)
+                    if candidate is clss or inspect.isclass(candidate):
                         filepath = _filepath
                         break
 
@@ -1260,7 +1274,7 @@ class FileUtils(HelpMixin):
             with open(file, "r", encoding="utf-8") as f:
                 dct = json.loads(f.read())
                 dct[key] = value
-        except json.decoder.JSONDecodeError:
+        except (json.decoder.JSONDecodeError, FileNotFoundError):
             dct = {}
             dct[key] = value
 

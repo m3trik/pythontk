@@ -59,7 +59,13 @@ class FrameExtractor:
 
         Returns the list of saved frame paths (empty when ``cv2`` is
         unavailable or the input can't be opened).
+
+        Raises:
+            ValueError: if ``step`` is less than 1.
         """
+        if step < 1:
+            raise ValueError("step must be >= 1")
+
         if not CV2_AVAILABLE:
             logger.error("OpenCV not available; cannot extract frames.")
             return []
