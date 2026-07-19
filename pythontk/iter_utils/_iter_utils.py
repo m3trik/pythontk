@@ -301,7 +301,11 @@ class IterUtils(HelpMixin):
             if isinstance(result, list):
                 filtered_result = IterUtils.filter_list(result, **filter_args_list)
             elif isinstance(result, dict):
-                filtered_result = IterUtils.filter_dict(result, **filter_args_dict)
+                # filter_args_dict supplies keys/values; filter_args_list supplies
+                # inc/exc/map_func/etc., which filter_dict forwards to filter_list.
+                filtered_result = IterUtils.filter_dict(
+                    result, **{**filter_args_dict, **filter_args_list}
+                )
             else:
                 raise TypeError(
                     f"Unsupported result type: {type(result)}. Only list and dict are supported."
@@ -631,9 +635,11 @@ class IterUtils(HelpMixin):
 
         if n:
             if mode == "parts":
-                n = len(lst) * -1 // n * -1  # ceil
+                # Floor at 1 so an empty list doesn't produce a zero range()
+                # step (ValueError) — mirrors the "parts+" guard below.
+                n = max(1, len(lst) * -1 // n * -1)  # ceil
             elif mode == "parts+":
-                n = len(lst) // n
+                n = max(1, len(lst) // n)  # floor divisor at 1 so short lists don't crash
             return [lst[i : i + n] for i in range(0, len(lst), n)]
 
         elif mode == "contiguous" or mode == "range":

@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-1932%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-2115%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -213,7 +213,7 @@ Beyond the data-type utilities, `core_utils` supplies the machinery the layers a
 - **`PresetStore` / `TemplateSet` / `SchemaSpec` / `UserConfig`** — Qt-free named-preset and schema-validated-template stores with built-in + user tiers; uitk's `PresetManager` is a GUI over them.
 - **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges and of mayatk's `MayaConnection`.
 - **`QcLog` / `QcGate`** — structured run logs and threshold-based acceptance gates for batch pipelines.
-- **`HierarchyAnalyzer` / `HierarchyDiff`** — compare two path hierarchies with exact / tail-path / fuzzy matching; detects *moved* items, not just added/removed, and exports a structured diff report.
+- **`HierarchyPath` / `HierarchyIndexer` / `HierarchyMatching` / `HierarchyAnalyzer` / `HierarchyDiff`** — delimited-path hierarchy toolkit: `HierarchyPath` is the single home for path-string primitives (namespace cleaning, split/join, leaf/parent/tail); indexing and exact / tail-path / fuzzy matching build on it; the analyzer detects *moved* items (deterministic best-pair assignment), and `HierarchyDiff.from_differences` turns analyzer records into a JSON-serializable diff.
 - **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in.
 
 ## Links

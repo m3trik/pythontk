@@ -308,10 +308,156 @@ class ModuleReloaderTests(BaseTestCase):
             order,
             [
                 "reloader_pkg_order.dep",
-                "reloader_pkg_order.plugin",
                 "reloader_pkg_order",
+                "reloader_pkg_order.plugin",
             ],
         )
+
+    def test_dependencies_first_precede_deeper_target_submodules(self) -> None:
+        """A shallow dependencies_first ref must not be reordered after the
+        target's deeper submodules (regression: global depth-sort)."""
+        self._make_package(
+            "reloader_helper_pkg",
+            init_body="""
+                from . import util
+            """,
+            modules={
+                "util.py": """
+                    value = "util"
+                """,
+            },
+        )
+        self._make_package(
+            "reloader_pkg_deep",
+            init_body="""
+                from .sub import mod
+            """,
+            modules={
+                "sub/__init__.py": """
+                    from . import mod
+                """,
+                "sub/mod.py": """
+                    value = "mod"
+                """,
+            },
+        )
+
+        importlib.import_module("reloader_helper_pkg.util")
+        importlib.import_module("reloader_pkg_deep.sub.mod")
+
+        order: list[str] = []
+        reloader = ModuleReloader(
+            dependencies_first=["reloader_helper_pkg"],
+            before_reload=lambda mod: order.append(mod.__name__),
+        )
+        reloader.reload("reloader_pkg_deep")
+
+        last_helper = max(
+            i for i, name in enumerate(order) if name.startswith("reloader_helper_pkg")
+        )
+        first_target = min(
+            i for i, name in enumerate(order) if name.startswith("reloader_pkg_deep")
+        )
+        self.assertLess(last_helper, first_target)
+        # Package refs in dependencies_first expand to their loaded submodules.
+        self.assertIn("reloader_helper_pkg.util", order)
+
+    def test_topological_order_puts_provider_before_consumer(self) -> None:
+        """`from .provider import thing` orders provider first even though the
+        modules share the same depth and 'consumer' walks alphabetically first."""
+        self._make_package(
+            "reloader_pkg_topo",
+            init_body="""
+                from . import provider
+                from . import consumer
+            """,
+            modules={
+                "provider.py": """
+                    def thing():
+                        return "thing"
+                """,
+                "consumer.py": """
+                    from .provider import thing
+                """,
+            },
+        )
+
+        order: list[str] = []
+        reloader = ModuleReloader(
+            before_reload=lambda mod: order.append(mod.__name__)
+        )
+        reloader.reload("reloader_pkg_topo")
+
+        self.assertLess(
+            order.index("reloader_pkg_topo.provider"),
+            order.index("reloader_pkg_topo.consumer"),
+        )
+        self.assertEqual(order[-1], "reloader_pkg_topo")
+
+    def test_module_recovering_on_second_pass_is_reported_reloaded(self) -> None:
+        """A module that fails pass 1 but reloads cleanly on pass 2 must appear
+        in the report's success list and not in ``failed``."""
+        self._make_package(
+            "reloader_pkg_flaky",
+            init_body="""
+                from . import flaky
+            """,
+            modules={
+                "flaky.py": """
+                    import builtins
+
+                    count = getattr(builtins, "_reload_probe_count", 0)
+                    builtins._reload_probe_count = count + 1
+                    if count == 1:
+                        raise RuntimeError("transient failure on first reload")
+                """,
+            },
+        )
+        import builtins
+
+        self.addCleanup(lambda: builtins.__dict__.pop("_reload_probe_count", None))
+
+        report = ModuleReloader(max_passes=2).reload("reloader_pkg_flaky")
+
+        self.assertTrue(report.ok)
+        reloaded_names = {mod.__name__ for mod in report}
+        self.assertIn("reloader_pkg_flaky.flaky", reloaded_names)
+
+    def test_reload_failure_does_not_abort_run(self) -> None:
+        """A syntax error in one edited module is reported, not raised, and
+        sibling modules still reload."""
+        self._make_package(
+            "reloader_pkg_broken",
+            init_body="""
+                from . import good
+                from . import bad
+            """,
+            modules={
+                "good.py": """
+                    value = "good-initial"
+                """,
+                "bad.py": """
+                    value = "bad-initial"
+                """,
+            },
+        )
+
+        sys.modules["reloader_pkg_broken.good"].value = "good-updated"
+        (self._tmp_path / "reloader_pkg_broken" / "bad.py").write_text(
+            "def broken(:\n", encoding="utf-8"
+        )
+        importlib.invalidate_caches()
+
+        report = ModuleReloader().reload("reloader_pkg_broken")
+
+        self.assertFalse(report.ok)
+        self.assertEqual(
+            [name for name, _ in report.failed], ["reloader_pkg_broken.bad"]
+        )
+        self.assertIsInstance(report.failed[0][1], SyntaxError)
+        reloaded_names = {mod.__name__ for mod in report}
+        self.assertIn("reloader_pkg_broken.good", reloaded_names)
+        self.assertEqual(sys.modules["reloader_pkg_broken.good"].value, "good-initial")
 
 
 if __name__ == "__main__":

@@ -203,6 +203,31 @@ class TestRpcClientWireProtocol(unittest.TestCase):
             client.invoke("foo")
         self.assertIn("MyDcc", str(ctx.exception))
 
+    def test_invoke_non_json_error_body_raises_runtimeerror(self):
+        """A non-2xx response whose body is NOT our JSON envelope (e.g. an
+        HTML/empty error page from a crashed plugin framework) must surface
+        as the documented RuntimeError -- never leak a JSONDecodeError."""
+        import io
+        import urllib.error
+
+        html = b"<html><body>500 Internal Server Error</body></html>"
+        http_error = urllib.error.HTTPError(
+            url="http://127.0.0.1:0/",
+            code=500,
+            msg="Internal Server Error",
+            hdrs=None,
+            fp=io.BytesIO(html),
+        )
+        client = RpcClient(port=_free_port(), app_label="stub")
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=http_error
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                client.invoke("scene.export")
+        msg = str(ctx.exception)
+        self.assertIn("scene.export", msg)
+        self.assertIn("500", msg)
+
 
 # ----------------------------------------------------------------------
 # RpcClient: connect() launch path

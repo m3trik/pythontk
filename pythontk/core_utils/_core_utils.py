@@ -234,18 +234,30 @@ class CoreUtils(HelpMixin):
                 or cls.__module__ == module
                 or cls.__module__.split(".")[-1] == module
             ):
-                derived_type = cls.__base__.__name__ if filter_by_base_type else cls
-                if not (
-                    derived_type in exclude
-                    and (
-                        derived_type in include
-                        if include
-                        else derived_type not in include
+                if filter_by_base_type:
+                    if cls.__base__ is None:
+                        # `object` (MRO tail) has no base to filter by; skip it
+                        # so an unmatched walk returns None per the docstring
+                        # instead of raising AttributeError.
+                        continue
+                    derived_type = cls.__base__.__name__
+                else:
+                    derived_type = cls
+                if derived_type in exclude:  # exclude takes dominance over include
+                    continue
+                if include and derived_type not in include:
+                    continue
+                if return_name:
+                    # derived_type is already a name string when filter_by_base_type.
+                    result = (
+                        derived_type
+                        if isinstance(derived_type, str)
+                        else derived_type.__name__
                     )
-                ):
-                    result = derived_type.__name__ if return_name else derived_type
-                    cache[cache_key] = result
-                    return result
+                else:
+                    result = derived_type
+                cache[cache_key] = result
+                return result
 
     CYCLEDICT = {}
 

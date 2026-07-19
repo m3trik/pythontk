@@ -280,5 +280,182 @@ class NamedTupleContainerTest(BaseTestCase):
             os.unlink(filepath)
 
 
+class NamedTupleContainerContractTest(BaseTestCase):
+    """Pins for contract bugs found in the 2026-07 improvement pass.
+
+    Each test was written red-first against the prior implementation.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.Person = namedtuple("Person", ["name", "age", "city"])
+        self.people = [
+            self.Person("Alice", 30, "New York"),
+            self.Person("Bob", 25, "London"),
+            self.Person("Charlie", 35, "Tokyo"),
+        ]
+
+    def test_init_normalizes_plain_tuples(self):
+        """Plain tuples + explicit fields must yield working field access.
+
+        This is the `Metadata._batch_get` call shape: it builds plain tuples
+        and relies on the container to make them addressable by field.
+        """
+        container = NamedTupleContainer(
+            named_tuples=[("a.txt", "/p/a.txt"), ("b.txt", "/p/b.txt")],
+            fields=["filename", "filepath"],
+        )
+        self.assertEqual(container.filename, ["a.txt", "b.txt"])
+        self.assertTrue(hasattr(container[0], "_fields"))
+        self.assertEqual(container.get(filename="b.txt", return_field="filepath"), "/p/b.txt")
+
+    def test_get_single_no_match_returns_none(self):
+        """conditions + return_field with no match returns None (as documented)."""
+        container = NamedTupleContainer(named_tuples=self.people)
+        self.assertIsNone(container.get(return_field="name", age=99))
+
+    def test_get_list_paths_return_lists(self):
+        """List-returning paths stay lists even when empty."""
+        container = NamedTupleContainer(named_tuples=self.people)
+        self.assertEqual(container.get(age=99), [])
+        self.assertEqual(container.get(return_field="name"), ["Alice", "Bob", "Charlie"])
+
+    def test_modify_rejects_namedtuple_method_names(self):
+        """Field validation must check _fields, not hasattr (count/index are methods)."""
+        container = NamedTupleContainer(named_tuples=self.people)
+        with self.assertRaises(AttributeError):
+            container.modify(0, count=1)
+
+    def test_partially_initialized_getattr_raises_attribute_error(self):
+        """__getattr__ on an instance without `fields` must not infinitely recurse."""
+        obj = NamedTupleContainer.__new__(NamedTupleContainer)
+        with self.assertRaises(AttributeError):
+            _ = obj.name
+
+    def test_copy_preserves_contents(self):
+        """Shallow copy round-trips (guards the __getattr__ special-method path)."""
+        import copy
+
+        container = NamedTupleContainer(named_tuples=self.people)
+        dup = copy.copy(container)
+        self.assertEqual(list(dup), list(container))
+        self.assertEqual(dup.fields, container.fields)
+
+    def test_extend_empty_list_is_noop(self):
+        """extend([]) must be a no-op, not a mis-dispatch into the object path."""
+        calls = []
+
+        def extender(container, objects, **metadata):
+            calls.append(objects)
+            return []
+
+        container = NamedTupleContainer(fields=["a", "b"], extender_func=extender)
+        container.extend([])
+        self.assertEqual(len(container), 0)
+        self.assertEqual(calls, [])
+
+    def test_extend_none_is_noop(self):
+        container = NamedTupleContainer(fields=["a", "b"])
+        container.extend(None)
+        self.assertEqual(len(container), 0)
+
+    def test_extend_adopts_fields_from_named_tuples(self):
+        """A field-less container adopts fields from incoming named tuples."""
+        container = NamedTupleContainer()
+        container.extend(self.people)
+        self.assertEqual(container.fields, ["name", "age", "city"])
+        self.assertEqual(container.name, ["Alice", "Bob", "Charlie"])
+        container.extend([("Diana", 28, "Paris")])  # tuple class adopted too
+        self.assertEqual(container[3].name, "Diana")
+
+    def test_extend_custom_signature_func(self):
+        """A metadata-supplied signature_func drives duplicate detection."""
+        container = NamedTupleContainer(
+            named_tuples=self.people[:1],
+            metadata={"signature_func": lambda nt: nt.name},
+        )
+        container.extend([self.Person("Alice", 99, "Nowhere")])  # same name = dup
+        self.assertEqual(len(container), 1)
+        container.extend([self.Person("Diana", 28, "Paris")])
+        self.assertEqual(len(container), 2)
+
+    def test_extend_custom_signature_func_unhashable(self):
+        """Custom signatures may be unhashable — dedup must still work."""
+        container = NamedTupleContainer(
+            named_tuples=self.people[:1],
+            metadata={"signature_func": lambda nt: [nt.name]},
+        )
+        container.extend([self.Person("Alice", 99, "Nowhere")])
+        self.assertEqual(len(container), 1)
+
+    def test_extend_dedup_with_unhashable_values(self):
+        """Duplicate detection must tolerate unhashable field values (lists/dicts)."""
+        Row = namedtuple("Row", ["name", "data"])
+        container = NamedTupleContainer(named_tuples=[Row("a", [1, 2])])
+        container.extend([Row("a", [1, 2]), Row("b", [3])])
+        self.assertEqual(len(container), 2)
+        self.assertEqual(container.name, ["a", "b"])
+
+    def test_extend_aligns_named_tuples_by_field_name(self):
+        """Same field set in a different order must align by name, not position."""
+        Swapped = namedtuple("Swapped", ["city", "name", "age"])
+        container = NamedTupleContainer(named_tuples=self.people[:1])
+        container.extend([Swapped("Paris", "Diana", 28)])
+        self.assertEqual(container[1].name, "Diana")
+        self.assertEqual(container[1].city, "Paris")
+        self.assertEqual(container[1].age, 28)
+
+    def test_fields_from_string(self):
+        """String fields split on commas/whitespace, mirroring namedtuple()."""
+        container = NamedTupleContainer(fields="name, age city")
+        self.assertEqual(container.fields, ["name", "age", "city"])
+        container.extend([("A", 1, "X")])
+        self.assertEqual(container[0].age, 1)
+
+    def test_fields_from_metadata_string(self):
+        container = NamedTupleContainer(metadata={"fields": "name age"})
+        self.assertEqual(container.fields, ["name", "age"])
+
+    def test_negative_index_modify_and_remove(self):
+        """Negative indices follow list semantics."""
+        container = NamedTupleContainer(named_tuples=list(self.people))
+        container.modify(-1, age=99)
+        self.assertEqual(container[2].age, 99)
+        removed = container.remove(-1)
+        self.assertEqual(removed.name, "Charlie")
+        self.assertEqual(len(container), 2)
+
+    def test_filter_and_map_preserve_subclass(self):
+        """filter/map must return the subclass with its extra state intact."""
+
+        class Tagged(NamedTupleContainer):
+            def __init__(self, tag, **kwargs):
+                super().__init__(**kwargs)
+                self.tag = tag
+
+        sub = Tagged("x", named_tuples=self.people)
+        filtered = sub.filter(lambda nt: nt.age > 25)
+        self.assertIsInstance(filtered, Tagged)
+        self.assertEqual(filtered.tag, "x")
+        self.assertEqual(len(filtered), 2)
+
+        mapped = sub.map(lambda nt: nt._replace(age=nt.age + 1))
+        self.assertIsInstance(mapped, Tagged)
+        self.assertEqual(mapped.tag, "x")
+        self.assertEqual(mapped[0].age, 31)
+
+    def test_filter_does_not_mutate_source(self):
+        container = NamedTupleContainer(named_tuples=self.people)
+        filtered = container.filter(lambda nt: nt.age > 25)
+        filtered.clear()
+        self.assertEqual(len(container), 3)
+
+    def test_repr_uses_subclass_name(self):
+        class Tagged(NamedTupleContainer):
+            pass
+
+        self.assertIn("Tagged", repr(Tagged(named_tuples=self.people)))
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

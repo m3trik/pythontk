@@ -134,7 +134,7 @@ class SSHClient:
 
         if use_pty or stream:
             # Transport-level session execution is better for PTY/streaming
-            return self._execute_transport(command, stream, use_pty)
+            return self._execute_transport(command, stream, use_pty, timeout)
         else:
             # Standard exec_command is simpler for capturing
             stdin, stdout, stderr = self.client.exec_command(
@@ -148,7 +148,9 @@ class SSHClient:
 
             return out_str.strip(), err_str.strip(), exit_code
 
-    def _execute_transport(self, command: str, stream: bool, use_pty: bool):
+    def _execute_transport(
+        self, command: str, stream: bool, use_pty: bool, timeout: float = None
+    ):
         """
         Low-level execution using channel transport, needed for robust PTY streaming.
         """
@@ -174,7 +176,16 @@ class SSHClient:
         stdout_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         stderr_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
+        deadline = (time.time() + timeout) if timeout is not None else None
+
         while True:
+            # A command that never exits on its own (e.g. `tail -f`) would pump
+            # forever; enforce the documented timeout as a hard deadline. Checked
+            # every iteration so a continuously-streaming command is bounded too.
+            if deadline is not None and time.time() > deadline:
+                channel.close()
+                raise socket.timeout(f"Command timed out after {timeout}s")
+
             # Reading logic
             pumped = False
             if channel.recv_ready():

@@ -24,6 +24,7 @@ from pythontk.core_utils.engines.shots.manifest.behaviors._behaviors import (  #
     load_behavior,
     list_behaviors,
     resolve_keys,
+    phase_durations,
     compute_duration,
 )
 from pythontk.core_utils.engines.shots.manifest.behaviors._spec import (  # noqa: F401
@@ -40,6 +41,7 @@ __all__ = [
     "load_behavior",
     "list_behaviors",
     "resolve_keys",
+    "phase_durations",
     "compute_duration",
     "BehaviorSpec",
     "KNOWN_VERIFY_MODES",

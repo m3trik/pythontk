@@ -258,7 +258,7 @@ class AudioUtils(HelpMixin):
         raw_out = composite.astype(np.int16).tobytes()
 
         output = os.path.normpath(output_path)
-        os.makedirs(os.path.dirname(output), exist_ok=True)
+        os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
 
         with _wave.open(output, "wb") as wf:
             wf.setnchannels(channels)

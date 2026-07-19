@@ -120,7 +120,10 @@ class ExecutionMonitor:
                     return (key_val & (1 << bit_index)) != 0
                 except Exception:
                     return False
-        except ImportError:
+        except Exception:
+            # Key-state probing is best-effort; an unexpected failure here must
+            # not propagate — it would kill the monitor thread (and with it the
+            # threshold callback), not just Esc support.
             return False
 
         return False
@@ -185,7 +188,6 @@ class ExecutionMonitor:
         """Get the current cursor position, or None if unavailable."""
         try:
             if sys.platform == "win32":
-                import ctypes
 
                 class POINT(ctypes.Structure):
                     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
@@ -198,24 +200,53 @@ class ExecutionMonitor:
         return None
 
     @staticmethod
-    def _start_spinner_process():
-        """Starts a subprocess to display a canvas-drawn spinner."""
-        try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            script_path = os.path.join(current_dir, "_spinner.py")
+    def _hidden_startupinfo():
+        """STARTUPINFO that suppresses the console window (None off Windows)."""
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            return startupinfo
+        return None
 
-            if not os.path.exists(script_path):
+    @staticmethod
+    def _helper_script_path(name):
+        """Absolute path to a helper script shipped beside this module, or None."""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
+        return path if os.path.exists(path) else None
+
+    @staticmethod
+    def _start_spinner_process(indicator=True):
+        """Starts a subprocess to display a busy indicator near the cursor.
+
+        Args:
+            indicator (bool|str): True shows the canvas-drawn spinner.
+                A string is treated as a path to an animated GIF (absolute,
+                or relative to this package — e.g. ``"task_indicator.gif"``)
+                shown via the GIF viewer; if the file is missing, falls back
+                to the canvas spinner.
+        """
+        try:
+            cmd_extra = []
+            script_path = None
+            if isinstance(indicator, str):
+                gif_path = (
+                    indicator
+                    if os.path.exists(indicator)
+                    else ExecutionMonitor._helper_script_path(indicator)
+                )
+                if gif_path:
+                    script_path = ExecutionMonitor._helper_script_path("_gif_viewer.py")
+                    cmd_extra = [gif_path]
+            if script_path is None:
+                script_path = ExecutionMonitor._helper_script_path("_spinner.py")
+                cmd_extra = []
+            if script_path is None:
                 return None
 
             executable = ExecutionMonitor._get_python_executable()
 
-            startupinfo = None
-            if sys.platform == "win32":
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-
-            cmd = [executable, script_path]
+            cmd = [executable, script_path, *cmd_extra]
             pos = ExecutionMonitor._get_cursor_pos()
             if pos:
                 # '=' form is required: on a monitor left/above the primary the
@@ -227,7 +258,7 @@ class ExecutionMonitor:
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                startupinfo=startupinfo,
+                startupinfo=ExecutionMonitor._hidden_startupinfo(),
             )
             return process
         except Exception:
@@ -242,6 +273,29 @@ class ExecutionMonitor:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 process.kill()
+
+    @staticmethod
+    def _handle_callback_result(result):
+        """Act on a monitor-callback result. Returns True to stop monitoring.
+
+        False           – interrupt the main thread (cooperative cancel).
+        "FORCE_INTERRUPT" – raise SystemExit in the main thread.
+        "FORCE_KILL"    – terminate the host process (last resort).
+        "STOP_MONITORING" – stop silently.
+        Anything else   – keep monitoring.
+        """
+        if result is False:
+            _thread.interrupt_main()
+            return True
+        elif result == "FORCE_KILL":
+            ExecutionMonitor._force_kill_process()
+            return True
+        elif result == "FORCE_INTERRUPT":
+            ExecutionMonitor._force_interrupt_main_thread()
+            return True
+        elif result == "STOP_MONITORING":
+            return True
+        return False
 
     @staticmethod
     def on_long_execution(
@@ -259,8 +313,9 @@ class ExecutionMonitor:
             interval (float|bool, optional): If True, repeats every `threshold` seconds.
                                              If float, repeats every `interval` seconds.
             allow_escape_cancel (bool): If True, holding Escape will interrupt the main thread immediately.
-            indicator (bool, optional): If True, displays a spinner overlay near the cursor.
-                                        Runs in a separate process to ensure animation during blocking tasks.
+            indicator (bool|str, optional): If True, displays a spinner overlay near the cursor.
+                                            A string is a path to an animated GIF to show instead.
+                                            Runs in a separate process to ensure animation during blocking tasks.
         """
         # If interval is True, use threshold as the interval
         repeat_interval = threshold if interval is True else interval
@@ -272,12 +327,14 @@ class ExecutionMonitor:
 
                 spinner_process = None
                 if indicator:
-                    spinner_process = ExecutionMonitor._start_spinner_process()
+                    spinner_process = ExecutionMonitor._start_spinner_process(indicator)
 
                 def wait_for_stop_or_timeout(duration):
-                    """Returns True if stopped (event set or aborted), False if timeout."""
+                    """Returns "stop" if the function finished, "abort" if Esc
+                    interrupted it (interrupt is sent once, here), or None on
+                    timeout."""
                     if not allow_escape_cancel:
-                        return stop_event.wait(duration)
+                        return "stop" if stop_event.wait(duration) else None
 
                     # Polling
                     remaining = duration
@@ -285,46 +342,31 @@ class ExecutionMonitor:
                     while remaining > 0:
                         wait_time = min(step, remaining)
                         if stop_event.wait(wait_time):
-                            return True
+                            return "stop"
                         if ExecutionMonitor.is_escape_pressed():
                             _thread.interrupt_main()
-                            return True  # Aborted
+                            return "abort"
                         remaining -= wait_time
-                    return False
+                    return None
 
                 def timer_func():
                     # Wait for the initial threshold
-                    if not wait_for_stop_or_timeout(threshold):
-                        result = callback()
-                        if result is False:
-                            _thread.interrupt_main()
-                            # If interrupt_main fails to stop the process (e.g. stuck in C extension),
-                            # we can try to raise it again after a short delay or escalate.
-                            return
-                        elif result == "FORCE_KILL":
-                            ExecutionMonitor._force_kill_process()
-                            return
-                        elif result == "FORCE_INTERRUPT":
-                            ExecutionMonitor._force_interrupt_main_thread()
-                            return
-                        elif result == "STOP_MONITORING":
-                            return
+                    if wait_for_stop_or_timeout(threshold):
+                        return  # Function finished, or Esc already fired.
 
-                        # If repeat_interval is set, keep repeating
-                        if repeat_interval:
-                            while not wait_for_stop_or_timeout(repeat_interval):
-                                result = callback()
-                                if result is False:
-                                    _thread.interrupt_main()
-                                    return
-                                elif result == "FORCE_KILL":
-                                    ExecutionMonitor._force_kill_process()
-                                    return
-                                elif result == "FORCE_INTERRUPT":
-                                    ExecutionMonitor._force_interrupt_main_thread()
-                                    return
-                                elif result == "STOP_MONITORING":
-                                    return
+                    stopped = ExecutionMonitor._handle_callback_result(callback())
+
+                    # If repeat_interval is set, keep repeating
+                    while not stopped and repeat_interval:
+                        if wait_for_stop_or_timeout(repeat_interval):
+                            return
+                        stopped = ExecutionMonitor._handle_callback_result(callback())
+
+                    # Monitoring is over, but the Esc-cancel contract lasts for
+                    # the whole execution — keep polling until the function ends.
+                    if allow_escape_cancel:
+                        while wait_for_stop_or_timeout(60.0) is None:
+                            pass
 
                 t = threading.Thread(target=timer_func)
                 t.daemon = True
@@ -341,38 +383,6 @@ class ExecutionMonitor:
             return wrapper
 
         return decorator
-
-    @staticmethod
-    def _start_dialog_process(title, message):
-        """Starts a subprocess to display a custom dialog using tkinter.
-
-        Returns:
-            subprocess.Popen: The dialog process, or None on error.
-        """
-        try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            script_path = os.path.join(current_dir, "_dialog_viewer.py")
-
-            if not os.path.exists(script_path):
-                return None
-
-            executable = ExecutionMonitor._get_python_executable()
-
-            startupinfo = None
-            if sys.platform == "win32":
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-
-            process = subprocess.Popen(
-                [executable, script_path, title, message],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                startupinfo=startupinfo,
-            )
-            return process
-        except Exception:
-            return None
 
     @staticmethod
     def show_long_execution_dialog(title, message, force_action=None):
@@ -392,8 +402,6 @@ class ExecutionMonitor:
             bool/str: True to continue waiting, False to abort,
                       ``"FORCE_INTERRUPT"`` or ``"FORCE_KILL"`` for the force action.
         """
-        import sys
-
         # Map force_action to button label and return sentinel
         if force_action == "interrupt":
             force_label = "Force Stop"
@@ -408,21 +416,17 @@ class ExecutionMonitor:
         if sys.platform == "win32":
             # Use custom tkinter dialog for better button labels
             try:
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                script_path = os.path.join(current_dir, "_dialog_viewer.py")
-
-                if os.path.exists(script_path):
+                script_path = ExecutionMonitor._helper_script_path("_dialog_viewer.py")
+                if script_path:
                     executable = ExecutionMonitor._get_python_executable()
-
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = subprocess.SW_HIDE
 
                     cmd = [executable, script_path, title, message]
                     if force_label:
                         cmd.append(force_label)
 
-                    result = subprocess.run(cmd, startupinfo=startupinfo)
+                    result = subprocess.run(
+                        cmd, startupinfo=ExecutionMonitor._hidden_startupinfo()
+                    )
 
                     # Exit codes: 0=Keep Waiting, 10=Cancel, 2=Force, 3=Closed
                     if result.returncode == 0 or result.returncode == 3:
@@ -437,8 +441,6 @@ class ExecutionMonitor:
 
             # Fallback to MessageBox if custom dialog fails
             try:
-                import ctypes
-
                 if force_label:
                     # MB_YESNOCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL | MB_TOPMOST
                     flags = 0x03 | 0x30 | 0x1000 | 0x40000
@@ -458,7 +460,7 @@ class ExecutionMonitor:
                     return False
                 if response == 2 and force_sentinel:  # IDCANCEL
                     return force_sentinel
-            except ImportError:
+            except Exception:
                 return True
 
         elif sys.platform.startswith("linux"):
@@ -578,7 +580,8 @@ class ExecutionMonitor:
             watchdog_check_interval (float): Watchdog polling interval in seconds.
             watchdog_kill_tree (bool): If True, attempt to kill child processes too.
             watchdog_heartbeat_path (str|None): Optional heartbeat file path override.
-            indicator (bool, optional): If True, displays a spinner overlay near the cursor.
+            indicator (bool|str, optional): If True, displays a spinner overlay near the cursor;
+                a string is a path to an animated GIF to show instead.
         """
 
         _dialog_shown = [False]
@@ -618,27 +621,37 @@ class ExecutionMonitor:
 
             return result
 
-        monitored = ExecutionMonitor.on_long_execution(
-            threshold,
-            callback,
-            interval=True,
-            allow_escape_cancel=allow_escape_cancel,
-            indicator=indicator,
-        )
+        def decorator(func):
+            monitored = ExecutionMonitor.on_long_execution(
+                threshold,
+                callback,
+                interval=True,
+                allow_escape_cancel=allow_escape_cancel,
+                indicator=indicator,
+            )(func)
 
-        if watchdog_timeout is None:
-            return monitored
+            if watchdog_timeout is not None:
+                # Layer the external watchdog outside the timer-based monitor.
+                monitored = ExecutionMonitor.external_watchdog(
+                    timeout=float(watchdog_timeout),
+                    message=message,
+                    heartbeat_interval=float(watchdog_heartbeat_interval),
+                    check_interval=float(watchdog_check_interval),
+                    kill_tree=bool(watchdog_kill_tree),
+                    logger=logger,
+                    heartbeat_path=watchdog_heartbeat_path,
+                )(monitored)
 
-        # Layer the external watchdog outside the timer-based monitor.
-        return ExecutionMonitor.external_watchdog(
-            timeout=float(watchdog_timeout),
-            message=message,
-            heartbeat_interval=float(watchdog_heartbeat_interval),
-            check_interval=float(watchdog_check_interval),
-            kill_tree=bool(watchdog_kill_tree),
-            logger=logger,
-            heartbeat_path=watchdog_heartbeat_path,
-        )(monitored)
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                # Re-arm the once-per-run dialog guard for THIS invocation;
+                # without this the dialog only ever showed once per session.
+                _dialog_shown[0] = False
+                return monitored(*args, **kwargs)
+
+            return wrapper
+
+        return decorator
 
     @staticmethod
     def _default_heartbeat_path(tag: str = "execution_monitor") -> str:
@@ -677,6 +690,9 @@ class ExecutionMonitor:
 
         def stop():
             stop_event.set()
+            # Join first — a still-running writer could recreate the file
+            # right after we delete it.
+            t.join(timeout=2.0)
             try:
                 # Best-effort cleanup
                 if os.path.exists(heartbeat_path):

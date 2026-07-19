@@ -1002,5 +1002,105 @@ class MathTest(BaseTestCase):
         self.assertEqual(MathUtils.convert_length_unit(1, "cm", "parsec"), "Error")
         self.assertEqual(MathUtils.convert_length_unit("abc", "cm", "m"), "Error")
 
+    def test_move_decimal_point_negative_places_exact(self):
+        # Regression: negative `places` must stay in the exact Decimal domain.
+        # Decimal(10 ** -1) captures the inexact float 0.1 -> 0.30000000000000004;
+        # Decimal(10) ** -1 is exact -> 0.3.
+        self.assertEqual(MathUtils.move_decimal_point(3, -1), 0.3)
+        self.assertEqual(MathUtils.move_decimal_point(11.05, -2), 0.1105)
+        # Positive/zero shifts remain correct.
+        self.assertEqual(MathUtils.move_decimal_point(3, 1), 30.0)
+        self.assertEqual(MathUtils.move_decimal_point(3, 0), 3.0)
+
+    # -------------------------------------------------------------------------
+    # Regression tests (fix sweep)
+    # -------------------------------------------------------------------------
+
+    def test_eval_expression_ast_escape_blocked(self):
+        # Regression: {"__builtins__": None} does not sandbox eval(); attribute
+        # access reaches the class hierarchy. The AST-whitelist evaluator must
+        # reject these while still computing legitimate arithmetic.
+        self.assertEqual(
+            MathUtils.eval_expression("(1).__class__.__base__.__subclasses__()"),
+            "Error",
+        )
+        self.assertEqual(
+            MathUtils.eval_expression(
+                "[c for c in ().__class__.__base__.__subclasses__() "
+                "if c.__name__=='catch_warnings'][0]()"
+            ),
+            "Error",
+        )
+        self.assertEqual(MathUtils.eval_expression("().__class__"), "Error")
+        self.assertEqual(MathUtils.eval_expression("[].append"), "Error")
+        # Legitimate arithmetic still evaluates through the new path.
+        self.assertEqual(MathUtils.eval_expression("sin(pi/2) + 2**3"), "9")
+        self.assertEqual(MathUtils.eval_expression("-5 + 3"), "-2")
+        self.assertEqual(MathUtils.eval_expression("7 % 3"), "1")
+        self.assertEqual(MathUtils.eval_expression("7 // 2"), "3")
+        self.assertEqual(MathUtils.eval_expression("abs(-4)"), "4")
+
+    def test_cross_product_parallel_normalize_no_zero_division(self):
+        # Regression: normalize=1 on a degenerate (parallel/collinear) cross
+        # product previously divided by a zero magnitude.
+        self.assertEqual(
+            MathUtils.cross_product((1, 0, 0), (2, 0, 0), normalize=1),
+            (0, 0, 0),
+        )
+        # Non-degenerate normalization is unchanged.
+        self.assertEqual(
+            MathUtils.cross_product((1, 2, 3), (1, 1, -1), None, 1),
+            (-0.7715167498104595, 0.6172133998483676, -0.1543033499620919),
+        )
+
+    def test_get_angle_from_two_vectors_identical_no_domain_error(self):
+        # Regression: dot/(len*len) rounds to 1.0000000000000002 for identical
+        # vectors, tripping math.acos domain error before the clamp.
+        self.assertEqual(MathUtils.get_angle_from_two_vectors((1, 1, 1), (1, 1, 1)), 0.0)
+        self.assertEqual(MathUtils.get_angle_from_two_vectors((2, 3, 4), (2, 3, 4)), 0.0)
+        self.assertAlmostEqual(
+            MathUtils.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1)),
+            1.5707963267948966,
+        )
+
+    def test_get_angle_from_three_points_collinear_no_domain_error(self):
+        # Regression: collinear rays normalize to the same unit vector, scalar
+        # rounds past 1.0, math.acos raised a domain error before the clamp.
+        self.assertEqual(
+            MathUtils.get_angle_from_three_points((2, 2, 2), (0, 0, 0), (1, 1, 1)),
+            0.0,
+        )
+        self.assertAlmostEqual(
+            MathUtils.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True),
+            45.29,
+            places=2,
+        )
+
+    def test_remap_descending_range_clamp(self):
+        # Regression: clamp with a descending target range collapsed every value
+        # to an endpoint; scalar and numpy paths must agree on the ordered range.
+        self.assertEqual(
+            MathUtils.remap(0.5, (0.0, 1.0), (255.0, 0.0), clamp=True), 127.5
+        )
+        self.assertEqual(
+            MathUtils.remap(2.0, (0.0, 1.0), (255.0, 0.0), clamp=True), 0.0
+        )
+        self.assertEqual(
+            MathUtils.remap(-1.0, (0.0, 1.0), (255.0, 0.0), clamp=True), 255.0
+        )
+        # Ascending range unaffected.
+        self.assertEqual(
+            MathUtils.remap(0.5, (0.0, 1.0), (0.0, 255.0), clamp=True), 127.5
+        )
+        try:
+            import numpy as np
+
+            out = MathUtils.remap(
+                np.array([0.0, 0.5, 2.0, -1.0]), (0.0, 1.0), (255.0, 0.0), clamp=True
+            )
+            self.assertEqual(list(out), [255.0, 127.5, 0.0, 255.0])
+        except ImportError:
+            pass
+
 if __name__ == "__main__":
     unittest.main(exit=False)

@@ -279,6 +279,48 @@ class TestNetUtils(unittest.TestCase):
         finally:
             squatter.close()
 
+    @patch("pythontk.net_utils._net_utils.subprocess.Popen")
+    @patch("pythontk.net_utils._net_utils.subprocess.run")
+    @patch("pythontk.net_utils._net_utils.tempfile.mkstemp")
+    @patch("pythontk.net_utils._net_utils.os.name", "nt")
+    def test_connect_rdp_saves_credentials_at_termsrv_target(
+        self, mock_mkstemp, mock_run, mock_popen
+    ):
+        """Regression: connect_rdp(save_credentials=True) must write the RDP
+        secret to the exact Windows target mstsc reads (TERMSRV/<host>) via
+        cmdkey. It previously routed through Credentials.set_credential, whose
+        keyring backend files the secret under the service name 'pythontk', so
+        mstsc never found it and prompted anyway -- silently defeating
+        save_credentials=True."""
+        import subprocess as _sp
+        import tempfile as _tf
+        import shutil as _sh
+
+        if not hasattr(_sp, "CREATE_NO_WINDOW"):
+            self.skipTest("subprocess.CREATE_NO_WINDOW is Windows-only")
+
+        # Redirect the generated .rdp temp file so nothing leaks into system temp.
+        tmp_dir = _tf.mkdtemp(prefix="pythontk_rdp_test_")
+        self.addCleanup(_sh.rmtree, tmp_dir, ignore_errors=True)
+        rdp_path = os.path.join(tmp_dir, "test.rdp")
+        fd = os.open(rdp_path, os.O_RDWR | os.O_CREAT)
+        mock_mkstemp.return_value = (fd, rdp_path)
+
+        NetUtils.connect_rdp(
+            "10.0.0.5", username="admin", password="p", save_credentials=True
+        )
+
+        # Exactly one credential write, and it goes through cmdkey targeting
+        # TERMSRV/<host> -- never through the keyring-first Credentials store.
+        self.assertEqual(mock_run.call_count, 1)
+        cmd = mock_run.call_args.args[0]
+        self.assertEqual(cmd[0], "cmdkey")
+        self.assertEqual(cmd[1], "/generic:TERMSRV/10.0.0.5")
+        self.assertIn("/user:admin", cmd)
+        self.assertIn("/pass:p", cmd)
+        # mstsc.exe is still launched with the generated .rdp config file.
+        mock_popen.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

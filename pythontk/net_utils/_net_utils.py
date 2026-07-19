@@ -7,11 +7,6 @@ import subprocess
 import tempfile
 from typing import Optional, Dict
 
-try:
-    from .credentials import Credentials
-except ImportError:
-    Credentials = None
-
 
 class NetUtils:
     """
@@ -47,24 +42,25 @@ class NetUtils:
         if os.name != "nt":
             raise OSError("RDP connection is only supported on Windows.")
 
-        # 1. Handle Credentials via Credentials API if available, else fallback to cmdkey
+        # 1. Save credentials at the exact Windows target mstsc reads.
         if username and password and save_credentials:
             target_name = f"TERMSRV/{host}"
 
-            if Credentials:
-                Credentials.set_credential(target_name, username, password)
-            else:
-                # Fallback if pywin32/Credentials not loaded
-                subprocess.run(
-                    [
-                        "cmdkey",
-                        "/generic:" + target_name,
-                        f"/user:{username}",
-                        f"/pass:{password}",
-                    ],
-                    check=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
+            # RDP creds must live at the exact Windows target mstsc reads
+            # (TERMSRV/{host}). The keyring-first Credentials store files them
+            # under its own service name, so mstsc never finds them and prompts
+            # anyway. Write the credential directly with cmdkey (this path is
+            # already Windows-only, guarded by os.name != "nt" above).
+            subprocess.run(
+                [
+                    "cmdkey",
+                    "/generic:" + target_name,
+                    f"/user:{username}",
+                    f"/pass:{password}",
+                ],
+                check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
 
         # 2. Build RDP configuration
         defaults = {

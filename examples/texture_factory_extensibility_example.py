@@ -2,13 +2,18 @@
 # coding=utf-8
 """Extending ``MapFactory`` without touching core code.
 
-Two extension points:
+Three extension points:
 
-1. **Workflow handlers** (``WorkflowHandler`` subclasses) — produce output
+1. **Map types** (``MapType``) — teach the taxonomy a new map so its files
+   resolve by name and enter the inventory. Registered via
+   ``MapRegistry().register``. Required whenever a custom conversion's
+   *source* type isn't built in: unresolvable files are dropped at inventory
+   build, so the conversion could never fire.
+2. **Workflow handlers** (``WorkflowHandler`` subclasses) — produce output
    maps for a target pipeline. Registered via ``MapFactory.register_handler``;
    gated by a config flag so they only run when explicitly requested
    (the factory is non-greedy by design).
-2. **Conversions** (``MapConversion``) — teach ``TextureProcessor.resolve_map``
+3. **Conversions** (``MapConversion``) — teach ``TextureProcessor.resolve_map``
    how to derive one map type from another. Registered via
    ``MapFactory.register_conversion``.
 
@@ -22,6 +27,7 @@ import os
 from typing import List, Optional
 
 from pythontk import ImgUtils
+from pythontk.core_utils.engines.textures.map_registry import MapRegistry, MapType
 from pythontk.core_utils.engines.textures.map_factory import (
     MapFactory,
     MapConversion,
@@ -84,7 +90,24 @@ MapFactory.register_handler(SubstancePackedHandler)
 
 
 # ---------------------------------------------------------------------------
-# 2. A custom conversion: derive AO from a Curvature map. Once registered,
+# 2. A custom map type: register "Curvature" so files like
+#    ``brick_Curvature.png`` resolve and enter the inventory. Without this,
+#    the conversion below could never fire through prepare_maps — unresolvable
+#    files are dropped at inventory build.
+# ---------------------------------------------------------------------------
+MapRegistry().register(
+    MapType(
+        name="Curvature",
+        aliases=["CurvatureMap", "Curv"],
+        color_space="Linear",
+        mode="L",
+        default_background=(127, 127, 127, 255),
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# 3. A custom conversion: derive AO from a Curvature map. Once registered,
 #    any handler asking resolve_map("Ambient_Occlusion") benefits from it.
 # ---------------------------------------------------------------------------
 def _curvature_to_ao(inventory, context):

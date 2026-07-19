@@ -725,6 +725,25 @@ class FileTest(BaseTestCase):
         result = FileUtils.get_json("nonexistent_key_xyz")
         self.assertIsNone(result)
 
+    def test_set_json_bootstraps_missing_file(self):
+        """Regression: set_json on a not-yet-existing file must create it.
+
+        open(file, 'r') raises FileNotFoundError (a subclass of OSError, NOT
+        json.decoder.JSONDecodeError) for an absent file, so the sole
+        JSONDecodeError except clause never caught it and set_json could not
+        bootstrap a fresh settings file. The except now also catches
+        FileNotFoundError, falling back to an empty dict and writing the file.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            json_path = os.path.join(d, "does_not_exist_yet.json")
+            self.assertFalse(os.path.exists(json_path))
+            # Should not raise; must create the file with the value.
+            FileUtils.set_json("hdr_map_visibility", True, file=json_path)
+            self.assertTrue(os.path.exists(json_path))
+            self.assertIs(
+                FileUtils.get_json("hdr_map_visibility", file=json_path), True
+            )
+
     def test_reveal_in_file_manager(self):
         """reveal_in_file_manager builds the right platform command and selects files vs folders."""
         import sys
@@ -834,6 +853,175 @@ class FileTest(BaseTestCase):
             "pythontk.file_utils._file_utils.os.path.exists", return_value=False
         ):
             self.assertIsNone(FileUtils.free_space("Z:/x/y/z.csv"))
+
+    # -------------------------------------------------------------------------
+    # get_dir_contents / get_object_path regression tests
+    # -------------------------------------------------------------------------
+
+    def test_get_dir_contents_recursive_exc_dirs_prunes_subtree(self):
+        """Regression: recursive walk must not descend into excluded dirs, so
+        files inside exc_dirs are never returned (serial and threaded)."""
+        with tempfile.TemporaryDirectory() as root:
+            keep = os.path.join(root, "keep")
+            skip = os.path.join(root, "_skip")
+            os.makedirs(keep)
+            os.makedirs(skip)
+            with open(os.path.join(keep, "a.txt"), "w") as f:
+                f.write("a")
+            with open(os.path.join(skip, "b.txt"), "w") as f:
+                f.write("b")
+            for nt in (1, 2):
+                result = FileUtils.get_dir_contents(
+                    root,
+                    "filepath",
+                    recursive=True,
+                    exc_dirs="_skip",
+                    num_threads=nt,
+                )
+                names = sorted(os.path.basename(p) for p in result)
+                self.assertEqual(names, ["a.txt"], f"num_threads={nt}")
+
+    def test_get_dir_contents_recursive_inc_dirs_includes_subtree(self):
+        """Regression: inc_dirs selects whole subtrees — a matched directory's
+        descendants are included even when their names don't match the
+        pattern. Re-applying inc at every depth silently dropped everything
+        below the matched dir (serial and threaded)."""
+        with tempfile.TemporaryDirectory() as root:
+            nested = os.path.join(root, "assets", "child")
+            other = os.path.join(root, "other")
+            os.makedirs(nested)
+            os.makedirs(other)
+            with open(os.path.join(root, "assets", "top.txt"), "w") as f:
+                f.write("t")
+            with open(os.path.join(nested, "deep.txt"), "w") as f:
+                f.write("d")
+            with open(os.path.join(other, "no.txt"), "w") as f:
+                f.write("n")
+            for nt in (1, 2):
+                result = FileUtils.get_dir_contents(
+                    root,
+                    "filepath",
+                    recursive=True,
+                    inc_dirs="assets",
+                    num_threads=nt,
+                )
+                names = sorted(os.path.basename(p) for p in result)
+                self.assertEqual(
+                    names, ["deep.txt", "top.txt"], f"num_threads={nt}"
+                )
+
+    def test_get_dir_contents_num_threads_all_cores_enters_parallel_branch(self):
+        """Regression: num_threads=-1 ('use all cores') must enter the
+        multithreaded branch (the only place cpu_count() is consulted).
+        Before the fix, -1 > 1 was False and it silently ran serially."""
+        import multiprocessing
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as root:
+            with open(os.path.join(root, "a.txt"), "w") as f:
+                f.write("a")
+            with patch.object(
+                multiprocessing, "cpu_count", wraps=multiprocessing.cpu_count
+            ) as spy:
+                result = FileUtils.get_dir_contents(
+                    root, "filepath", recursive=True, num_threads=-1
+                )
+            self.assertTrue(
+                spy.called,
+                "num_threads=-1 did not enter the parallel branch",
+            )
+            self.assertEqual(
+                sorted(os.path.basename(p) for p in result), ["a.txt"]
+            )
+
+    def test_get_object_path_module_absent_from_sys_modules_no_unbound_local(self):
+        """Regression: a class whose __module__ is absent from sys.modules
+        must not raise UnboundLocalError (filepath referenced before
+        assignment at the __main__ check); the graceful contract is a
+        ValueError. inspect.stack is stubbed empty so the unrelated stack-scan
+        fallback is bypassed and only the finding's code path is exercised."""
+        import inspect as _inspect
+        from unittest.mock import patch
+
+        absent = type(
+            "ObjPathAbsentModZZZ", (), {"__module__": "totally_absent_mod_zzz"}
+        )
+        inst = absent()
+        with patch.object(_inspect, "stack", return_value=[]):
+            try:
+                FileUtils.get_object_path(inst)
+            except UnboundLocalError:
+                self.fail(
+                    "get_object_path raised UnboundLocalError for a module "
+                    "absent from sys.modules"
+                )
+            except ValueError:
+                pass  # documented graceful failure: path could not be determined
+
+    def test_get_object_path_stack_scan_never_executes_caller_files(self):
+        """Regression: the stack-scan fallback exec'd each caller source file
+        (spec.loader.exec_module) just to check whether it defines the class —
+        re-running the file's side effects (under pytest, exec'ing
+        pytest/__main__.py launched a whole nested test session inside the
+        test). Frame globals already ARE each stack module's namespace, so an
+        unresolvable object must produce ValueError having executed nothing.
+
+        Proven in a subprocess: the driver script appends its __name__ to a
+        marker file at module level — a re-execution of the file appends a
+        second line."""
+        import subprocess
+        import sys as _sys
+
+        script = (
+            "import os\n"
+            "with open(os.environ['PTK_EXEC_MARKER'], 'a') as f:\n"
+            "    f.write(__name__ + '\\n')\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    import sys\n"
+            "    sys.path.insert(0, os.environ['PTK_ROOT'])\n"
+            "    from pythontk.file_utils._file_utils import FileUtils\n"
+            "    try:\n"
+            "        FileUtils.get_object_path(object())\n"
+            "        print('OUTCOME:no-error')\n"
+            "    except ValueError:\n"
+            "        print('OUTCOME:value-error')\n"
+        )
+
+        import pythontk
+
+        pythontk_root = os.path.dirname(
+            os.path.dirname(os.path.abspath(pythontk.__file__))
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = os.path.join(tmp, "goppath_driver.py")
+            marker_path = os.path.join(tmp, "exec_marker.txt")
+            with open(script_path, "w") as f:
+                f.write(script)
+
+            env = {
+                **os.environ,
+                "PTK_EXEC_MARKER": marker_path,
+                "PTK_ROOT": pythontk_root,
+            }
+            result = subprocess.run(
+                [_sys.executable, script_path],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("OUTCOME:value-error", result.stdout)
+            with open(marker_path) as f:
+                executions = f.read().splitlines()
+            self.assertEqual(
+                executions,
+                ["__main__"],
+                f"driver script was re-executed by get_object_path: {executions}",
+            )
 
 
 if __name__ == "__main__":

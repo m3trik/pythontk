@@ -175,6 +175,23 @@ class TestBehaviors(unittest.TestCase):
         self.assertLessEqual(keys[-1]["time"], 60.0 + 1e-6)
         self.assertEqual([k["time"] for k in keys], sorted(k["time"] for k in keys))
 
+    def test_phase_durations_sums_in_and_out_blocks(self):
+        # The shared phase-walk primitive behind compute_duration and the
+        # engine's resolve_duration: sums per-phase across all attributes.
+        tmpl = {
+            "attributes": {
+                "visibility": {"in": {"duration": 15}, "out": {"duration": 10}},
+                "scaleX": {"in": {"duration": 5}},
+            }
+        }
+        self.assertEqual(beh.phase_durations(tmpl), (20.0, 10.0))
+        self.assertEqual(beh.phase_durations({}), (0.0, 0.0))
+        # None/absent durations count as zero, not a crash.
+        self.assertEqual(
+            beh.phase_durations({"attributes": {"v": {"in": {"duration": None}}}}),
+            (0.0, 0.0),
+        )
+
     def test_compute_duration_dict_and_object_forms_agree(self):
         dict_form = beh.compute_duration([{"name": "g", "behavior": "fade_in"}])
         obj_form = beh.compute_duration([BuilderObject(name="g", behaviors=["fade_in"])])

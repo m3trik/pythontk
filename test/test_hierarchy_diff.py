@@ -13,6 +13,10 @@ import tempfile
 import unittest
 
 from pythontk.core_utils.hierarchy_utils.hierarchy_diff import HierarchyDiff
+from pythontk.core_utils.hierarchy_utils.hierarchy_analyzer import (
+    HierarchyDifference,
+    DifferenceType,
+)
 
 from conftest import BaseTestCase
 
@@ -185,6 +189,142 @@ class HierarchyDiffTest(BaseTestCase):
         """Test repr is same as str."""
         diff = HierarchyDiff()
         self.assertEqual(str(diff), repr(diff))
+
+    def test_kwargs_constructor(self):
+        """Dataclass constructor accepts fields as keywords."""
+        diff = HierarchyDiff(missing=["a"], extra=["b"], metadata={"k": "v"})
+        self.assertEqual(diff.missing, ["a"])
+        self.assertEqual(diff.extra, ["b"])
+        self.assertEqual(diff.metadata, {"k": "v"})
+
+    def test_default_lists_not_shared(self):
+        """Each instance gets its own mutable field defaults."""
+        a, b = HierarchyDiff(), HierarchyDiff()
+        a.missing.append("x")
+        self.assertEqual(b.missing, [])
+
+    def test_modified_field(self):
+        """The modified list participates in all aggregates."""
+        diff = HierarchyDiff()
+        diff.modified = ["a|b"]
+
+        self.assertFalse(diff.is_valid())
+        self.assertTrue(diff.has_differences())
+        self.assertEqual(diff.total_issues(), 1)
+        self.assertEqual(diff.get_summary()["modified"], 1)
+        self.assertEqual(diff.as_dict()["modified"], ["a|b"])
+        self.assertIn("modified=1", str(diff))
+
+        other = HierarchyDiff()
+        other.modified = ["c"]
+        diff.merge(other)
+        self.assertEqual(diff.modified, ["a|b", "c"])
+
+        diff.clear()
+        self.assertEqual(diff.modified, [])
+
+    def test_load_legacy_json_without_modified(self):
+        """Files written before the modified field load cleanly."""
+        legacy = {"missing": ["a"], "extra": [], "renamed": [], "reparented": []}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            json.dump(legacy, f)
+            filepath = f.name
+
+        try:
+            loaded = HierarchyDiff.load_from_file(filepath)
+            self.assertEqual(loaded.missing, ["a"])
+            self.assertEqual(loaded.modified, [])
+            self.assertEqual(loaded.metadata, {})
+        finally:
+            os.unlink(filepath)
+
+
+class FromDifferencesTest(BaseTestCase):
+    """Tests for the HierarchyDiff.from_differences analyzer bridge."""
+
+    def test_routes_basic_types(self):
+        records = [
+            HierarchyDifference(DifferenceType.MISSING, "a|gone"),
+            HierarchyDifference(DifferenceType.EXTRA, "a|new"),
+            HierarchyDifference(DifferenceType.MODIFIED, "a|changed"),
+        ]
+        diff = HierarchyDiff.from_differences(records)
+
+        self.assertEqual(diff.missing, ["a|gone"])
+        self.assertEqual(diff.extra, ["a|new"])
+        self.assertEqual(diff.modified, ["a|changed"])
+        self.assertEqual(diff.renamed, [])
+        self.assertEqual(diff.reparented, [])
+
+    def test_moved_same_parent_is_renamed(self):
+        moved = HierarchyDifference(
+            DifferenceType.MOVED,
+            "grp|item1",
+            {"from_path": "grp|item1", "to_path": "grp|item2", "similarity": 0.9},
+        )
+        diff = HierarchyDiff.from_differences([moved])
+
+        self.assertEqual(diff.renamed, ["grp|item1"])
+        self.assertEqual(diff.reparented, [])
+        self.assertEqual(
+            diff.fuzzy_matches,
+            [{"from": "grp|item1", "to": "grp|item2", "similarity": 0.9}],
+        )
+
+    def test_moved_different_parent_is_reparented(self):
+        moved = HierarchyDifference(
+            DifferenceType.MOVED,
+            "old|item",
+            {"from_path": "old|item", "to_path": "new|item", "similarity": 1.0},
+        )
+        diff = HierarchyDiff.from_differences([moved])
+
+        self.assertEqual(diff.reparented, ["old|item"])
+        self.assertEqual(diff.renamed, [])
+
+    def test_moved_consumes_paired_missing_and_extra(self):
+        """MISSING/EXTRA entries superseded by a move are dropped."""
+        records = [
+            HierarchyDifference(DifferenceType.MISSING, "old|item"),
+            HierarchyDifference(DifferenceType.MISSING, "old|really_gone"),
+            HierarchyDifference(DifferenceType.EXTRA, "new|item"),
+            HierarchyDifference(
+                DifferenceType.MOVED,
+                "old|item",
+                {"from_path": "old|item", "to_path": "new|item", "similarity": 1.0},
+            ),
+        ]
+        diff = HierarchyDiff.from_differences(records)
+
+        self.assertEqual(diff.missing, ["old|really_gone"])
+        self.assertEqual(diff.extra, [])
+        self.assertEqual(diff.reparented, ["old|item"])
+
+    def test_end_to_end_with_analyzer(self):
+        """Analyzer output flows into a serializable diff container."""
+        from pythontk.core_utils.hierarchy_utils.hierarchy_analyzer import (
+            HierarchyAnalyzer,
+        )
+
+        current = ["root|grpA|mesh1", "root|grpB|mesh2"]
+        reference = ["root|grpA|mesh1", "root|grpA|mesh2", "root|deleted"]
+
+        differences = HierarchyAnalyzer.analyze_hierarchy_differences(
+            current, reference, path_extractor=lambda p: p
+        )
+        differences += HierarchyAnalyzer.detect_moved_items(differences)
+
+        diff = HierarchyDiff.from_differences(differences)
+
+        self.assertEqual(diff.missing, ["root|deleted"])
+        self.assertEqual(diff.reparented, ["root|grpA|mesh2"])
+        self.assertEqual(diff.extra, [])
+        self.assertTrue(diff.has_differences())
+        # Round-trips through JSON.
+        reloaded = json.loads(diff.as_json())
+        self.assertEqual(reloaded["reparented"], ["root|grpA|mesh2"])
 
 
 if __name__ == "__main__":

@@ -146,6 +146,45 @@ class HierarchyAnalyzerTest(BaseTestCase):
         self.assertEqual(len(moves), 1)
         self.assertEqual(moves[0].type, DifferenceType.MOVED)
 
+    def test_detect_moved_items_prefers_best_pair(self):
+        """A contested extra item goes to the MOST similar missing item.
+
+        Regression pin: the original implementation was first-missing-wins —
+        whichever missing item happened to be seen first claimed the extra,
+        so results depended on input (set-hash) order.
+        """
+        # leaf "itemXX" vs "item12" -> ratio 0.667; "item1" vs "item12" -> 0.909
+        weak = HierarchyDifference(DifferenceType.MISSING, "grp|itemXX", {})
+        strong = HierarchyDifference(DifferenceType.MISSING, "grp|item1", {})
+        extra = HierarchyDifference(DifferenceType.EXTRA, "other|item12", {})
+
+        # weak listed first: first-missing-wins would hand it the extra.
+        moves = HierarchyAnalyzer.detect_moved_items(
+            [weak, strong, extra], similarity_threshold=0.6
+        )
+
+        self.assertEqual(len(moves), 1)
+        self.assertEqual(moves[0].details["from_path"], "grp|item1")
+        self.assertEqual(moves[0].details["to_path"], "other|item12")
+        self.assertGreater(moves[0].details["similarity"], 0.9)
+
+    def test_detect_moved_items_ordered_by_similarity(self):
+        """Moves are returned best-match-first regardless of input order."""
+        weak_m = HierarchyDifference(DifferenceType.MISSING, "a|node_XYZ", {})
+        weak_e = HierarchyDifference(DifferenceType.EXTRA, "b|node_QRS", {})
+        strong_m = HierarchyDifference(DifferenceType.MISSING, "a|mesh1", {})
+        strong_e = HierarchyDifference(DifferenceType.EXTRA, "b|mesh12", {})
+
+        # Weaker pair listed first.
+        moves = HierarchyAnalyzer.detect_moved_items(
+            [weak_m, weak_e, strong_m, strong_e], similarity_threshold=0.5
+        )
+
+        self.assertEqual(len(moves), 2)
+        similarities = [m.details["similarity"] for m in moves]
+        self.assertEqual(similarities, sorted(similarities, reverse=True))
+        self.assertEqual(moves[0].details["from_path"], "a|mesh1")
+
     def test_categorize_differences_by_type(self):
         """Test categorizing differences by type."""
         diffs = [

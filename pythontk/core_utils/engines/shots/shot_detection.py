@@ -210,9 +210,6 @@ def boundaries_from_key_entries(
             cur_objs = {obj}
     boundaries.append((first_time, cur_objs))
 
-    if not boundaries:
-        return []
-
     # Build contiguous regions: each boundary starts a shot that ends
     # at the next boundary.  The last shot gets a nominal 1-frame end
     # (a DCC range resolver may compute the real end).

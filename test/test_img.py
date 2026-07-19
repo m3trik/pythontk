@@ -492,6 +492,33 @@ class ImgTest(BaseTestCase):
         # The function preserves the original image mode (RGBA for PNG with alpha)
         self.assertIn(result.mode, ["RGB", "RGBA"])
 
+    def test_invert_channels_la_targets_real_alpha(self):
+        """Regression: invert_channels on an LA (grayscale+alpha) image must not
+        raise KeyError 'A', and channels='A' must invert the true alpha band
+        while leaving the luminance band untouched."""
+        im = Image.new("LA", (4, 4), (100, 200))  # L=100, A=200
+        result = ImgUtils.invert_channels(im, "A")
+        self.assertEqual(result.mode, "LA")
+        lum, alpha = result.split()
+        self.assertEqual(lum.getpixel((0, 0)), 100)  # luminance untouched
+        self.assertEqual(alpha.getpixel((0, 0)), 55)  # 255 - 200 inverted
+
+    def test_srgb_to_linear_preserves_rgba_alpha(self):
+        """Regression: sRGB->linear on an RGBA image must preserve the alpha
+        channel instead of blowing it out to 255."""
+        im = Image.new("RGBA", (4, 4), (128, 128, 128, 64))
+        result = ImgUtils.srgb_to_linear(im)
+        self.assertEqual(result.mode, "RGBA")
+        self.assertEqual(result.getpixel((0, 0))[3], 64)
+
+    def test_gaussian_blur_preserves_float_array(self):
+        """Regression: blurring a float numpy array in [0,1] must preserve its
+        magnitude rather than truncating it to uint8 (all-zero) via the PIL path."""
+        arr = np.full((16, 16), 0.7, np.float32)
+        out = ImgUtils.gaussian_blur(arr, radius=2.0)
+        self.assertEqual(out.dtype, np.float32)
+        self.assertAlmostEqual(float(out.max()), 0.7, places=5)
+
     # -------------------------------------------------------------------------
     # Channel Swizzle Tests
     # -------------------------------------------------------------------------
@@ -1566,6 +1593,64 @@ class UniqueDirStemsTest(unittest.TestCase):
         stems = ImgUtils.unique_dir_stems(dirs)
         self.assertEqual(stems[1], "solo")
         self.assertEqual(len(set(stems)), 3)
+
+
+class BitDepthAndBlurChannelRegressionTest(unittest.TestCase):
+    """Regressions for the set_bit_depth canonical-mode remap and the
+    gaussian_blur LA-alpha channel indexing (fix_groups_p2 entry 22)."""
+
+    def test_set_bit_depth_normalizes_exotic_modes_without_crashing(self):
+        """The old ``{v: k for k, v in bit_depth}`` inversion was order-dependent
+        and kept only the LAST mode per bit count (16->'PA', 24->'HSV',
+        32->'I;32LS'), so 'F'/'CMYK' raised ValueError on convert() and 'YCbCr'
+        silently corrupted. A canonical map must normalize each exotic mode to a
+        standard, loadable mode instead. (map_type is unknown so enforce_mode is
+        skipped and the exotic input survives to the bit-depth branch.)"""
+        for mode, expected in (
+            ("F", "RGBA"),
+            ("CMYK", "RGBA"),
+            ("I", "RGBA"),
+            ("YCbCr", "RGB"),
+            ("LAB", "RGB"),
+            ("HSV", "RGB"),
+            ("LA", "I;16"),
+        ):
+            with self.subTest(mode=mode):
+                out = ImgUtils.set_bit_depth(Image.new(mode, (4, 4)), "__unknown__")
+                self.assertEqual(out.mode, expected)
+
+    def test_set_bit_depth_leaves_standard_modes_untouched(self):
+        for mode in ("RGB", "RGBA", "L", "1", "P"):
+            with self.subTest(mode=mode):
+                out = ImgUtils.set_bit_depth(Image.new(mode, (4, 4)), "__unknown__")
+                self.assertEqual(out.mode, mode)
+
+    def test_gaussian_blur_la_alpha_pil_path(self):
+        """gaussian_blur(channel='A') on an LA image must resolve the alpha band
+        by its real position (index 1), not the fixed RGBA slot 3 -- which made
+        ``idx >= len(bands)`` fire and raise 'Channel A not present'."""
+        im = Image.new("LA", (16, 16))
+        px = im.load()
+        for x in range(16):
+            for y in range(16):
+                px[x, y] = (100, 0 if (x + y) % 2 == 0 else 255)  # flat L, noisy A
+        out = ImgUtils.gaussian_blur(im, radius=2.0, channel="A")
+        self.assertEqual(out.mode, "LA")
+        in_l, in_a = (np.asarray(b) for b in im.split())
+        out_l, out_a = (np.asarray(b) for b in out.split())
+        self.assertTrue(np.array_equal(out_l, in_l))      # luminance untouched
+        self.assertFalse(np.array_equal(out_a, in_a))     # alpha blurred
+
+    def test_gaussian_blur_la_alpha_numpy_fallback_only_blurs_alpha(self):
+        """The pure-numpy LA path used a fixed RGBA index map, so channel='A'
+        (idx 3, not < 2 channels) fell through to blurring EVERY channel. It must
+        blur only the alpha (index 1) and leave luminance intact."""
+        arr = np.zeros((16, 16, 2), dtype=np.float64)
+        arr[..., 0] = 0.5              # flat L
+        arr[::2, ::2, 1] = 1.0         # noisy A
+        out = ImgUtils._gaussian_blur_array_numpy(arr, 2.0, "A")
+        self.assertTrue(np.allclose(out[..., 0], arr[..., 0]))    # L untouched
+        self.assertFalse(np.allclose(out[..., 1], arr[..., 1]))   # A blurred
 
 
 if __name__ == "__main__":

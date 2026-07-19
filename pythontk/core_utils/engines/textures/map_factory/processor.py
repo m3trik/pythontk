@@ -13,7 +13,7 @@ top-level import here would form a cycle.
 """
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
 try:
     from PIL import Image
@@ -446,6 +446,54 @@ class TextureProcessor:
     def mark_used(self, *map_types: str):
         """Mark map types as consumed."""
         self.used_maps.update(map_types)
+
+    def resolve_smoothness_channel(
+        self,
+    ) -> Tuple[Optional[Union[str, "Image.Image"]], bool]:
+        """Resolve data for a smoothness-oriented channel, tracking inversion.
+
+        Shared by every handler that packs a smoothness value (MSAO / Mask Map,
+        Metallic-Smoothness): prefer a native Smoothness/Glossiness verbatim;
+        otherwise fall back to Roughness (derivable via the conversion
+        registry), which the packer must invert.
+
+        Returns:
+            (map, invert): The resolved path/Image and whether the packer
+            should invert it. ``(None, False)`` when nothing resolves.
+        """
+        smoothness = self.resolve_map(
+            "Smoothness", "Glossiness", allow_conversion=False
+        )
+        if smoothness:
+            return smoothness, False
+        roughness = self.resolve_map("Roughness", allow_conversion=True)
+        if roughness:
+            return roughness, True
+        return None, False
+
+    def resolve_roughness_channel(
+        self,
+    ) -> Tuple[Optional[Union[str, "Image.Image"]], bool]:
+        """Resolve data for a roughness-oriented channel, tracking inversion.
+
+        Mirror of :meth:`resolve_smoothness_channel` for roughness-primary
+        packing (MRAO): prefer native Roughness verbatim; else a native
+        Smoothness/Glossiness with inversion; else derive Roughness via the
+        broader conversion system.
+
+        Returns:
+            (map, invert): The resolved path/Image and whether the packer
+            should invert it. ``(None, False)`` when nothing resolves.
+        """
+        roughness = self.resolve_map("Roughness", allow_conversion=False)
+        if roughness:
+            return roughness, False
+        smoothness = self.resolve_map(
+            "Smoothness", "Glossiness", allow_conversion=False
+        )
+        if smoothness:
+            return smoothness, True
+        return self.resolve_map("Roughness", allow_conversion=True), False
 
     def convert_specular_to_metallic(
         self, specular_path: Union[str, "Image.Image"]

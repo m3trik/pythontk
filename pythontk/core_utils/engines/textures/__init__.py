@@ -10,6 +10,8 @@ other:
 - ``map_registry`` — the **domain model**: the PBR map-type taxonomy, per-target
   workflow presets (Unity / UE / glTF / Godot), and fallback / precedence /
   alias-resolution rules. Depends on nothing but ``core_utils`` — the clean core.
+  Extensible at runtime via ``MapRegistry().register(MapType(...))`` — custom
+  types then resolve by filename and flow through the factory like built-ins.
 - ``map_factory`` — the **planner + strategies**: a ``ConversionRegistry``
   (pluggable strategy registry), a ``TextureProcessor`` (injected processing
   context), ``WorkflowHandler`` strategies, and the ``MapFactory.prepare_maps``

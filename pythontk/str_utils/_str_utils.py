@@ -201,6 +201,9 @@ class StrUtils(CoreUtils):
         elif case == "camel":
             return string[0].lower() + string[1:]  # lowercase the first letter.
 
+        elif case is None:  # documented "no transform": return the string unchanged.
+            return string
+
         else:
             try:
                 return getattr(string, case)()
@@ -287,7 +290,9 @@ class StrUtils(CoreUtils):
         """
         import re
 
-        pattern = "|".join(re.escape(d) for d in IterUtils.make_iterable(delimiters))
+        # Iterate `delimiters` directly (char-by-char for a string, element-wise for
+        # a list) so the target side splits identically to the item side below.
+        pattern = "|".join(re.escape(d) for d in delimiters)
         target_parts = re.split(pattern, target)
 
         def match_hierarchy(item_parts):
@@ -300,7 +305,7 @@ class StrUtils(CoreUtils):
             return len(item_parts) > len(target_parts)
 
         def filter_items(item):
-            item_parts = re.split("|".join(re.escape(d) for d in delimiters), item)
+            item_parts = re.split(pattern, item)
 
             if exact and item == target:
                 return True
@@ -498,16 +503,14 @@ class StrUtils(CoreUtils):
             return "".join((src[:at], str(ins), src[at:]))
 
         except TypeError:
-            # if 'occurrance' is a negative value, search from the right.
-            if occurrence < 0:
-                i = src.replace(at, " " * len(at), occurrence - 1).rfind(at)
-            else:
-                i = src.replace(at, " " * len(at), occurrence - 1).find(at)
-            return (
-                cls.insert(src, str(ins), i if before else i + len(at))
-                if i != -1
-                else src
-            )
+            # 'at' is a string: locate the requested occurrence by position.
+            indices = [m.start() for m in re.finditer(re.escape(at), src)]
+            try:
+                # positive occurrence is 1-based; negative counts from the right (-1 == last).
+                i = indices[occurrence - 1] if occurrence > 0 else indices[occurrence]
+            except IndexError:  # occurrence out of range (or char not found).
+                return src
+            return cls.insert(src, str(ins), i if before else i + len(at))
 
     @staticmethod
     def rreplace(string, old, new="", count=None):
@@ -833,7 +836,9 @@ class StrUtils(CoreUtils):
                     else:
                         parts = orig_str.split(frm_, 1)
                         if len(parts) > 1:
-                            s = to_ + frm_ + frm_.join(parts[1:])
+                            # Drop the matched prefix, mirroring the ignore_case
+                            # branch (to_ + orig_str[match.end():]).
+                            s = to_ + parts[1]
                         else:
                             s = to_ + orig_str
                 else:

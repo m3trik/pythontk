@@ -319,6 +319,30 @@ class TestBuildCompositeWav(BaseTestCase):
         self.assertIsNotNone(result)
         self.assertTrue(os.path.isfile(result))
 
+    def test_bare_filename_output_path(self):
+        """A bare output filename (no directory) writes to the cwd.
+
+        Bug: ``os.makedirs(os.path.dirname(output))`` received ``''`` for a
+        bare filename and raised FileNotFoundError instead of writing the
+        file into the current working directory.
+        Fixed: 2026-07-18
+        """
+        path = self._wav("a.wav", [100] * 100)
+        cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        try:
+            result = AudioUtils.build_composite_wav(
+                events=[(0, "a")],
+                audio_map={"a": path},
+                fps=24.0,
+                output_path="comp_bare.wav",  # bare filename, no directory
+                logger=self.logger,
+            )
+            self.assertIsNotNone(result)
+            self.assertTrue(os.path.isfile(os.path.join(self.tmpdir, "comp_bare.wav")))
+        finally:
+            os.chdir(cwd)
+
 
 class TestTrimSilence(BaseTestCase):
     """Tests for AudioUtils.trim_silence."""

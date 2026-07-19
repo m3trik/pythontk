@@ -96,8 +96,15 @@ class RpcClient:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            # Server responded with non-2xx but a JSON body we can read.
-            body = json.loads(e.read().decode("utf-8"))
+            # Server responded non-2xx. The body may not be our JSON
+            # envelope (framework default error pages are HTML/empty).
+            raw = e.read().decode("utf-8", "replace")
+            try:
+                body = json.loads(raw)
+            except json.JSONDecodeError:
+                raise RuntimeError(
+                    f"Op {op!r} failed: HTTP {e.code} with non-JSON body: {raw!r}"
+                ) from e
         except (urllib.error.URLError, ConnectionError, OSError) as e:
             raise ConnectionError(
                 f"{self.app_label} plugin not reachable at {self.url!r}: {e}"

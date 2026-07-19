@@ -514,14 +514,7 @@ class ShotStore:
             if self._batch_depth == 0:
                 if self._batch_events:
                     self._batch_events.clear()
-                    _evt = BatchComplete()
-                    for cb in self._listeners:
-                        try:
-                            cb(_evt)
-                        except Exception:
-                            _log.warning(
-                                "shot store listener failed", exc_info=True
-                            )
+                    self._notify(BatchComplete())
                 # Synchronous flush — batch = single atomic write.
                 # Runs even with no accumulated events: mark_dirty
                 # inside a batch defers its flush to here, and mutators
@@ -531,7 +524,7 @@ class ShotStore:
 
     # ---- gap locking -----------------------------------------------------
 
-    def is_gap_locked(self, left_id: str, right_id: str) -> bool:
+    def is_gap_locked(self, left_id: int, right_id: int) -> bool:
         """Return whether the gap between two adjacent shots is locked."""
         return (left_id, right_id) in self.locked_gaps
 
@@ -586,21 +579,17 @@ class ShotStore:
         """
         if cls._active is None:
             persistence = cls._persistence
-            if persistence is not None:
-                data = persistence.load()
-                if data:
-                    cls._active = cls.from_dict(data)
-                    # Reconcile FPS: if the scene was saved at a different
-                    # framerate, rescale shot timings to match the current one.
-                    current_fps = cls._active._scene_fps()
-                    if (
-                        cls._active.shots
-                        and abs(cls._active.scene_fps - current_fps) > 0.01
-                    ):
-                        cls._active.rescale_to_fps(current_fps)
-                else:
-                    cls._active = cls()
-                    cls._active._restore_user_prefs()
+            data = persistence.load() if persistence is not None else None
+            if data:
+                cls._active = cls.from_dict(data)
+                # Reconcile FPS: if the scene was saved at a different
+                # framerate, rescale shot timings to match the current one.
+                current_fps = cls._active._scene_fps()
+                if (
+                    cls._active.shots
+                    and abs(cls._active.scene_fps - current_fps) > 0.01
+                ):
+                    cls._active.rescale_to_fps(current_fps)
             else:
                 cls._active = cls()
                 cls._active._restore_user_prefs()

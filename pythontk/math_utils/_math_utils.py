@@ -29,18 +29,22 @@ class MathUtils(HelpMixin):
 
     @staticmethod
     def eval_expression(expression: str) -> str:
-        """Safely evaluate a math expression string (calculator engine).
+        """Evaluate a math expression string (calculator engine).
 
-        Exposes the ``math`` module's functions/constants plus ``abs/round/min/max/pow``;
-        Python builtins are disabled so only arithmetic is reachable. Integer-valued floats
-        are returned without a trailing ``.0``.
+        Exposes the ``math`` module's functions/constants plus ``abs/round/min/max/pow``.
+        The expression is parsed to an AST and only arithmetic nodes are evaluated
+        (numeric literals; the binary operators ``+ - * / // % **``; unary ``+``/``-``;
+        and calls to the exposed names). Attribute access, subscripting, comprehensions
+        and every other construct return ``"Error"`` -- so a nulled-``__builtins__``
+        escape such as ``(1).__class__.__base__.__subclasses__()`` cannot reach the
+        object graph. Integer-valued floats are returned without a trailing ``.0``.
 
         Parameters:
             expression (str): e.g. ``"sin(pi/2) + 2**3"``.
 
         Returns:
             str: the formatted result, ``""`` for an empty expression, or ``"Error"``
-                when the expression is invalid.
+                when the expression is invalid or uses a disallowed construct.
 
         Example:
             MathUtils.eval_expression("2+2")        -> "4"
@@ -49,15 +53,52 @@ class MathUtils(HelpMixin):
         """
         if not expression:
             return ""
+        import ast
+        import operator
+
+        allowed_names = {
+            name: getattr(math, name) for name in dir(math) if not name.startswith("__")
+        }
+        allowed_names.update(
+            {"abs": abs, "round": round, "min": min, "max": max, "pow": pow}
+        )
+        binops = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.FloorDiv: operator.floordiv,
+            ast.Mod: operator.mod,
+            ast.Pow: operator.pow,
+        }
+        unaryops = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+        def _ev(node):
+            if isinstance(node, ast.Expression):
+                return _ev(node.body)
+            if isinstance(node, ast.Constant) and isinstance(
+                node.value, (int, float, complex)
+            ):
+                return node.value
+            if isinstance(node, ast.BinOp) and type(node.op) in binops:
+                return binops[type(node.op)](_ev(node.left), _ev(node.right))
+            if isinstance(node, ast.UnaryOp) and type(node.op) in unaryops:
+                return unaryops[type(node.op)](_ev(node.operand))
+            if isinstance(node, ast.Name) and node.id in allowed_names:
+                return allowed_names[node.id]
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and not node.keywords
+                and node.func.id in allowed_names
+            ):
+                fn = allowed_names[node.func.id]
+                if callable(fn):
+                    return fn(*[_ev(a) for a in node.args])
+            raise ValueError("disallowed expression")
+
         try:
-            allowed_names = {"__builtins__": None}
-            for name in dir(math):
-                if not name.startswith("__"):
-                    allowed_names[name] = getattr(math, name)
-            allowed_names.update(
-                {"abs": abs, "round": round, "min": min, "max": max, "pow": pow}
-            )
-            result = eval(expression, allowed_names)  # noqa: S307 - sandboxed, builtins off
+            result = _ev(ast.parse(expression, mode="eval"))
             if isinstance(result, float) and result.is_integer():
                 result = int(result)
             return str(result)
@@ -573,9 +614,9 @@ class MathUtils(HelpMixin):
         from decimal import Decimal
 
         num_decimal = Decimal(str(num))  # Convert the input number to a Decimal object
-        scaling_factor = Decimal(
-            10**places
-        )  # Create a scaling factor as a Decimal object
+        scaling_factor = (
+            Decimal(10) ** places
+        )  # Create a scaling factor as a Decimal object (exact for negative places)
 
         result = (
             num_decimal * scaling_factor
@@ -751,7 +792,9 @@ class MathUtils(HelpMixin):
         result = ((ay * bz) - (az * by), (az * bx) - (ax * bz), (ax * by) - (ay * bx))
 
         if normalize:
-            result = cls.normalize(result, normalize)
+            # safe_normalize returns the (zero) result unchanged for a degenerate
+            # cross product (parallel/collinear inputs) instead of dividing by 0.
+            result = cls.safe_normalize(result, result, normalize)
 
         return result
 
@@ -880,7 +923,10 @@ class MathUtils(HelpMixin):
         def length(v):
             return (cls.dot_product(v, v)) ** 0.5
 
-        result = acos(cls.dot_product(v1, v2) / (length(v1) * length(v2)))
+        cosine = cls.dot_product(v1, v2) / (length(v1) * length(v2))
+        # Clamp to acos's valid domain; float rounding can push identical/parallel
+        # vectors just past +-1 (e.g. 1.0000000000000002) -> math domain error.
+        result = acos(max(-1.0, min(1.0, cosine)))
 
         if degree:
             result = round(degrees(result), 2)
@@ -917,6 +963,7 @@ class MathUtils(HelpMixin):
         scalar = sum(
             (aa * bb for aa, bb in zip(ba, bc))
         )  # get scalar from normalized vectors
+        scalar = max(-1.0, min(1.0, scalar))  # guard float rounding past +-1 (collinear)
 
         angle = acos(scalar)  # get the angle in radian
 
@@ -1386,14 +1433,20 @@ class MathUtils(HelpMixin):
         scale = (new_max - new_min) / (old_max - old_min)
         offset = new_min - old_min * scale
 
+        # Ordered clamp bounds so a descending target range (e.g. (255, 0)) still
+        # clamps to the actual interval instead of collapsing to one endpoint.
+        clamp_lo, clamp_hi = (
+            (new_min, new_max) if new_min <= new_max else (new_max, new_min)
+        )
+
         def process_element(element: Any) -> Any:
             """Recursively remaps individual elements while preserving structure."""
             if isinstance(element, (int, float)):  # Single number
                 remapped = element * scale + offset
-                return max(min(remapped, new_max), new_min) if clamp else remapped
+                return max(min(remapped, clamp_hi), clamp_lo) if clamp else remapped
             elif isinstance(element, np.ndarray):  # NumPy array fix
                 remapped = element.astype(np.float64) * scale + offset
-                return np.clip(remapped, new_min, new_max) if clamp else remapped
+                return np.clip(remapped, clamp_lo, clamp_hi) if clamp else remapped
             elif isinstance(element, (list, tuple)):  # Nested list or tuple
                 return type(element)(process_element(e) for e in element)
             return element  # Return unchanged if not a number

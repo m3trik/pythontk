@@ -348,7 +348,11 @@ class MapCompositor(ptk.LoggingMixin):
         key = ptk.MapFactory.resolve_map_type(typ)
         registry = ptk.MapRegistry()
         map_modes = registry.get_map_modes()
-        target_mode = map_modes[key]
+        # Mode-less packed types (MSAO/MRAO have mode=None, filtered out of
+        # get_map_modes) and unresolved/None keys fall back to the image's
+        # natural mode — exactly what mode=None is documented to intend.
+        # Mirrors the safe .get() lookup already used in retry_failed.
+        target_mode = map_modes.get(key, mode)
         bit_depth = ptk.ImgUtils.format_bit_depth(target_mode)
 
         # PIL mode "I" (32bit int) cannot be created directly; route via RGB.

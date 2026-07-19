@@ -1,7 +1,14 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import List, Dict, Any, Optional, Callable
+from difflib import SequenceMatcher
+from typing import List, Dict, Any, Optional, Callable, Union
+
+from .hierarchy_path import HierarchyPath
 from .hierarchy_indexer import HierarchyIndexer
+
+# A matching strategy takes (source_items, target_items) and returns a
+# mapping of source item -> list of matching target items.
+MatchStrategy = Callable[[List[Any], List[Any]], Dict[Any, List[Any]]]
 
 
 class HierarchyMatching:
@@ -9,28 +16,12 @@ class HierarchyMatching:
 
     @staticmethod
     def _clean_namespace(name: str, separator: str = ":") -> str:
-        """Remove namespace prefix from a name."""
-        return name.split(separator)[-1] if separator in name else name
+        """Deprecated — use :meth:`HierarchyPath.clean_namespace`.
 
-    @staticmethod
-    def _get_path_tail(path: str, num_components: int = 1, separator: str = "|") -> str:
-        """Get the last N components of a hierarchy path."""
-        components = path.split(separator) if path else []
-        tail_components = components[-num_components:] if components else []
-        return separator.join(tail_components)
-
-    @staticmethod
-    def _path_ends_with(path: str, suffix: str, separator: str = "|") -> bool:
-        """Check if a hierarchical path ends with the given suffix."""
-        if not suffix:
-            return True
-        path_components = path.split(separator)
-        suffix_components = suffix.split(separator)
-
-        if len(suffix_components) > len(path_components):
-            return False
-
-        return path_components[-len(suffix_components) :] == suffix_components
+        Kept because released downstream code (mayatk hierarchy-sync)
+        called this before the public API existed.
+        """
+        return HierarchyPath.clean_namespace(name, separator)
 
     @staticmethod
     def exact_path_match(
@@ -54,7 +45,6 @@ class HierarchyMatching:
         Returns:
             Dictionary mapping source items to lists of matching target items
         """
-        # Build index of target items
         target_index = HierarchyIndexer.build_path_index(
             target_items,
             get_path_func,
@@ -103,7 +93,6 @@ class HierarchyMatching:
         Returns:
             Dictionary mapping source items to lists of matching target items
         """
-        # Build index of target items
         target_index = HierarchyIndexer.build_path_index(
             target_items,
             get_path_func,
@@ -116,10 +105,10 @@ class HierarchyMatching:
         for source_item in source_items:
             source_path = get_path_func(source_item)
             if source_path:
-                normalized_path = HierarchyIndexer._normalize_path(
+                normalized_path = HierarchyPath.normalize(
                     source_path, clean_namespaces, path_separator, namespace_separator
                 )
-                source_tail = HierarchyMatching._get_path_tail(
+                source_tail = HierarchyPath.tail(
                     normalized_path, num_components, path_separator
                 )
 
@@ -149,65 +138,31 @@ class HierarchyMatching:
         Returns:
             Dictionary mapping source items to lists of matching target items
         """
-        try:
-            from difflib import SequenceMatcher
-        except ImportError:
-            # Fallback to simple exact matching if difflib not available
-            return HierarchyMatching._exact_name_match(
-                source_items, target_items, get_name_func
-            )
+        # Clean target names once — not per source item.
+        cleaned_targets = []
+        for target_item in target_items:
+            target_name = get_name_func(target_item)
+            if target_name:
+                cleaned_targets.append(
+                    (target_item, HierarchyPath.clean_namespace(target_name))
+                )
 
         matches = {}
-
         for source_item in source_items:
             source_name = get_name_func(source_item)
             if not source_name:
                 continue
 
-            source_clean = HierarchyMatching._clean_namespace(source_name)
-            fuzzy_matches = []
-
-            for target_item in target_items:
-                target_name = get_name_func(target_item)
-                if not target_name:
-                    continue
-
-                target_clean = HierarchyMatching._clean_namespace(target_name)
-
-                # Calculate similarity
-                similarity = SequenceMatcher(None, source_clean, target_clean).ratio()
-                if similarity >= similarity_threshold:
-                    fuzzy_matches.append(target_item)
+            source_clean = HierarchyPath.clean_namespace(source_name)
+            fuzzy_matches = [
+                target_item
+                for target_item, target_clean in cleaned_targets
+                if SequenceMatcher(None, source_clean, target_clean).ratio()
+                >= similarity_threshold
+            ]
 
             if fuzzy_matches:
                 matches[source_item] = fuzzy_matches
-
-        return matches
-
-    @staticmethod
-    def _exact_name_match(
-        source_items: List[Any],
-        target_items: List[Any],
-        get_name_func: Callable[[Any], str],
-    ) -> Dict[Any, List[Any]]:
-        """Fallback exact name matching when fuzzy matching is unavailable."""
-        # Build index of target items by clean name
-        target_index = {}
-        for target_item in target_items:
-            target_name = get_name_func(target_item)
-            if target_name:
-                clean_name = HierarchyMatching._clean_namespace(target_name)
-                if clean_name not in target_index:
-                    target_index[clean_name] = []
-                target_index[clean_name].append(target_item)
-
-        matches = {}
-        for source_item in source_items:
-            source_name = get_name_func(source_item)
-            if source_name:
-                clean_name = HierarchyMatching._clean_namespace(source_name)
-                if clean_name in target_index:
-                    matches[source_item] = target_index[clean_name]
 
         return matches
 
@@ -217,24 +172,33 @@ class HierarchyMatching:
         target_items: List[Any],
         get_path_func: Callable[[Any], str],
         get_name_func: Optional[Callable[[Any], str]] = None,
-        strategies: List[str] = None,
+        strategies: Optional[List[Union[str, MatchStrategy]]] = None,
         path_separator: str = "|",
         clean_namespaces: bool = True,
         namespace_separator: str = ":",
         fuzzy_threshold: float = 0.8,
+        tail_components: int = 2,
     ) -> Dict[Any, List[Any]]:
         """Apply multiple matching strategies in order of preference.
+
+        Each strategy only sees the items the previous strategies left
+        unmatched. Built-in strategy names: ``"exact_path"``,
+        ``"tail_path"``, ``"fuzzy_name"`` (the latter requires
+        *get_name_func* and is skipped without it). A strategy may also be
+        a callable ``(source_items, target_items) -> {source: [targets]}``
+        for custom matching without touching this module.
 
         Args:
             source_items: Items to find matches for
             target_items: Items to search within
             get_path_func: Function to extract path from an item
             get_name_func: Function to extract name from an item (for fuzzy matching)
-            strategies: List of strategy names to try in order
+            strategies: Strategy names and/or callables to try in order
             path_separator: Character separating path components
             clean_namespaces: Whether to remove namespace prefixes
             namespace_separator: Character separating namespace from name
             fuzzy_threshold: Minimum similarity for fuzzy matching
+            tail_components: Tail length used by the "tail_path" strategy
 
         Returns:
             Dictionary mapping source items to lists of matching target items
@@ -242,44 +206,52 @@ class HierarchyMatching:
         if strategies is None:
             strategies = ["exact_path", "tail_path", "fuzzy_name"]
 
-        all_matches = {}
+        builtin: Dict[str, Optional[MatchStrategy]] = {
+            "exact_path": lambda items, targets: HierarchyMatching.exact_path_match(
+                items,
+                targets,
+                get_path_func,
+                path_separator,
+                clean_namespaces,
+                namespace_separator,
+            ),
+            "tail_path": lambda items, targets: HierarchyMatching.tail_path_match(
+                items,
+                targets,
+                get_path_func,
+                tail_components,
+                path_separator,
+                clean_namespaces,
+                namespace_separator,
+            ),
+            "fuzzy_name": (
+                (
+                    lambda items, targets: HierarchyMatching.fuzzy_name_match(
+                        items, targets, get_name_func, fuzzy_threshold
+                    )
+                )
+                if get_name_func
+                else None
+            ),
+        }
+
+        all_matches: Dict[Any, List[Any]] = {}
         unmatched_items = list(source_items)
 
         for strategy in strategies:
             if not unmatched_items:
                 break
 
-            if strategy == "exact_path":
-                matches = HierarchyMatching.exact_path_match(
-                    unmatched_items,
-                    target_items,
-                    get_path_func,
-                    path_separator,
-                    clean_namespaces,
-                    namespace_separator,
-                )
-            elif strategy == "tail_path":
-                matches = HierarchyMatching.tail_path_match(
-                    unmatched_items,
-                    target_items,
-                    get_path_func,
-                    2,
-                    path_separator,
-                    clean_namespaces,
-                    namespace_separator,
-                )
-            elif strategy == "fuzzy_name" and get_name_func:
-                matches = HierarchyMatching.fuzzy_name_match(
-                    unmatched_items, target_items, get_name_func, fuzzy_threshold
-                )
-            else:
+            strategy_func = strategy if callable(strategy) else builtin.get(strategy)
+            if strategy_func is None:
                 continue
 
-            # Add matches and remove matched items from unmatched list
-            for source_item, target_matches in matches.items():
-                all_matches[source_item] = target_matches
-                if source_item in unmatched_items:
-                    unmatched_items.remove(source_item)
+            matches = strategy_func(unmatched_items, target_items)
+            if matches:
+                all_matches.update(matches)
+                unmatched_items = [
+                    item for item in unmatched_items if item not in matches
+                ]
 
         return all_matches
 
