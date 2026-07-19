@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-18_
+_Generated: 2026-07-19_
 
 ## Index
 
@@ -800,17 +800,17 @@ Class-scoped logging toolkit.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1354)** — A generic logging handler that writes logs to any widget supporting
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1360)** — A generic logging handler that writes logs to any widget supporting
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1411)** — In-memory capped ring buffer of log records.
+- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1416)** — In-memory capped ring buffer of log records.
   - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `RingBufferHandler.clear(self) -> None`
   - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1449)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1454)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1582)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1587)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).

@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-07-18",
+  "generated_at": "2026-07-19",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -4601,7 +4601,7 @@
               "kind": "classmethod",
               "signature": "(cls, text: str) -> str",
               "summary": "Remove HTML tags from *text*, leaving the visible plain text.",
-              "line": 602,
+              "line": 608,
               "deprecated": false
             },
             {
@@ -4610,7 +4610,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: str) -> str",
               "summary": "Get the color code for a given log level.",
-              "line": 1312,
+              "line": 1318,
               "deprecated": false
             },
             {
@@ -4619,7 +4619,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, format_str: str) -> None",
               "summary": "Register a new HTML preset.",
-              "line": 1329,
+              "line": 1335,
               "deprecated": false
             },
             {
@@ -4628,7 +4628,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str) -> str",
               "summary": "Get an HTML preset by name.",
-              "line": 1334,
+              "line": 1340,
               "deprecated": false
             },
             {
@@ -4637,7 +4637,7 @@
               "kind": "classmethod",
               "signature": "(cls, message: str, level: str, preset: str = None) -> str",
               "summary": "Format a message using HTML presets.",
-              "line": 1339,
+              "line": 1345,
               "deprecated": false
             }
           ]
@@ -4645,7 +4645,7 @@
         {
           "name": "DefaultTextLogHandler",
           "summary": "A generic logging handler that writes logs to any widget supporting",
-          "line": 1354,
+          "line": 1360,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -4656,7 +4656,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1376,
+              "line": 1381,
               "deprecated": false
             },
             {
@@ -4665,7 +4665,7 @@
               "kind": "method",
               "signature": "(self, level: str) -> str",
               "summary": "",
-              "line": 1407,
+              "line": 1412,
               "deprecated": false
             }
           ]
@@ -4673,7 +4673,7 @@
         {
           "name": "RingBufferHandler",
           "summary": "In-memory capped ring buffer of log records.",
-          "line": 1411,
+          "line": 1416,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -4684,7 +4684,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1425,
+              "line": 1430,
               "deprecated": false
             },
             {
@@ -4693,7 +4693,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "",
-              "line": 1429,
+              "line": 1434,
               "deprecated": false
             },
             {
@@ -4702,7 +4702,7 @@
               "kind": "method",
               "signature": "(self, formatter: internal_logging.Formatter = None) -> str",
               "summary": "Render buffered records to a single plain-text string.",
-              "line": 1432,
+              "line": 1437,
               "deprecated": false
             }
           ]
@@ -4710,7 +4710,7 @@
         {
           "name": "TableMixin",
           "summary": "Mixin for formatting data as ASCII tables.",
-          "line": 1449,
+          "line": 1454,
           "bases": [],
           "members": [
             {
@@ -4719,7 +4719,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str",
               "summary": "Formats a list of lists as an ASCII table.",
-              "line": 1452,
+              "line": 1457,
               "deprecated": false
             },
             {
@@ -4728,7 +4728,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None",
               "summary": "Logs a formatted table.",
-              "line": 1547,
+              "line": 1552,
               "deprecated": false
             }
           ]
@@ -4736,7 +4736,7 @@
         {
           "name": "LoggingMixin",
           "summary": "Mixin class for logging utilities.",
-          "line": 1582,
+          "line": 1587,
           "bases": [
             "TableMixin"
           ],
@@ -4747,7 +4747,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1619,
+              "line": 1624,
               "deprecated": false
             },
             {
@@ -4756,7 +4756,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "",
-              "line": 1635,
+              "line": 1640,
               "deprecated": false
             },
             {
@@ -4765,7 +4765,7 @@
               "kind": "method",
               "signature": "(cls)",
               "summary": "Access to Python's internal logging module (aliased).",
-              "line": 1646,
+              "line": 1651,
               "deprecated": false
             },
             {
@@ -4774,7 +4774,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: int | str)",
               "summary": "Set log level for the class logger and its handlers.",
-              "line": 1651,
+              "line": 1656,
               "deprecated": false
             },
             {
@@ -4783,7 +4783,7 @@
               "kind": "classmethod",
               "signature": "(cls, filename: Optional[str], level: Union[int, str] = internal_logging.NOTSET) -> None",
               "summary": "Tee this class's log output to *filename* (or ``None`` to stop).",
-              "line": 1666,
+              "line": 1673,
               "deprecated": false
             },
             {
@@ -4792,7 +4792,7 @@
               "kind": "classmethod",
               "signature": "(cls, capacity: int = 2000, level: Union[int, str] = internal_logging.NOTSET) -> None",
               "summary": "Capture this class's log records into a capped ring buffer.",
-              "line": 1677,
+              "line": 1684,
               "deprecated": false
             },
             {
@@ -4801,7 +4801,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Stop ring-buffer capture and discard buffered records.",
-              "line": 1688,
+              "line": 1695,
               "deprecated": false
             },
             {
@@ -4810,7 +4810,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Drop buffered records but keep capturing.",
-              "line": 1693,
+              "line": 1700,
               "deprecated": false
             },
             {
@@ -4819,7 +4819,7 @@
               "kind": "classmethod",
               "signature": "(cls, target: Union[str, object, None] = None, mode: str = 'w', encoding: str = 'utf-8') -> str",
               "summary": "Render the ring buffer to text, optionally writing it to *target*.",
-              "line": 1698,
+              "line": 1705,
               "deprecated": false
             }
           ]
@@ -5057,7 +5057,7 @@
               "kind": "method",
               "signature": "(self, objects: Union[List[tuple], Any], **metadata) -> None",
               "summary": "Extend the container with new objects while handling duplicates.",
-              "line": 346,
+              "line": 345,
               "deprecated": false
             },
             {
@@ -5066,7 +5066,7 @@
               "kind": "method",
               "signature": "(self, return_field: Optional[str] = None, **conditions) -> Union[List[Any], Any, None]",
               "summary": "Query the named tuples based on specified conditions.",
-              "line": 412,
+              "line": 411,
               "deprecated": false
             },
             {
@@ -5075,7 +5075,7 @@
               "kind": "method",
               "signature": "(self, predicate: Callable[[tuple], bool]) -> 'NamedTupleContainer'",
               "summary": "Filter the container based on a predicate function.",
-              "line": 458,
+              "line": 457,
               "deprecated": false
             },
             {
@@ -5084,7 +5084,7 @@
               "kind": "method",
               "signature": "(self, func: Callable[[tuple], tuple]) -> 'NamedTupleContainer'",
               "summary": "Apply a function to all named tuples in the container.",
-              "line": 470,
+              "line": 469,
               "deprecated": false
             },
             {
@@ -5093,7 +5093,7 @@
               "kind": "method",
               "signature": "(self, index: int, **kwargs) -> tuple",
               "summary": "Modify a named tuple at a specific index within the container.",
-              "line": 482,
+              "line": 481,
               "deprecated": false
             },
             {
@@ -5102,7 +5102,7 @@
               "kind": "method",
               "signature": "(self, index: int) -> tuple",
               "summary": "Remove a named tuple at a specific index within the container.",
-              "line": 510,
+              "line": 509,
               "deprecated": false
             },
             {
@@ -5111,7 +5111,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Clear all named tuples from the container.",
-              "line": 526,
+              "line": 525,
               "deprecated": false
             },
             {
@@ -5120,7 +5120,7 @@
               "kind": "method",
               "signature": "(self) -> List[Dict[str, Any]]",
               "summary": "Convert all named tuples to a list of dictionaries.",
-              "line": 530,
+              "line": 529,
               "deprecated": false
             },
             {
@@ -5129,7 +5129,7 @@
               "kind": "method",
               "signature": "(self, filename: str, **kwargs) -> None",
               "summary": "Export the container to a CSV file.",
-              "line": 539,
+              "line": 538,
               "deprecated": false
             },
             {
@@ -5138,7 +5138,7 @@
               "kind": "classmethod",
               "signature": "(cls, filename: str, tuple_class_name: str = 'CsvRow', **kwargs) -> 'NamedTupleContainer'",
               "summary": "Create a NamedTupleContainer from a CSV file.",
-              "line": 558,
+              "line": 557,
               "deprecated": false
             }
           ]
@@ -6445,7 +6445,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 1081,
+              "line": 1065,
               "deprecated": false
             },
             {
@@ -6454,7 +6454,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Set the current json filepath.",
-              "line": 1240,
+              "line": 1224,
               "deprecated": false
             },
             {
@@ -6463,7 +6463,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Get the current json filepath.",
-              "line": 1252,
+              "line": 1236,
               "deprecated": false
             },
             {
@@ -6472,7 +6472,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, value, file=None)",
               "summary": "Parameters:",
-              "line": 1264,
+              "line": 1248,
               "deprecated": false
             },
             {
@@ -6481,7 +6481,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, file=None)",
               "summary": "Parameters:",
-              "line": 1301,
+              "line": 1285,
               "deprecated": false
             }
           ]
