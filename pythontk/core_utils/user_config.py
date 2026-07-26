@@ -22,6 +22,7 @@ lockstep without this module depending on uitk.
 JSON (not TOML) is deliberate: ``tomllib`` is 3.11+ and won't import under
 Metashape's 3.9; ``json`` is stdlib everywhere.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,40 +36,9 @@ logger = logging.getLogger(__name__)
 
 # Env var that redirects the ecosystem user-config root wholesale. Shared *by
 # name* (a documented string convention, not an import) with uitk's
-# ``preset_manager.get_presets_root()`` so one override moves both stores.
+# ``preset_manager.PresetManager.get_presets_root()`` so one override moves both stores.
 CONFIG_ROOT_ENV_VAR = "UITK_PRESETS_ROOT"
 _ECOSYSTEM_WRAPPER = "uitk"
-
-
-def user_config_root() -> Path:
-    """The ecosystem per-user config directory, resolved **without Qt**.
-
-    Honors ``$UITK_PRESETS_ROOT`` (used as given; ``~`` and ``%VAR%`` expanded).
-    Otherwise the host-independent per-user config dir plus a ``uitk`` wrapper
-    folder — matching uitk ``preset_manager.get_presets_root()`` so this Qt-free
-    path and uitk's ``QStandardPaths`` path resolve to the same location:
-
-    * Windows: ``%LOCALAPPDATA%/uitk``
-    * macOS:   ``~/Library/Preferences/uitk``
-    * Linux:   ``$XDG_CONFIG_HOME/uitk`` (else ``~/.config/uitk``)
-    """
-    override = os.environ.get(CONFIG_ROOT_ENV_VAR)
-    if override:
-        p = Path(os.path.expandvars(override)).expanduser()
-        return p if p.is_absolute() else p.absolute()
-
-    system = platform.system().lower()
-    if system == "windows":
-        base = os.environ.get("LOCALAPPDATA") or os.path.join(
-            os.path.expanduser("~"), "AppData", "Local"
-        )
-    elif system == "darwin":
-        base = os.path.join(os.path.expanduser("~"), "Library", "Preferences")
-    else:
-        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".config"
-        )
-    return Path(base) / _ECOSYSTEM_WRAPPER
 
 
 class UserConfig:
@@ -91,7 +61,7 @@ class UserConfig:
     @staticmethod
     def path_for(name: str, package: str) -> Path:
         """Default on-disk location: ``<user_config_root>/<package>/<name>.json``."""
-        return user_config_root() / package / f"{name}.json"
+        return UserConfig.user_config_root() / package / f"{name}.json"
 
     @staticmethod
     def load_file(path: Union[str, os.PathLike]) -> dict:
@@ -183,3 +153,34 @@ class UserConfig:
         if isinstance(value, (list, tuple)):
             return type(value)(UserConfig.expand(v) for v in value)
         return value
+
+    @staticmethod
+    def user_config_root() -> Path:
+        """The ecosystem per-user config directory, resolved **without Qt**.
+
+        Honors ``$UITK_PRESETS_ROOT`` (used as given; ``~`` and ``%VAR%`` expanded).
+        Otherwise the host-independent per-user config dir plus a ``uitk`` wrapper
+        folder — matching uitk ``preset_manager.PresetManager.get_presets_root()`` so this Qt-free
+        path and uitk's ``QStandardPaths`` path resolve to the same location:
+
+        * Windows: ``%LOCALAPPDATA%/uitk``
+        * macOS:   ``~/Library/Preferences/uitk``
+        * Linux:   ``$XDG_CONFIG_HOME/uitk`` (else ``~/.config/uitk``)
+        """
+        override = os.environ.get(CONFIG_ROOT_ENV_VAR)
+        if override:
+            p = Path(os.path.expandvars(override)).expanduser()
+            return p if p.is_absolute() else p.absolute()
+
+        system = platform.system().lower()
+        if system == "windows":
+            base = os.environ.get("LOCALAPPDATA") or os.path.join(
+                os.path.expanduser("~"), "AppData", "Local"
+            )
+        elif system == "darwin":
+            base = os.path.join(os.path.expanduser("~"), "Library", "Preferences")
+        else:
+            base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+                os.path.expanduser("~"), ".config"
+            )
+        return Path(base) / _ECOSYSTEM_WRAPPER

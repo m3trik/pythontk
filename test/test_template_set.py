@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Tests for pythontk.TemplateSet — schema-validated two-tier template files."""
+
 import json
 import os
 import shutil
@@ -9,14 +10,14 @@ import unittest
 from dataclasses import dataclass
 
 from pythontk.core_utils.preset_store import Codec
-from pythontk.core_utils.schema_spec import SchemaSpec, SchemaError, spec_field
+from pythontk.core_utils.schema_spec import SchemaSpec, SchemaError
 from pythontk.core_utils.template_set import TemplateSet
 
 
 @dataclass
 class CfgSpec(SchemaSpec):
-    title: str = spec_field(help="A title.", required=True, example="hi")
-    count: int = spec_field(help="A count.", default=1, example=2)
+    title: str = SchemaSpec.spec_field(help="A title.", required=True, example="hi")
+    count: int = SchemaSpec.spec_field(help="A count.", default=1, example=2)
 
 
 class TemplateSetTest(unittest.TestCase):
@@ -83,9 +84,7 @@ class TemplateSetTest(unittest.TestCase):
     def test_custom_codec_round_trips_with_its_extension(self):
         # A non-JSON codec (ext + load/dump) drives discovery and IO.
         codec = Codec(".txt", json.loads, json.dumps)
-        ts = TemplateSet(
-            "alt", CfgSpec, "mayatk", user_dir=self.user, codec=codec
-        )
+        ts = TemplateSet("alt", CfgSpec, "mayatk", user_dir=self.user, codec=codec)
         path = ts.store.save("c", {"title": "z", "count": 3})
         self.assertEqual(path.suffix, ".txt")
         self.assertEqual(ts.names(), ["c"])

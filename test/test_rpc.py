@@ -9,6 +9,7 @@ the install/uninstall strategy (symlink-first, copytree fallback,
 DCC-specific bindings (Toolbag's port, version-aware path resolver) are
 tested in :mod:`mayatk.test.mock_tests.test_marmoset_rpc`.
 """
+
 import json
 import os
 import shutil
@@ -23,12 +24,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from pythontk.net_utils.rpc.client import RpcClient
-from pythontk.net_utils.rpc.installer import (
-    install_plugin,
-    uninstall_plugin,
-    is_plugin_installed,
-)
-from pythontk.net_utils.rpc.job import Call, run_batch
+from pythontk.net_utils.rpc.installer import PluginInstaller
+from pythontk.net_utils.rpc.job import RpcJob, Call
 
 
 # ----------------------------------------------------------------------
@@ -65,13 +62,27 @@ class _StubHandler(BaseHTTPRequestHandler):
         if self.path == "/describe":
             op = req.get("op")
             if op == "":
-                self._respond(200, {"ok": True, "value": [
-                    {"name": "system.ping", "doc": "Heartbeat.", "params": []}
-                ]})
+                self._respond(
+                    200,
+                    {
+                        "ok": True,
+                        "value": [
+                            {"name": "system.ping", "doc": "Heartbeat.", "params": []}
+                        ],
+                    },
+                )
             elif op == "system.ping":
-                self._respond(200, {"ok": True, "value": {
-                    "name": "system.ping", "doc": "Heartbeat.", "params": []
-                }})
+                self._respond(
+                    200,
+                    {
+                        "ok": True,
+                        "value": {
+                            "name": "system.ping",
+                            "doc": "Heartbeat.",
+                            "params": [],
+                        },
+                    },
+                )
             else:
                 self._respond(200, {"ok": True, "value": None})
             return
@@ -80,16 +91,24 @@ class _StubHandler(BaseHTTPRequestHandler):
         kwargs = req.get("kwargs") or {}
         fn = self.OPS.get(op)
         if fn is None:
-            self._respond(404, {
-                "ok": False, "error": f"Unknown op: {op!r}",
-            })
+            self._respond(
+                404,
+                {
+                    "ok": False,
+                    "error": f"Unknown op: {op!r}",
+                },
+            )
             return
         try:
             value = fn(**kwargs)
         except Exception as exc:
-            self._respond(500, {
-                "ok": False, "error": f"{type(exc).__name__}: {exc}",
-            })
+            self._respond(
+                500,
+                {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
             return
         self._respond(200, {"ok": True, "value": value})
 
@@ -107,6 +126,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 
 def _free_port():
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -118,9 +138,7 @@ class _StubServer:
     def __init__(self):
         self.port = _free_port()
         self._server = HTTPServer(("127.0.0.1", self.port), _StubHandler)
-        self._thread = threading.Thread(
-            target=self._server.serve_forever, daemon=True
-        )
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     def __enter__(self):
         self._thread.start()
@@ -219,9 +237,7 @@ class TestRpcClientWireProtocol(unittest.TestCase):
             fp=io.BytesIO(html),
         )
         client = RpcClient(port=_free_port(), app_label="stub")
-        with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=http_error
-        ):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=http_error):
             with self.assertRaises(RuntimeError) as ctx:
                 client.invoke("scene.export")
         msg = str(ctx.exception)
@@ -249,7 +265,9 @@ class TestRpcClientConnect(unittest.TestCase):
             return None  # report not found
 
         client = RpcClient(
-            port=_free_port(), app_label="MyDcc", find_exe=_finder,
+            port=_free_port(),
+            app_label="MyDcc",
+            find_exe=_finder,
         )
         with self.assertRaises(FileNotFoundError):
             client.connect(timeout=0.5)
@@ -272,12 +290,13 @@ class TestRpcClientConnect(unittest.TestCase):
                 return None  # report not found -> raises FileNotFoundError
 
             client = RpcClient(
-                port=srv.port, app_label="stub", find_exe=_finder,
+                port=srv.port,
+                app_label="stub",
+                find_exe=_finder,
             )
             with self.assertRaises(FileNotFoundError):
                 client.connect(timeout=0.5, force_new=True)
-            self.assertEqual(called, [True],
-                             "force_new must skip the reuse path.")
+            self.assertEqual(called, [True], "force_new must skip the reuse path.")
 
     def test_connect_auto_cleanup_registers_atexit(self):
         """auto_cleanup=True registers an idempotent atexit hook."""
@@ -299,9 +318,7 @@ class TestRpcClientLifecycle(unittest.TestCase):
         """shutdown() on a never-connected client is a no-op."""
         client = RpcClient(port=_free_port(), app_label="stub")
         # Patch AppLauncher.close_process so a stray import can't fire.
-        with unittest.mock.patch(
-            "pythontk.AppLauncher.close_process"
-        ) as mock_close:
+        with unittest.mock.patch("pythontk.AppLauncher.close_process") as mock_close:
             client.shutdown(force=True)
             mock_close.assert_not_called()
 
@@ -310,9 +327,7 @@ class TestRpcClientLifecycle(unittest.TestCase):
         client = RpcClient(port=_free_port(), app_label="stub")
         proc = unittest.mock.MagicMock(pid=9999)
         client._launched_process = proc
-        with unittest.mock.patch(
-            "pythontk.AppLauncher.close_process"
-        ) as mock_close:
+        with unittest.mock.patch("pythontk.AppLauncher.close_process") as mock_close:
             client.shutdown(force=True)
             mock_close.assert_called_once_with(9999, force=True)
         # And clears the handle so a double-shutdown is a no-op.
@@ -354,16 +369,16 @@ class TestRpcInstaller(unittest.TestCase):
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_install_creates_plugin_at_dest(self):
-        result = install_plugin(self.src, self.dest)
+        result = PluginInstaller.install_plugin(self.src, self.dest)
         self.assertIsNotNone(result)
         self.assertTrue((self.dest / "__init__.py").is_file())
-        self.assertTrue(is_plugin_installed(self.dest))
+        self.assertTrue(PluginInstaller.is_plugin_installed(self.dest))
 
     def test_install_idempotent_without_force(self):
-        first = install_plugin(self.src, self.dest)
+        first = PluginInstaller.install_plugin(self.src, self.dest)
         marker = self.dest / "_marker.txt"
         marker.write_text("untouched", encoding="utf-8")
-        second = install_plugin(self.src, self.dest)
+        second = PluginInstaller.install_plugin(self.src, self.dest)
         self.assertEqual(first, second)
         self.assertTrue(marker.is_file(), "Idempotent install wiped the dir.")
 
@@ -372,36 +387,38 @@ class TestRpcInstaller(unittest.TestCase):
         # dest dir (not written through a symlink into ``self.src``, which
         # would survive force-rebuild via the recreated symlink on Linux).
         with unittest.mock.patch("os.symlink", side_effect=OSError("denied")):
-            install_plugin(self.src, self.dest)
+            PluginInstaller.install_plugin(self.src, self.dest)
             marker = self.dest / "_marker.txt"
             marker.write_text("delete me", encoding="utf-8")
-            install_plugin(self.src, self.dest, force=True)
+            PluginInstaller.install_plugin(self.src, self.dest, force=True)
         self.assertFalse(marker.is_file(), "force=True should rebuild.")
 
     def test_install_returns_none_for_missing_source(self):
         missing = Path(self._tmp) / "does_not_exist"
-        self.assertIsNone(install_plugin(missing, self.dest))
+        self.assertIsNone(PluginInstaller.install_plugin(missing, self.dest))
 
     def test_copytree_fallback_filters_pycache(self):
         """Force the copytree path by patching os.symlink to raise."""
         with unittest.mock.patch("os.symlink", side_effect=OSError("denied")):
-            install_plugin(self.src, self.dest)
+            PluginInstaller.install_plugin(self.src, self.dest)
         # Real files made it across...
         self.assertTrue((self.dest / "__init__.py").is_file())
         self.assertTrue((self.dest / "extra.py").is_file())
         # ...but __pycache__ was filtered.
-        self.assertFalse((self.dest / "__pycache__").exists(),
-                         "copytree fallback must filter __pycache__")
+        self.assertFalse(
+            (self.dest / "__pycache__").exists(),
+            "copytree fallback must filter __pycache__",
+        )
 
     def test_uninstall_removes_plugin(self):
-        install_plugin(self.src, self.dest)
-        self.assertTrue(is_plugin_installed(self.dest))
-        self.assertTrue(uninstall_plugin(self.dest))
-        self.assertFalse(is_plugin_installed(self.dest))
+        PluginInstaller.install_plugin(self.src, self.dest)
+        self.assertTrue(PluginInstaller.is_plugin_installed(self.dest))
+        self.assertTrue(PluginInstaller.uninstall_plugin(self.dest))
+        self.assertFalse(PluginInstaller.is_plugin_installed(self.dest))
 
     def test_uninstall_missing_is_safe(self):
         # Nothing installed yet.
-        self.assertFalse(uninstall_plugin(self.dest))
+        self.assertFalse(PluginInstaller.uninstall_plugin(self.dest))
 
 
 # ----------------------------------------------------------------------
@@ -413,7 +430,7 @@ class TestRunBatch(unittest.TestCase):
     def test_run_batch_returns_result_per_call(self):
         with _StubServer() as srv:
             client = RpcClient(port=srv.port, app_label="stub")
-            results = run_batch(
+            results = RpcJob.run_batch(
                 [Call("system.ping"), Call("system.list_ops")],
                 client=client,
             )
@@ -426,7 +443,7 @@ class TestRunBatch(unittest.TestCase):
     def test_run_batch_records_failures_without_aborting(self):
         with _StubServer() as srv:
             client = RpcClient(port=srv.port, app_label="stub")
-            results = run_batch(
+            results = RpcJob.run_batch(
                 [
                     Call("system.ping"),
                     Call("does.not.exist"),  # fails
@@ -443,7 +460,7 @@ class TestRunBatch(unittest.TestCase):
     def test_run_batch_stops_on_error_when_requested(self):
         with _StubServer() as srv:
             client = RpcClient(port=srv.port, app_label="stub")
-            results = run_batch(
+            results = RpcJob.run_batch(
                 [
                     Call("system.ping"),
                     Call("does.not.exist"),  # fails -> abort
@@ -459,7 +476,7 @@ class TestRunBatch(unittest.TestCase):
     def test_run_batch_raises_when_plugin_unreachable(self):
         client = RpcClient(port=_free_port(), app_label="stub")
         with self.assertRaises(ConnectionError):
-            run_batch([Call("system.ping")], client=client)
+            RpcJob.run_batch([Call("system.ping")], client=client)
 
 
 if __name__ == "__main__":

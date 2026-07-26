@@ -22,6 +22,7 @@ DCC-side USD I/O (the full-fidelity path) lives downstream in
 ``mayatk.env_utils.usd`` / ``blendertk.env_utils.usd`` over each app's native
 USD runtime; this module is the shared, dependency-free floor beneath them.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,29 +40,8 @@ _USDC_MAGIC = b"PXR-USDC"
 _ZIP_MAGIC = b"PK\x03\x04"
 
 
-def _unique_arcname(src: str, taken: set, prefix: str = "textures") -> str:
-    """A package-unique ``<prefix>/<basename>`` for *src*, suffixing on
-    collision (``tex.png`` → ``tex_1.png``) so same-named files from different
-    directories never clash. Adds the result to *taken*."""
-    base = os.path.basename(src)
-    arc, n = f"{prefix}/{base}", 1
-    while arc in taken:
-        stem, ext = os.path.splitext(base)
-        arc, n = f"{prefix}/{stem}_{n}{ext}", n + 1
-    taken.add(arc)
-    return arc
-
 # USDZ data alignment (bytes) mandated by the spec for zero-copy mmap reads.
 _USDZ_ALIGNMENT = 64
-
-
-def is_usd_file(path: str) -> bool:
-    """Return True when *path* looks like a USD layer/package.
-
-    An existing file is classified by content (magic bytes); a non-existent
-    or unreadable path falls back to its extension.
-    """
-    return UsdFile.sniff(path) is not None
 
 
 class UsdFile:
@@ -113,13 +93,41 @@ class UsdFile:
         entry is not a USD layer (a malformed package)."""
         names = UsdFile.list_package(path)
         if names and os.path.splitext(names[0])[1].lower() in (
-            ".usd", ".usda", ".usdc",
+            ".usd",
+            ".usda",
+            ".usdc",
         ):
             return names[0]
         return None
 
+    @staticmethod
+    def is_usd_file(path: str) -> bool:
+        """Return True when *path* looks like a USD layer/package.
 
-class UsdzPackager:
+        An existing file is classified by content (magic bytes); a non-existent
+        or unreadable path falls back to its extension.
+        """
+        return UsdFile.sniff(path) is not None
+
+
+class _UsdzPackagerInternal(object):
+    """Internal helpers for UsdzPackager."""
+
+    @staticmethod
+    def _unique_arcname(src: str, taken: set, prefix: str = "textures") -> str:
+        """A package-unique ``<prefix>/<basename>`` for *src*, suffixing on
+        collision (``tex.png`` → ``tex_1.png``) so same-named files from different
+        directories never clash. Adds the result to *taken*."""
+        base = os.path.basename(src)
+        arc, n = f"{prefix}/{base}", 1
+        while arc in taken:
+            stem, ext = os.path.splitext(base)
+            arc, n = f"{prefix}/{stem}_{n}{ext}", n + 1
+        taken.add(arc)
+        return arc
+
+
+class UsdzPackager(_UsdzPackagerInternal):
     """Write and verify spec-compliant ``.usdz`` packages.
 
     A USDZ file is a zip archive with three extra rules (all enforced here):
@@ -133,9 +141,17 @@ class UsdzPackager:
 
     # Asset types the USDZ spec admits alongside USD layers.
     _ASSET_EXTENSIONS = (
-        ".usd", ".usda", ".usdc",
-        ".png", ".jpg", ".jpeg", ".exr", ".avif",
-        ".m4a", ".mp3", ".wav",
+        ".usd",
+        ".usda",
+        ".usdc",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".exr",
+        ".avif",
+        ".m4a",
+        ".mp3",
+        ".wav",
     )
 
     @classmethod
@@ -202,7 +218,8 @@ class UsdzPackager:
             if os.path.splitext(arc)[1].lower() not in cls._ASSET_EXTENSIONS:
                 logger.warning(
                     "USDZ entry %r is not a spec-listed asset type "
-                    "(packaged anyway; some viewers may ignore it).", arc
+                    "(packaged anyway; some viewers may ignore it).",
+                    arc,
                 )
 
         output_path = os.path.abspath(os.path.expandvars(str(output_path)))
@@ -281,11 +298,12 @@ class UsdzPackager:
             if ext in (".usd", ".usda", ".usdc", ".usdz"):
                 logger.warning(
                     "Layer reference %r left un-packaged (flatten the stage "
-                    "before packaging to include composed layers).", ref
+                    "before packaging to include composed layers).",
+                    ref,
                 )
                 return match.group(0)
             if src not in arc_by_src:
-                arc_by_src[src] = _unique_arcname(src, taken)
+                arc_by_src[src] = _UsdzPackagerInternal._unique_arcname(src, taken)
             return f"@{arc_by_src[src]}@"
 
         text = re.sub(r"@([^@\n]+)@", rewrite, text)
@@ -322,7 +340,9 @@ class UsdzPackager:
             if not infos:
                 issues.append("empty package")
             elif os.path.splitext(infos[0].filename)[1].lower() not in (
-                ".usd", ".usda", ".usdc",
+                ".usd",
+                ".usda",
+                ".usdc",
             ):
                 issues.append(f"first entry is not a USD layer: {infos[0].filename}")
             with open(path, "rb") as fh:
@@ -335,7 +355,9 @@ class UsdzPackager:
                     stored = info.compress_type == zipfile.ZIP_STORED
                     entries.append((info.filename, data_offset, aligned, stored))
                     if not aligned:
-                        issues.append(f"misaligned data: {info.filename} @ {data_offset}")
+                        issues.append(
+                            f"misaligned data: {info.filename} @ {data_offset}"
+                        )
                     if not stored:
                         issues.append(f"compressed entry: {info.filename}")
         return {"valid": not issues, "issues": issues, "entries": entries}
@@ -429,7 +451,7 @@ class UsdMeshWriter:
         w.append("#usda 1.0")
         w.append("(")
         w.append(f'    defaultPrim = "{name}"')
-        w.append(f'    metersPerUnit = {cls._f(meters_per_unit)}')
+        w.append(f"    metersPerUnit = {cls._f(meters_per_unit)}")
         w.append(f'    upAxis = "{up_axis}"')
         w.append(")")
         w.append("")
@@ -449,12 +471,12 @@ class UsdMeshWriter:
             f"[{', '.join(str(int(i)) for i in face_vertex_indices)}]"
         )
         w.append(
-            "        point3f[] points = "
-            f"[{', '.join(cls._vec(p) for p in points)}]"
+            f"        point3f[] points = [{', '.join(cls._vec(p) for p in points)}]"
         )
         if normals:
-            interp = cls._interpolation(len(normals), len(points),
-                                        len(face_vertex_indices), "normals")
+            interp = cls._interpolation(
+                len(normals), len(points), len(face_vertex_indices), "normals"
+            )
             if interp:
                 w.append(
                     "        normal3f[] normals = "
@@ -463,8 +485,9 @@ class UsdMeshWriter:
                 w.append(f'            interpolation = "{interp}"')
                 w.append("        )")
         if uvs:
-            interp = cls._interpolation(len(uvs), len(points),
-                                        len(face_vertex_indices), "uvs")
+            interp = cls._interpolation(
+                len(uvs), len(points), len(face_vertex_indices), "uvs"
+            )
             if interp:
                 w.append(
                     "        texCoord2f[] primvars:st = "
@@ -542,7 +565,10 @@ class UsdMeshWriter:
             if ch == "normal":
                 w.append("                float4 inputs:scale = (2, 2, 2, 1)")
                 w.append("                float4 inputs:bias = (-1, -1, -1, 0)")
-            if ch not in ("diffuse", "emissive"):  # data maps read raw; color maps (sRGB) use file metadata
+            if ch not in (
+                "diffuse",
+                "emissive",
+            ):  # data maps read raw; color maps (sRGB) use file metadata
                 w.append('                token inputs:sourceColorSpace = "raw"')
             w.append("                float3 outputs:rgb")
             if comp == "r":
@@ -713,74 +739,70 @@ class UsdMeshWriter:
     def _vec2(cls, v: Sequence[float]) -> str:
         return f"({cls._f(v[0])}, {cls._f(v[1])})"
 
+    @staticmethod
+    def obj_to_usd(
+        obj_path: str, output_path: Optional[str] = None, **write_opts: Any
+    ) -> str:
+        """Convert an OBJ to a ``.usda`` layer beside it (or at *output_path*).
 
-def obj_to_usd(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str:
-    """Convert an OBJ to a ``.usda`` layer beside it (or at *output_path*).
+        Texture references are written relative to the output when possible, so the
+        layer stays portable alongside its textures. Extra *write_opts* override
+        the parsed :meth:`UsdMeshWriter.write` kwargs (``up_axis`` etc.).
+        """
+        data = UsdMeshWriter.from_obj(obj_path)
+        if output_path is None:
+            output_path = os.path.splitext(os.path.abspath(obj_path))[0] + ".usda"
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if data.get("textures"):
+            rel = {}
+            for ch, tex in data["textures"].items():
+                try:
+                    rel[ch] = os.path.relpath(tex, out_dir).replace("\\", "/")
+                except ValueError:  # different drive — keep absolute
+                    rel[ch] = tex.replace("\\", "/")
+            data["textures"] = rel
+        data.update(write_opts)
+        return UsdMeshWriter.write(output_path, **data)
 
-    Texture references are written relative to the output when possible, so the
-    layer stays portable alongside its textures. Extra *write_opts* override
-    the parsed :meth:`UsdMeshWriter.write` kwargs (``up_axis`` etc.).
-    """
-    data = UsdMeshWriter.from_obj(obj_path)
-    if output_path is None:
-        output_path = os.path.splitext(os.path.abspath(obj_path))[0] + ".usda"
-    out_dir = os.path.dirname(os.path.abspath(output_path))
-    if data.get("textures"):
-        rel = {}
-        for ch, tex in data["textures"].items():
-            try:
-                rel[ch] = os.path.relpath(tex, out_dir).replace("\\", "/")
-            except ValueError:  # different drive — keep absolute
-                rel[ch] = tex.replace("\\", "/")
-        data["textures"] = rel
-    data.update(write_opts)
-    return UsdMeshWriter.write(output_path, **data)
+    @staticmethod
+    def obj_to_usdz(
+        obj_path: str, output_path: Optional[str] = None, **write_opts: Any
+    ) -> str:
+        """Convert an OBJ (+ MTL textures) to a self-contained ``.usdz``.
+
+        The layer is authored to a temp file with in-package ``textures/<name>``
+        references, then packaged (layer first, textures under ``textures/``).
+        The no-DCC publish path: OBJ in, AR-ready USDZ out, zero dependencies.
+        """
+        import tempfile
+
+        data = UsdMeshWriter.from_obj(obj_path)
+        if output_path is None:
+            output_path = os.path.splitext(os.path.abspath(obj_path))[0] + ".usdz"
+
+        textures = data.get("textures") or {}
+        arc_by_src: Dict[str, str] = {}
+        taken: set = set()
+        for ch, tex in textures.items():
+            if tex not in arc_by_src:
+                arc_by_src[tex] = _UsdzPackagerInternal._unique_arcname(tex, taken)
+            textures[ch] = arc_by_src[tex]
+        data["textures"] = textures or None
+        data.update(write_opts)
+
+        tmp_dir = tempfile.mkdtemp(prefix="ptk_usdz_")
+        try:
+            layer_name = data.get("name", "Model")
+            layer = UsdMeshWriter.write(os.path.join(tmp_dir, layer_name), **data)
+            files: List[Union[str, Tuple[str, str]]] = [
+                (layer, os.path.basename(layer))
+            ]
+            files += [(src, arc) for src, arc in arc_by_src.items()]
+            return UsdzPackager.package(files, output_path)
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def obj_to_usdz(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str:
-    """Convert an OBJ (+ MTL textures) to a self-contained ``.usdz``.
-
-    The layer is authored to a temp file with in-package ``textures/<name>``
-    references, then packaged (layer first, textures under ``textures/``).
-    The no-DCC publish path: OBJ in, AR-ready USDZ out, zero dependencies.
-    """
-    import tempfile
-
-    data = UsdMeshWriter.from_obj(obj_path)
-    if output_path is None:
-        output_path = os.path.splitext(os.path.abspath(obj_path))[0] + ".usdz"
-
-    textures = data.get("textures") or {}
-    arc_by_src: Dict[str, str] = {}
-    taken: set = set()
-    for ch, tex in textures.items():
-        if tex not in arc_by_src:
-            arc_by_src[tex] = _unique_arcname(tex, taken)
-        textures[ch] = arc_by_src[tex]
-    data["textures"] = textures or None
-    data.update(write_opts)
-
-    tmp_dir = tempfile.mkdtemp(prefix="ptk_usdz_")
-    try:
-        layer_name = data.get("name", "Model")
-        layer = UsdMeshWriter.write(os.path.join(tmp_dir, layer_name), **data)
-        files: List[Union[str, Tuple[str, str]]] = [
-            (layer, os.path.basename(layer))
-        ]
-        files += [(src, arc) for src, arc in arc_by_src.items()]
-        return UsdzPackager.package(files, output_path)
-    finally:
-        import shutil
-
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-__all__ = [
-    "USD_EXTENSIONS",
-    "is_usd_file",
-    "UsdFile",
-    "UsdzPackager",
-    "UsdMeshWriter",
-    "obj_to_usd",
-    "obj_to_usdz",
-]
+__all__ = ["USD_EXTENSIONS", "UsdFile", "UsdzPackager", "UsdMeshWriter"]

@@ -17,6 +17,7 @@ Run with:
     python -m pytest test_core.py -v
     python test_core.py
 """
+
 import unittest
 import types
 
@@ -62,6 +63,32 @@ class CoreTest(BaseTestCase):
                 unresolved.append(name)
         self.assertEqual(
             unresolved, [], f"Unresolved pythontk.__all__ names: {unresolved}"
+        )
+
+    def test_default_include_names_are_registered(self):
+        """Every explicitly-named ``DEFAULT_INCLUDE`` symbol must be registered.
+
+        ``__all__`` is derived from what the resolver actually registered, so a
+        dead include key -- a typo'd module path (the historical regression:
+        ``core_utils.table_mixin`` -> ``TableMixin``, a module that never
+        existed) or a misspelled symbol -- silently drops its name from the
+        public surface instead of surfacing. Since the name is gone,
+        ``test_all_names_resolve`` alone can no longer catch it; this pins that
+        every declared explicit name actually made it into ``__all__``.
+        """
+        import pythontk as ptk
+
+        advertised = set(ptk.__all__)
+        missing = []
+        for key, value in ptk.DEFAULT_INCLUDE.items():
+            if value == "*":
+                continue  # wildcard entries expose no explicitly-named symbols
+            names = [value] if isinstance(value, str) else list(value)
+            for name in names:
+                if name not in advertised:
+                    missing.append(f"{key} -> {name}")
+        self.assertEqual(
+            missing, [], f"DEFAULT_INCLUDE names missing from __all__: {missing}"
         )
 
     # -------------------------------------------------------------------------

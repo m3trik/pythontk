@@ -23,11 +23,12 @@ try:
     import numpy as np
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
+    np = None  # type: ignore
 try:
     from PIL import Image, ImageOps, ImageFilter, ImageChops, ImageDraw
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
-    Image = None  # type: ignore# from this package:
+    Image = None  # type: ignore
 
 # From this package:
 from pythontk.core_utils._core_utils import CoreUtils
@@ -59,14 +60,18 @@ class ImgUtils(HelpMixin):
         "tga": ImageFormat(True, True, "pil"),
         "tiff": ImageFormat(True, True, "pil"),
         "gif": ImageFormat(True, True, "pil"),
-        "dds": ImageFormat(True, True, "pil"),  # DXT-tier; BC7/BC6H unsupported by PIL's writer
+        "dds": ImageFormat(
+            True, True, "pil"
+        ),  # DXT-tier; BC7/BC6H unsupported by PIL's writer
         "exr": ImageFormat(True, True, "cv2"),
         "hdr": ImageFormat(True, True, "cv2"),
     }
 
     recognized = tuple(image_formats)  # discovery / file dialogs
     readable = tuple(e for e, f in image_formats.items() if f.read)  # load / scan
-    writable = tuple(e for e, f in image_formats.items() if f.write)  # convert / output menus
+    writable = tuple(
+        e for e, f in image_formats.items() if f.write
+    )  # convert / output menus
 
     # Backward-compatible alias for the historical flat list (discovery surfaces).
     texture_file_types = list(recognized)
@@ -355,7 +360,12 @@ class ImgUtils(HelpMixin):
 
         # New-style adaptive RLE: each scanline is 0x02 0x02 <hi> <lo> then four
         # run-length-encoded channels. Old/flat RGBE has no markers.
-        if 8 <= width <= 0x7FFF and off + 4 <= n and data[off] == 2 and data[off + 1] == 2:
+        if (
+            8 <= width <= 0x7FFF
+            and off + 4 <= n
+            and data[off] == 2
+            and data[off + 1] == 2
+        ):
             rows = 0
             while rows < height and off + 4 <= n:
                 if data[off] != 2 or data[off + 1] != 2:
@@ -482,8 +492,10 @@ class ImgUtils(HelpMixin):
 
         # 16-bit precision for PIL container formats (PNG/TIFF). Returns False when
         # the container can't hold it → fall through to the 8-bit path.
-        if bit_depth and int(bit_depth) >= 16 and cls._save_high_bit_depth(
-            im, name, int(bit_depth)
+        if (
+            bit_depth
+            and int(bit_depth) >= 16
+            and cls._save_high_bit_depth(im, name, int(bit_depth))
         ):
             return
 
@@ -494,7 +506,9 @@ class ImgUtils(HelpMixin):
         im.save(name, **kwargs)
 
     @classmethod
-    def _save_dds_compressed(cls, im: "Image.Image", name: str, compression: str) -> None:
+    def _save_dds_compressed(
+        cls, im: "Image.Image", name: str, compression: str
+    ) -> None:
         """Write *im* to a block-compressed ``.dds``.
 
         DXT/BC5 use Pillow's ``pixel_format``; BC7/BC6H route to a codec registered
@@ -530,7 +544,9 @@ class ImgUtils(HelpMixin):
         8-bit sources are promoted (value*257); existing 16-bit data is preserved.
         """
         if bit_depth != 16:  # only 16 is supported here; 32-bit float = EXR/HDR.
-            print(f"# ImgUtils: {bit_depth}-bit unsupported for {name}; saving as 8-bit.")
+            print(
+                f"# ImgUtils: {bit_depth}-bit unsupported for {name}; saving as 8-bit."
+            )
             return False
 
         ext = os.path.splitext(name)[1].lstrip(".").lower()
@@ -695,9 +711,7 @@ class ImgUtils(HelpMixin):
                     parents[i] = os.path.dirname(parents[i])
                     changed = True
             if not changed:  # path components exhausted (identical inputs)
-                stems = [
-                    f"{s}_{i}" if s in dupes else s for i, s in enumerate(stems)
-                ]
+                stems = [f"{s}_{i}" if s in dupes else s for i, s in enumerate(stems)]
                 break
         return stems
 
@@ -758,12 +772,12 @@ class ImgUtils(HelpMixin):
                         if b != b"\xff":
                             continue
                         marker = f.read(1)
-                        while marker == b"\xff":          # skip fill bytes
+                        while marker == b"\xff":  # skip fill bytes
                             marker = f.read(1)
                         if not marker:
                             return None
                         m = marker[0]
-                        if 0xD0 <= m <= 0xD9:             # RSTn / SOI / EOI: no length
+                        if 0xD0 <= m <= 0xD9:  # RSTn / SOI / EOI: no length
                             continue
                         lb = f.read(2)
                         if len(lb) < 2:
@@ -773,13 +787,13 @@ class ImgUtils(HelpMixin):
                             return None  # guards against a backward-seek infinite loop
                         # SOF0..SOF15 carry the frame size (excl. DHT/JPG/DAC: C4/C8/CC).
                         if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
-                            f.read(1)                     # sample precision
+                            f.read(1)  # sample precision
                             hw = f.read(4)
                             if len(hw) < 4:
                                 return None
                             h, w = struct.unpack(">HH", hw)
                             return int(w), int(h)
-                        f.seek(seglen - 2, 1)             # skip to next segment
+                        f.seek(seglen - 2, 1)  # skip to next segment
         except Exception:
             return None
         return None
@@ -1331,7 +1345,9 @@ class ImgUtils(HelpMixin):
             return ImgUtils._gaussian_blur_array_numpy(arr, radius, channel)
         # 2D grayscale
         if arr.ndim == 2:
-            src = Image.fromarray(arr if arr.dtype == np.uint8 else arr.astype(np.uint8))
+            src = Image.fromarray(
+                arr if arr.dtype == np.uint8 else arr.astype(np.uint8)
+            )
             blurred = src.filter(ImageFilter.GaussianBlur(radius=radius))
             out = np.asarray(blurred)
             return out.astype(arr.dtype, copy=False)
@@ -1400,7 +1416,9 @@ class ImgUtils(HelpMixin):
             # maps to index 1 on a 2-channel LA array (not 3, which the fixed
             # RGBA map produced -- silently blurring every channel instead).
             band_names = {1: "L", 2: "LA", 3: "RGB", 4: "RGBA"}.get(chans, "")
-            idx = band_names.find(channel.upper()) if channel else -1  # -1 = absent/none
+            idx = (
+                band_names.find(channel.upper()) if channel else -1
+            )  # -1 = absent/none
             targets = [idx] if idx >= 0 else range(chans)
             out = arr.astype(np.float64, copy=True)
             for c in targets:
@@ -1455,8 +1473,16 @@ class ImgUtils(HelpMixin):
         out[~valid] = 0.0  # empties must not contribute color until filled
 
         if connectivity == 8:
-            offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1),
-                       (0, 1), (1, -1), (1, 0), (1, 1)]
+            offsets = [
+                (-1, -1),
+                (-1, 0),
+                (-1, 1),
+                (0, -1),
+                (0, 1),
+                (1, -1),
+                (1, 0),
+                (1, 1),
+            ]
         elif connectivity == 4:
             offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
         else:
@@ -1464,8 +1490,14 @@ class ImgUtils(HelpMixin):
 
         def shift(a: "np.ndarray", dy: int, dx: int) -> "np.ndarray":
             s = np.zeros_like(a)
-            ys, yd = slice(max(dy, 0), h + min(dy, 0)), slice(max(-dy, 0), h + min(-dy, 0))
-            xs, xd = slice(max(dx, 0), w + min(dx, 0)), slice(max(-dx, 0), w + min(-dx, 0))
+            ys, yd = (
+                slice(max(dy, 0), h + min(dy, 0)),
+                slice(max(-dy, 0), h + min(-dy, 0)),
+            )
+            xs, xd = (
+                slice(max(dx, 0), w + min(dx, 0)),
+                slice(max(-dx, 0), w + min(-dx, 0)),
+            )
             s[yd, xd] = a[ys, xs]
             return s
 
@@ -1792,12 +1824,12 @@ class ImgUtils(HelpMixin):
         denom = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
         if abs(denom) < 1e-9:
             return  # degenerate
-        yy, xx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+        yy, xx = np.mgrid[y0 : y1 + 1, x0 : x1 + 1]
         l1 = ((by - cy) * (xx - cx) + (cx - bx) * (yy - cy)) / denom
         l2 = ((cy - ay) * (xx - cx) + (ax - cx) * (yy - cy)) / denom
         l3 = 1.0 - l1 - l2
         inside = (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
-        sub = mask[y0:y1 + 1, x0:x1 + 1]
+        sub = mask[y0 : y1 + 1, x0 : x1 + 1]
         sub[inside] = 255
 
     @classmethod
@@ -1817,7 +1849,10 @@ class ImgUtils(HelpMixin):
         radial_w = max(1.0 - vertical_weight, 0.0)
         vertical_w = max(min(vertical_weight, 1.0), 0.0)
         radial = cls.radial_gradient(
-            (w, h), center=src, max_radius=max(bottom_row - top_row, 1), falloff_power=falloff_power
+            (w, h),
+            center=src,
+            max_radius=max(bottom_row - top_row, 1),
+            falloff_power=falloff_power,
         )
         vertical = np.zeros((h, w), dtype=np.float32)
         span = max(bottom_row - top_row, 1)
@@ -1829,8 +1864,16 @@ class ImgUtils(HelpMixin):
 
     @classmethod
     def rasterize_silhouette(
-        cls, meshes, size=512, axis="auto", *, uniform_alpha=False,
-        falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5,
+        cls,
+        meshes,
+        size=512,
+        axis="auto",
+        *,
+        uniform_alpha=False,
+        falloff_source=None,
+        falloff_power=0.8,
+        vertical_weight=0.3,
+        blur_amount=1.5,
     ):
         """Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.
 
@@ -1854,8 +1897,12 @@ class ImgUtils(HelpMixin):
             ``(size, size, 4)`` uint8 RGBA array (silhouette in alpha; V flipped for bottom-left UV).
         """
         meshes = [
-            (np.asarray(p, dtype=float).reshape(-1, 3), np.asarray(t, dtype=np.int64).reshape(-1, 3))
-            for p, t in meshes if len(p) and len(t)
+            (
+                np.asarray(p, dtype=float).reshape(-1, 3),
+                np.asarray(t, dtype=np.int64).reshape(-1, 3),
+            )
+            for p, t in meshes
+            if len(p) and len(t)
         ]
         if not meshes:
             raise ValueError("rasterize_silhouette: no geometry provided.")
@@ -1872,8 +1919,12 @@ class ImgUtils(HelpMixin):
 
         mask = np.zeros((size, size), dtype=np.uint8)
         for pts, tris in meshes:
-            pu = np.clip(((pts[:, u_idx] - u_c) / extent + 0.5) * size, 0, size - 1).astype(np.int32)
-            pv = np.clip((1.0 - ((pts[:, v_idx] - v_c) / extent + 0.5)) * size, 0, size - 1).astype(np.int32)
+            pu = np.clip(
+                ((pts[:, u_idx] - u_c) / extent + 0.5) * size, 0, size - 1
+            ).astype(np.int32)
+            pv = np.clip(
+                (1.0 - ((pts[:, v_idx] - v_c) / extent + 0.5)) * size, 0, size - 1
+            ).astype(np.int32)
             proj = np.stack([pu, pv], axis=1)
             for tri in tris:
                 cls._fill_triangle(mask, proj[tri])
@@ -1881,10 +1932,15 @@ class ImgUtils(HelpMixin):
         if blur_amount and blur_amount > 0:
             mask = cls.gaussian_blur(mask, radius=blur_amount)
         combined = (
-            np.ones(mask.shape, dtype=np.float32) if uniform_alpha
-            else cls._contact_falloff(mask, falloff_source, falloff_power, vertical_weight)
+            np.ones(mask.shape, dtype=np.float32)
+            if uniform_alpha
+            else cls._contact_falloff(
+                mask, falloff_source, falloff_power, vertical_weight
+            )
         )
-        alpha = np.flipud((mask.astype(np.float32) / 255.0 * combined * 255).astype(np.uint8))
+        alpha = np.flipud(
+            (mask.astype(np.float32) / 255.0 * combined * 255).astype(np.uint8)
+        )
         result = np.zeros((size, size, 4), dtype=np.uint8)
         result[:, :, 3] = alpha
         return result

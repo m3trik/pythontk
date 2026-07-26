@@ -140,6 +140,61 @@ class StrUtils(CoreUtils):
         return SafeFormatter().format(text, **kwargs)
 
     @staticmethod
+    def resolve_placeholders(text: str, **kwargs) -> dict:
+        """Resolve placeholders and report what was substituted vs. left unresolved.
+
+        A verbose companion to :meth:`replace_placeholders`, intended for building
+        live previews / diagnostics (e.g. a tooltip that shows the resolved value
+        of a user-typed pattern). It parses the ``{field}`` tokens in *text*
+        (honouring format specs like ``{n:03d}`` and attribute / index access such
+        as ``{obj.attr}`` / ``{seq[0]}`` — only the base name is reported), then
+        splits them into the ones supplied in *kwargs* and the ones that are not.
+
+        Args:
+            text (str): The string containing placeholders.
+            **kwargs: Key-value pairs corresponding to placeholders.
+
+        Returns:
+            dict with keys:
+                - ``"result"`` (str): *text* with supplied keys substituted and
+                  unresolved placeholders preserved verbatim — identical to
+                  :meth:`replace_placeholders`.
+                - ``"fields"`` (list[str]): every distinct placeholder base name
+                  found, in first-seen order (positional ``{}`` / ``{0}`` skipped).
+                - ``"resolved"`` (dict[str, str]): base name -> its supplied value
+                  rendered as a string, for fields present in *kwargs*.
+                - ``"unresolved"`` (list[str]): base names present in *text* but
+                  absent from *kwargs*, in first-seen order.
+
+        Raises:
+            ValueError: If *text* is a malformed format string (e.g. a lone ``{``),
+                matching :meth:`replace_placeholders`.
+
+        Example:
+            >>> StrUtils.resolve_placeholders("{root}/{name}_{ver:03d}", root="C:/p", name="shot")
+            {'result': 'C:/p/shot_{ver:03d}', 'fields': ['root', 'name', 'ver'], 'resolved': {'root': 'C:/p', 'name': 'shot'}, 'unresolved': ['ver']}
+        """
+        import string
+
+        fields = []
+        for _literal, field_name, _spec, _conv in string.Formatter().parse(text):
+            if not field_name:  # None (literal run) or "" (positional auto-number)
+                continue
+            base = field_name.split(".")[0].split("[")[0]
+            if base and not base.isdigit() and base not in fields:
+                fields.append(base)
+
+        resolved = {name: format(kwargs[name]) for name in fields if name in kwargs}
+        unresolved = [name for name in fields if name not in kwargs]
+
+        return {
+            "result": StrUtils.replace_placeholders(text, **kwargs),
+            "fields": fields,
+            "resolved": resolved,
+            "unresolved": unresolved,
+        }
+
+    @staticmethod
     def replace_delimited(
         text: str,
         context: dict,

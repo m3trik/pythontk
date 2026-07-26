@@ -22,6 +22,7 @@ This is the bottom-of-stack rule: no ``maya`` / ``bpy`` / ``PySide`` here. DCC b
 defer their ``import maya.cmds`` / ``import bpy`` into call bodies so the surface
 resolves headlessly.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -197,7 +198,10 @@ class HandoffBridge(LoggingMixin):
         Extra keyword args ride along in :attr:`HandoffRequest.extras`.
         """
         request = HandoffRequest(
-            template=template, mode=mode, params=self.merge_params(params), extras=extras
+            template=template,
+            mode=mode,
+            params=self.merge_params(params),
+            extras=extras,
         )
         return self._run(objects, request)
 
@@ -301,13 +305,15 @@ class ScriptLaunchDeliverer(Deliverer):
         self.spec = spec
 
     def _template_path(self, template: str) -> Path:
-        return Path(self.spec.template_dir) / f"{template}{self.spec.template_extension}"
+        return (
+            Path(self.spec.template_dir) / f"{template}{self.spec.template_extension}"
+        )
 
     def preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool:
         spec = self.spec
         template_path = self._template_path(request.template)
         allowed = (
-            script_template.template_modes(template_path, spec.modes)
+            script_template.ScriptTemplate.template_modes(template_path, spec.modes)
             if template_path.is_file()
             else ()
         )
@@ -329,7 +335,9 @@ class ScriptLaunchDeliverer(Deliverer):
         if script is None:
             return None
 
-        script_path = str(Path(payload.primary).with_suffix(self.spec.template_extension))
+        script_path = str(
+            Path(payload.primary).with_suffix(self.spec.template_extension)
+        )
         Path(script_path).write_text(script, encoding="utf-8")
         bridge.logger.info(
             f"Sending to {self.spec.app.name} ({request.template}) with script "
@@ -347,9 +355,7 @@ class ScriptLaunchDeliverer(Deliverer):
             )
             return None
 
-        bridge.logger.info(
-            f"Sent to {self.spec.app.name} (interactive session)."
-        )
+        bridge.logger.info(f"Sent to {self.spec.app.name} (interactive session).")
         return {
             "script": script_path,
             "template": request.template,
@@ -365,7 +371,7 @@ class ScriptLaunchDeliverer(Deliverer):
         if not template_path.is_file():
             available = sorted(
                 p.stem
-                for p in script_template.list_templates(
+                for p in script_template.ScriptTemplate.list_templates(
                     self.spec.template_dir, self.spec.template_extension
                 )
             )
@@ -376,7 +382,7 @@ class ScriptLaunchDeliverer(Deliverer):
             return None
         context = {"FBX_PATH": str(payload.primary).replace("\\", "/")}
         context.update(bridge.render_context(request.params))
-        return script_template.render_template(template_path, context)
+        return script_template.ScriptTemplate.render_template(template_path, context)
 
 
 class ScriptLaunchBridge(HandoffBridge):
@@ -393,7 +399,9 @@ class ScriptLaunchBridge(HandoffBridge):
     def __init__(self, app_path: Optional[str] = None):
         super().__init__(app_path=app_path)
         if self.spec is None:
-            raise TypeError(f"{type(self).__name__} must set a ScriptLaunchSpec `spec`.")
+            raise TypeError(
+                f"{type(self).__name__} must set a ScriptLaunchSpec `spec`."
+            )
         self.app_spec = self.spec.app
         self.payload_prefix = self.spec.payload_prefix
         self.deliverer = ScriptLaunchDeliverer(self.spec)
@@ -419,13 +427,13 @@ class ScriptLaunchBridge(HandoffBridge):
     # ------------------ Template helpers (for the slot/UI layer) ------------
     def list_template_modes(self) -> List[Tuple[str, str]]:
         """``[(stem, mode), ...]`` for the bridge's template directory."""
-        return script_template.list_template_modes(
+        return script_template.ScriptTemplate.list_template_modes(
             self.spec.template_dir, self.spec.template_extension, self.spec.modes
         )
 
     def list_templates(self) -> List[Path]:
         """User-visible template paths for the bridge."""
-        return script_template.list_templates(
+        return script_template.ScriptTemplate.list_templates(
             self.spec.template_dir, self.spec.template_extension
         )
 

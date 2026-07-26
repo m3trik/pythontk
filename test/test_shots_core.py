@@ -16,6 +16,7 @@ Pure-Python, DCC-free.  Covers:
 - the ``shot_apply.apply`` skeleton — bounds-only default plus the three-phase
   writer-backed path (park / ordered / land) and the +INF envelope cap.
 """
+
 import os
 import sys
 import shutil
@@ -30,18 +31,11 @@ if _PKG_PARENT not in sys.path:
 
 from pythontk.core_utils.engines.shots import shot_model
 from pythontk.core_utils.engines.shots.shot_model import ShotBlock, ShotStore
-from pythontk.core_utils.engines.shots.shot_plan import (
-    ShotMove,
-    plan_respace,
-    plan_ripple_downstream,
-    plan_ripple_upstream,
-    plan_reorder,
-)
-from pythontk.core_utils.engines.shots.shot_apply import apply
+from pythontk.core_utils.engines.shots.shot_plan import ShotPlanner, ShotMove
+from pythontk.core_utils.engines.shots.shot_apply import ShotApply
 from pythontk.core_utils.engines.shots.shot_detection import (
+    ShotDetection,
     STANDARD_TRANSFORM_ATTRS,
-    cluster_segments_by_gap,
-    boundaries_from_key_entries,
 )
 
 
@@ -93,7 +87,7 @@ class TestPlanRespace(_ShotTest):
                 ShotBlock(3, "C", 21, 30, []),
             ]
         )
-        plan = plan_respace(store, gap=20, start_frame=1)
+        plan = ShotPlanner.plan_respace(store, gap=20, start_frame=1)
         self.assertEqual(plan.sequence, [3, 2, 1])
 
     def test_backward_shift_orders_front_to_back(self):
@@ -104,7 +98,7 @@ class TestPlanRespace(_ShotTest):
                 ShotBlock(3, "C", 70, 80, []),
             ]
         )
-        plan = plan_respace(store, gap=0, start_frame=0)
+        plan = ShotPlanner.plan_respace(store, gap=0, start_frame=0)
         self.assertEqual(plan.sequence, [1, 2, 3])
 
     def test_non_moving_shots_absent_from_sequence(self):
@@ -117,7 +111,7 @@ class TestPlanRespace(_ShotTest):
             ]
         )
         # gap=10, start=0 → A stays, B stays.
-        plan = plan_respace(store, gap=10, start_frame=0)
+        plan = ShotPlanner.plan_respace(store, gap=10, start_frame=0)
         self.assertEqual(plan.sequence, [])
         self.assertFalse(plan.moves[1].moves)
         self.assertFalse(plan.moves[2].moves)
@@ -131,7 +125,7 @@ class TestPlanRespace(_ShotTest):
                 ShotBlock(2, "B", 20, 30, []),
             ]
         )
-        plan = plan_respace(store, gap=5, start_frame=0)
+        plan = ShotPlanner.plan_respace(store, gap=5, start_frame=0)
         a = plan.moves[1]
         b = plan.moves[2]
         self.assertEqual(a.env_start, 0)
@@ -149,14 +143,14 @@ class TestPlanRespace(_ShotTest):
             ]
         )
         store.lock_gap(1, 2)  # preserve 15-frame gap between A and B
-        plan = plan_respace(store, gap=0, start_frame=0)
+        plan = ShotPlanner.plan_respace(store, gap=0, start_frame=0)
         self.assertAlmostEqual(plan.moves[1].new_start, 0)
         self.assertAlmostEqual(plan.moves[1].new_end, 10)
         self.assertAlmostEqual(plan.moves[2].new_start, 25)  # 10 + 15 (locked)
         self.assertAlmostEqual(plan.moves[3].new_start, 35)  # 25+10 (gap=0)
 
     def test_empty_store_returns_empty_plan(self):
-        plan = plan_respace(_store([]), gap=5, start_frame=0)
+        plan = ShotPlanner.plan_respace(_store([]), gap=5, start_frame=0)
         self.assertEqual(plan.moves, {})
         self.assertEqual(plan.sequence, [])
 
@@ -169,7 +163,7 @@ class TestPlanRespace(_ShotTest):
             ]
         )
         store.snap_whole_frames = True
-        plan = plan_respace(store, gap=3.6, start_frame=0.4)
+        plan = ShotPlanner.plan_respace(store, gap=3.6, start_frame=0.4)
         self.assertEqual(plan.moves[1].new_start, 0.0)
         # duration not snapped in-place but new_end is
         for m in plan.moves.values():
@@ -187,7 +181,7 @@ class TestPlanRipple(_ShotTest):
                 ShotBlock(4, "D", 60, 70, []),
             ]
         )
-        plan = plan_ripple_downstream(
+        plan = ShotPlanner.plan_ripple_downstream(
             store, pivot_shot_id=2, after_frame=30, delta=5
         )
         self.assertNotIn(1, plan.moves)  # upstream of after_frame
@@ -206,7 +200,7 @@ class TestPlanRipple(_ShotTest):
                 ShotBlock(4, "D", 60, 70, []),
             ]
         )
-        plan = plan_ripple_upstream(
+        plan = ShotPlanner.plan_ripple_upstream(
             store, pivot_shot_id=3, before_frame=40, delta=-5
         )
         self.assertIn(1, plan.moves)
@@ -223,7 +217,7 @@ class TestPlanRipple(_ShotTest):
                 ShotBlock(2, "B", 20, 30, []),
             ]
         )
-        plan = plan_ripple_downstream(store, 1, 10, 0)
+        plan = ShotPlanner.plan_ripple_downstream(store, 1, 10, 0)
         self.assertEqual(plan.moves, {})
         self.assertEqual(plan.sequence, [])
 
@@ -266,8 +260,8 @@ class TestRespaceRoundTrip(_ShotTest):
                 shot.start = m.new_start
                 shot.end = m.new_end
 
-        _apply(plan_respace(store, gap=30, start_frame=0))
-        _apply(plan_respace(store, gap=10, start_frame=0))
+        _apply(ShotPlanner.plan_respace(store, gap=30, start_frame=0))
+        _apply(ShotPlanner.plan_respace(store, gap=10, start_frame=0))
 
         restored = {s.shot_id: (s.start, s.end) for s in store.sorted_shots()}
         self.assertEqual(restored, orig)
@@ -295,7 +289,7 @@ class TestPlanReorder(_ShotTest):
 
     def test_move_first_to_last_reorders_and_relays_out(self):
         store = self._abc()  # A[0,10] B[20,30] C[40,50], gap 10
-        plan = plan_reorder(store, shot_id=1, target_pos=3, gap=10)
+        plan = ShotPlanner.plan_reorder(store, shot_id=1, target_pos=3, gap=10)
         self._apply_bounds(store, plan)
         order = [(s.name, s.start, s.end) for s in store.sorted_shots()]
         # B first (anchored at old first-start 0), then C, then A appended.
@@ -303,7 +297,7 @@ class TestPlanReorder(_ShotTest):
 
     def test_move_last_to_first(self):
         store = self._abc()
-        plan = plan_reorder(store, shot_id=3, target_pos=1, gap=10)
+        plan = ShotPlanner.plan_reorder(store, shot_id=3, target_pos=1, gap=10)
         self._apply_bounds(store, plan)
         order = [s.name for s in store.sorted_shots()]
         self.assertEqual(order, ["C", "A", "B"])
@@ -311,39 +305,41 @@ class TestPlanReorder(_ShotTest):
     def test_durations_preserved(self):
         store = _store(
             [
-                ShotBlock(1, "A", 0, 5, []),      # dur 5
-                ShotBlock(2, "B", 20, 40, []),    # dur 20
-                ShotBlock(3, "C", 50, 58, []),    # dur 8
+                ShotBlock(1, "A", 0, 5, []),  # dur 5
+                ShotBlock(2, "B", 20, 40, []),  # dur 20
+                ShotBlock(3, "C", 50, 58, []),  # dur 8
             ]
         )
-        plan = plan_reorder(store, shot_id=1, target_pos=3, gap=10)
+        plan = ShotPlanner.plan_reorder(store, shot_id=1, target_pos=3, gap=10)
         self._apply_bounds(store, plan)
         durs = {s.name: s.duration for s in store.shots}
         self.assertEqual(durs, {"A": 5, "B": 20, "C": 8})
 
     def test_unchanged_position_is_empty_plan(self):
-        plan = plan_reorder(self._abc(), shot_id=2, target_pos=2, gap=10)
+        plan = ShotPlanner.plan_reorder(self._abc(), shot_id=2, target_pos=2, gap=10)
         self.assertEqual(plan.moves, {})
 
     def test_unknown_id_is_empty_plan(self):
-        plan = plan_reorder(self._abc(), shot_id=999, target_pos=1, gap=10)
+        plan = ShotPlanner.plan_reorder(self._abc(), shot_id=999, target_pos=1, gap=10)
         self.assertEqual(plan.moves, {})
 
     def test_single_shot_is_empty_plan(self):
-        plan = plan_reorder(_store([ShotBlock(1, "A", 0, 10, [])]), 1, 1, 10)
+        plan = ShotPlanner.plan_reorder(
+            _store([ShotBlock(1, "A", 0, 10, [])]), 1, 1, 10
+        )
         self.assertEqual(plan.moves, {})
 
     def test_target_pos_clamped(self):
         store = self._abc()
         # position 99 clamps to last slot -> A ends up last, same as pos 3.
-        plan = plan_reorder(store, shot_id=1, target_pos=99, gap=10)
+        plan = ShotPlanner.plan_reorder(store, shot_id=1, target_pos=99, gap=10)
         self._apply_bounds(store, plan)
         self.assertEqual([s.name for s in store.sorted_shots()], ["B", "C", "A"])
 
     def test_reordered_plan_partition_is_valid(self):
         """The move set must split cleanly into sequence ∪ parked (disjoint)."""
         store = self._abc()
-        plan = plan_reorder(store, shot_id=1, target_pos=3, gap=10)
+        plan = ShotPlanner.plan_reorder(store, shot_id=1, target_pos=3, gap=10)
         moving = {sid for sid, m in plan.moves.items() if m.moves}
         self.assertEqual(set(plan.sequence) | set(plan.parked), moving)
         self.assertEqual(set(plan.sequence) & set(plan.parked), set())
@@ -366,7 +362,7 @@ class TestRespaceCollisionParking(_ShotTest):
         )
 
     def test_cycle_members_are_parked_not_raised(self):
-        plan = plan_respace(self._cycle_store(), gap=30, start_frame=0)
+        plan = ShotPlanner.plan_respace(self._cycle_store(), gap=30, start_frame=0)
         moving = {sid for sid, m in plan.moves.items() if m.moves}
         self.assertTrue(plan.parked, "cycle members must be parked")
         self.assertEqual(set(plan.sequence) | set(plan.parked), moving)
@@ -397,7 +393,7 @@ class TestApplySkeleton(_ShotTest):
     def test_bounds_only_commits_final_positions(self):
         """No ``move_keys`` → in-memory bounds-only commit (headless path)."""
         store = self._cycle_store()
-        apply(plan_respace(store, gap=30, start_frame=0), store)
+        ShotApply.apply(ShotPlanner.plan_respace(store, gap=30, start_frame=0), store)
         by = {s.name: s for s in store.shots}
         self.assertEqual((by["A"].start, by["A"].end), (0, 10))
         self.assertEqual((by["B"].start, by["B"].end), (40, 49))
@@ -406,8 +402,8 @@ class TestApplySkeleton(_ShotTest):
     def test_empty_plan_is_noop(self):
         store = _store([ShotBlock(1, "A", 0, 10, [])])
         calls = []
-        apply(
-            plan_respace(store, gap=0, start_frame=0),
+        ShotApply.apply(
+            ShotPlanner.plan_respace(store, gap=0, start_frame=0),
             store,
             move_keys=lambda *a, **k: calls.append(a),
         )
@@ -417,7 +413,7 @@ class TestApplySkeleton(_ShotTest):
         """Parked cycle → phase-0 park + phase-2 land, both ``over=True``, and
         the last shot's +INF envelope must be capped (never propagated raw)."""
         store = self._cycle_store()
-        plan = plan_respace(store, gap=30, start_frame=0)
+        plan = ShotPlanner.plan_respace(store, gap=30, start_frame=0)
         self.assertEqual(set(plan.parked), {2, 3})  # B and C park
         self.assertEqual(plan.sequence, [])
 
@@ -426,14 +422,19 @@ class TestApplySkeleton(_ShotTest):
 
         def move_keys(objects, lo, hi, delta, over=False):
             key_calls.append(
-                {"objects": list(objects), "lo": lo, "hi": hi,
-                 "delta": delta, "over": over}
+                {
+                    "objects": list(objects),
+                    "lo": lo,
+                    "hi": hi,
+                    "delta": delta,
+                    "over": over,
+                }
             )
 
         def shift_audio(lo, hi, delta):
             audio_calls.append((lo, hi, delta))
 
-        apply(plan, store, move_keys=move_keys, shift_audio=shift_audio)
+        ShotApply.apply(plan, store, move_keys=move_keys, shift_audio=shift_audio)
 
         # Bounds still committed.
         by = {s.name: s for s in store.shots}
@@ -469,17 +470,23 @@ class TestShotBlock(_ShotTest):
 
     def test_classify_uses_object_status(self):
         shot = ShotBlock(
-            0, "S", 0, 10, objects=["a", "b"],
+            0,
+            "S",
+            0,
+            10,
+            objects=["a", "b"],
             metadata={"object_status": {"a": "missing_object", "b": "valid"}},
         )
-        self.assertEqual(
-            shot.classify_objects(), {"a": "missing_object", "b": "valid"}
-        )
+        self.assertEqual(shot.classify_objects(), {"a": "missing_object", "b": "valid"})
 
     def test_classify_leaf_name_fallback(self):
         """Status keyed by short name still matches long DAG-path objects."""
         shot = ShotBlock(
-            0, "S", 0, 10, objects=["|grp|a", "|grp|b"],
+            0,
+            "S",
+            0,
+            10,
+            objects=["|grp|a", "|grp|b"],
             metadata={"object_status": {"a": "user_animated"}},
         )
         result = shot.classify_objects()
@@ -488,7 +495,11 @@ class TestShotBlock(_ShotTest):
 
     def test_classify_scene_discovered_for_non_csv(self):
         shot = ShotBlock(
-            0, "S", 0, 10, objects=["a", "z"],
+            0,
+            "S",
+            0,
+            10,
+            objects=["a", "z"],
             metadata={"csv_objects": ["a"]},
         )
         result = shot.classify_objects()
@@ -676,7 +687,11 @@ class TestShotStoreSerialisation(_ShotTest):
     def test_to_from_dict_round_trip(self):
         s = _store([])
         s.define_shot(
-            "A", 0, 10, objects=["a"], description="first",
+            "A",
+            0,
+            10,
+            objects=["a"],
+            description="first",
             metadata={"section": "intro"},
         )
         s.define_shot("B", 20, 30, objects=["b"], locked=True)
@@ -778,7 +793,9 @@ class TestClusterSegmentsByGap(_ShotTest):
             {"start": 12, "end": 20, "obj": "b"},  # 12-10=2 <= gap → same cluster
             {"start": 40, "end": 50, "obj": "c"},  # 40-20=20 > gap → new cluster
         ]
-        out = cluster_segments_by_gap(segments, gap_threshold=5, min_duration=2)
+        out = ShotDetection.cluster_segments_by_gap(
+            segments, gap_threshold=5, min_duration=2
+        )
         self.assertEqual(len(out), 2)
         self.assertEqual((out[0]["start"], out[0]["end"]), (0, 20))
         self.assertEqual(out[0]["objects"], ["a", "b"])
@@ -791,12 +808,14 @@ class TestClusterSegmentsByGap(_ShotTest):
             {"start": 0, "end": 1, "obj": "a"},  # duration 1 < 2 → dropped
             {"start": 30, "end": 40, "obj": "b"},  # kept
         ]
-        out = cluster_segments_by_gap(segments, gap_threshold=5, min_duration=2)
+        out = ShotDetection.cluster_segments_by_gap(
+            segments, gap_threshold=5, min_duration=2
+        )
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["objects"], ["b"])
 
     def test_empty(self):
-        self.assertEqual(cluster_segments_by_gap([]), [])
+        self.assertEqual(ShotDetection.cluster_segments_by_gap([]), [])
 
     def test_does_not_mutate_input(self):
         segments = [
@@ -804,14 +823,16 @@ class TestClusterSegmentsByGap(_ShotTest):
             {"start": 0, "end": 10, "obj": "a"},
         ]
         snapshot = [dict(seg) for seg in segments]
-        cluster_segments_by_gap(segments)
+        ShotDetection.cluster_segments_by_gap(segments)
         self.assertEqual(segments, snapshot)  # sorted a copy, not in place
 
 
 class TestBoundariesFromKeyEntries(_ShotTest):
     def test_all_mode_contiguous(self):
         entries = [(0, 1, "a"), (20, 1, "b"), (40, 1, "c")]
-        out = boundaries_from_key_entries(entries, gap_threshold=5, key_filter="all")
+        out = ShotDetection.boundaries_from_key_entries(
+            entries, gap_threshold=5, key_filter="all"
+        )
         self.assertEqual(len(out), 3)
         self.assertEqual((out[0]["start"], out[0]["end"]), (0, 20))
         self.assertEqual((out[1]["start"], out[1]["end"]), (20, 40))
@@ -819,14 +840,16 @@ class TestBoundariesFromKeyEntries(_ShotTest):
 
     def test_all_mode_merges_within_gap(self):
         entries = [(0, 1, "a"), (3, 1, "b"), (40, 1, "c")]  # 0 & 3 merge (<=5)
-        out = boundaries_from_key_entries(entries, gap_threshold=5, key_filter="all")
+        out = ShotDetection.boundaries_from_key_entries(
+            entries, gap_threshold=5, key_filter="all"
+        )
         self.assertEqual(len(out), 2)
         self.assertEqual(out[0]["objects"], ["a", "b"])
         self.assertEqual((out[0]["start"], out[0]["end"]), (0, 40))
 
     def test_skip_zero_drops_zero_keys(self):
         entries = [(0, 0, "a"), (20, 1, "b"), (40, 0, "c")]
-        out = boundaries_from_key_entries(
+        out = ShotDetection.boundaries_from_key_entries(
             entries, gap_threshold=5, key_filter="skip_zero"
         )
         self.assertEqual(len(out), 1)
@@ -835,13 +858,15 @@ class TestBoundariesFromKeyEntries(_ShotTest):
 
     def test_zero_as_end_pairs_starts_with_ends(self):
         entries = [(0, 1, "a"), (10, 0, "a"), (20, 1, "b"), (35, 0, "b")]
-        out = boundaries_from_key_entries(entries, key_filter="zero_as_end")
+        out = ShotDetection.boundaries_from_key_entries(
+            entries, key_filter="zero_as_end"
+        )
         self.assertEqual(len(out), 2)
         self.assertEqual((out[0]["start"], out[0]["end"]), (0, 10))
         self.assertEqual((out[1]["start"], out[1]["end"]), (20, 35))
 
     def test_empty(self):
-        self.assertEqual(boundaries_from_key_entries([]), [])
+        self.assertEqual(ShotDetection.boundaries_from_key_entries([]), [])
 
 
 class TestDetectionConstants(_ShotTest):

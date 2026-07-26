@@ -15,6 +15,9 @@ Persistence is pluggable: call :meth:`ShotStore.set_persistence` with a backend
 that implements ``save(data)`` / ``load() -> dict | None``.  Absent a backend
 the store runs in pure in-memory mode.
 """
+
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 from typing import (
@@ -34,16 +37,6 @@ from contextlib import contextmanager
 _log = logging.getLogger(__name__)
 
 _DEFAULT_FPS = 24.0
-
-
-def leaf_name(node) -> str:
-    """Leaf name with namespace preserved: ``"|grp|ns:obj"`` -> ``"ns:obj"``.
-
-    Pure, DCC-agnostic ``"|"``-split — the only naming primitive the shot model
-    needs.  Mirrors ``mayatk.core_utils.leaf_name`` so classification behaves
-    identically whether names are short (Blender / pure) or long DAG paths (Maya).
-    """
-    return str(node).split("|")[-1]
 
 
 __all__ = [
@@ -155,11 +148,11 @@ class ShotBlock:
         # long DAG paths after a manifest sync — fall back to leaf-name
         # comparison so every object doesn't degrade to
         # "scene_discovered" on the first re-sync.
-        status_by_leaf = {leaf_name(k): v for k, v in statuses.items()}
-        csv_leaves = {leaf_name(n) for n in csv_objs}
+        status_by_leaf = {ShotStore.leaf_name(k): v for k, v in statuses.items()}
+        csv_leaves = {ShotStore.leaf_name(n) for n in csv_objs}
         result: Dict[str, str] = {}
         for obj in self.objects:
-            leaf = leaf_name(obj)
+            leaf = ShotStore.leaf_name(obj)
             if obj in statuses:
                 result[obj] = statuses[obj]
             elif leaf in status_by_leaf:
@@ -179,36 +172,6 @@ CLIP_NAME_STRATEGIES: Dict[str, Callable[[int, "ShotBlock"], str]] = {
     "name": lambda i, shot: shot.name,
     "sequence": lambda i, shot: f"{(i + 1) * 10:03d}_{shot.name}",
 }
-
-
-def _sanitize_clip_name(name: str) -> str:
-    """Return a Unity/FBX-legal clip name (alphanumeric + ``_``, case preserved)."""
-    import pythontk as ptk
-
-    clean = ptk.StrUtils.sanitize(name or "", preserve_case=True)
-    return clean or "shot"
-
-
-def resolve_clip_specs(
-    shots: List["ShotBlock"], strategy: str = "name"
-) -> List[Tuple[str, int, int]]:
-    """Resolve ``[(clip_name, start, end), …]`` — the single source of truth for
-    clip naming.  Names are sanitized and made unique *in the given order*, so
-    callers pass ``sorted_shots()`` for deterministic, stable results.
-    """
-    fn = CLIP_NAME_STRATEGIES.get(strategy, CLIP_NAME_STRATEGIES["name"])
-    seen: set = set()
-    specs: List[Tuple[str, int, int]] = []
-    for i, shot in enumerate(shots):
-        clip = _sanitize_clip_name(fn(i, shot))
-        if clip in seen:
-            n = 1
-            while f"{clip}_{n}" in seen:
-                n += 1
-            clip = f"{clip}_{n}"
-        seen.add(clip)
-        specs.append((clip, int(round(shot.start)), int(round(shot.end))))
-    return specs
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +254,19 @@ class StoreInvalidated(StoreEvent):
 # ---------------------------------------------------------------------------
 
 
-class ShotStore:
+class _ShotStoreInternal(object):
+    """Internal helpers for ShotStore."""
+
+    @staticmethod
+    def _sanitize_clip_name(name: str) -> str:
+        """Return a Unity/FBX-legal clip name (alphanumeric + ``_``, case preserved)."""
+        import pythontk as ptk
+
+        clean = ptk.StrUtils.sanitize(name or "", preserve_case=True)
+        return clean or "shot"
+
+
+class ShotStore(_ShotStoreInternal):
     """Central store for shot data with pluggable persistence.
 
     The pure, DCC-agnostic core.  Scene-reaching behaviour lives in the
@@ -546,9 +521,7 @@ class ShotStore:
         sorted_shots = self.sorted_shots()
         before = len(self.locked_gaps)
         for i in range(len(sorted_shots) - 1):
-            self.locked_gaps.add(
-                (sorted_shots[i].shot_id, sorted_shots[i + 1].shot_id)
-            )
+            self.locked_gaps.add((sorted_shots[i].shot_id, sorted_shots[i + 1].shot_id))
         if len(self.locked_gaps) != before:
             self.mark_dirty()
 
@@ -649,9 +622,7 @@ class ShotStore:
             try:
                 cb(event)
             except Exception:
-                _log.warning(
-                    "shot store invalidation listener failed", exc_info=True
-                )
+                _log.warning("shot store invalidation listener failed", exc_info=True)
 
     # ---- cross-scene user preferences ------------------------------------
 
@@ -663,9 +634,9 @@ class ShotStore:
 
         if cls._prefs_dir_override is not None:
             return Path(cls._prefs_dir_override) / "shots_prefs.json"
-        from pythontk.core_utils.user_config import user_config_root
+        from pythontk.core_utils.user_config import UserConfig
 
-        return user_config_root() / "shots" / "prefs.json"
+        return UserConfig.user_config_root() / "shots" / "prefs.json"
 
     def _restore_user_prefs(self) -> None:
         """Apply detection preferences from the cross-scene prefs file.
@@ -1024,13 +995,13 @@ class ShotStore:
         a clip can't (description, objects, section), keyed by clip.
         """
         sorted_s = self.sorted_shots()
-        specs = resolve_clip_specs(sorted_s, strategy=strategy)
+        specs = ShotStore.resolve_clip_specs(sorted_s, strategy=strategy)
         fbx_takes = [{"name": c, "start": s, "end": e} for c, s, e in specs]
         shots_meta = [
             {
                 "clip": clip,
                 "description": shot.description or "",
-                "objects": [leaf_name(o) for o in shot.objects],
+                "objects": [ShotStore.leaf_name(o) for o in shot.objects],
                 "section": (shot.metadata or {}).get("section", ""),
             }
             for (clip, _s, _e), shot in zip(specs, sorted_s)
@@ -1282,3 +1253,35 @@ class ShotStore:
                 )
                 created.append(shot)
         return created
+
+    @staticmethod
+    def leaf_name(node) -> str:
+        """Leaf name with namespace preserved: ``"|grp|ns:obj"`` -> ``"ns:obj"``.
+
+        Pure, DCC-agnostic ``"|"``-split — the only naming primitive the shot model
+        needs.  Mirrors ``mayatk.core_utils.leaf_name`` so classification behaves
+        identically whether names are short (Blender / pure) or long DAG paths (Maya).
+        """
+        return str(node).split("|")[-1]
+
+    @staticmethod
+    def resolve_clip_specs(
+        shots: List["ShotBlock"], strategy: str = "name"
+    ) -> List[Tuple[str, int, int]]:
+        """Resolve ``[(clip_name, start, end), …]`` — the single source of truth for
+        clip naming.  Names are sanitized and made unique *in the given order*, so
+        callers pass ``sorted_shots()`` for deterministic, stable results.
+        """
+        fn = CLIP_NAME_STRATEGIES.get(strategy, CLIP_NAME_STRATEGIES["name"])
+        seen: set = set()
+        specs: List[Tuple[str, int, int]] = []
+        for i, shot in enumerate(shots):
+            clip = _ShotStoreInternal._sanitize_clip_name(fn(i, shot))
+            if clip in seen:
+                n = 1
+                while f"{clip}_{n}" in seen:
+                    n += 1
+                clip = f"{clip}_{n}"
+            seen.add(clip)
+            specs.append((clip, int(round(shot.start)), int(round(shot.end))))
+        return specs

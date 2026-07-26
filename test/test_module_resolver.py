@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Tests for the reusable module resolver helper."""
+
 from __future__ import annotations
 
 import importlib
@@ -466,6 +467,114 @@ class ModuleResolverBootstrapTests(BaseTestCase):
         # Accessing the class should trigger the import
         _ = pkg.Demo
         self.assertIn(submodule_name, sys.modules)
+
+    def test_auto_all_derived_from_resolved_surface(self) -> None:
+        """``__all__`` is populated automatically from the resolved surface.
+
+        It carries every module-level name reachable as ``pkg.Name`` (explicit
+        classes/constants + wildcard-scanned classes), is a sorted list, and
+        every advertised name resolves -- but flat method aliases and bare
+        submodule names are excluded.
+        """
+        pkg = self._make_package(
+            "resolver_pkg_all",
+            init_body="""
+                from pythontk.core_utils.module_resolver import bootstrap_package
+
+                DEFAULT_INCLUDE = {"alpha": ["Demo", "KONST"], "beta": "*"}
+
+                bootstrap_package(globals(), include=DEFAULT_INCLUDE)
+            """,
+            modules={
+                "alpha.py": """
+                    KONST = 42
+                    class Demo:
+                        def foo(self):
+                            return "demo"
+                """,
+                "beta.py": """
+                    class Widget:
+                        @staticmethod
+                        def build():
+                            return "built"
+                """,
+            },
+        )
+
+        self.assertTrue(hasattr(pkg, "__all__"))
+        self.assertIsInstance(pkg.__all__, list)
+        self.assertEqual(pkg.__all__, sorted(pkg.__all__))
+        # Explicit class, explicit constant, and wildcard-scanned class are all
+        # advertised.
+        for name in ("Demo", "KONST", "Widget"):
+            self.assertIn(name, pkg.__all__)
+        # Every advertised name actually resolves.
+        for name in pkg.__all__:
+            self.assertIsNotNone(getattr(pkg, name, None), name)
+        # Flat method aliases (wildcard) resolve lazily but are NOT advertised.
+        self.assertIn("build", pkg.METHOD_TO_MODULE)
+        self.assertNotIn("build", pkg.__all__)
+        # Bare submodule names are not part of the public surface either.
+        self.assertNotIn("alpha", pkg.__all__)
+        self.assertNotIn("beta", pkg.__all__)
+
+    def test_set_all_false_opts_out(self) -> None:
+        """``set_all=False`` leaves ``__all__`` unmanaged (absent here)."""
+        pkg = self._make_package(
+            "resolver_pkg_no_all",
+            init_body="""
+                from pythontk.core_utils.module_resolver import bootstrap_package
+
+                bootstrap_package(globals(), include={"alpha": ["Demo"]}, set_all=False)
+            """,
+            modules={"alpha.py": "class Demo:\n    pass\n"},
+        )
+
+        self.assertFalse(hasattr(pkg, "__all__"))
+        # Resolution is unaffected by opting out of __all__ management.
+        self.assertTrue(hasattr(pkg, "Demo"))
+
+    def test_predeclared_all_is_preserved(self) -> None:
+        """A hand-declared ``__all__`` is unioned with the derived names."""
+        pkg = self._make_package(
+            "resolver_pkg_predecl_all",
+            init_body="""
+                from pythontk.core_utils.module_resolver import bootstrap_package
+
+                MANUAL = object()
+                __all__ = ["MANUAL"]
+
+                bootstrap_package(globals(), include={"alpha": ["Demo"]})
+            """,
+            modules={"alpha.py": "class Demo:\n    pass\n"},
+        )
+
+        self.assertIn("MANUAL", pkg.__all__)  # hand-declared name kept
+        self.assertIn("Demo", pkg.__all__)  # resolved name added
+
+    def test_reconfigure_refreshes_all_without_stale_names(self) -> None:
+        """A runtime reconfigure re-derives ``__all__`` (no stale carryover)."""
+        pkg = self._make_package(
+            "resolver_pkg_reconf_all",
+            init_body="""
+                from pythontk.core_utils.module_resolver import bootstrap_package
+
+                bootstrap_package(globals(), include={"alpha": ["Demo", "KONST"]})
+            """,
+            modules={
+                "alpha.py": "KONST = 1\nclass Demo:\n    pass\n",
+                "beta.py": "class Other:\n    pass\n",
+            },
+        )
+
+        self.assertIn("Demo", pkg.__all__)
+        self.assertIn("KONST", pkg.__all__)
+
+        pkg.configure(include={"beta": ["Other"]}, merge=False)
+
+        self.assertIn("Other", pkg.__all__)  # new surface advertised
+        self.assertNotIn("Demo", pkg.__all__)  # stale names dropped
+        self.assertNotIn("KONST", pkg.__all__)
 
 
 # ==============================================================================

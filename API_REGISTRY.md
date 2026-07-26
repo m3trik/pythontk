@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-19_
+_Generated: 2026-07-25_
 
 ## Index
 
@@ -133,26 +133,26 @@ _Generated: 2026-07-19_
 
 Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
-- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L41)** — Declarative target-application executable-discovery config (data, not code).
+- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L42)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
   - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
-- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L72)** — The unit of work threaded through the skeleton.
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L73)** — The unit of work threaded through the skeleton.
   - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
-- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L92)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
-- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L107)** — Strategy: hand a produced :class:`Payload` to the target app.
+- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L93)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L108)** — Strategy: hand a produced :class:`Payload` to the target app.
   - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
-- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L128)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L129)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
   - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L273)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L289)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L277)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L293)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L382)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L388)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context (subclass hook).
   - `ScriptLaunchBridge.render_template(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]` — Render *template*'s body with *payload_path* + *params* (no launch).
   - `ScriptLaunchBridge.list_template_modes(self) -> List[Tuple[str, str]]` — ``[(stem, mode), ...]`` for the bridge's template directory.
@@ -243,56 +243,55 @@ Sort separated mesh parts into repeated-assembly copies.
 
 Behaviors — load JSON keying recipes and resolve them to keyframe math.
 
-- [`templates() -> TemplateSet`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L48) — The shared :class:`~pythontk.TemplateSet` backing behavior discovery.
-- [`load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L71) — Load a JSON behavior template by stem name.
-- [`list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L124) — Return stem names of all available behavior templates.
-- [`resolve_keys(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L173) — Resolve an ``in`` or ``out`` block to absolute keyframe dicts.
-- [`phase_durations(tmpl: Dict[str, Any]) -> Tuple[float, float]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L229) — Sum a template's ``in`` / ``out`` phase durations across all attributes.
-- [`compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L258) — Derive duration from the behavior templates referenced in *behavior_entries*.
+- **[`class Behaviors(_BehaviorsInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L83)** — Behaviors — module namespace.
+  - `Behaviors.templates() -> TemplateSet` *(static)* — The shared :class:`~pythontk.TemplateSet` backing behavior discovery.
+  - `Behaviors.load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]` *(static)* — Load a JSON behavior template by stem name.
+  - `Behaviors.list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]` *(static)* — Return stem names of all available behavior templates.
+  - `Behaviors.resolve_keys(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]` *(static)* — Resolve an ``in`` or ``out`` block to absolute keyframe dicts.
+  - `Behaviors.phase_durations(tmpl: Dict[str, Any]) -> Tuple[float, float]` *(static)* — Sum a template's ``in`` / ``out`` phase durations across all attributes.
+  - `Behaviors.compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float` *(static)* — Derive duration from the behavior templates referenced in *behavior_entries*.
 
 <a id="core_utils--engines--shots--manifest--behaviors--_spec"></a>
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py`
 
 Schema for a *behavior* template file, defined as a dataclass.
 
-- [`validate_duration(value: Any) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L29) — ``duration`` is a frame count or the literal ``"from_source"``.
-- [`validate_verify(value: Any) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L38)
-- [`validate_attributes(value: Any) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L47) — ``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}.
-- [`format_markdown() -> str`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L111) — Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.
-- **[`class BehaviorSpec(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L69)** — Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``).
+- **[`class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L74)** — Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``).
+  - `BehaviorSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.
 
 <a id="core_utils--engines--shots--manifest--manifest_engine"></a>
 ### `core_utils/engines/shots/manifest/manifest_engine.py`
 
 Shot Manifest engine — pure planning/orchestration core with scene hooks.
 
-- [`resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L48) — Compute final shot duration for *step* under the given fit policy.
-- **[`class ShotManifest`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L167)** — Creates shot store entries from parsed steps and applies behaviors.
+- **[`class ShotManifest(_ShotManifestInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L91)** — Creates shot store entries from parsed steps and applies behaviors.
   - `ShotManifest.rewire_audio(self, tracks: Optional[List[str]] = None) -> Dict[str, List[str]]` — Reconcile managed audio nodes with keyed track state (hook).
   - `ShotManifest.apply_behaviors(self) -> Dict[str, list]` — Apply detected behaviors to the store's shots (hook).
   - `ShotManifest.sync(self, steps: List[BuilderStep], apply_behaviors: bool = True, ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH, skip_scene_discovery: bool = False) -> Tuple[Dict[str, str], Dict[str, list], List[StepStatus]]` — Full build pipeline: plan -> commit -> apply behaviors -> assess.
   - `ShotManifest.update(self, steps: List[BuilderStep], ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH) -> Dict[str, str]` — Sync parsed steps to the ShotStore (data only, no behaviors).
   - `ShotManifest.assess(self, steps: List[BuilderStep], exists_fn: Optional[Callable[[str], bool]] = None, verify_fn: Optional[Callable] = None, keyframe_range_fn: Optional[Callable[[str], Optional[Tuple[float, float]]]] = None, audio_exists_fn: Optional[Callable[[str], bool]] = None, skip_scene_discovery: bool = False) -> List[StepStatus]` — Compare parsed steps against the current store state.
   - `ShotManifest.from_csv(cls, filepath: str, store: Optional[ShotStore] = None, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> Tuple['ShotManifest', List[BuilderStep]]` *(class)* — Convenience: parse a CSV and return a ready-to-build engine.
+  - `ShotManifest.resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]` *(static)* — Compute final shot duration for *step* under the given fit policy.
 
 <a id="core_utils--engines--shots--manifest--manifest_model"></a>
 ### `core_utils/engines/shots/manifest/manifest_model.py`
 
 Pure Shot Manifest data model + CSV parser.
 
-- [`detect_behaviors(text: str) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L227) — Return behavior names inferred from descriptive *text*.
-- [`parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L416) — Parse a structured CSV into a list of :class:`BuilderStep`.
-- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L46)** — One asset within a step.
-- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L56)** — One step (= one future sequencer shot).
+- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L120)** — ManifestModel — module namespace.
+  - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
+  - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
+- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L315)** — One asset within a step.
+- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L325)** — One step (= one future sequencer shot).
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
   - `BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert detection candidates to BuilderSteps + pre-filled ranges.
-- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L126)** — Immutable build instruction computed before any store mutation.
-- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L165)** — Assessment result for one object within a step.
-- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L181)** — Assessment result for one step.
+- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L395)** — Immutable build instruction computed before any store mutation.
+- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L434)** — Assessment result for one object within a step.
+- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L450)** — Assessment result for one step.
   - `StepStatus.status(self) -> str` *(property)* — Worst-of-children rollup.
   - `StepStatus.missing_count(self) -> int` *(property)*
   - `StepStatus.total_count(self) -> int` *(property)*
-- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L246)** — Maps logical fields to CSV header names (case-insensitive).
+- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L502)** — Maps logical fields to CSV header names (case-insensitive).
   - `ColumnMap.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON-safe dict (tuples → lists).
   - `ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'` *(class)* — Reconstruct from a dict produced by :meth:`to_dict`.
 
@@ -301,67 +300,67 @@ Pure Shot Manifest data model + CSV parser.
 
 CSV mapping resolver — interprets JSON mapping files.
 
-- [`templates() -> TemplateSet`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L80) — The shared :class:`~pythontk.TemplateSet` backing mapping discovery.
-- [`discover(directory: Optional[str] = None) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L103) — List available mapping names (without ``.json``).
-- [`load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L126) — Read a mapping JSON by *name*, validate it, and return the parsed dict.
-- [`resolve(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L175) — Parse a CSV through a mapping and return fully resolved steps.
+- **[`class Mapping(_MappingInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L275)** — Mapping — module namespace.
+  - `Mapping.templates() -> TemplateSet` *(static)* — The shared :class:`~pythontk.TemplateSet` backing mapping discovery.
+  - `Mapping.discover(directory: Optional[str] = None) -> List[str]` *(static)* — List available mapping names (without ``.json``).
+  - `Mapping.load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]` *(static)* — Read a mapping JSON by *name*, validate it, and return the parsed dict.
+  - `Mapping.resolve(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]` *(static)* — Parse a CSV through a mapping and return fully resolved steps.
 
 <a id="core_utils--engines--shots--manifest--mapping--_spec"></a>
 ### `core_utils/engines/shots/manifest/mapping/_spec.py`
 
 Schema for a CSV *mapping* file, defined as a dataclass.
 
-- [`validate_audio_resolve(value: Any) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L76) — Validate the polymorphic ``audio_resolve`` block.
-- [`validate_default_behaviors(value: Any) -> List[str]`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L89) — Validate the ``default_behaviors`` block ({kind: [behavior names]}).
-- [`format_markdown() -> str`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L123) — Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.
-- **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L28)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
-- **[`class MappingSpec(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L101)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
+- **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L29)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
+- **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L112)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
+  - `MappingSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.
 
 <a id="core_utils--engines--shots--manifest--range_resolver"></a>
 ### `core_utils/engines/shots/manifest/range_resolver.py`
 
 Range resolution algorithm for the Shot Manifest.
 
-- [`prune_to_top_boundaries(region_starts: List[float], n_steps: int) -> List[float]`](pythontk/pythontk/core_utils/engines/shots/manifest/range_resolver.py#L16) — Keep only *n_steps* region starts by selecting the largest gaps.
-- [`resolve_ranges(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], gap_starts: List[float], gap_end_map: Dict[float, float], gap: float, use_selected_keys: bool, last_resolved: List[Tuple[str, float, Optional[float], bool]], from_step_idx: int = 0, default_duration: float = 0, duration_fn: Optional[Callable[..., float]] = None) -> List[Tuple[str, float, Optional[float], bool]]`](pythontk/pythontk/core_utils/engines/shots/manifest/range_resolver.py#L37) — Compute a resolved ``(start, end)`` for every step.
+- **[`class RangeResolver`](pythontk/pythontk/core_utils/engines/shots/manifest/range_resolver.py#L19)** — RangeResolver — module namespace.
+  - `RangeResolver.prune_to_top_boundaries(region_starts: List[float], n_steps: int) -> List[float]` *(static)* — Keep only *n_steps* region starts by selecting the largest gaps.
+  - `RangeResolver.resolve_ranges(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], gap_starts: List[float], gap_end_map: Dict[float, float], gap: float, use_selected_keys: bool, last_resolved: List[Tuple[str, float, Optional[float], bool]], from_step_idx: int = 0, default_duration: float = 0, duration_fn: Optional[Callable[..., float]] = None) -> List[Tuple[str, float, Optional[float], bool]]` *(static)* — Compute a resolved ``(start, end)`` for every step.
 
 <a id="core_utils--engines--shots--shot_apply"></a>
 ### `core_utils/engines/shots/shot_apply.py`
 
 Commit a resolved :class:`MovePlan` via injected writer callables.
 
-- [`apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None`](pythontk/pythontk/core_utils/engines/shots/shot_apply.py#L43) — Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).
+- **[`class ShotApply`](pythontk/pythontk/core_utils/engines/shots/shot_apply.py#L46)** — ShotApply — module namespace.
+  - `ShotApply.apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None` *(static)* — Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).
 
 <a id="core_utils--engines--shots--shot_detection"></a>
 ### `core_utils/engines/shots/shot_detection.py`
 
 Pure shot-boundary detection math.
 
-- [`cluster_segments_by_gap(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]`](pythontk/pythontk/core_utils/engines/shots/shot_detection.py#L46) — Cluster per-object animation segments into shot-region candidates.
-- [`boundaries_from_key_entries(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]`](pythontk/pythontk/core_utils/engines/shots/shot_detection.py#L108) — Build shot-region candidates from ``(time, value, object)`` key entries.
+- **[`class ShotDetection`](pythontk/pythontk/core_utils/engines/shots/shot_detection.py#L45)** — ShotDetection — module namespace.
+  - `ShotDetection.cluster_segments_by_gap(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]` *(static)* — Cluster per-object animation segments into shot-region candidates.
+  - `ShotDetection.boundaries_from_key_entries(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]` *(static)* — Build shot-region candidates from ``(time, value, object)`` key entries.
 
 <a id="core_utils--engines--shots--shot_model"></a>
 ### `core_utils/engines/shots/shot_model.py`
 
 DCC-agnostic shot data model and persistent store.
 
-- [`leaf_name(node) -> str`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L39) — Leaf name with namespace preserved: ``"|grp|ns:obj"`` -> ``"ns:obj"``.
-- [`resolve_clip_specs(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L192) — Resolve ``[(clip_name, start, end), …]`` — the single source of truth for
-- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L71)** — Interface for saving / loading ShotStore data.
+- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L64)** — Interface for saving / loading ShotStore data.
   - `ScenePersistence.save(self, data: Dict[str, Any]) -> None`
   - `ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
-- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L108)** — Represents a single shot (contiguous animation range).
+- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L101)** — Represents a single shot (contiguous animation range).
   - `ShotBlock.duration(self) -> float` *(property)*
   - `ShotBlock.classify_objects(self) -> Dict[str, str]` — Return ``{obj_name: status_key}`` using stored metadata.
-- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L220)** — Base class for typed :class:`ShotStore` events.
-- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L232)** — A new shot was created and added to the store.
-- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L240)** — An existing shot's fields were modified.
-- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L248)** — A shot was removed from the store.
-- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L256)** — The active (selected) shot changed.
-- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L264)** — Detection-relevant settings were modified.
-- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L271)** — A :meth:`ShotStore.batch_update` context has exited.
-- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L278)** — The active store was discarded (scene change / new scene).
-- **[`class ShotStore`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L294)** — Central store for shot data with pluggable persistence.
+- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L183)** — Base class for typed :class:`ShotStore` events.
+- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L195)** — A new shot was created and added to the store.
+- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L203)** — An existing shot's fields were modified.
+- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L211)** — A shot was removed from the store.
+- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L219)** — The active (selected) shot changed.
+- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L227)** — Detection-relevant settings were modified.
+- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L234)** — A :meth:`ShotStore.batch_update` context has exited.
+- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L241)** — The active store was discarded (scene change / new scene).
+- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L269)** — Central store for shot data with pluggable persistence.
   - `ShotStore.has_animation() -> bool` *(static)* — Return whether the scene contains animation (overridable hook).
   - `ShotStore.detect_regions(self) -> List[Dict[str, Any]]` — Detect shot-region candidates from the scene (overridable hook).
   - `ShotStore.assess(self) -> Dict[int, str]` — Assess whether each shot's objects exist in the scene (hook).
@@ -408,20 +407,23 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.save(self) -> None` — Persist via the configured backend (no-op if none set).
   - `ShotStore.is_detection_relevant(self) -> bool` *(property)* — True when detection settings are actionable.
   - `ShotStore.detect_and_define(self, overwrite: bool = False) -> List[ShotBlock]` — Detect shot regions and define them in the store.
+  - `ShotStore.leaf_name(node) -> str` *(static)* — Leaf name with namespace preserved: ``"|grp|ns:obj"`` -> ``"ns:obj"``.
+  - `ShotStore.resolve_clip_specs(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]` *(static)* — Resolve ``[(clip_name, start, end), …]`` — the single source of truth for
 
 <a id="core_utils--engines--shots--shot_plan"></a>
 ### `core_utils/engines/shots/shot_plan.py`
 
 Pure planning layer for multi-shot topology transformations.
 
-- [`plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L209) — Build a plan that lays shots out sequentially with uniform gaps.
-- [`plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L249) — Build a plan that shifts every shot starting at or after
-- [`plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L285) — Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.
-- [`plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L359) — Build a plan that shifts every shot ending at or before
-- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L35)** — A single shot's source and destination ranges.
+- **[`class ShotPlanner(_ShotPlannerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L154)** — ShotPlanner — module namespace.
+  - `ShotPlanner.plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan` *(static)* — Build a plan that lays shots out sequentially with uniform gaps.
+  - `ShotPlanner.plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan` *(static)* — Build a plan that shifts every shot starting at or after
+  - `ShotPlanner.plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan` *(static)* — Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.
+  - `ShotPlanner.plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan` *(static)* — Build a plan that shifts every shot ending at or before
+- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L343)** — A single shot's source and destination ranges.
   - `ShotMove.delta(self) -> float` *(property)*
   - `ShotMove.moves(self) -> bool` *(property)*
-- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L63)** — Resolved multi-shot timeline mutation.
+- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L371)** — Resolved multi-shot timeline mutation.
 
 <a id="core_utils--engines--textures--map_compositor"></a>
 ### `core_utils/engines/textures/map_compositor.py`
@@ -837,9 +839,9 @@ Helpers for hot-reloading packages and their submodules.
 
 Reusable module attribute resolver for package-style imports.
 
-- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L742) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
-- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L821) — Create multi-inheritance namespace classes from groups of related classes.
-- **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L34)** — Discover and resolve attributes exposed from package submodules lazily.
+- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L773) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
+- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L861) — Create multi-inheritance namespace classes from groups of related classes.
+- **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L35)** — Discover and resolve attributes exposed from package submodules lazily.
   - `ModuleAttributeResolver.build(self) -> 'ModuleAttributeResolver'` — Populate resolver dictionaries based on current include spec.
   - `ModuleAttributeResolver.rebuild(self, include: Optional[Mapping[str, Union[Sequence[str], str]]] = None) -> 'ModuleAttributeResolver'` — Reset include spec (optional) and rebuild dictionaries.
   - `ModuleAttributeResolver.resolve(self, name: str)` — Resolve an attribute using the registered dictionaries.
@@ -847,7 +849,7 @@ Reusable module attribute resolver for package-style imports.
   - `ModuleAttributeResolver.bind_to(self, module_globals: MutableMapping[str, object], *, install_getattr: bool = True, eager: bool = False, names: Optional[Iterable[str]] = None) -> None` — Bind resolver helpers into a module's globals dictionary.
   - `ModuleAttributeResolver.iter_registered_names(self) -> Iterable[str]` — Return an iterable of attribute names known to the resolver.
   - `ModuleAttributeResolver.clear_module_cache(self) -> None` — Drop cached module imports managed by the resolver.
-- **[`class PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L431)** — Facade that wires a :class:`ModuleAttributeResolver` into a package module.
+- **[`class PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L432)** — Facade that wires a :class:`ModuleAttributeResolver` into a package module.
   - `PackageResolverHandle.install(self, *, expose_maps: bool = True, install_helpers: bool = True, allow_getattr: Optional[bool] = None, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> None` — Publish resolver artifacts into the target module globals.
   - `PackageResolverHandle.configure(self, *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, merge: bool = True, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver` — Reconfigure the underlying resolver and optionally re-export symbols.
   - `PackageResolverHandle.build_dictionaries(self, include_override: Optional[IncludeMapping] = None, *, eager: bool = False, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver` — Compatibility wrapper mirroring the legacy ``build_dictionaries`` helper.
@@ -905,9 +907,8 @@ Reusable module attribute resolver for package-style imports.
 
 Qt-free, zero-dependency named-preset *store* for the ecosystem.
 
-- [`sanitize_preset_name(name: str) -> str`](pythontk/pythontk/core_utils/preset_store.py#L75) — Filesystem-safe filename stem for a preset *name*.
-- **[`class Codec`](pythontk/pythontk/core_utils/preset_store.py#L40)** — Pluggable (de)serialiser for a :class:`PresetStore`'s on-disk format.
-- **[`class PresetStore`](pythontk/pythontk/core_utils/preset_store.py#L100)** — Named-preset collection with a read-only built-in tier and a writable
+- **[`class Codec`](pythontk/pythontk/core_utils/preset_store.py#L41)** — Pluggable (de)serialiser for a :class:`PresetStore`'s on-disk format.
+- **[`class PresetStore(_PresetStoreInternal)`](pythontk/pythontk/core_utils/preset_store.py#L95)** — Named-preset collection with a read-only built-in tier and a writable
   - `PresetStore.ext(self) -> str` *(property)* — File extension this store reads/writes (from its :class:`Codec`).
   - `PresetStore.user_dir(self) -> Path` *(property)* — Writable preset directory (created lazily on first :meth:`save`).
   - `PresetStore.builtin_dir(self) -> Optional[Path]` *(property)* — Read-only shipped preset directory, or ``None`` when not configured.
@@ -920,6 +921,7 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
   - `PresetStore.save(self, name: str, data: dict) -> Path` — Write *data* as a user preset *name* (built-ins stay read-only).
   - `PresetStore.delete(self, name: str) -> bool` — Delete the *user* preset *name*.
   - `PresetStore.rename(self, old: str, new: str) -> bool` — Rename a *user* preset.
+  - `PresetStore.sanitize_preset_name(name: str) -> str` *(static)* — Filesystem-safe filename stem for a preset *name*.
 
 <a id="core_utils--process_stream"></a>
 ### `core_utils/process_stream.py`
@@ -959,39 +961,41 @@ Structured run logs and threshold-based acceptance gates for pipeline
 
 Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 
-- [`spec_field(*, help: str = '', example: Any = MISSING, required: bool = False, nested: Optional[Type['SchemaSpec']] = None, choices: Optional[Sequence[Any]] = None, validate: Optional[Callable[[Any], List[str]]] = None, default: Any = MISSING, default_factory: Any = MISSING)`](pythontk/pythontk/core_utils/schema_spec.py#L53) — A :func:`dataclasses.field` carrying schema metadata.
-- **[`class SchemaError(ValueError)`](pythontk/pythontk/core_utils/schema_spec.py#L49)** — Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.
-- **[`class FieldDoc`](pythontk/pythontk/core_utils/schema_spec.py#L101)** — One row of a schema's generated reference.
-- **[`class ValidationResult`](pythontk/pythontk/core_utils/schema_spec.py#L113)** — Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.
+- **[`class SchemaError(ValueError)`](pythontk/pythontk/core_utils/schema_spec.py#L50)** — Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.
+- **[`class FieldDoc`](pythontk/pythontk/core_utils/schema_spec.py#L55)** — One row of a schema's generated reference.
+- **[`class ValidationResult`](pythontk/pythontk/core_utils/schema_spec.py#L68)** — Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.
   - `ValidationResult.ok(self) -> bool` *(property)* — ``True`` when there are no errors (warnings are tolerable).
   - `ValidationResult.raise_if_errors(self, prefix: str = '') -> None` — Raise :class:`SchemaError` joining all errors, or do nothing.
   - `ValidationResult.raise_or_warn(self, *, prefix: str = '', logger: Optional[logging.Logger] = None, strict: bool = False) -> None` — Enforce a validated file: raise on errors, log (or, if *strict*, raise on) warnings.
   - `ValidationResult.merge(self, other: 'ValidationResult', path: str = '') -> None` — Fold *other* in, prefixing each message with *path* (e.g.
-- **[`class SchemaSpec`](pythontk/pythontk/core_utils/schema_spec.py#L171)** — Base for declarative template schemas (see module docstring).
+- **[`class SchemaSpec(_SchemaSpecInternal)`](pythontk/pythontk/core_utils/schema_spec.py#L159)** — Base for declarative template schemas (see module docstring).
   - `SchemaSpec.from_dict(cls, data: Dict[str, Any]) -> 'SchemaSpec'` *(class)* — Build an instance from a raw ``dict``, recursing into nested schemas.
   - `SchemaSpec.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON/YAML-safe ``dict``;
   - `SchemaSpec.validate(cls, data: Any) -> ValidationResult` *(class)* — Validate a raw ``dict`` against this schema.
   - `SchemaSpec.skeleton(cls) -> Dict[str, Any]` *(class)* — A fully-populated example ``dict`` to model a new file after.
   - `SchemaSpec.describe(cls) -> List[FieldDoc]` *(class)* — Structured field-by-field reference (powers :meth:`to_markdown`).
   - `SchemaSpec.to_markdown(cls, title: Optional[str] = None, _level: int = 2) -> str` *(class)* — Markdown reference for this schema, recursing into nested schemas.
+  - `SchemaSpec.spec_field(*, help: str = '', example: Any = MISSING, required: bool = False, nested: Optional[Type['SchemaSpec']] = None, choices: Optional[Sequence[Any]] = None, validate: Optional[Callable[[Any], List[str]]] = None, default: Any = MISSING, default_factory: Any = MISSING)` *(static)* — A :func:`dataclasses.field` carrying schema metadata.
 
 <a id="core_utils--script_run"></a>
 ### `core_utils/script_run.py`
 
 Run a script in an external app, block until it exits, and collect an artifact.
 
-- [`run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None) -> ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L51) — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
-- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L32)** — What a successful :func:`run_script_to_artifact` returns.
+- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L40)** — ScriptRunner — module namespace.
+  - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L137)** — What a successful :func:`run_script_to_artifact` returns.
 
 <a id="core_utils--script_template"></a>
 ### `core_utils/script_template.py`
 
 Generic on-disk script-template discovery + ``__KEY__`` rendering.
 
-- [`list_templates(template_dir, extension: str = '.py') -> List[Path]`](pythontk/pythontk/core_utils/script_template.py#L47) — Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).
-- [`template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]`](pythontk/pythontk/core_utils/script_template.py#L56) — Return the modes a template declares via its ``<field> = (...)`` tuple.
-- [`list_template_modes(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]`](pythontk/pythontk/core_utils/script_template.py#L81) — Return ``[(stem, mode), ...]`` for every (template, mode) pairing.
-- [`render_template(template_path, context: Dict[str, str]) -> str`](pythontk/pythontk/core_utils/script_template.py#L95) — Substitute ``__KEY__`` placeholders in *template_path* using *context*.
+- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L52)** — ScriptTemplate — module namespace.
+  - `ScriptTemplate.list_templates(template_dir, extension: str = '.py') -> List[Path]` *(static)* — Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).
+  - `ScriptTemplate.template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]` *(static)* — Return the modes a template declares via its ``<field> = (...)`` tuple.
+  - `ScriptTemplate.list_template_modes(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]` *(static)* — Return ``[(stem, mode), ...]`` for every (template, mode) pairing.
+  - `ScriptTemplate.render_template(template_path, context: Dict[str, str]) -> str` *(static)* — Substitute ``__KEY__`` placeholders in *template_path* using *context*.
 
 <a id="core_utils--singleton_mixin"></a>
 ### `core_utils/singleton_mixin.py`
@@ -1048,13 +1052,13 @@ A discoverable, user-extensible collection of schema-validated template files.
 
 Qt-free, zero-dependency user-config resolution for the ecosystem.
 
-- [`user_config_root() -> Path`](pythontk/pythontk/core_utils/user_config.py#L43) — The ecosystem per-user config directory, resolved **without Qt**.
-- **[`class UserConfig`](pythontk/pythontk/core_utils/user_config.py#L74)** — Resolve a JSON user-config doc with discovery + deep-merge over a default.
+- **[`class UserConfig`](pythontk/pythontk/core_utils/user_config.py#L44)** — Resolve a JSON user-config doc with discovery + deep-merge over a default.
   - `UserConfig.path_for(name: str, package: str) -> Path` *(static)* — Default on-disk location: ``<user_config_root>/<package>/<name>.json``.
   - `UserConfig.load_file(path: Union[str, os.PathLike]) -> dict` *(static)* — Load a JSON object from *path*.
   - `UserConfig.resolve(cls, name: str, *, package: str, env: Optional[str] = None, default: Optional[Mapping[str, Any]] = None, path: Optional[Union[str, os.PathLike]] = None) -> dict` *(class)* — Resolve config *name* for *package*, deep-merged over *default*.
   - `UserConfig.deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict` *(static)* — Recursively merge *override* into a copy of *base* (override wins).
   - `UserConfig.expand(value: Any) -> Any` *(static)* — Expand ``~`` and ``${ENV}`` / ``%VAR%`` in string values.
+  - `UserConfig.user_config_root() -> Path` *(static)* — The ecosystem per-user config directory, resolved **without Qt**.
 
 <a id="file_utils--_file_utils"></a>
 ### `file_utils/_file_utils.py`
@@ -1116,40 +1120,41 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 
 Prefix-scoped temp artifacts with an explicit lifetime policy.
 
-- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L36)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files in one directory.
+- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L37)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files in one directory.
   - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L186)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+  - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
+  - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
 
 <a id="file_utils--usd"></a>
 ### `file_utils/usd.py`
 
 Zero-dependency USD (OpenUSD) file utilities.
 
-- [`is_usd_file(path: str) -> bool`](pythontk/pythontk/file_utils/usd.py#L58) — Return True when *path* looks like a USD layer/package.
-- [`obj_to_usd(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str`](pythontk/pythontk/file_utils/usd.py#L717) — Convert an OBJ to a ``.usda`` layer beside it (or at *output_path*).
-- [`obj_to_usdz(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str`](pythontk/pythontk/file_utils/usd.py#L740) — Convert an OBJ (+ MTL textures) to a self-contained ``.usdz``.
-- **[`class UsdFile`](pythontk/pythontk/file_utils/usd.py#L67)** — Format sniffing + USDZ package inspection (pure Python, no ``pxr``).
+- **[`class UsdFile`](pythontk/pythontk/file_utils/usd.py#L47)** — Format sniffing + USDZ package inspection (pure Python, no ``pxr``).
   - `UsdFile.sniff(path: str) -> Optional[str]` *(static)* — Classify *path* as ``'usda'`` / ``'usdc'`` / ``'usdz'``, or ``None``.
   - `UsdFile.list_package(path: str) -> List[str]` *(static)* — Return the entry names of a ``.usdz`` package, in archive order.
   - `UsdFile.default_layer(path: str) -> Optional[str]` *(static)* — The package's default (first) layer name, or ``None`` if the first
-- **[`class UsdzPackager`](pythontk/pythontk/file_utils/usd.py#L122)** — Write and verify spec-compliant ``.usdz`` packages.
+  - `UsdFile.is_usd_file(path: str) -> bool` *(static)* — Return True when *path* looks like a USD layer/package.
+- **[`class UsdzPackager(_UsdzPackagerInternal)`](pythontk/pythontk/file_utils/usd.py#L130)** — Write and verify spec-compliant ``.usdz`` packages.
   - `UsdzPackager.package(cls, files: Sequence[Union[str, Tuple[str, str]]], output_path: str, default_layer: Optional[str] = None) -> str` *(class)* — Package *files* into a ``.usdz`` at *output_path*.
   - `UsdzPackager.from_layer(cls, layer_path: str, output_path: str) -> str` *(class)* — Build a self-contained ``.usdz`` from a ``.usda`` text layer.
   - `UsdzPackager.verify(path: str) -> Dict[str, Any]` *(static)* — Structurally verify a ``.usdz``;
-- **[`class UsdMeshWriter`](pythontk/pythontk/file_utils/usd.py#L344)** — Author a single textured mesh as a ``.usda`` text layer (no ``pxr``).
+- **[`class UsdMeshWriter`](pythontk/pythontk/file_utils/usd.py#L366)** — Author a single textured mesh as a ``.usda`` text layer (no ``pxr``).
   - `UsdMeshWriter.write(cls, path: str, points: Sequence[Sequence[float]], face_vertex_counts: Sequence[int], face_vertex_indices: Sequence[int], uvs: Optional[Sequence[Sequence[float]]] = None, normals: Optional[Sequence[Sequence[float]]] = None, textures: Optional[Dict[str, str]] = None, name: str = 'Model', up_axis: str = 'Y', meters_per_unit: float = 1.0, double_sided: bool = False) -> str` *(class)* — Write the mesh to *path* as a ``.usda`` layer;
   - `UsdMeshWriter.from_obj(cls, obj_path: str) -> Dict[str, Any]` *(class)* — Parse a Wavefront OBJ (+ its MTL) into :meth:`write` kwargs.
+  - `UsdMeshWriter.obj_to_usd(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str` *(static)* — Convert an OBJ to a ``.usda`` layer beside it (or at *output_path*).
+  - `UsdMeshWriter.obj_to_usdz(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str` *(static)* — Convert an OBJ (+ MTL textures) to a self-contained ``.usdz``.
 
 <a id="file_utils--workspace"></a>
 ### `file_utils/workspace.py`
 
 Shared project-workspace model + ``workspace.mel`` codec.
 
-- [`parse_workspace_mel(source: str) -> Dict[str, str]`](pythontk/pythontk/file_utils/workspace.py#L122) — File rules from a ``workspace.mel`` — *source* is a path or the file's text.
-- [`write_workspace_mel(path: str, rules: Dict[str, str], preserve: bool = True, remove: Sequence[str] = ()) -> bool`](pythontk/pythontk/file_utils/workspace.py#L143) — Write / merge file *rules* into the ``workspace.mel`` at *path*.
-- **[`class Workspace`](pythontk/pythontk/file_utils/workspace.py#L214)** — A project workspace: root directory + named file rules.
+- **[`class Workspace(_WorkspaceInternal)`](pythontk/pythontk/file_utils/workspace.py#L127)** — A project workspace: root directory + named file rules.
   - `Workspace.marker_path(self) -> str` *(property)*
   - `Workspace.is_marked(self) -> bool` *(property)*
   - `Workspace.load(cls, root: str) -> 'Workspace'` *(class)* — The workspace at *root* — rules parsed from its marker when present,
@@ -1161,6 +1166,8 @@ Shared project-workspace model + ``workspace.mel`` codec.
   - `Workspace.source_images_dir(self) -> str` *(property)* — Where textures live (rule ``sourceImages``, an existing
   - `Workspace.find(cls, root_dir: str, recursive: bool = False, scene_exts: Sequence[str] = (), require_marker: bool = False) -> List['Workspace']` *(class)* — Workspaces under *root_dir* (the root itself included).
   - `Workspace.find_containing(cls, path: str) -> Optional['Workspace']` *(class)* — The nearest marked workspace containing *path* (file or directory),
+  - `Workspace.parse_workspace_mel(source: str) -> Dict[str, str]` *(static)* — File rules from a ``workspace.mel`` — *source* is a path or the file's text.
+  - `Workspace.write_workspace_mel(path: str, rules: Dict[str, str], preserve: bool = True, remove: Sequence[str] = ()) -> bool` *(static)* — Write / merge file *rules* into the ``workspace.mel`` at *path*.
 
 <a id="geo_utils--pointcloud"></a>
 ### `geo_utils/pointcloud.py`
@@ -1181,7 +1188,7 @@ Point-cloud geometry — analyze and group unordered sets of points.
 
 Pure polyline / curve geometry — generate, measure, sample, reshape.
 
-- **[`class Polyline`](pythontk/pythontk/geo_utils/polyline.py#L31)** — Stateless polyline/curve geometry (the line other tools follow).
+- **[`class Polyline`](pythontk/pythontk/geo_utils/polyline.py#L28)** — Stateless polyline/curve geometry (the line other tools follow).
   - `Polyline.make(width: float = 6.0, curvature: float = 0.0, segments: int = 24, closed: bool = False, center: Vec = (0.0, 0.0, 0.0)) -> Tuple[List[Vec], bool]` *(static)* — Build a default polyline: a straight line of ``width`` (``curvature == 0``).
   - `Polyline.from_point_cloud(cls, points: Sequence, count: int, axis: Optional[int] = None, precision: Optional[int] = None) -> List[List[float]]` *(class)* — Extract an ordered centerline polyline from a tube-shaped **point cloud**.
   - `Polyline.order_points(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]` *(static)* — Order scattered points into a continuous path (greedy nearest-neighbour).
@@ -1203,7 +1210,7 @@ Rail-driven parametric surface — a general geometry primitive.
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L45)** — Helper methods for working with image file formats.
+- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L46)** — Helper methods for working with image file formats.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
   - `ImgUtils.allow_large_images(cls)` *(class)* — Context manager to safely load very large images.
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
@@ -1421,18 +1428,20 @@ Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 
 Generic DCC plugin installer (symlink-first, copytree fallback).
 
-- [`install_plugin(plugin_src: Union[str, Path], dest: Union[str, Path], force: bool = False) -> Optional[Path]`](pythontk/pythontk/net_utils/rpc/installer.py#L31) — Install *plugin_src* at *dest*.
-- [`uninstall_plugin(dest: Union[str, Path]) -> bool`](pythontk/pythontk/net_utils/rpc/installer.py#L79) — Remove a plugin install at *dest*.
-- [`is_plugin_installed(dest: Union[str, Path]) -> bool`](pythontk/pythontk/net_utils/rpc/installer.py#L94) — True if *dest* looks like an installed plugin (has ``__init__.py``).
+- **[`class PluginInstaller`](pythontk/pythontk/net_utils/rpc/installer.py#L34)** — PluginInstaller — module namespace.
+  - `PluginInstaller.install_plugin(plugin_src: Union[str, Path], dest: Union[str, Path], force: bool = False) -> Optional[Path]` *(static)* — Install *plugin_src* at *dest*.
+  - `PluginInstaller.uninstall_plugin(dest: Union[str, Path]) -> bool` *(static)* — Remove a plugin install at *dest*.
+  - `PluginInstaller.is_plugin_installed(dest: Union[str, Path]) -> bool` *(static)* — True if *dest* looks like an installed plugin (has ``__init__.py``).
 
 <a id="net_utils--rpc--job"></a>
 ### `net_utils/rpc/job.py`
 
 One-shot batch pipeline over :class:`RpcClient`.
 
-- [`run_batch(calls: List[Call], client: RpcClient, stop_on_error: bool = False) -> List[Result]`](pythontk/pythontk/net_utils/rpc/job.py#L55) — Connect, fire every call in *calls*, return a Result per call.
-- **[`class Call`](pythontk/pythontk/net_utils/rpc/job.py#L30)** — One queued op invocation.
-- **[`class Result`](pythontk/pythontk/net_utils/rpc/job.py#L42)** — Outcome of a single :class:`Call`.
+- **[`class RpcJob`](pythontk/pythontk/net_utils/rpc/job.py#L32)** — RpcJob — module namespace.
+  - `RpcJob.run_batch(calls: List[Call], client: RpcClient, stop_on_error: bool = False) -> List[Result]` *(static)* — Connect, fire every call in *calls*, return a Result per call.
+- **[`class Call`](pythontk/pythontk/net_utils/rpc/job.py#L73)** — One queued op invocation.
+- **[`class Result`](pythontk/pythontk/net_utils/rpc/job.py#L86)** — Outcome of a single :class:`Call`.
 
 <a id="net_utils--ssh_client"></a>
 ### `net_utils/ssh_client.py`
@@ -1451,6 +1460,7 @@ One-shot batch pipeline over :class:`RpcClient`.
   - `StrUtils.strip_ansi(string: str) -> str` *(static)* — Remove ANSI escape sequences (color/cursor codes) from a string.
   - `StrUtils.sanitize(text: Union[str, List[str]], replacement_char: str = '_', char_map: Optional[Dict[str, str]] = None, preserve_trailing: bool = False, preserve_case: bool = False, allow_consecutive: bool = False, return_original: bool = False) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]` *(static)* — Sanitizes a string or a list of strings by replacing invalid characters.
   - `StrUtils.replace_placeholders(text: str, **kwargs) -> str` *(static)* — Replace placeholders in a string with provided values.
+  - `StrUtils.resolve_placeholders(text: str, **kwargs) -> dict` *(static)* — Resolve placeholders and report what was substituted vs.
   - `StrUtils.replace_delimited(text: str, context: dict, prefix: str = '__', suffix: str = '__') -> str` *(static)* — Replace delimited placeholders in *text* using *context*.
   - `StrUtils.set_case(string, case='title')` *(static)* — Format the given string(s) in the given case.
   - `StrUtils.get_mangled_name(class_input, attribute_name)` *(static)* — Returns the mangled name for a private attribute of a class.
@@ -1512,8 +1522,7 @@ Portable hotkey-token helpers shared by the ecosystem's macro managers.
 
 Extract still frames from a video file via OpenCV.
 
-- [`extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]`](pythontk/pythontk/vid_utils/frame_extractor.py#L256) — Convenience wrapper around :meth:`FrameExtractor.extract_frames`.
-- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L25)** — Extract frames from a video file at a configurable step interval.
+- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L26)** — Extract frames from a video file at a configurable step interval.
   - `FrameExtractor.score_sharpness(frame) -> float` *(static)* — Variance-of-Laplacian sharpness score.
   - `FrameExtractor.extract_frames(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]` — Save every ``step``-th frame from ``video_path`` to ``output_folder``.
   - `FrameExtractor.extract_frames_sharpest(self, video_path: str, output_folder: str, window_sec: float = 1.0, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None, min_sharpness: float = 0.0) -> List[str]` — Bucket frames by time window;

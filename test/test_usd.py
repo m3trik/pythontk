@@ -8,21 +8,14 @@ is importable, authored layers/packages are additionally validated by opening
 them with the real USD runtime (skipped otherwise; the blendertk suite also
 cross-validates against Blender's bundled ``pxr``).
 """
+
 import os
 import shutil
 import tempfile
 import unittest
 import zipfile
 
-from pythontk.file_utils.usd import (
-    USD_EXTENSIONS,
-    UsdFile,
-    UsdMeshWriter,
-    UsdzPackager,
-    is_usd_file,
-    obj_to_usd,
-    obj_to_usdz,
-)
+from pythontk.file_utils.usd import USD_EXTENSIONS, UsdFile, UsdMeshWriter, UsdzPackager
 
 try:
     from pxr import Usd, UsdGeom  # noqa: F401 — optional deep validation
@@ -86,7 +79,7 @@ class TestSniffing(UsdTestCase):
         with open(p, "w") as fh:
             fh.write("#usda 1.0\n")
         self.assertEqual(UsdFile.sniff(p), "usda")
-        self.assertTrue(is_usd_file(p))
+        self.assertTrue(UsdFile.is_usd_file(p))
 
     def test_usd_extension_with_text_content_sniffs_usda(self):
         p = self.path("layer.usd")  # .usd may be text OR crate — content wins
@@ -110,7 +103,7 @@ class TestSniffing(UsdTestCase):
         with open(p, "wb") as fh:
             fh.write(b"not a usd file")
         self.assertIsNone(UsdFile.sniff(p))
-        self.assertFalse(is_usd_file(p))
+        self.assertFalse(UsdFile.is_usd_file(p))
 
     def test_extensions_constant(self):
         self.assertIn(".usdz", USD_EXTENSIONS)
@@ -121,7 +114,7 @@ class TestUsdzPackager(UsdTestCase):
     def _layer(self, name="model.usda"):
         p = self.path(name)
         with open(p, "w") as fh:
-            fh.write("#usda 1.0\n(\n    defaultPrim = \"M\"\n)\n")
+            fh.write('#usda 1.0\n(\n    defaultPrim = "M"\n)\n')
         return p
 
     def _png(self, name):
@@ -180,7 +173,9 @@ class TestUsdzPackager(UsdTestCase):
     def test_explicit_default_layer_wins(self):
         a = self._layer("a.usda")
         b = self._layer("b.usda")
-        out = UsdzPackager.package([a, b], self.path("lead.usdz"), default_layer="b.usda")
+        out = UsdzPackager.package(
+            [a, b], self.path("lead.usdz"), default_layer="b.usda"
+        )
         self.assertEqual(UsdFile.default_layer(out), "b.usda")
         self.assertEqual(UsdFile.list_package(out), ["b.usda", "a.usda"])
 
@@ -203,7 +198,7 @@ class TestUsdzPackager(UsdTestCase):
             fh.write(
                 "#usda 1.0\n"
                 f'def Shader "t" {{ asset inputs:file = @{tex.replace(chr(92), "/")}@ }}\n'
-                "def Shader \"missing\" { asset inputs:file = @/no/such/file.png@ }\n"
+                'def Shader "missing" { asset inputs:file = @/no/such/file.png@ }\n'
             )
         out = UsdzPackager.from_layer(layer, self.path("pkg.usdz"))
         report = UsdzPackager.verify(out)
@@ -233,7 +228,9 @@ class TestUsdMeshWriter(UsdTestCase):
         self.assertIn('defaultPrim = "Model"', text)
         self.assertIn("int[] faceVertexCounts = [4]", text)
         self.assertIn("int[] faceVertexIndices = [0, 1, 2, 3]", text)
-        self.assertIn("point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]", text)
+        self.assertIn(
+            "point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]", text
+        )
         # 4 uvs == 4 points: the length tie resolves to the compacter "vertex".
         self.assertIn('interpolation = "vertex"', text)
         self.assertIn('uniform token subdivisionScheme = "none"', text)
@@ -265,10 +262,14 @@ class TestUsdMeshWriter(UsdTestCase):
         self.assertIn("asset inputs:file = @textures/d.png@", text)
         self.assertIn(
             "color3f inputs:diffuseColor.connect = "
-            "</Scan01/Materials/Scan01Mat/diffuseTex.outputs:rgb>", text)
+            "</Scan01/Materials/Scan01Mat/diffuseTex.outputs:rgb>",
+            text,
+        )
         self.assertIn(
             "float inputs:roughness.connect = "
-            "</Scan01/Materials/Scan01Mat/roughnessTex.outputs:r>", text)
+            "</Scan01/Materials/Scan01Mat/roughnessTex.outputs:r>",
+            text,
+        )
         self.assertIn('token inputs:sourceColorSpace = "raw"', text)  # data map
 
     def test_emissive_is_srgb_not_raw(self):
@@ -289,8 +290,10 @@ class TestUsdMeshWriter(UsdTestCase):
         out = UsdMeshWriter.write(
             self.path("big"),
             points=[
-                (1234567.89, 0, 0), (1234568.89, 0, 0),
-                (1234568.89, 1, 0), (1234567.89, 1, 0),
+                (1234567.89, 0, 0),
+                (1234568.89, 0, 0),
+                (1234568.89, 1, 0),
+                (1234567.89, 1, 0),
             ],
             face_vertex_counts=[4],
             face_vertex_indices=[0, 1, 2, 3],
@@ -301,8 +304,10 @@ class TestUsdMeshWriter(UsdTestCase):
     def test_bad_topology_raises(self):
         with self.assertRaises(ValueError):
             UsdMeshWriter.write(
-                self.path("bad"), points=[(0, 0, 0)],
-                face_vertex_counts=[3], face_vertex_indices=[0, 0],  # 3 != 2
+                self.path("bad"),
+                points=[(0, 0, 0)],
+                face_vertex_counts=[3],
+                face_vertex_indices=[0, 0],  # 3 != 2
             )
 
     def test_illegal_prim_name_sanitized(self):
@@ -341,12 +346,10 @@ class TestObjConverters(UsdTestCase):
         self.assertEqual(len(data["points"]), 4)
         self.assertEqual(data["face_vertex_counts"], [4])
         self.assertEqual(data["face_vertex_indices"], [0, 1, 2, 3])
-        self.assertEqual(len(data["uvs"]), 4)       # faceVarying expansion
-        self.assertEqual(len(data["normals"]), 4)   # vn 1 referenced 4x
+        self.assertEqual(len(data["uvs"]), 4)  # faceVarying expansion
+        self.assertEqual(len(data["normals"]), 4)  # vn 1 referenced 4x
         self.assertEqual(data["name"], "quad")
-        self.assertEqual(
-            sorted(data["textures"]), ["diffuse", "roughness"]
-        )
+        self.assertEqual(sorted(data["textures"]), ["diffuse", "roughness"])
         self.assertTrue(os.path.isabs(data["textures"]["diffuse"]))
 
     def test_mtl_texture_path_with_spaces(self):
@@ -373,14 +376,14 @@ class TestObjConverters(UsdTestCase):
         self.assertIsNone(data["normals"])
 
     def test_obj_to_usd_writes_relative_texture_refs(self):
-        out = obj_to_usd(self._write_obj())
+        out = UsdMeshWriter.obj_to_usd(self._write_obj())
         self.assertTrue(os.path.isfile(out))
         text = open(out, encoding="utf-8").read()
         self.assertIn("@quad_diffuse.png@", text)  # relative to layer dir
         self.assertNotIn("@" + self.tmp.replace("\\", "/"), text)
 
     def test_obj_to_usdz_is_self_contained_and_valid(self):
-        out = obj_to_usdz(self._write_obj())
+        out = UsdMeshWriter.obj_to_usdz(self._write_obj())
         self.assertTrue(out.endswith(".usdz"))
         report = UsdzPackager.verify(out)
         self.assertTrue(report["valid"], report["issues"])
@@ -405,7 +408,7 @@ class TestObjConverters(UsdTestCase):
             fh.write("mtllib col.mtl\n" + OBJ_TEXT.split("\n", 2)[2])
         with open(self.path("col.mtl"), "w") as fh:
             fh.write("newmtl m\nmap_Kd sub1/t.png\nmap_Pr sub2/t.png\n")
-        out = obj_to_usdz(obj)
+        out = UsdMeshWriter.obj_to_usdz(obj)
         names = UsdFile.list_package(out)
         self.assertIn("textures/t.png", names)
         self.assertIn("textures/t_1.png", names)
@@ -413,7 +416,7 @@ class TestObjConverters(UsdTestCase):
 
     @unittest.skipUnless(HAS_PXR, "usd-core not installed")
     def test_pxr_opens_authored_usdz(self):
-        out = obj_to_usdz(self._write_obj())
+        out = UsdMeshWriter.obj_to_usdz(self._write_obj())
         stage = Usd.Stage.Open(out)
         self.assertIsNotNone(stage)
         self.assertTrue(stage.GetDefaultPrim().IsValid())
@@ -426,8 +429,8 @@ class TestRootRegistration(unittest.TestCase):
         self.assertIs(ptk.UsdzPackager, UsdzPackager)
         self.assertIs(ptk.UsdMeshWriter, UsdMeshWriter)
         self.assertIs(ptk.UsdFile, UsdFile)
-        self.assertIs(ptk.is_usd_file, is_usd_file)
-        self.assertIs(ptk.obj_to_usdz, obj_to_usdz)
+        self.assertIs(ptk.UsdFile.is_usd_file, UsdFile.is_usd_file)
+        self.assertIs(ptk.UsdMeshWriter.obj_to_usdz, UsdMeshWriter.obj_to_usdz)
         self.assertEqual(ptk.USD_EXTENSIONS, USD_EXTENSIONS)
 
 

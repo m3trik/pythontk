@@ -7,6 +7,9 @@ structured production CSV parses into, the column-mapping schema, behavior
 detection, and the assessment/plan result dataclasses.  Duration resolution and
 key emission (which reach a scene) live in the hooked engine layer, not here.
 """
+
+from __future__ import annotations
+
 import csv
 import io
 import logging
@@ -14,7 +17,7 @@ import re
 from dataclasses import dataclass, field, fields
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
-from pythontk import SchemaSpec, spec_field
+from pythontk import SchemaSpec
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 
 log = logging.getLogger(__name__)
@@ -32,14 +35,280 @@ __all__ = [
     "DEFAULT_INITIAL_SHOT_LENGTH",
     "DEFAULT_FIT_MODE",
     "AUDIO_PLACEHOLDER_DURATION",
-    "detect_behaviors",
-    "parse_csv",
+    "ManifestModel",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
+
+class _ManifestModelInternal(object):
+    """Internal helpers for ManifestModel."""
+
+    @staticmethod
+    def _resolve_columns(header: List[str], col_map: ColumnMap) -> _ResolvedColumns:
+        """Match header cell text to column indices via *col_map* aliases.
+
+        Raises:
+            ValueError: If a required column cannot be found.
+        """
+        normalized = [c.strip().lower() for c in header]
+
+        def _find_optional(aliases: Tuple[str, ...]) -> Optional[int]:
+            for alias in aliases:
+                try:
+                    return normalized.index(alias.lower())
+                except ValueError:
+                    continue
+            return None
+
+        def _find(aliases: Tuple[str, ...], field_name: str) -> int:
+            idx = _find_optional(aliases)
+            if idx is None:
+                raise ValueError(
+                    f"Column '{field_name}' not found in header row. "
+                    f"Expected one of {aliases!r}, got {header}"
+                )
+            return idx
+
+        resolved = _ResolvedColumns(
+            step_id=_find(col_map.step_id, "step_id"),
+            description=_find(col_map.description, "description"),
+            assets=_find(col_map.assets, "assets"),
+            audio=_find_optional(col_map.audio) if col_map.audio else None,
+        )
+        for key, aliases in col_map.metadata_pass.items():
+            idx = _find_optional(aliases)
+            if idx is not None:
+                resolved.metadata_pass[key] = idx
+        return resolved
+
+    @staticmethod
+    def _strip_cell(cell: str) -> str:
+        """Strip whitespace from a CSV cell."""
+        return (cell or "").strip()
+
+    @staticmethod
+    def _read_csv_rows(filepath: str) -> List[List[str]]:
+        """Read all CSV rows, tolerating non-UTF-8 encodings.
+
+        Production manifests frequently come out of Excel as cp1252; a
+        UTF-8-only read used to fail the entire load on the first accented
+        character.  The UTF-8 BOM is stripped from the raw bytes up front —
+        otherwise a BOM'd file that falls back to cp1252 (or the lossy
+        read) leaks it into the first header cell and the header never
+        resolves.  Tries UTF-8 first, then cp1252, then a lossy UTF-8 read
+        as a last resort so a stray byte can't kill the manifest.
+        """
+        with open(filepath, "rb") as fh:
+            raw = fh.read()
+        if raw.startswith(b"\xef\xbb\xbf"):
+            raw = raw[3:]
+        for encoding in ("utf-8", "cp1252"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = raw.decode("utf-8", errors="replace")
+        return list(csv.reader(io.StringIO(text, newline="")))
+
+
+class ManifestModel(_ManifestModelInternal):
+    """ManifestModel — module namespace."""
+
+    @staticmethod
+    def detect_behaviors(text: str) -> List[str]:
+        """Return behavior names inferred from descriptive *text*.
+
+        Each pattern is tested independently so text mentioning both
+        "fades in" and "fades out" yields ``["fade_in", "fade_out"]``.
+        """
+        found = []
+        for pattern, name in _BEHAVIOR_PATTERNS:
+            if pattern.search(text):
+                found.append(name)
+        return found
+
+    @staticmethod
+    def parse_csv(
+        filepath: str,
+        columns: Optional[ColumnMap] = None,
+        post_process: Optional[Callable[[BuilderStep], None]] = None,
+    ) -> List[BuilderStep]:
+        """Parse a structured CSV into a list of :class:`BuilderStep`.
+
+        Parameters:
+            filepath: Path to the CSV file.
+            columns: Optional header-name mapping.  Defaults cover
+                common layouts (C-5M, C-130H, C-17A).
+            post_process: Optional callable invoked on each step after
+                assembly.  Use to compute derived fields (e.g.
+                audio objects) from the parsed data.
+
+        Returns:
+            Ordered list of steps, each carrying its objects and detected
+            behaviors.
+        """
+        col_map = columns or ColumnMap()
+        cols: Optional[_ResolvedColumns] = None
+        steps: List[BuilderStep] = []
+        seen_ids: set = set()
+        current_section = ""
+        current_section_title = ""
+        current_step: Optional[BuilderStep] = None
+        step_id_aliases = {a.lower() for a in col_map.step_id}
+        asset_excludes = {v.upper() for v in col_map.exclude_values.get("assets", ())}
+        # Per-step accumulator for metadata_pass values (first-row-wins)
+        step_pass: Dict[str, str] = {}
+
+        rows = _ManifestModelInternal._read_csv_rows(filepath)
+        for row in rows:
+            if not row:
+                continue
+
+            first = _ManifestModelInternal._strip_cell(row[0])
+
+            # --- section header ---
+            sec_match = _SECTION_RE.match(first)
+            if sec_match:
+                current_section = sec_match.group(1)
+                current_section_title = sec_match.group(2).strip()
+                current_step = None
+                continue
+
+            # --- column header row (resolve indices) ---
+            if first.lower() in step_id_aliases:
+                cols = _ManifestModelInternal._resolve_columns(row, col_map)
+                continue
+            # The step-ID header may not sit in the first column.  Accept a
+            # row with a matching cell anywhere — but only if it actually
+            # resolves (which also demands the description/assets headers),
+            # so a data row containing a bare alias can't hijack the column
+            # map.  Not gated on ``cols is None``: layouts repeat the header
+            # per section, and an unrecognized repeat would be misread as a
+            # continuation row of the previous step.
+            if any(
+                _ManifestModelInternal._strip_cell(c).lower() in step_id_aliases
+                for c in row
+            ):
+                try:
+                    cols = _ManifestModelInternal._resolve_columns(row, col_map)
+                    continue
+                except ValueError:
+                    pass
+
+            # Skip data rows before we've seen a header
+            if cols is None:
+                continue
+
+            # --- step row ---
+            # Read the step ID from the resolved step column (column 0 for
+            # the default layouts) rather than assuming it sits first.
+            step_cell = (
+                _ManifestModelInternal._strip_cell(row[cols.step_id])
+                if len(row) > cols.step_id
+                else ""
+            )
+            step_match = _STEP_RE.match(step_cell) or _ALT_STEP_RE.match(step_cell)
+            description = (
+                _ManifestModelInternal._strip_cell(row[cols.description])
+                if len(row) > cols.description
+                else ""
+            )
+            asset = (
+                _ManifestModelInternal._strip_cell(row[cols.assets])
+                if len(row) > cols.assets
+                else ""
+            )
+            audio = (
+                _ManifestModelInternal._strip_cell(row[cols.audio])
+                if cols.audio is not None and len(row) > cols.audio
+                else ""
+            )
+
+            if step_match:
+                step_id = step_match.group(1)
+                if step_id in seen_ids:
+                    log.warning("Duplicate step_id '%s' — skipping.", step_id)
+                    current_step = None
+                    continue
+                seen_ids.add(step_id)
+                step_behaviors = ManifestModel.detect_behaviors(description)
+                # Collect metadata_pass values for this step row
+                step_pass = {}
+                for key, idx in cols.metadata_pass.items():
+                    val = (
+                        _ManifestModelInternal._strip_cell(row[idx])
+                        if len(row) > idx
+                        else ""
+                    )
+                    if val:
+                        step_pass[key] = val
+                current_step = BuilderStep(
+                    step_id=step_id,
+                    section=current_section,
+                    section_title=current_section_title,
+                    description=description,
+                    audio=audio,
+                )
+                current_step._pass_through = dict(step_pass)
+                steps.append(current_step)
+
+                if asset and asset.upper() not in asset_excludes:
+                    obj = BuilderObject(
+                        name=asset,
+                        behaviors=list(step_behaviors),
+                    )
+                    current_step.objects.append(obj)
+                continue
+
+            # --- continuation row (belongs to previous step) ---
+            if current_step is not None:
+                # Merge continuation description into the parent step
+                if description:
+                    current_step.description += " " + description
+
+                if asset and asset.upper() not in asset_excludes:
+                    # Own description overrides, otherwise inherit from parent step
+                    row_behaviors = (
+                        ManifestModel.detect_behaviors(description)
+                        if description
+                        else []
+                    )
+                    behaviors = row_behaviors or ManifestModel.detect_behaviors(
+                        current_step.description
+                    )
+                    obj = BuilderObject(
+                        name=asset,
+                        behaviors=list(behaviors),
+                    )
+                    current_step.objects.append(obj)
+
+        # A missing header row used to fail silently: every data row was
+        # skipped and the caller saw 0 steps with no explanation.
+        if cols is None and rows:
+            log.warning(
+                "No header row found in '%s' — 0 steps parsed. Expected a "
+                "column named one of %s.",
+                filepath,
+                sorted(step_id_aliases),
+            )
+
+        # Apply exclude list
+        if col_map.exclude_steps:
+            excluded = {s.upper() for s in col_map.exclude_steps}
+            steps = [s for s in steps if s.step_id.upper() not in excluded]
+
+        # Apply post-processing hook (e.g. derive audio objects from step fields)
+        if post_process:
+            for step in steps:
+                post_process(step)
+
+        return steps
 
 
 @dataclass
@@ -224,19 +493,6 @@ _BEHAVIOR_PATTERNS: List[Tuple[re.Pattern, str]] = [
 ]
 
 
-def detect_behaviors(text: str) -> List[str]:
-    """Return behavior names inferred from descriptive *text*.
-
-    Each pattern is tested independently so text mentioning both
-    "fades in" and "fades out" yields ``["fade_in", "fade_out"]``.
-    """
-    found = []
-    for pattern, name in _BEHAVIOR_PATTERNS:
-        if pattern.search(text):
-            found.append(name)
-    return found
-
-
 # ---------------------------------------------------------------------------
 # CSV column mapping
 # ---------------------------------------------------------------------------
@@ -255,38 +511,38 @@ class ColumnMap(SchemaSpec):
     through JSON.
     """
 
-    step_id: Tuple[str, ...] = spec_field(
+    step_id: Tuple[str, ...] = SchemaSpec.spec_field(
         help="Header alias(es) for the step-ID column.",
         example=["Step"],
         default=("Step",),
     )
-    description: Tuple[str, ...] = spec_field(
+    description: Tuple[str, ...] = SchemaSpec.spec_field(
         help="Header alias(es) for the step description / contents column.",
         example=["Step Contents", "Contents"],
         default=("Step Contents", "Contents"),
     )
-    assets: Tuple[str, ...] = spec_field(
+    assets: Tuple[str, ...] = SchemaSpec.spec_field(
         help="Header alias(es) for the assets / object-names column.",
         example=["Asset Names", "Asset"],
         default=("Asset Names", "Asset"),
     )
-    audio: Tuple[str, ...] = spec_field(
+    audio: Tuple[str, ...] = SchemaSpec.spec_field(
         help="Header alias(es) for the audio / voice-over column (optional).",
         example=["Voice Support", "Voice"],
         default=("Voice Support", "Voice"),
     )
-    exclude_steps: Tuple[str, ...] = spec_field(
+    exclude_steps: Tuple[str, ...] = SchemaSpec.spec_field(
         help="Step IDs to skip entirely (e.g. setup rows).",
         example=["SETUP"],
         default=("SETUP",),
     )
-    exclude_values: Dict[str, Tuple[str, ...]] = spec_field(
+    exclude_values: Dict[str, Tuple[str, ...]] = SchemaSpec.spec_field(
         help='Per-field cell values to treat as empty, e.g. {"assets": ["N/A"]}.',
         example={"assets": ["N/A"]},
         default_factory=lambda: {"assets": ("N/A",)},
     )
-    metadata_pass: Dict[str, Tuple[str, ...]] = spec_field(
-        help='Extra columns copied into shot metadata: {key: [header aliases]}.',
+    metadata_pass: Dict[str, Tuple[str, ...]] = SchemaSpec.spec_field(
+        help="Extra columns copied into shot metadata: {key: [header aliases]}.",
         example={"priority": ["Priority"]},
         default_factory=dict,
     )
@@ -335,44 +591,6 @@ class _ResolvedColumns:
     metadata_pass: Dict[str, int] = field(default_factory=dict)
 
 
-def _resolve_columns(header: List[str], col_map: ColumnMap) -> _ResolvedColumns:
-    """Match header cell text to column indices via *col_map* aliases.
-
-    Raises:
-        ValueError: If a required column cannot be found.
-    """
-    normalized = [c.strip().lower() for c in header]
-
-    def _find_optional(aliases: Tuple[str, ...]) -> Optional[int]:
-        for alias in aliases:
-            try:
-                return normalized.index(alias.lower())
-            except ValueError:
-                continue
-        return None
-
-    def _find(aliases: Tuple[str, ...], field_name: str) -> int:
-        idx = _find_optional(aliases)
-        if idx is None:
-            raise ValueError(
-                f"Column '{field_name}' not found in header row. "
-                f"Expected one of {aliases!r}, got {header}"
-            )
-        return idx
-
-    resolved = _ResolvedColumns(
-        step_id=_find(col_map.step_id, "step_id"),
-        description=_find(col_map.description, "description"),
-        assets=_find(col_map.assets, "assets"),
-        audio=_find_optional(col_map.audio) if col_map.audio else None,
-    )
-    for key, aliases in col_map.metadata_pass.items():
-        idx = _find_optional(aliases)
-        if idx is not None:
-            resolved.metadata_pass[key] = idx
-    return resolved
-
-
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
@@ -380,194 +598,3 @@ def _resolve_columns(header: List[str], col_map: ColumnMap) -> _ResolvedColumns:
 _SECTION_RE = re.compile(r"^SECTION\s+([A-Z0-9]+)\s*:\s*(.*)", re.I)
 _STEP_RE = re.compile(r"^([A-Z]\d+)\.\)")
 _ALT_STEP_RE = re.compile(r"^([A-Z]{2,})$")  # non-numbered IDs: SETUP, INTRO …
-
-
-def _strip_cell(cell: str) -> str:
-    """Strip whitespace from a CSV cell."""
-    return (cell or "").strip()
-
-
-def _read_csv_rows(filepath: str) -> List[List[str]]:
-    """Read all CSV rows, tolerating non-UTF-8 encodings.
-
-    Production manifests frequently come out of Excel as cp1252; a
-    UTF-8-only read used to fail the entire load on the first accented
-    character.  The UTF-8 BOM is stripped from the raw bytes up front —
-    otherwise a BOM'd file that falls back to cp1252 (or the lossy
-    read) leaks it into the first header cell and the header never
-    resolves.  Tries UTF-8 first, then cp1252, then a lossy UTF-8 read
-    as a last resort so a stray byte can't kill the manifest.
-    """
-    with open(filepath, "rb") as fh:
-        raw = fh.read()
-    if raw.startswith(b"\xef\xbb\xbf"):
-        raw = raw[3:]
-    for encoding in ("utf-8", "cp1252"):
-        try:
-            text = raw.decode(encoding)
-            break
-        except UnicodeDecodeError:
-            continue
-    else:
-        text = raw.decode("utf-8", errors="replace")
-    return list(csv.reader(io.StringIO(text, newline="")))
-
-
-def parse_csv(
-    filepath: str,
-    columns: Optional[ColumnMap] = None,
-    post_process: Optional[Callable[[BuilderStep], None]] = None,
-) -> List[BuilderStep]:
-    """Parse a structured CSV into a list of :class:`BuilderStep`.
-
-    Parameters:
-        filepath: Path to the CSV file.
-        columns: Optional header-name mapping.  Defaults cover
-            common layouts (C-5M, C-130H, C-17A).
-        post_process: Optional callable invoked on each step after
-            assembly.  Use to compute derived fields (e.g.
-            audio objects) from the parsed data.
-
-    Returns:
-        Ordered list of steps, each carrying its objects and detected
-        behaviors.
-    """
-    col_map = columns or ColumnMap()
-    cols: Optional[_ResolvedColumns] = None
-    steps: List[BuilderStep] = []
-    seen_ids: set = set()
-    current_section = ""
-    current_section_title = ""
-    current_step: Optional[BuilderStep] = None
-    step_id_aliases = {a.lower() for a in col_map.step_id}
-    asset_excludes = {v.upper() for v in col_map.exclude_values.get("assets", ())}
-    # Per-step accumulator for metadata_pass values (first-row-wins)
-    step_pass: Dict[str, str] = {}
-
-    rows = _read_csv_rows(filepath)
-    for row in rows:
-        if not row:
-            continue
-
-        first = _strip_cell(row[0])
-
-        # --- section header ---
-        sec_match = _SECTION_RE.match(first)
-        if sec_match:
-            current_section = sec_match.group(1)
-            current_section_title = sec_match.group(2).strip()
-            current_step = None
-            continue
-
-        # --- column header row (resolve indices) ---
-        if first.lower() in step_id_aliases:
-            cols = _resolve_columns(row, col_map)
-            continue
-        # The step-ID header may not sit in the first column.  Accept a
-        # row with a matching cell anywhere — but only if it actually
-        # resolves (which also demands the description/assets headers),
-        # so a data row containing a bare alias can't hijack the column
-        # map.  Not gated on ``cols is None``: layouts repeat the header
-        # per section, and an unrecognized repeat would be misread as a
-        # continuation row of the previous step.
-        if any(_strip_cell(c).lower() in step_id_aliases for c in row):
-            try:
-                cols = _resolve_columns(row, col_map)
-                continue
-            except ValueError:
-                pass
-
-        # Skip data rows before we've seen a header
-        if cols is None:
-            continue
-
-        # --- step row ---
-        # Read the step ID from the resolved step column (column 0 for
-        # the default layouts) rather than assuming it sits first.
-        step_cell = (
-            _strip_cell(row[cols.step_id]) if len(row) > cols.step_id else ""
-        )
-        step_match = _STEP_RE.match(step_cell) or _ALT_STEP_RE.match(step_cell)
-        description = (
-            _strip_cell(row[cols.description])
-            if len(row) > cols.description
-            else ""
-        )
-        asset = _strip_cell(row[cols.assets]) if len(row) > cols.assets else ""
-        audio = (
-            _strip_cell(row[cols.audio])
-            if cols.audio is not None and len(row) > cols.audio
-            else ""
-        )
-
-        if step_match:
-            step_id = step_match.group(1)
-            if step_id in seen_ids:
-                log.warning("Duplicate step_id '%s' — skipping.", step_id)
-                current_step = None
-                continue
-            seen_ids.add(step_id)
-            step_behaviors = detect_behaviors(description)
-            # Collect metadata_pass values for this step row
-            step_pass = {}
-            for key, idx in cols.metadata_pass.items():
-                val = _strip_cell(row[idx]) if len(row) > idx else ""
-                if val:
-                    step_pass[key] = val
-            current_step = BuilderStep(
-                step_id=step_id,
-                section=current_section,
-                section_title=current_section_title,
-                description=description,
-                audio=audio,
-            )
-            current_step._pass_through = dict(step_pass)
-            steps.append(current_step)
-
-            if asset and asset.upper() not in asset_excludes:
-                obj = BuilderObject(
-                    name=asset,
-                    behaviors=list(step_behaviors),
-                )
-                current_step.objects.append(obj)
-            continue
-
-        # --- continuation row (belongs to previous step) ---
-        if current_step is not None:
-            # Merge continuation description into the parent step
-            if description:
-                current_step.description += " " + description
-
-            if asset and asset.upper() not in asset_excludes:
-                # Own description overrides, otherwise inherit from parent step
-                row_behaviors = detect_behaviors(description) if description else []
-                behaviors = row_behaviors or detect_behaviors(
-                    current_step.description
-                )
-                obj = BuilderObject(
-                    name=asset,
-                    behaviors=list(behaviors),
-                )
-                current_step.objects.append(obj)
-
-    # A missing header row used to fail silently: every data row was
-    # skipped and the caller saw 0 steps with no explanation.
-    if cols is None and rows:
-        log.warning(
-            "No header row found in '%s' — 0 steps parsed. Expected a "
-            "column named one of %s.",
-            filepath,
-            sorted(step_id_aliases),
-        )
-
-    # Apply exclude list
-    if col_map.exclude_steps:
-        excluded = {s.upper() for s in col_map.exclude_steps}
-        steps = [s for s in steps if s.step_id.upper() not in excluded]
-
-    # Apply post-processing hook (e.g. derive audio objects from step fields)
-    if post_process:
-        for step in steps:
-            post_process(step)
-
-    return steps

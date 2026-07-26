@@ -24,9 +24,6 @@ from pythontk.math_utils._math_utils import MathUtils
 
 Vec = Tuple[float, float, float]
 
-_lerp = MathUtils.lerp                # point/vector lerp
-_unit = MathUtils.safe_normalize      # normalize with a degenerate fallback
-
 
 class Polyline:
     """Stateless polyline/curve geometry (the line other tools follow).
@@ -383,7 +380,7 @@ class Polyline:
         Each frame is ``(position, tangent, normal)``; the ``normal`` is the
         in-plane perpendicular ``cross(up, tangent)`` — the direction a sweep
         bows/offsets along. ``up`` is the reference up-vector (default world +Y);
-        the ``_unit`` fallback handles the degenerate case where the tangent is
+        the ``safe_normalize`` fallback handles the degenerate case where the tangent is
         parallel to ``up`` (a vertical run / coincident points).
         """
         dist = MathUtils.distance_between_points
@@ -402,7 +399,7 @@ class Polyline:
                 if s <= cum[i] or i == len(cum) - 1:
                     span = cum[i] - cum[i - 1]
                     t = (s - cum[i - 1]) / span if span > 1e-9 else 0.0
-                    return _lerp(pts[i - 1], pts[i], t)
+                    return MathUtils.lerp(pts[i - 1], pts[i], t)
             return pts[-1]
 
         frames: List[Tuple[Vec, Vec, Vec]] = []
@@ -411,11 +408,13 @@ class Polyline:
             s = (c / segments) * total if total > 0 else 0.0
             pos = sample(s)
             # get_vector_from_two_points(a, b) -> b - a, so this is the forward
-            # tangent; _unit guards the degenerate (vertical / coincident) case.
-            tan = _unit(
+            # tangent; safe_normalize guards the degenerate (vertical / coincident) case.
+            tan = MathUtils.safe_normalize(
                 MathUtils.get_vector_from_two_points(sample(s - eps), sample(s + eps)),
                 (0.0, 0.0, 1.0),
             )
-            normal = _unit(MathUtils.cross_product(up, tan), (1.0, 0.0, 0.0))
+            normal = MathUtils.safe_normalize(
+                MathUtils.cross_product(up, tan), (1.0, 0.0, 0.0)
+            )
             frames.append((pos, tan, normal))
         return frames

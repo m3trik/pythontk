@@ -8,6 +8,7 @@ generic script-template discovery / mode parsing / ``__KEY__`` substitution
 (``AppLauncher.resolve_app_path``), and the Template-Method + Strategy orchestration
 (``core_utils.app_handoff``). No DCC runtime required.
 """
+
 import os
 import shutil
 import tempfile
@@ -44,54 +45,70 @@ class TemplatesTest(unittest.TestCase):
         self._write("import.py")
         self._write("replace_scene.py")
         self._write("_helper.py")  # underscore-prefixed -> hidden
-        stems = [p.stem for p in script_template.list_templates(self.tmp)]
+        stems = [
+            p.stem for p in script_template.ScriptTemplate.list_templates(self.tmp)
+        ]
         self.assertEqual(stems, ["import", "replace_scene"])
 
     def test_list_templates_honors_extension(self):
         self._write("load.lua")
         self._write("ignore.py")
-        stems = [p.stem for p in script_template.list_templates(self.tmp, ".lua")]
+        stems = [
+            p.stem
+            for p in script_template.ScriptTemplate.list_templates(self.tmp, ".lua")
+        ]
         self.assertEqual(stems, ["load"])
 
     def test_template_modes_declared(self):
         path = self._write("a.py", "BRIDGE_MODES = ('send_to',)\n")
-        self.assertEqual(script_template.template_modes(path), ("send_to",))
+        self.assertEqual(
+            script_template.ScriptTemplate.template_modes(path), ("send_to",)
+        )
 
     def test_template_modes_fallback_when_absent(self):
         path = self._write("a.py", "x = 1\n")
-        self.assertEqual(script_template.template_modes(path), (SEND_TO,))
+        self.assertEqual(
+            script_template.ScriptTemplate.template_modes(path), (SEND_TO,)
+        )
 
     def test_template_modes_filters_unknown(self):
         path = self._write("a.py", "BRIDGE_MODES = ('send_to', 'bogus')\n")
         # 'bogus' isn't in the allowed set -> dropped; only 'send_to' survives.
-        self.assertEqual(script_template.template_modes(path), ("send_to",))
+        self.assertEqual(
+            script_template.ScriptTemplate.template_modes(path), ("send_to",)
+        )
 
     def test_template_modes_missing_file_fallback(self):
         self.assertEqual(
-            script_template.template_modes(self.tmp / "nope.py", ("send_to",)),
+            script_template.ScriptTemplate.template_modes(
+                self.tmp / "nope.py", ("send_to",)
+            ),
             ("send_to",),
         )
 
     def test_template_modes_custom_field(self):
         path = self._write("a.py", "MODES = ('send_to',)\n")
         # Default field name finds nothing -> fallback.
-        self.assertEqual(script_template.template_modes(path), (SEND_TO,))
+        self.assertEqual(
+            script_template.ScriptTemplate.template_modes(path), (SEND_TO,)
+        )
         # Custom field name reads the declaration.
         self.assertEqual(
-            script_template.template_modes(path, field="MODES"), ("send_to",)
+            script_template.ScriptTemplate.template_modes(path, field="MODES"),
+            ("send_to",),
         )
 
     def test_list_template_modes_pairs(self):
         self._write("import.py", "BRIDGE_MODES = ('send_to',)\n")
         self._write("frame.py")  # no declaration -> fallback mode
         self.assertEqual(
-            script_template.list_template_modes(self.tmp),
+            script_template.ScriptTemplate.list_template_modes(self.tmp),
             [("frame", "send_to"), ("import", "send_to")],
         )
 
     def test_render_template_substitutes(self):
         path = self._write("t.py", 'FBX = r"__FBX_PATH__"\nN = __COUNT__\n')
-        out = script_template.render_template(
+        out = script_template.ScriptTemplate.render_template(
             path, {"FBX_PATH": "C:/x.fbx", "COUNT": "3"}
         )
         self.assertIn('FBX = r"C:/x.fbx"', out)
@@ -147,11 +164,13 @@ class AppScanTest(unittest.TestCase):
         for name in ("Rizomuv_VS.exe", "rizomuv_RS.exe", "rizomuv.exe"):
             (d / name).write_text("", encoding="utf-8")
         base = self.tmp / "Rizom Lab" / "*"
-        got = AppLauncher.resolve_app_path(scan_globs=(
-            str(base / "Rizomuv_VS.exe"),
-            str(base / "rizomuv_RS.exe"),
-            str(base / "rizomuv.exe"),
-        ))
+        got = AppLauncher.resolve_app_path(
+            scan_globs=(
+                str(base / "Rizomuv_VS.exe"),
+                str(base / "rizomuv_RS.exe"),
+                str(base / "rizomuv.exe"),
+            )
+        )
         self.assertEqual(got, str(d / "Rizomuv_VS.exe"))
 
     def test_scan_glob_priority_still_prefers_newest_within_pattern(self):
@@ -161,10 +180,12 @@ class AppScanTest(unittest.TestCase):
             d.mkdir()
             (d / "primary.exe").write_text("", encoding="utf-8")
         (self.tmp / "Tool 2020.1" / "fallback.exe").write_text("", encoding="utf-8")
-        got = AppLauncher.resolve_app_path(scan_globs=(
-            str(self.tmp / "Tool *" / "primary.exe"),
-            str(self.tmp / "Tool *" / "fallback.exe"),
-        ))
+        got = AppLauncher.resolve_app_path(
+            scan_globs=(
+                str(self.tmp / "Tool *" / "primary.exe"),
+                str(self.tmp / "Tool *" / "fallback.exe"),
+            )
+        )
         self.assertEqual(got, str(self.tmp / "Tool 2022.2" / "primary.exe"))
 
     def test_returns_none_when_nothing_resolves(self):
@@ -224,8 +245,7 @@ class HandoffSendTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         (self.tmp / "import.py").write_text(
-            "BRIDGE_MODES = ('send_to',)\n"
-            'FBX = r"__FBX_PATH__"\nSCALE = __SCALE__\n',
+            "BRIDGE_MODES = ('send_to',)\nFBX = r\"__FBX_PATH__\"\nSCALE = __SCALE__\n",
             encoding="utf-8",
         )
         self.launched = []

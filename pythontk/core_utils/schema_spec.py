@@ -29,6 +29,7 @@ Design note — errors vs. warnings
     never warned about — that is how a generated skeleton can embed help text
     while remaining valid.
 """
+
 from __future__ import annotations
 
 import copy
@@ -50,53 +51,6 @@ class SchemaError(ValueError):
     """Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid."""
 
 
-def spec_field(
-    *,
-    help: str = "",
-    example: Any = MISSING,
-    required: bool = False,
-    nested: Optional[Type["SchemaSpec"]] = None,
-    choices: Optional[Sequence[Any]] = None,
-    validate: Optional[Callable[[Any], List[str]]] = None,
-    default: Any = MISSING,
-    default_factory: Any = MISSING,
-):
-    """A :func:`dataclasses.field` carrying schema metadata.
-
-    ``required`` is a *validation* flag (the key must appear in an input file),
-    independent of the dataclass default — every spec field still gets a default
-    so the dataclass stays constructible and field-ordering rules never bite.
-    When neither *default* nor *default_factory* is given the field defaults to
-    ``None``.
-
-    Parameters:
-        help: One-line description shown in generated docs.
-        example: Value used in :meth:`SchemaSpec.skeleton`/docs.  Omit to fall
-            back to the field default (or a nested schema's skeleton).
-        required: Whether the key must be present in a validated file.
-        nested: A :class:`SchemaSpec` subclass validated recursively for this
-            key's (mapping) value.
-        choices: Allowed values for a scalar field.
-        validate: Callable ``(value) -> list[str]`` returning error strings for
-            polymorphic/irregular fields the generic checks can't express.
-    """
-    meta = {
-        _META: {
-            "help": help,
-            "example": example,
-            "required": required,
-            "nested": nested,
-            "choices": choices,
-            "validate": validate,
-        }
-    }
-    if default is not MISSING:
-        return field(default=default, metadata=meta)
-    if default_factory is not MISSING:
-        return field(default_factory=default_factory, metadata=meta)
-    return field(default=None, metadata=meta)
-
-
 @dataclass
 class FieldDoc:
     """One row of a schema's generated reference."""
@@ -107,6 +61,7 @@ class FieldDoc:
     example: Any
     choices: Optional[Sequence[Any]]
     nested: Optional[Type["SchemaSpec"]]
+    nested_is_list: bool = False
 
 
 @dataclass
@@ -155,20 +110,53 @@ class ValidationResult:
         self.warnings.extend(f"{path}{w}" for w in other.warnings)
 
 
-def _default_for(cls: Type["SchemaSpec"], name: str) -> Any:
-    """The dataclass default (value or factory result) for field *name*."""
-    for f in fields(cls):
-        if f.name == name:
-            if f.default is not MISSING:
-                return f.default
-            if f.default_factory is not MISSING:  # type: ignore[misc]
-                return f.default_factory()
-            return None
-    return None
+class _SchemaSpecInternal(object):
+    """Internal helpers for SchemaSpec."""
+
+    @staticmethod
+    def _default_for(cls: Type["SchemaSpec"], name: str) -> Any:
+        """The dataclass default (value or factory result) for field *name*."""
+        for f in fields(cls):
+            if f.name == name:
+                if f.default is not MISSING:
+                    return f.default
+                if f.default_factory is not MISSING:  # type: ignore[misc]
+                    return f.default_factory()
+                return None
+        return None
+
+    @staticmethod
+    def _compact(value: Any, limit: int = 60) -> str:
+        """One-line, length-capped repr of an example value for a doc table cell."""
+        import json
+
+        try:
+            text = json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(value)
+        text = text.replace("\n", " ")
+        return text if len(text) <= limit else text[: limit - 1] + "…"
+
+    @staticmethod
+    def _nested_of(m: dict) -> "tuple[Optional[Type['SchemaSpec']], bool]":
+        """Resolve a spec field's ``nested`` metadata to ``(schema, is_list)``.
+
+        A bare ``SchemaSpec`` subclass is a single nested mapping; a one-element
+        ``[SchemaSpec]`` (mirroring ``typing.List[X]``) is a list of that schema.
+        ``(None, False)`` when the field carries no nested schema.
+        """
+        nested = m["nested"]
+        if isinstance(nested, (list, tuple)):
+            if len(nested) != 1:
+                raise SchemaError(
+                    "nested list must hold exactly one SchemaSpec subclass"
+                )
+            return nested[0], True
+        return nested, False
 
 
 @dataclass
-class SchemaSpec:
+class SchemaSpec(_SchemaSpecInternal):
     """Base for declarative template schemas (see module docstring).
 
     Subclass with ``@dataclass`` and declare fields via :func:`spec_field`.
@@ -200,15 +188,19 @@ class SchemaSpec:
             if name not in data:
                 continue
             value = data[name]
-            nested = m["nested"]
+            schema, is_list = cls._nested_of(m)
             # Deep-copy plain values so the instance never aliases the source
             # dict (a later mutation of one must not silently rewrite the other).
             # Nested schemas recurse and copy on their own.
-            kwargs[name] = (
-                nested.from_dict(value)
-                if nested is not None and isinstance(value, dict)
-                else copy.deepcopy(value)
-            )
+            if schema is not None and is_list and isinstance(value, list):
+                kwargs[name] = [
+                    schema.from_dict(v) if isinstance(v, dict) else copy.deepcopy(v)
+                    for v in value
+                ]
+            elif schema is not None and not is_list and isinstance(value, dict):
+                kwargs[name] = schema.from_dict(value)
+            else:
+                kwargs[name] = copy.deepcopy(value)
         return cls(**kwargs)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -220,11 +212,15 @@ class SchemaSpec:
                 continue
             # Deep-copy so a caller mutating the serialised output can't reach
             # back into the live instance (nested schemas serialise + copy below).
-            out[name] = (
-                value.to_dict()
-                if isinstance(value, SchemaSpec)
-                else copy.deepcopy(value)
-            )
+            if isinstance(value, SchemaSpec):
+                out[name] = value.to_dict()
+            elif isinstance(value, list):
+                out[name] = [
+                    v.to_dict() if isinstance(v, SchemaSpec) else copy.deepcopy(v)
+                    for v in value
+                ]
+            else:
+                out[name] = copy.deepcopy(value)
         return out
 
     # -- validation -------------------------------------------------------
@@ -259,10 +255,18 @@ class SchemaSpec:
                     f"{name}: {value!r} is not one of {list(m['choices'])}"
                 )
 
-            nested = m["nested"]
-            if nested is not None:
-                if isinstance(value, dict):
-                    res.merge(nested.validate(value), path=f"{name}.")
+            schema, is_list = cls._nested_of(m)
+            if schema is not None:
+                if is_list:
+                    if isinstance(value, list):
+                        for i, item in enumerate(value):
+                            res.merge(schema.validate(item), path=f"{name}[{i}].")
+                    else:
+                        res.errors.append(
+                            f"{name}: expected a list for nested-list schema"
+                        )
+                elif isinstance(value, dict):
+                    res.merge(schema.validate(value), path=f"{name}.")
                 else:
                     res.errors.append(f"{name}: expected a mapping for nested schema")
 
@@ -293,11 +297,12 @@ class SchemaSpec:
                 # caller mutating a skeleton must not poison it (or later skeletons).
                 value = copy.deepcopy(m["example"])
             elif m["nested"] is not None:
-                value = m["nested"].skeleton()
+                schema, is_list = cls._nested_of(m)
+                value = [schema.skeleton()] if is_list else schema.skeleton()
             elif choices:
                 value = choices[0]
             else:
-                value = _default_for(cls, name)
+                value = _SchemaSpecInternal._default_for(cls, name)
             # A ``choices`` field must carry an allowed value or the skeleton
             # fails its own validate(); fall back to the first valid choice.
             if choices and value not in choices:
@@ -323,7 +328,8 @@ class SchemaSpec:
                 continue
             example = m["example"]
             if example is MISSING:
-                example = _default_for(cls, f.name)
+                example = _SchemaSpecInternal._default_for(cls, f.name)
+            schema, is_list = _SchemaSpecInternal._nested_of(m)
             docs.append(
                 FieldDoc(
                     name=f.name,
@@ -331,7 +337,8 @@ class SchemaSpec:
                     required=m["required"],
                     example=example,
                     choices=m["choices"],
-                    nested=m["nested"],
+                    nested=schema,
+                    nested_is_list=is_list,
                 )
             )
         return docs
@@ -366,26 +373,64 @@ class SchemaSpec:
             if fd.nested is not None:
                 # A nested block gets its own table below — pointing there reads
                 # better than cramming a serialised default into one cell.
-                example = f"see *{fd.nested.__name__}* below"
+                suffix = " (list)" if fd.nested_is_list else ""
+                example = f"see *{fd.nested.__name__}* below{suffix}"
                 if fd.nested not in nested_specs:
                     nested_specs.append(fd.nested)
             elif fd.example in (None, MISSING):
                 example = ""
             else:
-                example = f"`{_compact(fd.example)}`"
+                example = f"`{_SchemaSpecInternal._compact(fd.example)}`"
             lines.append(f"| `{fd.name}` | {req} | {desc} | {example} |")
         for ns in nested_specs:
             lines += ["", ns.to_markdown(_level=_level + 1)]
         return "\n".join(lines)
 
+    @staticmethod
+    def spec_field(
+        *,
+        help: str = "",
+        example: Any = MISSING,
+        required: bool = False,
+        nested: Optional[Type["SchemaSpec"]] = None,
+        choices: Optional[Sequence[Any]] = None,
+        validate: Optional[Callable[[Any], List[str]]] = None,
+        default: Any = MISSING,
+        default_factory: Any = MISSING,
+    ):
+        """A :func:`dataclasses.field` carrying schema metadata.
 
-def _compact(value: Any, limit: int = 60) -> str:
-    """One-line, length-capped repr of an example value for a doc table cell."""
-    import json
+        ``required`` is a *validation* flag (the key must appear in an input file),
+        independent of the dataclass default — every spec field still gets a default
+        so the dataclass stays constructible and field-ordering rules never bite.
+        When neither *default* nor *default_factory* is given the field defaults to
+        ``None``.
 
-    try:
-        text = json.dumps(value, ensure_ascii=False)
-    except (TypeError, ValueError):
-        text = str(value)
-    text = text.replace("\n", " ")
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+        Parameters:
+            help: One-line description shown in generated docs.
+            example: Value used in :meth:`SchemaSpec.skeleton`/docs.  Omit to fall
+                back to the field default (or a nested schema's skeleton).
+            required: Whether the key must be present in a validated file.
+            nested: A :class:`SchemaSpec` subclass validated recursively for this
+                key's (mapping) value. Wrap it in a one-element list —
+                ``nested=[MySpec]`` (mirroring ``typing.List[X]``) — for a key
+                whose value is a *list* of that schema.
+            choices: Allowed values for a scalar field.
+            validate: Callable ``(value) -> list[str]`` returning error strings for
+                polymorphic/irregular fields the generic checks can't express.
+        """
+        meta = {
+            _META: {
+                "help": help,
+                "example": example,
+                "required": required,
+                "nested": nested,
+                "choices": choices,
+                "validate": validate,
+            }
+        }
+        if default is not MISSING:
+            return field(default=default, metadata=meta)
+        if default_factory is not MISSING:
+            return field(default_factory=default_factory, metadata=meta)
+        return field(default=None, metadata=meta)

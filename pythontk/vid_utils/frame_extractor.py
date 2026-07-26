@@ -7,6 +7,7 @@ a guard so pythontk's zero-required-deps surface is preserved. Calls to
 :meth:`FrameExtractor.extract_frames` short-circuit with a logged error
 when ``cv2`` is unavailable.
 """
+
 import logging
 import os
 from typing import List, Optional
@@ -195,8 +196,9 @@ class FrameExtractor:
                         out = os.path.join(
                             output_folder, f"{prefix}_{best_index:06d}.jpg"
                         )
-                        if cv2.imwrite(out, best_frame,
-                                       [cv2.IMWRITE_JPEG_QUALITY, quality]):
+                        if cv2.imwrite(
+                            out, best_frame, [cv2.IMWRITE_JPEG_QUALITY, quality]
+                        ):
                             saved.append(out)
                             if max_frames and len(saved) >= max_frames:
                                 break
@@ -204,8 +206,11 @@ class FrameExtractor:
                     best_score = -1.0
                     best_frame = None
             # flush the trailing partial bucket
-            if (best_frame is not None and best_score >= min_sharpness
-                    and (not max_frames or len(saved) < max_frames)):
+            if (
+                best_frame is not None
+                and best_score >= min_sharpness
+                and (not max_frames or len(saved) < max_frames)
+            ):
                 out = os.path.join(output_folder, f"{prefix}_{best_index:06d}.jpg")
                 if cv2.imwrite(out, best_frame, [cv2.IMWRITE_JPEG_QUALITY, quality]):
                     saved.append(out)
@@ -251,8 +256,3 @@ class FrameExtractor:
             return info
         finally:
             cap.release()
-
-
-def extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]:
-    """Convenience wrapper around :meth:`FrameExtractor.extract_frames`."""
-    return FrameExtractor().extract_frames(video_path, output_folder, step)
