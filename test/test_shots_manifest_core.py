@@ -7,6 +7,7 @@ the column-mapping templates (``mapping``), the behavior template loading + keyi
 math (``behaviors``), and the range resolver (``range_resolver``).  The DCC-hooked
 engine (``manifest_engine``) is exercised separately.
 """
+
 import os
 import sys
 import tempfile
@@ -17,21 +18,17 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from pythontk.core_utils.engines.shots.manifest.manifest_model import (
-    parse_csv,
+    ManifestModel,
     ColumnMap,
     BuilderStep,
     BuilderObject,
-    detect_behaviors,
     StepStatus,
     ObjectStatus,
 )
 from pythontk.core_utils.engines.shots.manifest import mapping as mapping_mod
 from pythontk.core_utils.engines.shots.manifest import behaviors as beh
 from pythontk.core_utils.engines.shots.manifest import range_resolver as rr
-from pythontk.core_utils.engines.shots.manifest.manifest_engine import (
-    ShotManifest,
-    resolve_duration,
-)
+from pythontk.core_utils.engines.shots.manifest.manifest_engine import ShotManifest
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 
 
@@ -59,39 +56,39 @@ class TestManifestParse(unittest.TestCase):
         os.remove(self.path)
 
     def test_step_count_excludes_setup(self):
-        steps = parse_csv(self.path)
+        steps = ManifestModel.parse_csv(self.path)
         self.assertEqual([s.step_id for s in steps], ["A01", "A02"])
 
     def test_section_and_title(self):
-        steps = parse_csv(self.path)
+        steps = ManifestModel.parse_csv(self.path)
         self.assertEqual(steps[0].section, "A")
         self.assertEqual(steps[0].section_title, "AILERON RIGGING")
 
     def test_continuation_row_merges_description_and_object(self):
-        steps = parse_csv(self.path)
+        steps = ManifestModel.parse_csv(self.path)
         a01 = steps[0]
         self.assertIn("wing detail continuation", a01.description)
         self.assertEqual([o.name for o in a01.objects], ["aileron_geo", "wing_geo"])
 
     def test_behaviors_detected_from_description(self):
-        steps = parse_csv(self.path)
+        steps = ManifestModel.parse_csv(self.path)
         a01 = steps[0]
         self.assertEqual(a01.objects[0].behaviors, ["fade_in", "fade_out"])
 
     def test_audio_column_captured(self):
-        steps = parse_csv(self.path)
+        steps = ManifestModel.parse_csv(self.path)
         self.assertEqual(steps[0].audio, "Narrator intro")
 
     def test_metadata_pass_first_row_wins(self):
         cm = ColumnMap(metadata_pass={"priority": ("Priority",)})
-        steps = parse_csv(self.path, columns=cm)
+        steps = ManifestModel.parse_csv(self.path, columns=cm)
         self.assertEqual(steps[0]._pass_through.get("priority"), "high")
         self.assertEqual(steps[1]._pass_through.get("priority"), "low")
 
     def test_missing_header_yields_zero_steps(self):
         path = _write_csv("just,some,data\nwith,no,header\n")
         try:
-            self.assertEqual(parse_csv(path), [])
+            self.assertEqual(ManifestModel.parse_csv(path), [])
         finally:
             os.remove(path)
 
@@ -115,34 +112,39 @@ class TestColumnMap(unittest.TestCase):
 
 class TestDetectBehaviors(unittest.TestCase):
     def test_fade_in(self):
-        self.assertEqual(detect_behaviors("the panel fades in slowly"), ["fade_in"])
+        self.assertEqual(
+            ManifestModel.detect_behaviors("the panel fades in slowly"), ["fade_in"]
+        )
 
     def test_fade_out(self):
-        self.assertEqual(detect_behaviors("then it fades out"), ["fade_out"])
+        self.assertEqual(
+            ManifestModel.detect_behaviors("then it fades out"), ["fade_out"]
+        )
 
     def test_both_independent(self):
         self.assertEqual(
-            detect_behaviors("fades in then fades out"), ["fade_in", "fade_out"]
+            ManifestModel.detect_behaviors("fades in then fades out"),
+            ["fade_in", "fade_out"],
         )
 
     def test_none(self):
-        self.assertEqual(detect_behaviors("a static object"), [])
+        self.assertEqual(ManifestModel.detect_behaviors("a static object"), [])
 
 
 class TestMapping(unittest.TestCase):
     def test_discover_builtins(self):
-        names = mapping_mod.discover()
+        names = mapping_mod.Mapping.discover()
         self.assertIn("default", names)
         self.assertIn("speedrun", names)
 
     def test_load_default(self):
-        spec = mapping_mod.load_mapping("default")
+        spec = mapping_mod.Mapping.load_mapping("default")
         self.assertIsNotNone(spec)
 
     def test_resolve_csv_to_steps(self):
         path = _write_csv(_SAMPLE_CSV)
         try:
-            steps = mapping_mod.resolve(path, name="default")
+            steps = mapping_mod.Mapping.resolve(path, name="default")
             self.assertTrue(all(isinstance(s, BuilderStep) for s in steps))
             self.assertEqual([s.step_id for s in steps], ["A01", "A02"])
         finally:
@@ -152,24 +154,24 @@ class TestMapping(unittest.TestCase):
 class TestBehaviors(unittest.TestCase):
     def test_list_builtins(self):
         self.assertEqual(
-            sorted(beh.list_behaviors()), ["fade_in", "fade_out", "set_clip"]
+            sorted(beh.Behaviors.list_behaviors()), ["fade_in", "fade_out", "set_clip"]
         )
 
     def test_load_behavior(self):
-        fi = beh.load_behavior("fade_in")
+        fi = beh.Behaviors.load_behavior("fade_in")
         self.assertIn("attributes", fi)
         self.assertIn("visibility", fi["attributes"])
 
     def test_resolve_keys_start_anchored_block(self):
-        block = beh.load_behavior("fade_in")["attributes"]["visibility"]["in"]
-        keys = beh.resolve_keys(block, 10, 60)
+        block = beh.Behaviors.load_behavior("fade_in")["attributes"]["visibility"]["in"]
+        keys = beh.Behaviors.resolve_keys(block, 10, 60)
         # anchor=start, offset=0, duration=15, values=[0,1] -> keys at 10 and 25
         self.assertEqual([k["time"] for k in keys], [10.0, 25.0])
         self.assertEqual([k["value"] for k in keys], [0.0, 1.0])
 
     def test_resolve_keys_end_anchored_block(self):
-        out = beh.load_behavior("fade_out")["attributes"]["visibility"]["out"]
-        keys = beh.resolve_keys(out, 10, 60)
+        out = beh.Behaviors.load_behavior("fade_out")["attributes"]["visibility"]["out"]
+        keys = beh.Behaviors.resolve_keys(out, 10, 60)
         # end-anchored: keys land near the range end (60), ascending times
         self.assertTrue(keys)
         self.assertLessEqual(keys[-1]["time"], 60.0 + 1e-6)
@@ -184,25 +186,33 @@ class TestBehaviors(unittest.TestCase):
                 "scaleX": {"in": {"duration": 5}},
             }
         }
-        self.assertEqual(beh.phase_durations(tmpl), (20.0, 10.0))
-        self.assertEqual(beh.phase_durations({}), (0.0, 0.0))
+        self.assertEqual(beh.Behaviors.phase_durations(tmpl), (20.0, 10.0))
+        self.assertEqual(beh.Behaviors.phase_durations({}), (0.0, 0.0))
         # None/absent durations count as zero, not a crash.
         self.assertEqual(
-            beh.phase_durations({"attributes": {"v": {"in": {"duration": None}}}}),
+            beh.Behaviors.phase_durations(
+                {"attributes": {"v": {"in": {"duration": None}}}}
+            ),
             (0.0, 0.0),
         )
 
     def test_compute_duration_dict_and_object_forms_agree(self):
-        dict_form = beh.compute_duration([{"name": "g", "behavior": "fade_in"}])
-        obj_form = beh.compute_duration([BuilderObject(name="g", behaviors=["fade_in"])])
+        dict_form = beh.Behaviors.compute_duration(
+            [{"name": "g", "behavior": "fade_in"}]
+        )
+        obj_form = beh.Behaviors.compute_duration(
+            [BuilderObject(name="g", behaviors=["fade_in"])]
+        )
         self.assertEqual(dict_form, obj_form)
 
     def test_compute_duration_fallback_when_empty(self):
-        self.assertEqual(beh.compute_duration([], fallback=200), 200)
+        self.assertEqual(beh.Behaviors.compute_duration([], fallback=200), 200)
 
     def test_compute_duration_audio_callback(self):
-        obj = BuilderObject(name="vo", behaviors=["set_clip"], kind="audio", source_path="x.wav")
-        got = beh.compute_duration(
+        obj = BuilderObject(
+            name="vo", behaviors=["set_clip"], kind="audio", source_path="x.wav"
+        )
+        got = beh.Behaviors.compute_duration(
             [obj], fallback=10, audio_duration_fn=lambda src: 123.0
         )
         self.assertGreaterEqual(got, 123.0)
@@ -211,14 +221,16 @@ class TestBehaviors(unittest.TestCase):
         # An entry with NO source_path resolves via resolve_source_fn and is
         # then measured by audio_duration_fn — the seam a DCC layer binds to
         # its own track registry (populated independently of the CSV).
-        obj = BuilderObject(name="vo", behaviors=["set_clip"], kind="audio", source_path="")
+        obj = BuilderObject(
+            name="vo", behaviors=["set_clip"], kind="audio", source_path=""
+        )
         seen = {}
 
         def resolver(name, kind):
             seen["args"] = (name, kind)
             return "resolved.wav"
 
-        got = beh.compute_duration(
+        got = beh.Behaviors.compute_duration(
             [obj],
             fallback=10,
             audio_duration_fn=lambda src: 77.0 if src == "resolved.wav" else None,
@@ -230,12 +242,14 @@ class TestBehaviors(unittest.TestCase):
     def test_compute_duration_raising_resolver_falls_back(self):
         # A raising resolver is swallowed; the unresolvable entry contributes
         # nothing so the manifest falls back instead of crashing the build.
-        obj = BuilderObject(name="vo", behaviors=["set_clip"], kind="audio", source_path="")
+        obj = BuilderObject(
+            name="vo", behaviors=["set_clip"], kind="audio", source_path=""
+        )
 
         def boom(name, kind):
             raise RuntimeError("no registry")
 
-        got = beh.compute_duration(
+        got = beh.Behaviors.compute_duration(
             [obj],
             fallback=10,
             audio_duration_fn=lambda src: 99.0,
@@ -254,17 +268,23 @@ class TestRangeResolver(unittest.TestCase):
     def test_prune_to_top_boundaries(self):
         # starts 0,1,2,100,101 -> largest gap before 100; keep 2 -> [0,100]
         self.assertEqual(
-            rr.prune_to_top_boundaries([0, 1, 2, 100, 101], 2), [0, 100]
+            rr.RangeResolver.prune_to_top_boundaries([0, 1, 2, 100, 101], 2), [0, 100]
         )
 
     def test_prune_noop_when_within_budget(self):
-        self.assertEqual(rr.prune_to_top_boundaries([0, 10], 3), [0, 10])
+        self.assertEqual(rr.RangeResolver.prune_to_top_boundaries([0, 10], 3), [0, 10])
 
     def test_sequential_default_duration(self):
         steps = self._steps(3)
-        out = rr.resolve_ranges(
-            steps, {}, [], {}, gap=10, use_selected_keys=False,
-            last_resolved=[], default_duration=200,
+        out = rr.RangeResolver.resolve_ranges(
+            steps,
+            {},
+            [],
+            {},
+            gap=10,
+            use_selected_keys=False,
+            last_resolved=[],
+            default_duration=200,
         )
         # uniform 200f each, gap 10, anchored at 0
         self.assertEqual(
@@ -274,28 +294,47 @@ class TestRangeResolver(unittest.TestCase):
 
     def test_user_range_pins_and_advances_cursor(self):
         steps = self._steps(2)
-        out = rr.resolve_ranges(
-            steps, {"A01": (50.0, 100.0)}, [], {}, gap=10,
-            use_selected_keys=False, last_resolved=[], default_duration=200,
+        out = rr.RangeResolver.resolve_ranges(
+            steps,
+            {"A01": (50.0, 100.0)},
+            [],
+            {},
+            gap=10,
+            use_selected_keys=False,
+            last_resolved=[],
+            default_duration=200,
         )
         first = out[0]
-        self.assertEqual((first[0], first[1], first[2], first[3]), ("A01", 50.0, 100.0, True))
+        self.assertEqual(
+            (first[0], first[1], first[2], first[3]), ("A01", 50.0, 100.0, True)
+        )
         # A02 starts after A01's end + gap
         self.assertEqual(out[1][1], 110.0)
 
     def test_gap_boundaries_place_steps(self):
         steps = self._steps(2)
-        out = rr.resolve_ranges(
-            steps, {}, [30.0, 80.0], {}, gap=5,
-            use_selected_keys=False, last_resolved=[], default_duration=0,
+        out = rr.RangeResolver.resolve_ranges(
+            steps,
+            {},
+            [30.0, 80.0],
+            {},
+            gap=5,
+            use_selected_keys=False,
+            last_resolved=[],
+            default_duration=0,
         )
         self.assertEqual(out[0][1], 30.0)
         self.assertEqual(out[1][1], 80.0)
 
     def test_selected_keys_no_regions_returns_empty(self):
-        out = rr.resolve_ranges(
-            self._steps(2), {}, [], {}, gap=0,
-            use_selected_keys=True, last_resolved=[],
+        out = rr.RangeResolver.resolve_ranges(
+            self._steps(2),
+            {},
+            [],
+            {},
+            gap=0,
+            use_selected_keys=True,
+            last_resolved=[],
         )
         self.assertEqual(out, [])
 
@@ -303,7 +342,8 @@ class TestRangeResolver(unittest.TestCase):
 class TestStatusRollup(unittest.TestCase):
     def test_worst_of_children(self):
         st = StepStatus(
-            step_id="A01", built=True,
+            step_id="A01",
+            built=True,
             objects=[
                 ObjectStatus("a", True, "valid"),
                 ObjectStatus("b", False, "missing_object"),
@@ -313,8 +353,12 @@ class TestStatusRollup(unittest.TestCase):
         self.assertEqual(st.missing_count, 1)
 
     def test_locked_wins(self):
-        st = StepStatus(step_id="A01", built=True, locked=True,
-                        objects=[ObjectStatus("a", False, "missing_object")])
+        st = StepStatus(
+            step_id="A01",
+            built=True,
+            locked=True,
+            objects=[ObjectStatus("a", False, "missing_object")],
+        )
         self.assertEqual(st.status, "locked")
 
     def test_unbuilt(self):
@@ -336,8 +380,7 @@ class TestManifestEngine(unittest.TestCase):
 
     def _steps(self, ids):
         return [
-            BuilderStep(sid, "A", "t", "", [BuilderObject(f"{sid}_geo")])
-            for sid in ids
+            BuilderStep(sid, "A", "t", "", [BuilderObject(f"{sid}_geo")]) for sid in ids
         ]
 
     def test_sync_creates_shots_sequentially(self):
@@ -387,8 +430,13 @@ class TestManifestEngine(unittest.TestCase):
         store = ShotStore()
         mani = AudioMani(store)
         step = [
-            BuilderStep("V01", "V", "t", "",
-                        [BuilderObject("vo", kind="audio", source_path="x.wav")])
+            BuilderStep(
+                "V01",
+                "V",
+                "t",
+                "",
+                [BuilderObject("vo", kind="audio", source_path="x.wav")],
+            )
         ]
         mani.sync(step, initial_shot_length=50)
         self.assertAlmostEqual(store.sorted_shots()[0].duration, 100.0)
@@ -406,7 +454,10 @@ class TestManifestEngine(unittest.TestCase):
         mani = AudioMani(store)
         step = [
             BuilderStep(
-                "V01", "V", "t", "",
+                "V01",
+                "V",
+                "t",
+                "",
                 [BuilderObject("vo", kind="audio", source_path="x.wav")],
             )
         ]
@@ -429,7 +480,10 @@ class TestManifestEngine(unittest.TestCase):
         mani = GrowMani(store)
         step = [
             BuilderStep(
-                "V01", "V", "t", "",
+                "V01",
+                "V",
+                "t",
+                "",
                 [BuilderObject("vo", kind="audio", source_path="x.wav")],
             )
         ]
@@ -470,7 +524,7 @@ class TestManifestEngine(unittest.TestCase):
         step = BuilderStep(
             "A01", "A", "t", "", [BuilderObject("g", behaviors=["fade_in"])]
         )
-        dur, beh_span, aud = resolve_duration(
+        dur, beh_span, aud = ShotManifest.resolve_duration(
             step, initial_shot_length=200, fit_mode="extend_only", fps=24.0
         )
         self.assertGreaterEqual(dur, 0.0)

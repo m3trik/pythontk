@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-07-18_
+_Generated: 2026-07-25_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -56,28 +56,20 @@ _Generated: 2026-07-18_
   - methods: sort
 
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py` — Behaviors — load JSON keying recipes and resolve them to keyframe math.
-- `templates() -> TemplateSet`
-- `load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]`
-- `list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]`
-- `resolve_keys(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]`
-- `phase_durations(tmpl: Dict[str, Any]) -> Tuple[float, float]`
-- `compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`
+- `class Behaviors(_BehaviorsInternal)`
+  - methods: templates, load_behavior, list_behaviors, resolve_keys, phase_durations, compute_duration
 
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py` — Schema for a *behavior* template file, defined as a dataclass.
-- `validate_duration(value: Any) -> List[str]`
-- `validate_verify(value: Any) -> List[str]`
-- `validate_attributes(value: Any) -> List[str]`
-- `format_markdown() -> str`
-- `class BehaviorSpec(SchemaSpec)`
+- `class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`
+  - methods: format_markdown
 
 ### `core_utils/engines/shots/manifest/manifest_engine.py` — Shot Manifest engine — pure planning/orchestration core with scene hooks.
-- `resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]`
-- `class ShotManifest`
-  - methods: rewire_audio, apply_behaviors, sync, update, assess, from_csv
+- `class ShotManifest(_ShotManifestInternal)`
+  - methods: rewire_audio, apply_behaviors, sync, update, assess, from_csv, resolve_duration
 
 ### `core_utils/engines/shots/manifest/manifest_model.py` — Pure Shot Manifest data model + CSV parser.
-- `detect_behaviors(text: str) -> List[str]`
-- `parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]`
+- `class ManifestModel(_ManifestModelInternal)`
+  - methods: detect_behaviors, parse_csv
 - `class BuilderObject`
 - `class BuilderStep`
   - methods: display_text, from_detection
@@ -89,32 +81,27 @@ _Generated: 2026-07-18_
   - methods: to_dict, from_dict
 
 ### `core_utils/engines/shots/manifest/mapping/_mapping.py` — CSV mapping resolver — interprets JSON mapping files.
-- `templates() -> TemplateSet`
-- `discover(directory: Optional[str] = None) -> List[str]`
-- `load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]`
-- `resolve(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]`
+- `class Mapping(_MappingInternal)`
+  - methods: templates, discover, load_mapping, resolve
 
 ### `core_utils/engines/shots/manifest/mapping/_spec.py` — Schema for a CSV *mapping* file, defined as a dataclass.
-- `validate_audio_resolve(value: Any) -> List[str]`
-- `validate_default_behaviors(value: Any) -> List[str]`
-- `format_markdown() -> str`
 - `class AudioMethod`
-- `class MappingSpec(SchemaSpec)`
+- `class MappingSpec(SchemaSpec, _MappingSpecInternal)`
+  - methods: format_markdown
 
 ### `core_utils/engines/shots/manifest/range_resolver.py` — Range resolution algorithm for the Shot Manifest.
-- `prune_to_top_boundaries(region_starts: List[float], n_steps: int) -> List[float]`
-- `resolve_ranges(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], gap_starts: List[float], gap_end_map: Dict[float, float], gap: float, use_selected_keys: bool, last_resolved: List[Tuple[str, float, Optional[float], bool]], from_step_idx: int = 0, default_duration: float = 0, duration_fn: Optional[Callable[..., float]] = None) -> List[Tuple[str, float, Optional[float], bool]]`
+- `class RangeResolver`
+  - methods: prune_to_top_boundaries, resolve_ranges
 
 ### `core_utils/engines/shots/shot_apply.py` — Commit a resolved :class:`MovePlan` via injected writer callables.
-- `apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None`
+- `class ShotApply`
+  - methods: apply
 
 ### `core_utils/engines/shots/shot_detection.py` — Pure shot-boundary detection math.
-- `cluster_segments_by_gap(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]`
-- `boundaries_from_key_entries(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]`
+- `class ShotDetection`
+  - methods: cluster_segments_by_gap, boundaries_from_key_entries
 
 ### `core_utils/engines/shots/shot_model.py` — DCC-agnostic shot data model and persistent store.
-- `leaf_name(node) -> str`
-- `resolve_clip_specs(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]`
 - `class ScenePersistence(Protocol)`
   - methods: save, load
 - `class ShotBlock`
@@ -127,14 +114,12 @@ _Generated: 2026-07-18_
 - `class SettingsChanged(StoreEvent)`
 - `class BatchComplete(StoreEvent)`
 - `class StoreInvalidated(StoreEvent)`
-- `class ShotStore`
-  - methods: has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define
+- `class ShotStore(_ShotStoreInternal)`
+  - methods: has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs
 
 ### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
-- `plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan`
-- `plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan`
-- `plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan`
-- `plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan`
+- `class ShotPlanner(_ShotPlannerInternal)`
+  - methods: plan_respace, plan_ripple_downstream, plan_reorder, plan_ripple_upstream
 - `class ShotMove`
   - methods: delta, moves
 - `class MovePlan`
@@ -268,7 +253,7 @@ _Generated: 2026-07-18_
   - methods: reload
 
 ### `core_utils/module_resolver.py` — Reusable module attribute resolver for package-style imports.
-- `bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None) -> PackageResolverHandle`
+- `bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`
 - `create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`
 - `class ModuleAttributeResolver`
   - methods: build, rebuild, resolve, get_module, bind_to, iter_registered_names, clear_module_cache
@@ -290,10 +275,9 @@ _Generated: 2026-07-18_
   - methods: pip, get_local_dependency_order
 
 ### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
-- `sanitize_preset_name(name: str) -> str`
 - `class Codec`
-- `class PresetStore`
-  - methods: ext, user_dir, builtin_dir, active, list, source, exists, path, load, save, delete, rename
+- `class PresetStore(_PresetStoreInternal)`
+  - methods: ext, user_dir, builtin_dir, active, list, source, exists, path, load, save, delete, rename, sanitize_preset_name
 
 ### `core_utils/process_stream.py` — App-agnostic line-stream primitives for launched processes and log files.
 - `class OutputStream`
@@ -311,23 +295,21 @@ _Generated: 2026-07-18_
   - methods: check
 
 ### `core_utils/schema_spec.py` — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
-- `spec_field(*, help: str = '', example: Any = MISSING, required: bool = False, nested: Optional[Type['SchemaSpec']] = None, choices: Optional[Sequence[Any]] = None, validate: Optional[Callable[[Any], List[str]]] = None, default: Any = MISSING, default_factory: Any = MISSING)`
 - `class SchemaError(ValueError)`
 - `class FieldDoc`
 - `class ValidationResult`
   - methods: ok, raise_if_errors, raise_or_warn, merge
-- `class SchemaSpec`
-  - methods: from_dict, to_dict, validate, skeleton, describe, to_markdown
+- `class SchemaSpec(_SchemaSpecInternal)`
+  - methods: from_dict, to_dict, validate, skeleton, describe, to_markdown, spec_field
 
 ### `core_utils/script_run.py` — Run a script in an external app, block until it exits, and collect an artifact.
-- `run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None) -> ScriptRunResult`
+- `class ScriptRunner(_ScriptRunnerInternal)`
+  - methods: run_script_to_artifact
 - `class ScriptRunResult`
 
 ### `core_utils/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
-- `list_templates(template_dir, extension: str = '.py') -> List[Path]`
-- `template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]`
-- `list_template_modes(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]`
-- `render_template(template_path, context: Dict[str, str]) -> str`
+- `class ScriptTemplate(_ScriptTemplateInternal)`
+  - methods: list_templates, template_modes, list_template_modes, render_template
 
 ### `core_utils/singleton_mixin.py`
 - `class SingletonMixin`
@@ -346,9 +328,8 @@ _Generated: 2026-07-18_
   - methods: names, source, exists, user_dir, builtin_dir, active, delete, rename, path, raw, validate, load, skeleton, save, write_skeleton, markdown
 
 ### `core_utils/user_config.py` — Qt-free, zero-dependency user-config resolution for the ecosystem.
-- `user_config_root() -> Path`
 - `class UserConfig`
-  - methods: path_for, load_file, resolve, deep_merge, expand
+  - methods: path_for, load_file, resolve, deep_merge, expand, user_config_root
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
@@ -370,23 +351,20 @@ _Generated: 2026-07-18_
 ### `file_utils/temp_artifacts.py` — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - `class TempArtifacts(LoggingMixin)`
   - methods: path, register, cleanup, sweep_stale
+- `class CachedArtifact(LoggingMixin)`
+  - methods: key, get
 
 ### `file_utils/usd.py` — Zero-dependency USD (OpenUSD) file utilities.
-- `is_usd_file(path: str) -> bool`
-- `obj_to_usd(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str`
-- `obj_to_usdz(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str`
 - `class UsdFile`
-  - methods: sniff, list_package, default_layer
-- `class UsdzPackager`
+  - methods: sniff, list_package, default_layer, is_usd_file
+- `class UsdzPackager(_UsdzPackagerInternal)`
   - methods: package, from_layer, verify
 - `class UsdMeshWriter`
-  - methods: write, from_obj
+  - methods: write, from_obj, obj_to_usd, obj_to_usdz
 
 ### `file_utils/workspace.py` — Shared project-workspace model + ``workspace.mel`` codec.
-- `parse_workspace_mel(source: str) -> Dict[str, str]`
-- `write_workspace_mel(path: str, rules: Dict[str, str], preserve: bool = True, remove: Sequence[str] = ()) -> bool`
-- `class Workspace`
-  - methods: marker_path, is_marked, load, save, create, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing
+- `class Workspace(_WorkspaceInternal)`
+  - methods: marker_path, is_marked, load, save, create, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing, parse_workspace_mel, write_workspace_mel
 
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`
@@ -449,12 +427,12 @@ _Generated: 2026-07-18_
   - methods: url, ping, invoke, list_ops, describe, connect, shutdown
 
 ### `net_utils/rpc/installer.py` — Generic DCC plugin installer (symlink-first, copytree fallback).
-- `install_plugin(plugin_src: Union[str, Path], dest: Union[str, Path], force: bool = False) -> Optional[Path]`
-- `uninstall_plugin(dest: Union[str, Path]) -> bool`
-- `is_plugin_installed(dest: Union[str, Path]) -> bool`
+- `class PluginInstaller`
+  - methods: install_plugin, uninstall_plugin, is_plugin_installed
 
 ### `net_utils/rpc/job.py` — One-shot batch pipeline over :class:`RpcClient`.
-- `run_batch(calls: List[Call], client: RpcClient, stop_on_error: bool = False) -> List[Result]`
+- `class RpcJob`
+  - methods: run_batch
 - `class Call`
 - `class Result`
 
@@ -464,7 +442,7 @@ _Generated: 2026-07-18_
 
 ### `str_utils/_str_utils.py`
 - `class StrUtils(CoreUtils)`
-  - methods: strip_ansi, sanitize, replace_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, truncate, get_trailing_integers, find_str, find_str_and_format, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, truncate, get_trailing_integers, find_str, find_str_and_format, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`
@@ -479,6 +457,5 @@ _Generated: 2026-07-18_
   - methods: get_frame_rate, resolve_ffmpeg, get_video_frame_rate, get_sequence_start_number, compress_video
 
 ### `vid_utils/frame_extractor.py` — Extract still frames from a video file via OpenCV.
-- `extract_frames(video_path: str, output_folder: str, step: int = 5) -> List[str]`
 - `class FrameExtractor`
   - methods: score_sharpness, extract_frames, extract_frames_sharpest, get_video_info

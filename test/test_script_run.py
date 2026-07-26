@@ -10,6 +10,7 @@ Run with:
     python -m pytest test_script_run.py -v
     python test_script_run.py
 """
+
 import glob
 import os
 import shutil
@@ -18,7 +19,7 @@ import sys
 import tempfile
 import unittest
 
-from pythontk.core_utils.script_run import ScriptRunResult, run_script_to_artifact
+from pythontk.core_utils.script_run import ScriptRunner, ScriptRunResult
 
 
 class ScriptRunBase(unittest.TestCase):
@@ -42,7 +43,7 @@ class ScriptRunBase(unittest.TestCase):
     def run_script(self, script, **kwargs):
         kwargs.setdefault("artifact", self.artifact)
         kwargs.setdefault("script_prefix", self.SCRIPT_PREFIX)
-        return run_script_to_artifact(sys.executable, script, **kwargs)
+        return ScriptRunner.run_script_to_artifact(sys.executable, script, **kwargs)
 
 
 class TestSuccess(ScriptRunBase):
@@ -72,9 +73,7 @@ class TestSuccess(ScriptRunBase):
         # Success is judged by the artifact, not the exit code (DCC standalone
         # teardown is a known crasher — the artifact is the ground truth).
         script = (
-            "import os, sys\n"
-            f"open({self.artifact!r}, 'wb').write(b'x')\n"
-            "sys.exit(9)\n"
+            f"import os, sys\nopen({self.artifact!r}, 'wb').write(b'x')\nsys.exit(9)\n"
         )
         result = self.run_script(script)
         self.assertEqual(result.returncode, 9)
@@ -148,7 +147,8 @@ class TestRootExport(unittest.TestCase):
     def test_registered_on_package_root(self):
         import pythontk as ptk
 
-        self.assertTrue(hasattr(ptk, "run_script_to_artifact"))
+        self.assertTrue(hasattr(ptk, "ScriptRunner"))
+        self.assertTrue(callable(ptk.ScriptRunner.run_script_to_artifact))
         self.assertTrue(hasattr(ptk, "ScriptRunResult"))
 
 

@@ -14,79 +14,84 @@ This module is DCC-free (pure schema), so it imports and validates without any
 DCC runtime even though the DCC toolkits' sibling appliers key values via their
 own scene API.
 """
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
-from pythontk import SchemaSpec, spec_field
+from pythontk import SchemaSpec
 
 # Verification strategies understood by the DCC appliers' ``verify_behavior``.
 KNOWN_VERIFY_MODES = ("exact", "values_in_range", "audio_clip")
 
 
-def validate_duration(value: Any) -> List[str]:
-    """``duration`` is a frame count or the literal ``"from_source"``."""
-    if value is None or value == "from_source":
+class _BehaviorSpecInternal(object):
+    """Internal helpers for BehaviorSpec (field validators)."""
+
+    @staticmethod
+    def validate_duration(value: Any) -> List[str]:
+        """``duration`` is a frame count or the literal ``"from_source"``."""
+        if value is None or value == "from_source":
+            return []
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return []
+        return [f'must be a number or "from_source", got {value!r}']
+
+    @staticmethod
+    def validate_verify(value: Any) -> List[str]:
+        if not isinstance(value, dict):
+            return ["expected a mapping with a 'mode' key"]
+        mode = value.get("mode")
+        if mode is not None and mode not in KNOWN_VERIFY_MODES:
+            return [f"mode {mode!r} is not one of {list(KNOWN_VERIFY_MODES)}"]
         return []
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return []
-    return [f'must be a number or "from_source", got {value!r}']
 
-
-def validate_verify(value: Any) -> List[str]:
-    if not isinstance(value, dict):
-        return ["expected a mapping with a 'mode' key"]
-    mode = value.get("mode")
-    if mode is not None and mode not in KNOWN_VERIFY_MODES:
-        return [f"mode {mode!r} is not one of {list(KNOWN_VERIFY_MODES)}"]
-    return []
-
-
-def validate_attributes(value: Any) -> List[str]:
-    """``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}."""
-    if not isinstance(value, dict):
-        return ["expected a mapping of {attribute: {in/out: key-block}}"]
-    errs: List[str] = []
-    for attr, phases in value.items():
-        if not isinstance(phases, dict):
-            errs.append(f"{attr!r} must map phase ('in'/'out') to a key block")
-            continue
-        for phase, block in phases.items():
-            if phase not in ("in", "out"):
-                errs.append(f"{attr}.{phase}: phase must be 'in' or 'out'")
-            if not isinstance(block, dict):
-                errs.append(f"{attr}.{phase}: must be a mapping")
+    @staticmethod
+    def validate_attributes(value: Any) -> List[str]:
+        """``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}."""
+        if not isinstance(value, dict):
+            return ["expected a mapping of {attribute: {in/out: key-block}}"]
+        errs: List[str] = []
+        for attr, phases in value.items():
+            if not isinstance(phases, dict):
+                errs.append(f"{attr!r} must map phase ('in'/'out') to a key block")
                 continue
-            vals = block.get("values")
-            if vals is not None and not isinstance(vals, list):
-                errs.append(f"{attr}.{phase}.values: must be a list of numbers")
-    return errs
+            for phase, block in phases.items():
+                if phase not in ("in", "out"):
+                    errs.append(f"{attr}.{phase}: phase must be 'in' or 'out'")
+                if not isinstance(block, dict):
+                    errs.append(f"{attr}.{phase}: must be a mapping")
+                    continue
+                vals = block.get("values")
+                if vals is not None and not isinstance(vals, list):
+                    errs.append(f"{attr}.{phase}.values: must be a list of numbers")
+        return errs
 
 
 @dataclass
-class BehaviorSpec(SchemaSpec):
+class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal):
     """Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``)."""
 
-    description: str = spec_field(
+    description: str = SchemaSpec.spec_field(
         help="One-line description of what the behavior does.",
         example="Fade objects in at shot start via visibility.",
         default="",
     )
-    kind: List[str] = spec_field(
+    kind: List[str] = SchemaSpec.spec_field(
         help='Object kinds this applies to (e.g. ["scene"] or ["audio"]).',
         example=["scene"],
         default_factory=lambda: ["scene"],
     )
-    duration: Any = spec_field(
+    duration: Any = SchemaSpec.spec_field(
         help='Length in frames, or "from_source" to size to an audio clip.',
-        validate=validate_duration,
+        validate=_BehaviorSpecInternal.validate_duration,
         default=None,
     )
-    attributes: Dict[str, Any] = spec_field(
+    attributes: Dict[str, Any] = SchemaSpec.spec_field(
         help="Keyframe blocks per attribute, split into in/out phases.",
-        validate=validate_attributes,
+        validate=_BehaviorSpecInternal.validate_attributes,
         example={
             "visibility": {
                 "in": {
@@ -100,19 +105,19 @@ class BehaviorSpec(SchemaSpec):
         },
         default=None,
     )
-    verify: Dict[str, Any] = spec_field(
+    verify: Dict[str, Any] = SchemaSpec.spec_field(
         help="How verification checks the authored keys.",
-        validate=validate_verify,
+        validate=_BehaviorSpecInternal.validate_verify,
         example={"mode": "values_in_range"},
         default=None,
     )
 
-
-def format_markdown() -> str:
-    """Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT."""
-    skeleton = json.dumps(BehaviorSpec.skeleton(), indent=2)
-    modes = ", ".join(f"`{m}`" for m in KNOWN_VERIFY_MODES)
-    return f"""<!-- GENERATED by behaviors/_spec.py:format_markdown() — do not edit by hand. -->
+    @classmethod
+    def format_markdown(cls) -> str:
+        """Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT."""
+        skeleton = json.dumps(cls.skeleton(), indent=2)
+        modes = ", ".join(f"`{m}`" for m in KNOWN_VERIFY_MODES)
+        return f"""<!-- GENERATED by behaviors/_spec.py:format_markdown() — do not edit by hand. -->
 # Shot Manifest — Behavior Template Format
 
 A *behavior* is a `.json` file describing a keying recipe (a fade, an audio
@@ -129,7 +134,7 @@ available everywhere a behavior name is accepted. JSON is used (stdlib,
 zero-dependency, and loadable in every DCC's bundled Python — the same format as
 the CSV mapping templates).
 
-{BehaviorSpec.to_markdown(title="Top-level keys")}
+{cls.to_markdown(title="Top-level keys")}
 
 Each `attributes.<attr>.<phase>` block holds: `anchor` (`start` | `end` | a
 float 0–1), `offset` (frames), `duration` (frames), `values` (list keyframed

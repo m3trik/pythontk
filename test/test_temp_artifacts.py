@@ -1,15 +1,21 @@
 #!/usr/bin/python
 # coding=utf-8
 """
-Unit tests for pythontk TempArtifacts.
+Unit tests for pythontk TempArtifacts and CachedArtifact.
 
-Covers:
+Covers (TempArtifacts):
 - path() allocation (unique tags, fixed names, prefix scoping)
 - register() adoption of externally-created artifacts
 - lifetime policies: scoped / session / detached
 - context-manager semantics (delete on success, keep on failure)
 - on_cleanup callback
 - sweep_stale() prefix-scoped GC (age-gated, conservative)
+
+Covers (CachedArtifact):
+- key() stability + invalidation on any input file (source AND template)
+- hit / miss, scratch-then-atomic-promote, sidecar promotion + stale-sidecar drop
+- failure keeps the partial and leaves the cache slot untouched
+- use_cache=False bypass
 
 Run with:
     python -m pytest test_temp_artifacts.py -v
@@ -21,7 +27,7 @@ import shutil
 import tempfile
 import unittest
 
-from pythontk.file_utils.temp_artifacts import TempArtifacts
+from pythontk.file_utils.temp_artifacts import CachedArtifact, TempArtifacts
 
 
 class TempArtifactsBase(unittest.TestCase):
@@ -192,11 +198,122 @@ class TestSessionPolicy(TempArtifactsBase):
         self.assertFalse(os.path.exists(p))
 
 
+class CachedArtifactBase(TempArtifactsBase):
+    def setUp(self):
+        super().setUp()
+        self.cache = CachedArtifact("ca", extension=".out", dir=self.dir)
+        self.src = self.touch(os.path.join(self.dir, "src.bin"), b"source")
+        self.produced = []
+
+    def produce(self, out):
+        self.produced.append(out)
+        self.touch(out, b"artifact")
+
+    def produce_with_sidecar(self, out):
+        self.produce(out)
+        self.touch(out + ".manifest.json", b"{}")
+
+
+class TestCachedArtifactKey(CachedArtifactBase):
+    def test_key_is_stable_for_unchanged_inputs(self):
+        self.assertEqual(
+            CachedArtifact.key("a", files=[self.src]),
+            CachedArtifact.key("a", files=[self.src]),
+        )
+
+    def test_key_changes_when_a_file_changes(self):
+        before = CachedArtifact.key(files=[self.src])
+        time.sleep(0.01)
+        self.touch(self.src, b"source-edited")
+        self.assertNotEqual(before, CachedArtifact.key(files=[self.src]))
+
+    def test_key_changes_when_a_part_changes(self):
+        self.assertNotEqual(
+            CachedArtifact.key("fbx", files=[self.src]),
+            CachedArtifact.key("usd", files=[self.src]),
+        )
+
+    def test_key_includes_every_file(self):
+        """A template fix must invalidate stale payloads — so the producing script's
+        identity has to be part of the key, not just the source's."""
+        tpl = self.touch(os.path.join(self.dir, "tpl.py"), b"v1")
+        before = CachedArtifact.key(files=[self.src, tpl])
+        time.sleep(0.01)
+        self.touch(tpl, b"v2")
+        self.assertNotEqual(before, CachedArtifact.key(files=[self.src, tpl]))
+
+
+class TestCachedArtifactGet(CachedArtifactBase):
+    def test_miss_produces_then_promotes_into_the_cache_slot(self):
+        got = self.cache.get("k1", self.produce)
+        self.assertFalse(got.hit)
+        self.assertTrue(os.path.isfile(got.path))
+        self.assertTrue(os.path.basename(got.path).startswith("ca_cache_"))
+        self.assertIsNotNone(got.scratch, "a miss hands back its scratch store to clean up")
+
+    def test_hit_skips_production_entirely(self):
+        first = self.cache.get("k1", self.produce)
+        second = self.cache.get("k1", self.produce)
+        self.assertTrue(second.hit)
+        self.assertEqual(second.path, first.path)
+        self.assertIsNone(second.scratch, "a hit must never be cleaned up — it IS the cache")
+        self.assertEqual(len(self.produced), 1)
+
+    def test_distinct_keys_get_distinct_slots(self):
+        a = self.cache.get("k1", self.produce)
+        b = self.cache.get("k2", self.produce)
+        self.assertNotEqual(a.path, b.path)
+        self.assertEqual(len(self.produced), 2)
+
+    def test_sidecars_are_promoted_with_the_artifact(self):
+        got = self.cache.get("k1", self.produce_with_sidecar, sidecars=(".manifest.json",))
+        self.assertTrue(os.path.isfile(got.path + ".manifest.json"))
+
+    def test_stale_sidecar_is_dropped_when_the_new_run_produced_none(self):
+        """A sidecar must never outlive the artifact it describes: re-filling the SAME
+        slot from a run that wrote no sidecar has to clear the previous one."""
+        first = self.cache.get(
+            "k1", self.produce_with_sidecar, sidecars=(".manifest.json",)
+        )
+        self.assertTrue(os.path.isfile(first.path + ".manifest.json"))
+
+        os.remove(first.path)  # empty the slot so the next call misses and re-produces
+        again = self.cache.get("k1", self.produce, sidecars=(".manifest.json",))
+        self.assertEqual(again.path, first.path, "same key -> same slot")
+        self.assertFalse(os.path.isfile(again.path + ".manifest.json"))
+
+    def test_failure_keeps_the_partial_and_never_poisons_the_slot(self):
+        def boom(out):
+            self.touch(out, b"partial")
+            raise RuntimeError("conversion died")
+
+        with self.assertRaises(RuntimeError):
+            self.cache.get("k1", boom)
+        # The slot stays empty, so the next attempt re-produces rather than serving junk.
+        got = self.cache.get("k1", self.produce)
+        self.assertFalse(got.hit)
+        self.assertEqual(open(got.path, "rb").read(), b"artifact")
+
+    def test_use_cache_false_produces_into_scratch_every_time(self):
+        a = self.cache.get("k1", self.produce, use_cache=False)
+        b = self.cache.get("k1", self.produce, use_cache=False)
+        self.assertFalse(a.hit)
+        self.assertFalse(b.hit)
+        self.assertNotEqual(a.path, b.path)
+        self.assertNotIn("ca_cache_", os.path.basename(a.path))
+        self.assertEqual(len(self.produced), 2)
+
+    def test_empty_name_is_rejected(self):
+        with self.assertRaises(ValueError):
+            CachedArtifact("", extension=".out")
+
+
 class TestRootExport(unittest.TestCase):
     def test_registered_on_package_root(self):
         import pythontk as ptk
 
         self.assertTrue(hasattr(ptk, "TempArtifacts"))
+        self.assertTrue(hasattr(ptk, "CachedArtifact"))
 
 
 if __name__ == "__main__":

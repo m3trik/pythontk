@@ -1,14 +1,15 @@
 # !/usr/bin/python
 # coding=utf-8
 """Tests for pythontk.PresetStore — Qt-free built-in + user named-preset store."""
+
 import json
 import os
 import shutil
 import tempfile
 import unittest
 
-from pythontk.core_utils.preset_store import PresetStore, sanitize_preset_name
-from pythontk.core_utils.user_config import user_config_root, CONFIG_ROOT_ENV_VAR
+from pythontk.core_utils.preset_store import PresetStore
+from pythontk.core_utils.user_config import UserConfig, CONFIG_ROOT_ENV_VAR
 
 
 class PresetStoreTest(unittest.TestCase):
@@ -17,9 +18,15 @@ class PresetStoreTest(unittest.TestCase):
         self.builtin = os.path.join(self.tmp, "builtin")
         self.user = os.path.join(self.tmp, "user")
         os.makedirs(self.builtin)
-        self._write(self.builtin, "specular_metal", {"depth_filter": "moderate", "align_downscale": 2})
+        self._write(
+            self.builtin,
+            "specular_metal",
+            {"depth_filter": "moderate", "align_downscale": 2},
+        )
         self._write(self.builtin, "studio", {"depth_filter": "mild"})
-        self.store = PresetStore("photog", "extapps", builtin_dir=self.builtin, user_dir=self.user)
+        self.store = PresetStore(
+            "photog", "extapps", builtin_dir=self.builtin, user_dir=self.user
+        )
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -30,7 +37,9 @@ class PresetStoreTest(unittest.TestCase):
 
     # --- discovery -----------------------------------------------------------
     def test_list_union_with_user_shadowing(self):
-        self.store.save("specular_metal", {"depth_filter": "aggressive"})  # shadows builtin
+        self.store.save(
+            "specular_metal", {"depth_filter": "aggressive"}
+        )  # shadows builtin
         self.store.save("custom", {"x": 1})
         # Each name once; builtin + user unioned.
         self.assertEqual(self.store.list(), ["custom", "specular_metal", "studio"])
@@ -46,9 +55,13 @@ class PresetStoreTest(unittest.TestCase):
 
     # --- io ------------------------------------------------------------------
     def test_load_prefers_user_over_builtin(self):
-        self.assertEqual(self.store.load("specular_metal")["align_downscale"], 2)  # builtin
+        self.assertEqual(
+            self.store.load("specular_metal")["align_downscale"], 2
+        )  # builtin
         self.store.save("specular_metal", {"align_downscale": 99})
-        self.assertEqual(self.store.load("specular_metal")["align_downscale"], 99)  # user wins
+        self.assertEqual(
+            self.store.load("specular_metal")["align_downscale"], 99
+        )  # user wins
 
     def test_load_missing_raises_keyerror_with_available(self):
         with self.assertRaises(KeyError) as ctx:
@@ -66,8 +79,10 @@ class PresetStoreTest(unittest.TestCase):
         self.assertFalse(self.store.delete("studio"))
         self.assertTrue(self.store.exists("studio"))  # builtin survives
         self.store.save("studio", {"x": 1})
-        self.assertTrue(self.store.delete("studio"))   # removes the user shadow
-        self.assertEqual(self.store.source("studio"), "builtin")  # falls back to builtin
+        self.assertTrue(self.store.delete("studio"))  # removes the user shadow
+        self.assertEqual(
+            self.store.source("studio"), "builtin"
+        )  # falls back to builtin
 
     def test_rename_user_preset(self):
         self.store.save("draft", {"x": 1})
@@ -84,7 +99,10 @@ class PresetStoreTest(unittest.TestCase):
         self.store.save("a/b:c", {"x": 1})
         # The same sanitized stem is used for save + load + path.
         self.assertEqual(self.store.load("a/b:c")["x"], 1)
-        self.assertEqual(self.store.path("a/b:c", "user").name, sanitize_preset_name("a/b:c") + ".json")
+        self.assertEqual(
+            self.store.path("a/b:c", "user").name,
+            PresetStore.sanitize_preset_name("a/b:c") + ".json",
+        )
 
     # --- active pointer ------------------------------------------------------
     def test_active_round_trips_and_clears(self):
@@ -92,7 +110,9 @@ class PresetStoreTest(unittest.TestCase):
         self.store.active = "studio"
         self.assertEqual(self.store.active, "studio")
         # A fresh store over the same dirs reads the same pointer (cross-session).
-        other = PresetStore("photog", "extapps", builtin_dir=self.builtin, user_dir=self.user)
+        other = PresetStore(
+            "photog", "extapps", builtin_dir=self.builtin, user_dir=self.user
+        )
         self.assertEqual(other.active, "studio")
         self.store.active = None
         self.assertIsNone(self.store.active)
@@ -191,7 +211,9 @@ class PresetStoreDefaultLocationTest(unittest.TestCase):
 
     def test_user_dir_under_package_and_name(self):
         store = PresetStore("photog_presets", "extapps")
-        self.assertEqual(store.user_dir, user_config_root() / "extapps" / "photog_presets")
+        self.assertEqual(
+            store.user_dir, UserConfig.user_config_root() / "extapps" / "photog_presets"
+        )
         # Lazily created on save, not on read.
         self.assertFalse(store.user_dir.exists())
         store.save("p", {"x": 1})

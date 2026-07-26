@@ -22,6 +22,7 @@ bundled Python 3.9) use it directly. uitk's ``PresetManager`` layers Qt
 widget-state (de)serialization + combo wiring on top of an instance of this
 class, so both front-ends share one set of directories, names, and rules.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Union
 
-from pythontk.core_utils.user_config import user_config_root
+from pythontk.core_utils.user_config import UserConfig
 
 logger = logging.getLogger(__name__)
 
@@ -72,32 +73,26 @@ JSON_CODEC = Codec(
 ACTIVE_SENTINEL = ".active"
 
 
-def sanitize_preset_name(name: str) -> str:
-    """Filesystem-safe filename stem for a preset *name*.
+class _PresetStoreInternal(object):
+    """Internal helpers for PresetStore."""
 
-    Keeps alphanumerics, ``-``, ``_`` and spaces; every other character becomes
-    ``_``. Shared by both tiers (and by uitk's ``PresetManager``) so a name maps
-    to the same file everywhere.
-    """
-    return "".join(c if c.isalnum() or c in ("-", "_", " ") else "_" for c in str(name))
+    @staticmethod
+    def _atomic_write_text(path: Path, text: str) -> None:
+        """Write *text* to *path* atomically (temp file + ``os.replace``).
 
+        Preset files and the ``.active`` sidecar are read by other processes —
+        another DCC session applying its startup preset while this one saves — and
+        a plain ``write_text`` lets such a reader see a torn/partial file (and a
+        crash mid-write corrupt an existing preset permanently). Delegates to
+        ``FileUtils.atomic_write_text``; imported lazily because ``file_utils``
+        itself imports from ``core_utils`` (module-level would risk a cycle).
+        """
+        from pythontk.file_utils._file_utils import FileUtils
 
-def _atomic_write_text(path: Path, text: str) -> None:
-    """Write *text* to *path* atomically (temp file + ``os.replace``).
-
-    Preset files and the ``.active`` sidecar are read by other processes —
-    another DCC session applying its startup preset while this one saves — and
-    a plain ``write_text`` lets such a reader see a torn/partial file (and a
-    crash mid-write corrupt an existing preset permanently). Delegates to
-    ``FileUtils.atomic_write_text``; imported lazily because ``file_utils``
-    itself imports from ``core_utils`` (module-level would risk a cycle).
-    """
-    from pythontk.file_utils._file_utils import FileUtils
-
-    FileUtils.atomic_write_text(path, text)
+        FileUtils.atomic_write_text(path, text)
 
 
-class PresetStore:
+class PresetStore(_PresetStoreInternal):
     """Named-preset collection with a read-only built-in tier and a writable
     user tier. Qt-free; deals in plain dicts (JSON by default, or any injected
     :class:`Codec` — e.g. YAML).
@@ -142,8 +137,10 @@ class PresetStore:
     def user_dir(self) -> Path:
         """Writable preset directory (created lazily on first :meth:`save`)."""
         if self._user_dir is None:
-            root = user_config_root()
-            self._user_dir = root / self.package / self.name if self.package else root / self.name
+            root = UserConfig.user_config_root()
+            self._user_dir = (
+                root / self.package / self.name if self.package else root / self.name
+            )
         return self._user_dir
 
     @property
@@ -192,7 +189,7 @@ class PresetStore:
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write_text(path, json.dumps({"name": name}))
+            _PresetStoreInternal._atomic_write_text(path, json.dumps({"name": name}))
         except OSError as e:
             logger.debug("PresetStore: could not write .active: %s", e)
 
@@ -214,7 +211,9 @@ class PresetStore:
         elif tier == "builtin":
             names = set(self._names_in(self._builtin_dir))
         elif tier is None:
-            names = set(self._names_in(self._builtin_dir)) | set(self._names_in(self.user_dir))
+            names = set(self._names_in(self._builtin_dir)) | set(
+                self._names_in(self.user_dir)
+            )
         else:
             raise ValueError(f"tier must be None, 'user', or 'builtin'; got {tier!r}")
         return sorted(names)
@@ -240,7 +239,7 @@ class PresetStore:
             base = self._builtin_dir
         else:
             raise ValueError(f"tier must be 'user' or 'builtin'; got {tier!r}")
-        return base / f"{sanitize_preset_name(name)}{self._ext}"
+        return base / f"{PresetStore.sanitize_preset_name(name)}{self._ext}"
 
     # ------------------------------------------------------------------ io
     def load(self, name: str) -> dict:
@@ -270,7 +269,7 @@ class PresetStore:
         """
         path = self.path(name, "user")
         path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write_text(path, self._codec.dump(data))
+        _PresetStoreInternal._atomic_write_text(path, self._codec.dump(data))
         logger.debug("PresetStore: saved %r -> %s", name, path)
         return path
 
@@ -304,3 +303,15 @@ class PresetStore:
         if self.active == old:
             self.active = new
         return True
+
+    @staticmethod
+    def sanitize_preset_name(name: str) -> str:
+        """Filesystem-safe filename stem for a preset *name*.
+
+        Keeps alphanumerics, ``-``, ``_`` and spaces; every other character becomes
+        ``_``. Shared by both tiers (and by uitk's ``PresetManager``) so a name maps
+        to the same file everywhere.
+        """
+        return "".join(
+            c if c.isalnum() or c in ("-", "_", " ") else "_" for c in str(name)
+        )

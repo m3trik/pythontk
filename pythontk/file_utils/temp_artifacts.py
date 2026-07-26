@@ -25,10 +25,11 @@ leftovers have no other reclamation path.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import os
 import tempfile
 import time
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, NamedTuple, Optional, Sequence
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
 
@@ -182,4 +183,142 @@ class TempArtifacts(LoggingMixin):
                 self.logger.warning(f"Keeping temp artifacts after failure: {kept}")
 
 
-__all__ = ["TempArtifacts"]
+class CachedArtifact(LoggingMixin):
+    """Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+
+    The lifecycle every headless-conversion pipeline otherwise re-implements: hash the
+    inputs into a stable *key*, hand back the cached file when one exists, else produce it
+    into a **scoped scratch** store and only then atomically promote it into the cache
+    slot. Built on :class:`TempArtifacts` — the ``"detached"`` policy owns the cache
+    (nothing can safely delete a payload another process may still read; stale entries are
+    age-swept), ``"scoped"`` owns the scratch (kept + logged on failure).
+
+    The scratch hop is load-bearing, not ceremony: producing straight into the cache slot
+    lets a timeout-killed partial write poison every later run, and lets two concurrent
+    producers of the same key interleave into one file. ``os.replace`` is atomic on both
+    POSIX and Windows, so a slot is only ever empty or complete.
+
+    Example (a headless DCC conversion, cached on scene + template identity):
+        >>> cache = CachedArtifact("maya_to_btk", extension=".fbx")
+        >>> key = CachedArtifact.key(sorted(opts.items()), files=[src, template])
+        >>> got = cache.get(key, lambda out: convert(src, out), sidecars=(".manifest.json",))
+        >>> import_fbx(got.path)
+        >>> if got.scratch:          # a miss produced it — clean up on success
+        ...     got.scratch.cleanup()
+
+    Parameters:
+        name: Prefix shared by the cache (``<name>_cache_*``) and scratch (``<name>_*``)
+            stores; also the sweep scope of each.
+        extension: Artifact file extension, e.g. ``".fbx"``.
+        dir: Base directory for both stores (default: the system temp dir).
+        max_age_days: Stale-sweep threshold for the cache store.
+    """
+
+    class Result(NamedTuple):
+        """What :meth:`CachedArtifact.get` hands back.
+
+        ``scratch`` is the scoped store on a miss (``cleanup()`` it once the artifact has
+        been consumed) and ``None`` on a hit — persistence is the cache's whole point, so
+        a hit must never be cleaned up.
+        """
+
+        path: str
+        hit: bool
+        scratch: Optional[TempArtifacts]
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        extension: str,
+        dir: Optional[str] = None,  # noqa: A002 - matches TempArtifacts' own param name
+        max_age_days: float = 7,
+        log_level: str = "WARNING",
+    ):
+        super().__init__()
+        if not name:
+            raise ValueError("CachedArtifact requires a non-empty name.")
+        self.logger.setLevel(log_level)
+        self.name = name
+        self.extension = extension
+        self.dir = dir
+        self.max_age_days = max_age_days
+
+    @staticmethod
+    def key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str:
+        """A deterministic tag over *parts* and the identity of each path in *files*.
+
+        A file contributes its path + mtime + size, so editing an input invalidates the
+        key. Pass every file the artifact's content depends on — the source **and** the
+        script/template that produces it: a template fix must invalidate stale payloads,
+        or a retry after an upgrade silently replays the old bug.
+        """
+        blob = "|".join(repr(p) for p in parts)
+        for f in files:
+            stat = os.stat(f)
+            blob += f"|{f}|{stat.st_mtime_ns}|{stat.st_size}"
+        return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:length]
+
+    def get(
+        self,
+        key: str,
+        produce: Callable[[str], Any],
+        *,
+        sidecars: Sequence[str] = (),
+        use_cache: bool = True,
+    ) -> "CachedArtifact.Result":
+        """The artifact for *key*, produced by ``produce(out_path)`` on a miss.
+
+        Parameters:
+            key: Content-addressed tag from :meth:`key` (or any stable string).
+            produce: Called with the scratch path it must write; its return value is
+                ignored (the artifact's *existence* is the contract). An exception
+                propagates with the partial output kept + logged for debugging.
+            sidecars: Suffixes appended to the artifact path that ``produce`` may also
+                write (e.g. ``".manifest.json"``). Promoted with the artifact; a slot's
+                stale sidecar is removed when the new run produced none, so a sidecar can
+                never outlive the artifact it describes.
+            use_cache: When False, produce into scratch every time and skip the cache
+                entirely (the result's ``path`` is then the scratch path).
+
+        Returns:
+            CachedArtifact.Result: ``(path, hit, scratch)``.
+        """
+        cache_path = None
+        if use_cache:
+            store = TempArtifacts(
+                f"{self.name}_cache",
+                policy="detached",
+                dir=self.dir,
+                max_age_days=self.max_age_days,
+            )
+            cache_path = store.path(extension=self.extension, name=key)
+            if os.path.isfile(cache_path) and os.path.getsize(cache_path) > 0:
+                self.logger.info(
+                    f"Cache hit ({os.path.basename(cache_path)}) -- skipping production."
+                )
+                return self.Result(cache_path, True, None)
+
+        scratch = TempArtifacts(self.name, policy="scoped", dir=self.dir)
+        out_path = scratch.path(extension=self.extension)
+        for suffix in sidecars:
+            scratch.register(out_path + suffix)
+        try:
+            produce(out_path)
+        except Exception:
+            if os.path.isfile(out_path):
+                self.logger.warning(f"Keeping partial artifact for debugging: {out_path}")
+            raise
+        if cache_path is None:
+            return self.Result(out_path, False, scratch)
+
+        os.replace(out_path, cache_path)
+        for suffix in sidecars:
+            if os.path.isfile(out_path + suffix):
+                os.replace(out_path + suffix, cache_path + suffix)
+            elif os.path.isfile(cache_path + suffix):
+                os.remove(cache_path + suffix)  # stale sidecar from a partial promote
+        return self.Result(cache_path, False, scratch)
+
+
+__all__ = ["TempArtifacts", "CachedArtifact"]

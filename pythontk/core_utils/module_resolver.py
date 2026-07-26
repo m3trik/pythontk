@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Reusable module attribute resolver for package-style imports."""
+
 import importlib
 import inspect
 import os
@@ -59,9 +60,9 @@ class ModuleAttributeResolver:
         self._include_spec = include
         self._direct_include: Optional[Dict[str, Tuple[str, ...]]] = None
         self._absolute_include: Optional[Dict[str, Tuple[str, ...]]] = None
-        self.namespace_aliases: Dict[str, Tuple[str, Tuple[str, ...]]] = (
-            {}
-        )  # alias_name -> (module_key, class_list)
+        self.namespace_aliases: Dict[
+            str, Tuple[str, Tuple[str, ...]]
+        ] = {}  # alias_name -> (module_key, class_list)
         self._set_include(include)
 
         self.module_to_parent: Dict[str, str] = dict(module_to_parent or {})
@@ -441,12 +442,18 @@ class PackageResolverHandle:
         allow_getattr: bool = True,
         default_eager: bool = False,
         custom_getattr: Optional[Callable[[str], Any]] = None,
+        set_all: bool = True,
     ) -> None:
         self.resolver = resolver
         self.module_globals = module_globals
         self.allow_getattr = allow_getattr
         self.default_eager = default_eager
         self.custom_getattr = custom_getattr
+        self.set_all = set_all
+        # Snapshot any hand-declared ``__all__`` so it is preserved (unioned)
+        # with the resolver-registered names on every (re)build, never letting a
+        # runtime reconfigure accumulate stale derived names.
+        self._declared_all: Tuple[str, ...] = tuple(module_globals.get("__all__") or ())
 
         self._default_include = (
             dict(default_include) if default_include is not None else None
@@ -508,6 +515,10 @@ class PackageResolverHandle:
 
         # Create namespace aliases after everything else is set up
         self._create_namespace_aliases()
+
+        # Publish the resolved public surface as ``__all__`` (after aliases so
+        # fused alias classes are included).
+        self._populate_all()
 
     # ------------------------------------------------------------------
     # public facade methods (mirrors legacy API)
@@ -691,6 +702,23 @@ class PackageResolverHandle:
                     f"{self.resolver.package_name}._namespace_aliases"
                 )
 
+    def _populate_all(self) -> None:
+        """Assign ``__all__`` from the resolver's registered top-level names.
+
+        The exported surface is the union of any ``__all__`` the package
+        hand-declared before bootstrap and the resolver's ``class_to_module``
+        keys -- i.e. every module-level class, function, constant, and created
+        namespace alias reachable as ``pkg.Name``. Flat method aliases
+        (``method_to_module``) and bare submodule names are intentionally
+        excluded: they resolve lazily via ``__getattr__`` but do not belong in
+        the advertised public surface. No-op when ``set_all`` is disabled.
+        """
+        if not self.set_all:
+            return
+        names = set(self._declared_all)
+        names.update(self.resolver.class_to_module)
+        self.module_globals["__all__"] = sorted(names)
+
     def _apply_configuration(self, eager: bool) -> None:
         self.resolver.module_to_parent.clear()
         self.resolver.module_to_parent.update(self.module_parent_spec)
@@ -703,6 +731,9 @@ class PackageResolverHandle:
 
         # Recreate namespace aliases after rebuild
         self._create_namespace_aliases()
+
+        # Keep ``__all__`` in sync with the rebuilt resolver state.
+        self._populate_all()
 
     @staticmethod
     def _merge_include(
@@ -751,8 +782,16 @@ def bootstrap_package(
     method_predicate: Optional[Callable[[str], bool]] = None,
     custom_getattr: Optional[Callable[[str], Any]] = None,
     lazy_import: Optional[bool] = None,
+    set_all: bool = True,
 ) -> PackageResolverHandle:
-    """Bootstrap a package's ``__init__`` module with dynamic attribute resolution."""
+    """Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
+
+    When ``set_all`` is true (the default) the package's ``__all__`` is derived
+    automatically from the resolved public surface, so it never has to be listed
+    by hand or kept in sync with ``DEFAULT_INCLUDE``. Any ``__all__`` the module
+    declared before this call is preserved and unioned in. Pass ``set_all=False``
+    to manage ``__all__`` manually.
+    """
 
     module_name = module_globals.get("__name__")
     if not module_name:
@@ -807,6 +846,7 @@ def bootstrap_package(
         allow_getattr=allow_getattr,
         default_eager=eager,
         custom_getattr=custom_getattr,
+        set_all=set_all,
     )
     handle.install(
         expose_maps=True,

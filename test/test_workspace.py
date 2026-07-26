@@ -9,6 +9,7 @@ All zero-dep and venv-runnable; the Maya-side contract (a real Maya opening a
 workspace this module wrote, and preserving foreign rules on its own rewrite)
 is covered downstream in ``mayatk/test/test_workspace_mel.py``.
 """
+
 import os
 import shutil
 import tempfile
@@ -19,8 +20,6 @@ from pythontk.file_utils.workspace import (
     RULE_NICE_NAMES,
     WORKSPACE_MARKER,
     Workspace,
-    parse_workspace_mel,
-    write_workspace_mel,
 )
 
 # A realistic Maya-authored file: header comment, variables, spaced rule names,
@@ -50,14 +49,14 @@ class WorkspaceMelCodecTest(unittest.TestCase):
         return os.path.join(self.tmp, name)
 
     def test_parse_text_and_path(self):
-        rules = parse_workspace_mel(MAYA_SAMPLE)
+        rules = Workspace.parse_workspace_mel(MAYA_SAMPLE)
         path = self._marker()
         with open(path, "w", encoding="utf-8") as f:
             f.write(MAYA_SAMPLE)
-        self.assertEqual(parse_workspace_mel(path), rules)
+        self.assertEqual(Workspace.parse_workspace_mel(path), rules)
 
     def test_parse_semantics(self):
-        rules = parse_workspace_mel(MAYA_SAMPLE)
+        rules = Workspace.parse_workspace_mel(MAYA_SAMPLE)
         self.assertEqual(rules["scene"], "shots/scenes")  # later duplicate wins
         self.assertEqual(rules["FBX export"], "data")  # spaced rule name
         self.assertEqual(rules['odd"name'], "we\\ird")  # MEL escapes unescaped
@@ -66,7 +65,11 @@ class WorkspaceMelCodecTest(unittest.TestCase):
 
     def test_write_fresh_canonical(self):
         path = self._marker()
-        self.assertTrue(write_workspace_mel(path, {"scene": "scenes", "sourceImages": "src\\images"}))
+        self.assertTrue(
+            Workspace.write_workspace_mel(
+                path, {"scene": "scenes", "sourceImages": "src\\images"}
+            )
+        )
         with open(path, encoding="utf-8") as f:
             text = f.read()
         self.assertIn('workspace -fr "scene" "scenes";', text)
@@ -79,13 +82,15 @@ class WorkspaceMelCodecTest(unittest.TestCase):
         path = self._marker()
         with open(path, "w", encoding="utf-8") as f:
             f.write(MAYA_SAMPLE)
-        write_workspace_mel(path, {"scene": "scenes", "blenderRule": "blender"})
+        Workspace.write_workspace_mel(
+            path, {"scene": "scenes", "blenderRule": "blender"}
+        )
         with open(path, encoding="utf-8") as f:
             text = f.read()
         # unknown lines survive verbatim
         self.assertIn('workspace -v "customVariable" "value";', text)
         self.assertIn("// a hand-written comment", text)
-        self.assertIn('if (`about -mac`)', text)
+        self.assertIn("if (`about -mac`)", text)
         self.assertIn('workspace -fr "FBX export" "data";', text)
         # managed rule updated in place, duplicate collapsed
         self.assertEqual(text.count('workspace -fr "scene"'), 1)
@@ -93,54 +98,60 @@ class WorkspaceMelCodecTest(unittest.TestCase):
         # new rule appended among the rules
         self.assertIn('workspace -fr "blenderRule" "blender";', text)
         # round-trip: the merged file parses back to the merged values
-        merged = parse_workspace_mel(path)
+        merged = Workspace.parse_workspace_mel(path)
         self.assertEqual(merged["scene"], "scenes")
         self.assertEqual(merged["blenderRule"], "blender")
 
     def test_unchanged_content_not_rewritten(self):
         path = self._marker()
-        write_workspace_mel(path, {"scene": "scenes"})
+        Workspace.write_workspace_mel(path, {"scene": "scenes"})
         before = os.stat(path).st_mtime_ns
-        self.assertFalse(write_workspace_mel(path, {"scene": "scenes"}))
+        self.assertFalse(Workspace.write_workspace_mel(path, {"scene": "scenes"}))
         self.assertEqual(os.stat(path).st_mtime_ns, before)
 
     def test_remove_drops_only_named_rules(self):
         path = self._marker()
         with open(path, "w", encoding="utf-8") as f:
             f.write(MAYA_SAMPLE)
-        write_workspace_mel(path, {"sourceImages": "tex"}, remove=["scene", "notThere"])
-        rules = parse_workspace_mel(path)
+        Workspace.write_workspace_mel(
+            path, {"sourceImages": "tex"}, remove=["scene", "notThere"]
+        )
+        rules = Workspace.parse_workspace_mel(path)
         self.assertNotIn("scene", rules)  # both duplicate scene lines dropped
         self.assertEqual(rules["sourceImages"], "tex")
         self.assertEqual(rules["FBX export"], "data")  # untouched rule survives
         with open(path, encoding="utf-8") as f:
             text = f.read()
-        self.assertIn('workspace -v "customVariable" "value";', text)  # non-rules survive
+        self.assertIn(
+            'workspace -v "customVariable" "value";', text
+        )  # non-rules survive
 
     def test_remove_loses_to_rules(self):
         path = self._marker()
-        write_workspace_mel(path, {"scene": "scenes"})
-        write_workspace_mel(path, {"scene": "shots"}, remove=["scene"])
-        self.assertEqual(parse_workspace_mel(path), {"scene": "shots"})
+        Workspace.write_workspace_mel(path, {"scene": "scenes"})
+        Workspace.write_workspace_mel(path, {"scene": "shots"}, remove=["scene"])
+        self.assertEqual(Workspace.parse_workspace_mel(path), {"scene": "shots"})
 
     def test_bom_file_parses_and_merges(self):
         """A BOM'd file (e.g. PowerShell-written) still parses, and merge updates in place."""
         path = self._marker()
         with open(path, "w", encoding="utf-8-sig") as f:
             f.write('workspace -fr "scene" "scenes";\n')
-        self.assertEqual(parse_workspace_mel(path), {"scene": "scenes"})
-        write_workspace_mel(path, {"scene": "shots"})
+        self.assertEqual(Workspace.parse_workspace_mel(path), {"scene": "scenes"})
+        Workspace.write_workspace_mel(path, {"scene": "shots"})
         with open(path, encoding="utf-8-sig") as f:
             text = f.read()
-        self.assertEqual(text.count('workspace -fr "scene"'), 1)  # updated, not appended
-        self.assertEqual(parse_workspace_mel(path), {"scene": "shots"})
+        self.assertEqual(
+            text.count('workspace -fr "scene"'), 1
+        )  # updated, not appended
+        self.assertEqual(Workspace.parse_workspace_mel(path), {"scene": "shots"})
 
     def test_crlf_input_is_equivalent(self):
         path = self._marker()
         with open(path, "w", encoding="utf-8", newline="\r\n") as f:
             f.write('//x\nworkspace -fr "scene" "scenes";\n')
         # same rules → content-identical modulo EOLs → no rewrite
-        self.assertFalse(write_workspace_mel(path, {"scene": "scenes"}))
+        self.assertFalse(Workspace.write_workspace_mel(path, {"scene": "scenes"}))
 
 
 class WorkspaceModelTest(unittest.TestCase):
@@ -153,7 +164,9 @@ class WorkspaceModelTest(unittest.TestCase):
     def test_create_writes_marker_and_dirs(self):
         ws = Workspace.create(os.path.join(self.tmp, "proj"))
         self.assertTrue(ws.is_marked)
-        self.assertEqual(parse_workspace_mel(ws.marker_path), DEFAULT_FILE_RULES)
+        self.assertEqual(
+            Workspace.parse_workspace_mel(ws.marker_path), DEFAULT_FILE_RULES
+        )
         for rel in ("scenes", "sourceimages", "cache/alembic"):
             self.assertTrue(os.path.isdir(os.path.join(ws.root, rel)), rel)
 
@@ -195,7 +208,9 @@ class WorkspaceModelTest(unittest.TestCase):
         self.assertEqual(ws.scene_dir, os.path.normpath(self.tmp))  # falls to root
         marked = Workspace.create(os.path.join(self.tmp, "proj"))
         self.assertEqual(marked.scene_dir, os.path.join(marked.root, "scenes"))
-        self.assertEqual(marked.source_images_dir, os.path.join(marked.root, "sourceimages"))
+        self.assertEqual(
+            marked.source_images_dir, os.path.join(marked.root, "sourceimages")
+        )
 
     def test_nice_names_cover_the_default_template(self):
         """Every default rule renders with a Project Window label (rule editors fall back
@@ -204,8 +219,12 @@ class WorkspaceModelTest(unittest.TestCase):
 
     def test_fspath_and_equality(self):
         ws = Workspace(self.tmp)
-        self.assertEqual(os.path.join(ws, "x"), os.path.join(os.path.normpath(self.tmp), "x"))
-        self.assertEqual(ws, Workspace(self.tmp.upper() if os.name == "nt" else self.tmp))
+        self.assertEqual(
+            os.path.join(ws, "x"), os.path.join(os.path.normpath(self.tmp), "x")
+        )
+        self.assertEqual(
+            ws, Workspace(self.tmp.upper() if os.name == "nt" else self.tmp)
+        )
 
 
 class WorkspaceDiscoveryTest(unittest.TestCase):

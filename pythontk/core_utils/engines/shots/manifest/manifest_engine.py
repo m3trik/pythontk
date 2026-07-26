@@ -16,11 +16,15 @@ Mirrors the :class:`ShotStore` hook pattern: the pure core never imports
 (:func:`resolve_duration`, :func:`_audio_placeholder_dur`) take an optional
 ``measure_audio`` callable so audio-clip probing stays a DCC concern.
 """
+
+from __future__ import annotations
+
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 from pythontk.core_utils.engines.shots.manifest.manifest_model import (
+    ManifestModel,
     Action,
     AUDIO_PLACEHOLDER_DURATION,
     BuilderObject,
@@ -32,12 +36,11 @@ from pythontk.core_utils.engines.shots.manifest.manifest_model import (
     ObjectStatus,
     PlannedShot,
     StepStatus,
-    parse_csv,
 )
 
 log = logging.getLogger(__name__)
 
-__all__ = ["ShotManifest", "resolve_duration"]
+__all__ = ["ShotManifest"]
 
 
 # ---------------------------------------------------------------------------
@@ -45,126 +48,47 @@ __all__ = ["ShotManifest", "resolve_duration"]
 # ---------------------------------------------------------------------------
 
 
-def resolve_duration(
-    step: BuilderStep,
-    initial_shot_length: float,
-    fit_mode: FitMode,
-    fps: float,
-    measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None,
-) -> Tuple[float, float, float]:
-    """Compute final shot duration for *step* under the given fit policy.
-
-    Probes behavior templates and (via *measure_audio*) audio-clip lengths to
-    determine the minimum content-driven length, then applies *fit_mode*
-    against the user-specified *initial_shot_length* (default 200f).
-
-    Parameters:
-        step: The step whose objects drive the duration.
-        initial_shot_length: Baseline length the fit policy is applied against.
-        fit_mode: ``"extend_only"`` or ``"fit_contents"``.
-        fps: Scene frame rate.  Retained for signature compatibility — the
-            pure core does not probe audio itself; a DCC layer binds its
-            frame-rate into *measure_audio* when it needs one.
-        measure_audio: Optional callable ``(BuilderObject) -> Optional[float]``
-            returning an audio clip's length in frames, or ``None`` when it is
-            unresolvable.  Injected by the DCC layer.  ``None`` (or a ``None`` /
-            non-positive return) contributes no audio length, so a purely
-            behavior-template step is sized entirely by its templates.
-
-    Returns:
-        ``(duration, behavior_span, audio_span)`` — the resolved shot
-        length plus the individual content measurements that drove it.
-    """
-    from pythontk.core_utils.engines.shots.manifest.behaviors import (
-        load_behavior,
-        phase_durations,
-    )
-
-    audio_span = 0.0
-    max_obj_total = 0.0
-    global_max_in = 0.0
-    global_max_out = 0.0
-
-    for obj in step.objects:
-        # ---- behavior template durations (phase-aware) ----
-        obj_in = 0.0
-        obj_out = 0.0
-        for b in obj.behaviors:
-            if not b:
-                continue
-            try:
-                tmpl = load_behavior(b)
-            except FileNotFoundError:
-                continue
-            if tmpl.get("duration") == "from_source":
-                continue  # handled via audio_span below
-            d_in, d_out = phase_durations(tmpl)
-            obj_in += d_in
-            obj_out += d_out
-        max_obj_total = max(max_obj_total, obj_in + obj_out)
-        global_max_in = max(global_max_in, obj_in)
-        global_max_out = max(global_max_out, obj_out)
-
-        # ---- audio clip length ----
-        if obj.kind == "audio" and measure_audio is not None:
-            try:
-                frames = measure_audio(obj)
-            except Exception as exc:
-                log.debug("audio duration probe failed for %r: %s", obj.name, exc)
-                frames = None
-            if frames and frames > 0:
-                audio_span = max(audio_span, float(frames))
-
-    behavior_span = max(max_obj_total, global_max_in + global_max_out)
-    content_min = max(behavior_span, audio_span)
-
-    if fit_mode == "extend_only":
-        duration = max(initial_shot_length, content_min)
-    elif fit_mode == "fit_contents":
-        duration = content_min if content_min > 0 else initial_shot_length
-    else:
-        raise ValueError(f"Unknown fit_mode: {fit_mode!r}")
-
-    return duration, behavior_span, audio_span
-
-
-def _audio_placeholder_dur(
-    step: BuilderStep,
-    measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None,
-) -> Optional[float]:
-    """Return ``AUDIO_PLACEHOLDER_DURATION`` if *step* is an audio step with
-    no resolvable source — i.e. the shot should grow to the clip length
-    once it loads, but currently has nothing to size by.  Returns ``None``
-    when a regular fit-mode + initial_shot_length policy should be used.
-
-    Source resolvability is probed through *measure_audio*: a positive
-    return means the clip is measurable (regular policy applies), so ``None``
-    is returned.  Absent a resolver, an audio step with no ``source_path``
-    yields the placeholder.
-    """
-    has_audio = False
-    for obj in step.objects:
-        if obj.kind != "audio":
-            continue
-        has_audio = True
-        if obj.source_path:
-            return None
-        if measure_audio is not None:
-            try:
-                dur = measure_audio(obj)
-            except Exception:
-                dur = None
-            if dur and dur > 0:
-                return None
-    return AUDIO_PLACEHOLDER_DURATION if has_audio else None
-
-
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
 
 
-class ShotManifest:
+class _ShotManifestInternal(object):
+    """Internal helpers for ShotManifest."""
+
+    @staticmethod
+    def _audio_placeholder_dur(
+        step: BuilderStep,
+        measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None,
+    ) -> Optional[float]:
+        """Return ``AUDIO_PLACEHOLDER_DURATION`` if *step* is an audio step with
+        no resolvable source — i.e. the shot should grow to the clip length
+        once it loads, but currently has nothing to size by.  Returns ``None``
+        when a regular fit-mode + initial_shot_length policy should be used.
+
+        Source resolvability is probed through *measure_audio*: a positive
+        return means the clip is measurable (regular policy applies), so ``None``
+        is returned.  Absent a resolver, an audio step with no ``source_path``
+        yields the placeholder.
+        """
+        has_audio = False
+        for obj in step.objects:
+            if obj.kind != "audio":
+                continue
+            has_audio = True
+            if obj.source_path:
+                return None
+            if measure_audio is not None:
+                try:
+                    dur = measure_audio(obj)
+                except Exception:
+                    dur = None
+                if dur and dur > 0:
+                    return None
+        return AUDIO_PLACEHOLDER_DURATION if has_audio else None
+
+
+class ShotManifest(_ShotManifestInternal):
     """Creates shot store entries from parsed steps and applies behaviors.
 
     Duration for each step is derived entirely from behavior templates.
@@ -282,9 +206,7 @@ class ShotManifest:
         """
         return []
 
-    def rewire_audio(
-        self, tracks: Optional[List[str]] = None
-    ) -> Dict[str, List[str]]:
+    def rewire_audio(self, tracks: Optional[List[str]] = None) -> Dict[str, List[str]]:
         """Reconcile managed audio nodes with keyed track state (hook).
 
         Pure default: ``{"created": [], "updated": [], "deleted": []}`` — no
@@ -365,11 +287,9 @@ class ShotManifest:
         override to route through its own ``compute_duration`` binding
         (e.g. one that resolves registered track paths and probes files).
         """
-        from pythontk.core_utils.engines.shots.manifest.behaviors import (
-            compute_duration,
-        )
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
-        tmpl_dur = compute_duration(audio_objs, fallback=0.0)
+        tmpl_dur = Behaviors.compute_duration(audio_objs, fallback=0.0)
         measured = [self._measure_audio(o) for o in audio_objs]
         return max([tmpl_dur] + [m for m in measured if m])
 
@@ -556,7 +476,7 @@ class ShotManifest:
                         # Range pinned by caller (rebuild / explicit user
                         # ranges) — respect rng[1] as the end, but still
                         # grow if measured content exceeds it.
-                        _content_dur, _beh, _aud = resolve_duration(
+                        _content_dur, _beh, _aud = ShotManifest.resolve_duration(
                             step,
                             initial_shot_length=0.0,
                             fit_mode="fit_contents",
@@ -568,13 +488,13 @@ class ShotManifest:
                         # Audio steps with no resolvable source get a
                         # small placeholder so the shot grows once the
                         # clip loads.
-                        placeholder = _audio_placeholder_dur(
+                        placeholder = _ShotManifestInternal._audio_placeholder_dur(
                             step, measure_audio=self._measure_audio
                         )
                         if placeholder is not None:
                             dur = placeholder
                         else:
-                            dur, _beh, _aud = resolve_duration(
+                            dur, _beh, _aud = ShotManifest.resolve_duration(
                                 step,
                                 initial_shot_length,
                                 fit_mode,
@@ -716,10 +636,7 @@ class ShotManifest:
     @staticmethod
     def _reposition_kwargs(existing, ps: PlannedShot) -> Dict[str, Any]:
         """``start``/``end`` kwargs when the plan displaced *existing*, else empty."""
-        if (
-            abs(existing.start - ps.start) > 1e-6
-            or abs(existing.end - ps.end) > 1e-6
-        ):
+        if abs(existing.start - ps.start) > 1e-6 or abs(existing.end - ps.end) > 1e-6:
             return {"start": ps.start, "end": ps.end}
         return {}
 
@@ -992,10 +909,9 @@ class ShotManifest:
             # Detect additional objects (in shot but not in CSV)
             additional = []
             if shot is not None:
-                from pythontk.core_utils.engines.shots.shot_model import (
-                    leaf_name as _short,
-                )
+                from pythontk.core_utils.engines.shots.shot_model import ShotStore
 
+                _short = ShotStore.leaf_name
                 csv_short = {_short(o.name) for o in step.objects}
                 stored_extra = [n for n in shot.objects if _short(n) not in csv_short]
                 # Filter stored extras to only those with actual motion
@@ -1047,13 +963,13 @@ class ShotManifest:
         obj_statuses: List[ObjectStatus],
     ) -> float:
         """Return the latest frame used by content in this step."""
-        from pythontk.core_utils.engines.shots.manifest.behaviors import load_behavior
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
         latest = scene.start  # at minimum, content starts at scene start
         for obj, obj_st in zip(step.objects, obj_statuses):
             for beh in obj.behaviors:
                 try:
-                    tmpl = load_behavior(beh)
+                    tmpl = Behaviors.load_behavior(beh)
                 except FileNotFoundError:
                     continue
                 for _attr, attr_def in tmpl.get("attributes", {}).items():
@@ -1101,7 +1017,87 @@ class ShotManifest:
             ``(builder, steps)`` tuple. Call ``builder.sync(steps)`` to
             execute.
         """
-        steps = parse_csv(filepath, columns, post_process=post_process)
+        steps = ManifestModel.parse_csv(filepath, columns, post_process=post_process)
         st = store or ShotStore.active()
         builder = cls(st)
         return builder, steps
+
+    @staticmethod
+    def resolve_duration(
+        step: BuilderStep,
+        initial_shot_length: float,
+        fit_mode: FitMode,
+        fps: float,
+        measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None,
+    ) -> Tuple[float, float, float]:
+        """Compute final shot duration for *step* under the given fit policy.
+
+        Probes behavior templates and (via *measure_audio*) audio-clip lengths to
+        determine the minimum content-driven length, then applies *fit_mode*
+        against the user-specified *initial_shot_length* (default 200f).
+
+        Parameters:
+            step: The step whose objects drive the duration.
+            initial_shot_length: Baseline length the fit policy is applied against.
+            fit_mode: ``"extend_only"`` or ``"fit_contents"``.
+            fps: Scene frame rate.  Retained for signature compatibility — the
+                pure core does not probe audio itself; a DCC layer binds its
+                frame-rate into *measure_audio* when it needs one.
+            measure_audio: Optional callable ``(BuilderObject) -> Optional[float]``
+                returning an audio clip's length in frames, or ``None`` when it is
+                unresolvable.  Injected by the DCC layer.  ``None`` (or a ``None`` /
+                non-positive return) contributes no audio length, so a purely
+                behavior-template step is sized entirely by its templates.
+
+        Returns:
+            ``(duration, behavior_span, audio_span)`` — the resolved shot
+            length plus the individual content measurements that drove it.
+        """
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+        audio_span = 0.0
+        max_obj_total = 0.0
+        global_max_in = 0.0
+        global_max_out = 0.0
+
+        for obj in step.objects:
+            # ---- behavior template durations (phase-aware) ----
+            obj_in = 0.0
+            obj_out = 0.0
+            for b in obj.behaviors:
+                if not b:
+                    continue
+                try:
+                    tmpl = Behaviors.load_behavior(b)
+                except FileNotFoundError:
+                    continue
+                if tmpl.get("duration") == "from_source":
+                    continue  # handled via audio_span below
+                d_in, d_out = Behaviors.phase_durations(tmpl)
+                obj_in += d_in
+                obj_out += d_out
+            max_obj_total = max(max_obj_total, obj_in + obj_out)
+            global_max_in = max(global_max_in, obj_in)
+            global_max_out = max(global_max_out, obj_out)
+
+            # ---- audio clip length ----
+            if obj.kind == "audio" and measure_audio is not None:
+                try:
+                    frames = measure_audio(obj)
+                except Exception as exc:
+                    log.debug("audio duration probe failed for %r: %s", obj.name, exc)
+                    frames = None
+                if frames and frames > 0:
+                    audio_span = max(audio_span, float(frames))
+
+        behavior_span = max(max_obj_total, global_max_in + global_max_out)
+        content_min = max(behavior_span, audio_span)
+
+        if fit_mode == "extend_only":
+            duration = max(initial_shot_length, content_min)
+        elif fit_mode == "fit_contents":
+            duration = content_min if content_min > 0 else initial_shot_length
+        else:
+            raise ValueError(f"Unknown fit_mode: {fit_mode!r}")
+
+        return duration, behavior_span, audio_span

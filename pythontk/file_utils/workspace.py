@@ -28,6 +28,7 @@ the *active* project (Maya parses the marker natively); ``blendertk`` — which
 has no native project system — builds its current-workspace resolver and
 rule-fed folder accessors on this module.
 """
+
 from __future__ import annotations
 
 import os
@@ -106,112 +107,24 @@ _HEADER = "//Maya Project Definition"
 # One `workspace -fr "name" "value";` (or long-form -fileRule) line. Quoted
 # fields may contain MEL escapes (\" and \\) and spaces ("FBX export").
 _RULE_LINE_RE = re.compile(
-    r'^\s*workspace\s+(?:-fr|-fileRule)\s+'
+    r"^\s*workspace\s+(?:-fr|-fileRule)\s+"
     r'"((?:[^"\\]|\\.)*)"\s+"((?:[^"\\]|\\.)*)"\s*;\s*$'
 )
 
 
-def _unescape(s: str) -> str:
-    return re.sub(r"\\(.)", r"\1", s)
+class _WorkspaceInternal(object):
+    """Internal helpers for Workspace."""
+
+    @staticmethod
+    def _unescape(s: str) -> str:
+        return re.sub(r"\\(.)", r"\1", s)
+
+    @staticmethod
+    def _escape(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _escape(s: str) -> str:
-    return s.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def parse_workspace_mel(source: str) -> Dict[str, str]:
-    """File rules from a ``workspace.mel`` — *source* is a path or the file's text.
-
-    Later duplicates of a rule win (MEL executes top to bottom). Lines that are
-    not file rules (comments, ``workspace -v`` variables, hand-written MEL) are
-    ignored here — :func:`write_workspace_mel` preserves them verbatim instead.
-    """
-    if "\n" not in source and os.path.isfile(source):
-        # utf-8-sig: tolerate a BOM (e.g. PowerShell-written files) — no-op otherwise.
-        with open(source, "r", encoding="utf-8-sig", errors="replace") as f:
-            text = f.read()
-    else:
-        text = source.lstrip("﻿")
-    rules: Dict[str, str] = {}
-    for line in text.splitlines():
-        m = _RULE_LINE_RE.match(line)
-        if m:
-            rules[_unescape(m.group(1))] = _unescape(m.group(2))
-    return rules
-
-
-def write_workspace_mel(
-    path: str,
-    rules: Dict[str, str],
-    preserve: bool = True,
-    remove: Sequence[str] = (),
-) -> bool:
-    """Write / merge file *rules* into the ``workspace.mel`` at *path*.
-
-    ``preserve=True`` (default) never destroys what it can't parse: each managed
-    rule updates its first existing line in place (later duplicates of that rule
-    collapse into it), new rules are appended after the last rule line, and every
-    other line — comments, variables, hand-authored MEL — survives verbatim.
-    ``preserve=False`` rewrites the file canonically (header + rules only).
-
-    *remove* names rules whose lines should be **dropped** — the only way a rule
-    ever leaves the file, since the merge deliberately never deletes on its own
-    (an editor computes ``set(old) - set(new)`` and passes it here). A name in
-    both *rules* and *remove* is written (rules win).
-
-    Rule values are normalized to forward slashes (Maya's own convention). A
-    content-identical result is not rewritten. Returns True when the file changed.
-    """
-    rules_out = {str(k): str(v).replace("\\", "/") for k, v in rules.items()}
-    remove_set = {str(r) for r in remove} - set(rules_out)
-    existing_text = None
-    if os.path.isfile(path):
-        # utf-8-sig: a BOM (e.g. PowerShell-written files) would otherwise glue
-        # to the first rule line and defeat the in-place merge.
-        with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
-            existing_text = f.read()
-
-    def rule_line(name: str) -> str:
-        return f'workspace -fr "{_escape(name)}" "{_escape(rules_out[name])}";'
-
-    if preserve and existing_text is not None:
-        out: List[str] = []
-        handled: set = set()
-        last_rule_idx = -1
-        for line in existing_text.splitlines():
-            m = _RULE_LINE_RE.match(line)
-            if m:
-                name = _unescape(m.group(1))
-                if name in remove_set:
-                    continue  # explicit removal — drop every line of this rule
-                if name in rules_out:
-                    if name in handled:
-                        continue  # collapse a duplicate managed line
-                    handled.add(name)
-                    out.append(rule_line(name))
-                else:
-                    out.append(line)
-                last_rule_idx = len(out) - 1
-            else:
-                out.append(line)
-        new = [rule_line(n) for n in rules_out if n not in handled]
-        if new:
-            pos = last_rule_idx + 1 if last_rule_idx >= 0 else len(out)
-            out[pos:pos] = new
-        text = "\n".join(out)
-    else:
-        text = "\n".join([_HEADER, ""] + [rule_line(n) for n in rules_out])
-
-    if not text.endswith("\n"):
-        text += "\n"
-    if existing_text is not None and existing_text.replace("\r\n", "\n") == text:
-        return False
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
-    return True
-
-
-class Workspace:
+class Workspace(_WorkspaceInternal):
     """A project workspace: root directory + named file rules.
 
     Rules map a semantic name to a directory (workspace-relative unless
@@ -255,20 +168,24 @@ class Workspace:
         empty (unmarked) otherwise."""
         ws = cls(root)
         if ws.is_marked:
-            ws.rules = parse_workspace_mel(ws.marker_path)
+            ws.rules = Workspace.parse_workspace_mel(ws.marker_path)
         return ws
 
-    def save(self, create_dirs: bool = False, remove: Sequence[str] = ()) -> "Workspace":
+    def save(
+        self, create_dirs: bool = False, remove: Sequence[str] = ()
+    ) -> "Workspace":
         """Persist the rules to the marker file (merge-preserving — see
         :func:`write_workspace_mel`). ``create_dirs`` also makes each
         workspace-relative rule directory; *remove* drops the named rules from
         the file (an editor passes the rules the user deleted)."""
         os.makedirs(self.root, exist_ok=True)
-        write_workspace_mel(self.marker_path, self.rules, remove=remove)
+        Workspace.write_workspace_mel(self.marker_path, self.rules, remove=remove)
         if create_dirs:
             for rel in set(self.rules.values()):
                 if rel and rel != "." and not os.path.isabs(rel):
-                    os.makedirs(os.path.normpath(os.path.join(self.root, rel)), exist_ok=True)
+                    os.makedirs(
+                        os.path.normpath(os.path.join(self.root, rel)), exist_ok=True
+                    )
         return self
 
     @classmethod
@@ -285,7 +202,9 @@ class Workspace:
         fills in missing keys — so promoting never clobbers a project.
         """
         ws = cls.load(root)
-        for k, v in (dict(DEFAULT_FILE_RULES) if rules is None else dict(rules)).items():
+        for k, v in (
+            dict(DEFAULT_FILE_RULES) if rules is None else dict(rules)
+        ).items():
             ws.rules.setdefault(k, v)
         return ws.save(create_dirs=create_dirs)
 
@@ -325,13 +244,17 @@ class Workspace:
     def scene_dir(self) -> str:
         """Where scene files live (rule ``scene``/``mayaAscii``/``mayaBinary``,
         an existing ``scenes/``, else the root)."""
-        return self.resolve_dir(("scene", "mayaAscii", "mayaBinary"), ("scenes",), default=".")
+        return self.resolve_dir(
+            ("scene", "mayaAscii", "mayaBinary"), ("scenes",), default="."
+        )
 
     @property
     def source_images_dir(self) -> str:
         """Where textures live (rule ``sourceImages``, an existing
         ``sourceimages/`` or ``textures/``, else ``sourceimages/``)."""
-        return self.resolve_dir(("sourceImages",), ("sourceimages", "textures"), default="sourceimages")
+        return self.resolve_dir(
+            ("sourceImages",), ("sourceimages", "textures"), default="sourceimages"
+        )
 
     # --------------------------------------------------------------- discovery
     @staticmethod
@@ -431,6 +354,100 @@ class Workspace:
                 return None
             cur = nxt
         return None
+
+    @staticmethod
+    def parse_workspace_mel(source: str) -> Dict[str, str]:
+        """File rules from a ``workspace.mel`` — *source* is a path or the file's text.
+
+        Later duplicates of a rule win (MEL executes top to bottom). Lines that are
+        not file rules (comments, ``workspace -v`` variables, hand-written MEL) are
+        ignored here — :func:`write_workspace_mel` preserves them verbatim instead.
+        """
+        if "\n" not in source and os.path.isfile(source):
+            # utf-8-sig: tolerate a BOM (e.g. PowerShell-written files) — no-op otherwise.
+            with open(source, "r", encoding="utf-8-sig", errors="replace") as f:
+                text = f.read()
+        else:
+            text = source.lstrip("﻿")
+        rules: Dict[str, str] = {}
+        for line in text.splitlines():
+            m = _RULE_LINE_RE.match(line)
+            if m:
+                rules[_WorkspaceInternal._unescape(m.group(1))] = (
+                    _WorkspaceInternal._unescape(m.group(2))
+                )
+        return rules
+
+    @staticmethod
+    def write_workspace_mel(
+        path: str,
+        rules: Dict[str, str],
+        preserve: bool = True,
+        remove: Sequence[str] = (),
+    ) -> bool:
+        """Write / merge file *rules* into the ``workspace.mel`` at *path*.
+
+        ``preserve=True`` (default) never destroys what it can't parse: each managed
+        rule updates its first existing line in place (later duplicates of that rule
+        collapse into it), new rules are appended after the last rule line, and every
+        other line — comments, variables, hand-authored MEL — survives verbatim.
+        ``preserve=False`` rewrites the file canonically (header + rules only).
+
+        *remove* names rules whose lines should be **dropped** — the only way a rule
+        ever leaves the file, since the merge deliberately never deletes on its own
+        (an editor computes ``set(old) - set(new)`` and passes it here). A name in
+        both *rules* and *remove* is written (rules win).
+
+        Rule values are normalized to forward slashes (Maya's own convention). A
+        content-identical result is not rewritten. Returns True when the file changed.
+        """
+        rules_out = {str(k): str(v).replace("\\", "/") for k, v in rules.items()}
+        remove_set = {str(r) for r in remove} - set(rules_out)
+        existing_text = None
+        if os.path.isfile(path):
+            # utf-8-sig: a BOM (e.g. PowerShell-written files) would otherwise glue
+            # to the first rule line and defeat the in-place merge.
+            with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+                existing_text = f.read()
+
+        def rule_line(name: str) -> str:
+            return f'workspace -fr "{_WorkspaceInternal._escape(name)}" "{_WorkspaceInternal._escape(rules_out[name])}";'
+
+        if preserve and existing_text is not None:
+            out: List[str] = []
+            handled: set = set()
+            last_rule_idx = -1
+            for line in existing_text.splitlines():
+                m = _RULE_LINE_RE.match(line)
+                if m:
+                    name = _WorkspaceInternal._unescape(m.group(1))
+                    if name in remove_set:
+                        continue  # explicit removal — drop every line of this rule
+                    if name in rules_out:
+                        if name in handled:
+                            continue  # collapse a duplicate managed line
+                        handled.add(name)
+                        out.append(rule_line(name))
+                    else:
+                        out.append(line)
+                    last_rule_idx = len(out) - 1
+                else:
+                    out.append(line)
+            new = [rule_line(n) for n in rules_out if n not in handled]
+            if new:
+                pos = last_rule_idx + 1 if last_rule_idx >= 0 else len(out)
+                out[pos:pos] = new
+            text = "\n".join(out)
+        else:
+            text = "\n".join([_HEADER, ""] + [rule_line(n) for n in rules_out])
+
+        if not text.endswith("\n"):
+            text += "\n"
+        if existing_text is not None and existing_text.replace("\r\n", "\n") == text:
+            return False
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        return True
 
 
 # -----------------------------------------------------------------------------

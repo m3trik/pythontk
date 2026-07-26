@@ -971,6 +971,52 @@ class StrTest(BaseTestCase):
         )
 
     # -------------------------------------------------------------------------
+    # resolve_placeholders Tests
+    # -------------------------------------------------------------------------
+
+    def test_resolve_placeholders_reports_resolved_and_unresolved(self):
+        info = StrUtils.resolve_placeholders(
+            "{root}/{name}_{ver:03d}", root="C:/p", name="shot"
+        )
+        # Unresolved tokens keep their format spec verbatim (see replace_placeholders).
+        self.assertEqual(info["result"], "C:/p/shot_{ver:03d}")
+        self.assertEqual(info["fields"], ["root", "name", "ver"])
+        self.assertEqual(info["resolved"], {"root": "C:/p", "name": "shot"})
+        self.assertEqual(info["unresolved"], ["ver"])
+
+    def test_resolve_placeholders_result_matches_replace_placeholders(self):
+        """The 'result' key must be byte-identical to replace_placeholders."""
+        tmpl = "{scenes}/{name}/{missing}"
+        info = StrUtils.resolve_placeholders(tmpl, scenes="scenes", name="shot")
+        self.assertEqual(
+            info["result"],
+            StrUtils.replace_placeholders(tmpl, scenes="scenes", name="shot"),
+        )
+
+    def test_resolve_placeholders_first_seen_order_and_dedup(self):
+        """Fields are first-seen order; repeats collapse to one entry."""
+        info = StrUtils.resolve_placeholders("{b}{a}{b}{c}", a="1")
+        self.assertEqual(info["fields"], ["b", "a", "c"])
+        self.assertEqual(info["unresolved"], ["b", "c"])
+        self.assertEqual(info["resolved"], {"a": "1"})
+
+    def test_resolve_placeholders_index_access_reports_base_name(self):
+        """Index access reduces to the base name in the reported fields."""
+        info = StrUtils.resolve_placeholders("{parts[0]}", parts=["a", "b"])
+        self.assertEqual(info["fields"], ["parts"])
+        self.assertIn("parts", info["resolved"])
+
+    def test_resolve_placeholders_stringifies_values(self):
+        info = StrUtils.resolve_placeholders("{n}", n=5)
+        self.assertEqual(info["resolved"], {"n": "5"})
+
+    def test_resolve_placeholders_empty_template(self):
+        info = StrUtils.resolve_placeholders("no placeholders here")
+        self.assertEqual(info["fields"], [])
+        self.assertEqual(info["unresolved"], [])
+        self.assertEqual(info["result"], "no placeholders here")
+
+    # -------------------------------------------------------------------------
     # Regression tests (audit fixes)
     # -------------------------------------------------------------------------
 
