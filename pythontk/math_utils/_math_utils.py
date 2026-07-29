@@ -163,6 +163,28 @@ class MathUtils(HelpMixin):
         padding = map_size / factor
         return padding / map_size if normalize else padding
 
+    @classmethod
+    def uv_tile_margin(cls, map_size: int, factor: int = 256) -> float:
+        """Normalized border a UV tile keeps clear — one rule, every consumer.
+
+        Half the island gutter (:meth:`calculate_uv_padding`), because the
+        border is shared: an island inset by half on each side of a tile
+        seam still clears a full gutter from its neighbour across it. Like
+        the normalized gutter it is map-size-invariant, so a layout built
+        at one resolution stays correct at another.
+
+        Parameters:
+            map_size (int): Map size in pixels (width or height).
+            factor (int): Divisor setting the gutter. 256 (default).
+
+        Returns:
+            float: The margin in normalized (0-1) tile units.
+
+        Example:
+            MathUtils.uv_tile_margin(4096)  -> 0.001953125
+        """
+        return cls.calculate_uv_padding(map_size, normalize=True, factor=factor) / 2
+
     @staticmethod
     def udim_to_tile(udim: int) -> Tuple[int, int]:
         """UDIM tile number to its (u, v) tile offset — one rule, every packer.
@@ -182,6 +204,94 @@ class MathUtils(HelpMixin):
             MathUtils.udim_to_tile(1012)  -> (1, 1)
         """
         return (udim - 1001) % 10, (udim - 1001) // 10
+
+    @staticmethod
+    def majority_tile(bounds) -> Optional[Tuple[int, int]]:
+        """The tile most of the given UV boxes occupy — one rule, every gatherer.
+
+        Each box votes for the tile containing its bbox center; the most-voted
+        tile wins, ties going to the first seen. This is what "the target tile"
+        means for a gather with no explicit UDIM: the bulk of a layout defines
+        where it lives, so only the strays travel.
+
+        Parameters:
+            bounds (iterable): ``(u_min, v_min, u_max, v_max)`` boxes.
+
+        Returns:
+            tuple: The winning ``(u, v)`` integer tile offsets, or None when
+            *bounds* is empty.
+
+        Example:
+            MathUtils.majority_tile([(0.1, 0.1, 0.4, 0.4), (0.5, 0.2, 0.9, 0.6),
+                                     (3.1, 2.1, 3.4, 2.4)])  -> (0, 0)
+        """
+        from collections import Counter
+
+        votes = Counter(
+            (
+                math.floor((u_min + u_max) / 2.0),
+                math.floor((v_min + v_max) / 2.0),
+            )
+            for u_min, v_min, u_max, v_max in bounds
+        )
+        return votes.most_common(1)[0][0] if votes else None
+
+    @staticmethod
+    def fit_into_tile(
+        bounds: Tuple[float, float, float, float],
+        tile: Tuple[int, int],
+        margin: float = 0.0,
+    ) -> Tuple[float, float]:
+        """Relative offset that moves a UV bounding box inside a unit tile — one rule, every gatherer.
+
+        Two passes per axis: unless the box already overlaps the tile's span
+        on that axis, a whole-tile translation brings the box's center tile
+        onto *tile* (preserving the box's sub-tile position, the cheap
+        stand-in for a real repack); then a minimal clamp pulls any
+        remaining overhang inside the margin-inset tile. A box straddling
+        the target's border therefore gets the smallest pull-in rather than
+        a full-tile shove. A box too big for the inset tile is centered on
+        it instead, splitting the unavoidable overhang (best effort) —
+        notably a box spanning the tile exactly does not move.
+
+        Parameters:
+            bounds (tuple): ``(u_min, v_min, u_max, v_max)`` of the box.
+            tile (tuple): ``(u, v)`` integer tile offsets — the tile's
+                bottom-left corner (see :meth:`udim_to_tile`).
+            margin (float): Normalized border inset kept clear inside the
+                tile (e.g. half the island gutter). Default 0.0.
+
+        Returns:
+            tuple: ``(du, dv)`` relative offset to apply to the box;
+            ``(0.0, 0.0)`` when it already fits.
+
+        Example:
+            MathUtils.fit_into_tile((2.1, 0.2, 2.4, 0.5), (0, 0))  -> (-2.0, 0.0)
+            MathUtils.fit_into_tile((0.9, 0.1, 1.2, 0.4), (0, 0))  -> (-0.2, 0.0)
+        """
+        u_min, v_min, u_max, v_max = bounds
+        offsets = []
+        for lo, hi, t in ((u_min, u_max, tile[0]), (v_min, v_max, tile[1])):
+            if hi - lo > 1.0 - 2 * margin:
+                # Too big to fit the inset tile — center it, so the unavoidable
+                # overhang is split evenly. Anchoring an edge instead would push
+                # a shell that already spans the tile exactly (the common
+                # full-coverage layout) off the far border by the whole margin.
+                offsets.append((t + 0.5) - (lo + hi) / 2.0)
+                continue
+            if hi > t and lo < t + 1.0:  # already overlaps — clamp minimally
+                delta = 0.0
+            else:
+                delta = float(t) - math.floor((lo + hi) / 2.0)
+            lo_lim, hi_lim = t + margin, t + 1.0 - margin
+            overhang = (hi + delta) - hi_lim
+            if overhang > 0:
+                delta -= overhang
+            shortfall = lo_lim - (lo + delta)
+            if shortfall > 0:  # after the max-edge clamp, so the min edge wins
+                delta += shortfall
+            offsets.append(delta)
+        return tuple(offsets)
 
     @staticmethod
     def max_axis_skew(axes, degenerate_length: float = 1e-9) -> float:

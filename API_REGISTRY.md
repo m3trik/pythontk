@@ -438,9 +438,10 @@ Pure image-compositing engine — alpha-composite layered texture maps
 - **[`class NormalOutputMode(Enum)`](pythontk/pythontk/core_utils/engines/textures/map_compositor.py#L35)** — How the engine handles DirectX/OpenGL normal-map output.
 - **[`class MapCompositor(ptk.LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_compositor.py#L55)** — Alpha-composite layered texture maps and auto-generate the
   - `MapCompositor.removeNormalMap(self) -> bool` *(property)*
+  - `MapCompositor.written_paths(self) -> List[str]` *(property)* — Files written by the most recent batch, in write order.
   - `MapCompositor.reset(self) -> None` — Clear per-session state (masks, progress counters).
   - `MapCompositor.process_batch(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult` — Drive a full composite → retry-with-mask → re-composite cycle.
-  - `MapCompositor.apply_output_template(self, output_dir: str) -> List[str]` — Post-process composited output for a target workflow.
+  - `MapCompositor.apply_output_template(self, output_dir: str, files: Optional[List[str]] = None) -> List[str]` — Post-process composited output for a target workflow.
   - `MapCompositor.composite_images(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages` — Composite each map type and write the result.
   - `MapCompositor.retry_failed(self, failed: SortedImages, name: str) -> SortedImages` — Fill the masked area of each failed layer with the map-type's
 
@@ -1399,7 +1400,10 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.eval_expression(expression: str) -> str` *(static)* — Evaluate a math expression string (calculator engine).
   - `MathUtils.convert_length_unit(cls, value: float, from_unit: str, to_unit: str) -> str` *(class)* — Convert a length ``value`` between units (mm, cm, m, km, in, ft, yd, mi).
   - `MathUtils.calculate_uv_padding(map_size: int, normalize: bool = False, factor: int = 256) -> float` *(static)* — Texture gutter width for a given map size — one rule, every consumer.
+  - `MathUtils.uv_tile_margin(cls, map_size: int, factor: int = 256) -> float` *(class)* — Normalized border a UV tile keeps clear — one rule, every consumer.
   - `MathUtils.udim_to_tile(udim: int) -> Tuple[int, int]` *(static)* — UDIM tile number to its (u, v) tile offset — one rule, every packer.
+  - `MathUtils.majority_tile(bounds) -> Optional[Tuple[int, int]]` *(static)* — The tile most of the given UV boxes occupy — one rule, every gatherer.
+  - `MathUtils.fit_into_tile(bounds: Tuple[float, float, float, float], tile: Tuple[int, int], margin: float = 0.0) -> Tuple[float, float]` *(static)* — Relative offset that moves a UV bounding box inside a unit tile — one rule, every gatherer.
   - `MathUtils.max_axis_skew(axes, degenerate_length: float = 1e-09) -> float` *(static)* — Worst pairwise misalignment of a matrix's axis vectors — one rule, every consumer.
   - `MathUtils.linear_sum_assignment(cost_matrix: Sequence[Sequence[float]], maximize: bool = False) -> Tuple[List[int], List[int]]` *(static)* — Solve the linear sum assignment problem (Hungarian algorithm).
   - `MathUtils.kmeans_clustering(points: Sequence[Sequence[float]], k: int, max_iterations: int = 30, seed_indices: Optional[List[int]] = None) -> List[List[int]]` *(static)* — Perform K-Means clustering on a set of points.
