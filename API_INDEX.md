@@ -128,7 +128,7 @@ _Generated: 2026-07-29_
 - `class BatchResult(Enum)`
 - `class NormalOutputMode(Enum)`
 - `class MapCompositor(ptk.LoggingMixin)`
-  - methods: removeNormalMap, reset, process_batch, apply_output_template, composite_images, retry_failed
+  - methods: removeNormalMap, written_paths, reset, process_batch, apply_output_template, composite_images, retry_failed
 
 ### `core_utils/engines/textures/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
 - `class MapFactory(LoggingMixin)`
@@ -424,7 +424,7 @@ _Generated: 2026-07-29_
 
 ### `math_utils/_math_utils.py`
 - `class MathUtils(HelpMixin)`
-  - methods: eval_expression, convert_length_unit, calculate_uv_padding, udim_to_tile, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance
+  - methods: eval_expression, convert_length_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance
 
 ### `math_utils/noise.py`
 - `class BandLimitedNoise`

@@ -292,6 +292,166 @@ class TestOutputTemplate(unittest.TestCase, _LoggerCaptureMixin):
         )
 
 
+class TestOutputTemplateScoping(unittest.TestCase, _LoggerCaptureMixin):
+    """The template post-pass must only see maps this batch actually wrote.
+
+    Regression: the post-pass used to re-scan ``output_dir``, so compositing
+    into a shared library folder (e.g. a project ``sourceimages``) swept every
+    pre-existing texture set into ``prepare_maps`` and generated packed /
+    converted siblings for unrelated materials.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mc_scope_")
+        self.src = os.path.join(self.tmp, "src")
+        self.out = os.path.join(self.tmp, "out")
+        os.makedirs(self.src)
+        os.makedirs(self.out)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    # DirectX normal source so BOTH mode synthesizes the OpenGL complement —
+    # the auto-generated sibling has to be tracked too, not just direct saves.
+    _MAPS = (
+        ("Base_Color", "RGB", (200, 100, 50)),
+        ("Metallic", "L", 200),
+        ("Roughness", "L", 100),
+        ("Ambient_Occlusion", "L", 150),
+        ("Normal_DirectX", "RGB", (128, 128, 255)),
+    )
+
+    def _stage_sources(self):
+        """Layers to composite — written to ``src``, composited into ``out``."""
+        sorted_images = {}
+        for typ, mode, color in self._MAPS:
+            path = os.path.join(self.src, f"layer_{typ}.png")
+            Image.new(mode, (4, 4), color).save(path)
+            sorted_images[typ] = [(path, _load(path))]
+        return sorted_images
+
+    def _plant_foreign_set(self, name="UNRELATED"):
+        """A complete, pre-existing texture set already sitting in ``out``."""
+        planted = {}
+        for typ, mode, color in self._MAPS:
+            path = os.path.join(self.out, f"{name}_{typ}.png")
+            Image.new(mode, (4, 4), color).save(path)
+            with open(path, "rb") as f:
+                planted[path] = f.read()
+        return planted
+
+    def test_template_ignores_preexisting_sets_in_output_dir(self):
+        planted = self._plant_foreign_set()
+        engine = MapCompositor()
+        engine.output_template = "Unity HDRP"
+
+        result = engine.process_batch(self._stage_sources(), self.out, name="mat")
+        self.assertIs(result, BatchResult.SUCCESS)
+
+        # Our own set still gets its packed map.
+        self.assertTrue(os.path.isfile(os.path.join(self.out, "mat_MSAO.png")))
+
+        # The foreign set gained nothing …
+        produced = {
+            n for n in os.listdir(self.out) if n.startswith("UNRELATED_")
+        }
+        self.assertEqual(
+            produced,
+            {os.path.basename(p) for p in planted},
+            "Template post-pass generated files for an unrelated texture set",
+        )
+        # … and lost nothing: every planted file is byte-identical.
+        for path, before in planted.items():
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), before, f"{path} was rewritten in place")
+
+    def test_written_paths_tracks_batch_output(self):
+        engine = MapCompositor()
+        self._plant_foreign_set()
+        engine.process_batch(self._stage_sources(), self.out, name="mat")
+
+        written = set(engine.written_paths)
+        self.assertTrue(written, "Engine did not record any written paths")
+        self.assertTrue(all(os.path.isfile(p) for p in written))
+        self.assertTrue(
+            all(os.path.basename(p).startswith("mat_") for p in written),
+            f"written_paths leaked non-batch files: {sorted(written)}",
+        )
+        # Includes the auto-generated OpenGL complement, not just direct saves.
+        self.assertIn(os.path.join(self.out, "mat_Normal_OpenGL.png"), written)
+
+    def test_stale_packed_map_is_repacked_not_passed_through(self):
+        """A stale packed map from a previous run must not shadow this batch.
+
+        The old directory scan fed the pre-existing ``<name>_MSAO.png`` back
+        into ``prepare_maps`` as an *input*, so the packer saw MSAO already
+        in the inventory and passed it through untouched — the freshly
+        composited Metallic/AO/Roughness never reached the packed output.
+        """
+        stale = os.path.join(self.out, "mat_MSAO.png")
+        Image.new("RGBA", (4, 4), (1, 2, 3, 4)).save(stale)
+        with open(stale, "rb") as f:
+            before = f.read()
+
+        engine = MapCompositor()
+        engine.output_template = "Unity HDRP"
+        engine.process_batch(self._stage_sources(), self.out, name="mat")
+
+        with open(stale, "rb") as f:
+            self.assertNotEqual(
+                f.read(), before, "Stale packed map was passed through, not repacked"
+            )
+
+    def test_pruned_normal_source_is_untracked(self):
+        """OPENGL_ONLY deletes the DirectX source it just wrote — the
+        post-pass must not be handed a path that no longer exists.
+        """
+        engine = MapCompositor()
+        engine.normal_output_mode = NormalOutputMode.OPENGL_ONLY
+        engine.process_batch(self._stage_sources(), self.out, name="mat")
+
+        written = engine.written_paths
+        self.assertIn(os.path.join(self.out, "mat_Normal_OpenGL.png"), written)
+        self.assertNotIn(os.path.join(self.out, "mat_Normal_DirectX.png"), written)
+        for path in written:
+            self.assertTrue(os.path.isfile(path), f"tracked but missing: {path}")
+
+    def test_written_paths_reset_between_batches(self):
+        engine = MapCompositor()
+        engine.process_batch(self._stage_sources(), self.out, name="mat")
+        first = list(engine.written_paths)
+        engine.process_batch(self._stage_sources(), self.out, name="mat2")
+        self.assertTrue(first)
+        self.assertTrue(
+            all(os.path.basename(p).startswith("mat2_") for p in engine.written_paths),
+            "written_paths carried over from the prior batch",
+        )
+
+    def test_explicit_files_argument_overrides_tracking(self):
+        engine = MapCompositor()
+        engine.output_template = "Unity HDRP"
+        for typ, mode, color in self._MAPS:
+            Image.new(mode, (4, 4), color).save(
+                os.path.join(self.out, f"solo_{typ}.png")
+            )
+        files = [
+            os.path.join(self.out, f"solo_{typ}.png") for typ, _m, _c in self._MAPS
+        ]
+        engine.apply_output_template(self.out, files=files)
+        self.assertTrue(os.path.isfile(os.path.join(self.out, "solo_MSAO.png")))
+
+    def test_standalone_call_still_scans_dir(self):
+        """No batch run + no explicit files → back-compat directory scan."""
+        engine = MapCompositor()
+        engine.output_template = "Unity HDRP"
+        for typ, mode, color in self._MAPS:
+            Image.new(mode, (4, 4), color).save(
+                os.path.join(self.out, f"legacy_{typ}.png")
+            )
+        engine.apply_output_template(self.out)
+        self.assertTrue(os.path.isfile(os.path.join(self.out, "legacy_MSAO.png")))
+
+
 class TestRetryFailed(unittest.TestCase, _LoggerCaptureMixin):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mc_retry_")
@@ -751,10 +911,70 @@ class TestNormalOutputMode(unittest.TestCase, _LoggerCaptureMixin):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _write_dx(self) -> str:
-        flat = Image.new("RGBA", (4, 4), (127, 127, 255, 255))
-        path = os.path.join(self.tmp, "src_Normal_DirectX.png")
+        return self._write_normal("Normal_DirectX")
+
+    def _write_normal(self, typ: str, green: int = 127) -> str:
+        flat = Image.new("RGBA", (4, 4), (127, green, 255, 255))
+        path = os.path.join(self.tmp, f"src_{typ}.png")
         flat.save(path)
         return path
+
+    def test_both_is_symmetric_generates_dx_from_gl_source(self):
+        """BOTH means both, whichever format the batch supplies.
+
+        The guard that stops the engine clobbering a user-provided
+        complement used to short-circuit the whole branch whenever the
+        batch carried OpenGL — so a GL-only batch (the common case) never
+        got its DirectX complement, and the DX-from-GL branch below it was
+        unreachable.
+        """
+        path = self._write_normal("Normal_OpenGL")
+        engine = MapCompositor()
+        engine.total_len = 1
+        engine.composite_images(
+            {"Normal_OpenGL": [(path, _load(path))]}, self.tmp, name="t"
+        )
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "t_Normal_OpenGL.png")))
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "t_Normal_DirectX.png")))
+
+    def test_both_does_not_clobber_a_supplied_complement(self):
+        """Symmetry must not cost the anti-clobber guard: when the batch
+        carries both formats, neither is regenerated from the other.
+
+        Both key orders are exercised because a stray inversion is only
+        observable when it lands *after* the victim's own composite — with
+        one order the bad write is masked by the map that follows it, so a
+        single-order test silently passes even with the guard removed.
+        """
+        # An off-centre green so an inversion is unmistakable: invert_channels
+        # would turn 60 into 195, not a neighbouring value.
+        green = 60
+        dx = self._write_normal("Normal_DirectX", green=green)
+        gl = self._write_normal("Normal_OpenGL", green=green)
+        layers = {
+            "Normal_DirectX": [(dx, _load(dx))],
+            "Normal_OpenGL": [(gl, _load(gl))],
+        }
+
+        for order in (
+            ("Normal_DirectX", "Normal_OpenGL"),
+            ("Normal_OpenGL", "Normal_DirectX"),
+        ):
+            out_dir = os.path.join(self.tmp, "_".join(order))
+            os.makedirs(out_dir)
+            engine = MapCompositor()
+            engine.total_len = 2
+            engine.composite_images(
+                {typ: layers[typ] for typ in order}, out_dir, name="t"
+            )
+            # Each output keeps its own green — not the counterpart's inversion.
+            for typ in order:
+                out = _load(os.path.join(out_dir, f"t_{typ}.png"))
+                self.assertEqual(
+                    out.convert("RGB").getpixel((0, 0))[1],
+                    green,
+                    f"{typ} was overwritten by an inversion (order={order})",
+                )
 
     def test_both_default_writes_dx_and_gl(self):
         path = self._write_dx()
@@ -833,6 +1053,39 @@ class TestOptimizeOutput(unittest.TestCase, _LoggerCaptureMixin):
 
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][1].get("map_type"), "Base_Color")
+        finally:
+            ptk.MapOptimizer.optimize_map = original
+
+    def test_written_path_follows_optimizer_output(self):
+        """optimize_map resolves its own output name — track what it returned.
+
+        Recording the pre-optimization path would leave ``written_paths``
+        pointing at a file the optimizer renamed away, silently dropping the
+        map from the output-template post-pass.
+        """
+        import pythontk as ptk
+
+        original = ptk.MapOptimizer.optimize_map
+        try:
+
+            def _renaming(cls, path, **kw):
+                renamed = f"{os.path.splitext(path)[0]}.tga"
+                os.replace(path, renamed)
+                return renamed
+
+            ptk.MapOptimizer.optimize_map = classmethod(_renaming)
+
+            p = os.path.join(self.tmp, "src_Base_Color.png")
+            Image.new("RGBA", (4, 4), (127, 127, 127, 255)).save(p)
+
+            engine = MapCompositor()
+            engine.optimize_output = True
+            engine.total_len = 1
+            engine.composite_images({"Base_Color": [(p, _load(p))]}, self.tmp, name="t")
+
+            self.assertEqual(
+                engine.written_paths, [os.path.join(self.tmp, "t_Base_Color.tga")]
+            )
         finally:
             ptk.MapOptimizer.optimize_map = original
 

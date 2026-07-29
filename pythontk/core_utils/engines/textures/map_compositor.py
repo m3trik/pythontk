@@ -98,6 +98,12 @@ class MapCompositor(ptk.LoggingMixin):
         # (e.g. "skip auto-invert because Normal_OpenGL is already on
         # disk") must reason about the original source set.
         self._batch_map_types: set = set()
+        # Every file this batch wrote to disk, in write order. Scopes the
+        # output-template post-pass to the batch's own output — without it
+        # the post-pass would re-scan output_dir and sweep in unrelated
+        # texture sets that happen to share the folder (e.g. a project-wide
+        # sourceimages library).
+        self._written_paths: List[str] = []
         # Drops the noisy fully-qualified logger name prefix from every
         # record without sacrificing the level tag (which still carries
         # colour information).
@@ -112,6 +118,16 @@ class MapCompositor(ptk.LoggingMixin):
     def removeNormalMap(self, value: bool) -> None:
         self.remove_normal_map = value
 
+    @property
+    def written_paths(self) -> List[str]:
+        """Files written by the most recent batch, in write order.
+
+        Cleared by :meth:`reset` (and therefore by every
+        :meth:`process_batch` call). Auto-generated normal complements are
+        included; files the engine wrote and then removed are not.
+        """
+        return list(self._written_paths)
+
     def reset(self) -> None:
         """Clear per-session state (masks, progress counters).
 
@@ -122,6 +138,7 @@ class MapCompositor(ptk.LoggingMixin):
         self.total_progress = 0
         self.total_len = 0
         self._batch_map_types = set()
+        self._written_paths = []
 
     def process_batch(
         self,
@@ -151,7 +168,9 @@ class MapCompositor(ptk.LoggingMixin):
         self.apply_output_template(output_dir)
         return BatchResult.RETRIED
 
-    def apply_output_template(self, output_dir: str) -> List[str]:
+    def apply_output_template(
+        self, output_dir: str, files: Optional[List[str]] = None
+    ) -> List[str]:
         """Post-process composited output for a target workflow.
 
         No-op when ``output_template`` is unset. Otherwise loads the named
@@ -159,6 +178,15 @@ class MapCompositor(ptk.LoggingMixin):
         and runs :meth:`pythontk.MapFactory.prepare_maps` on the files just
         written to ``output_dir``. The composited files stay on disk; the
         workflow adds packed / format-converted siblings alongside them.
+
+        The post-pass is scoped to this batch's own output. ``files``
+        defaults to :attr:`written_paths` — the paths the composite pass
+        recorded. Only when the engine has written nothing (a standalone
+        call on a pre-existing folder) does it fall back to scanning
+        ``output_dir``. Scoping matters because ``output_dir`` is routinely
+        a shared library folder: an unscoped scan would group every
+        unrelated texture set in there into its own set and generate
+        packed / converted siblings for materials the user never selected.
 
         Returns the list of files produced by the workflow (empty list when
         the template is unset, the dir is invalid, or no inputs were found).
@@ -180,7 +208,18 @@ class MapCompositor(ptk.LoggingMixin):
             )
             return []
 
-        files = ptk.get_images(output_dir)
+        if files is None:
+            # Path-only listing for the fallback: prepare_maps wants paths, and
+            # get_images would decode every texture in the folder just to throw
+            # the pixels away (whole 4K sets, for nothing). Same extension set.
+            files = self._written_paths or ptk.FileUtils.get_dir_contents(
+                output_dir,
+                "filepath",
+                inc_files=[f"*.{ext}" for ext in ptk.ImgUtils.texture_file_types],
+            )
+        # A batch can prune its own output (normal-format modes), and a
+        # caller-supplied list may be stale — feed prepare_maps live paths.
+        files = [f for f in files if os.path.isfile(f)]
         if not files:
             return []
 
@@ -398,7 +437,10 @@ class MapCompositor(ptk.LoggingMixin):
         bit_depth = ptk.ImgUtils.format_bit_depth(mode)
         out_path = os.path.join(output_dir, f"{name}_{typ}.{ext}")
         result.save(out_path)
-        self._maybe_optimize(out_path, key)
+        # Track the post-optimization path — optimization can resolve a
+        # different filename, and the template post-pass must be handed the
+        # file that actually exists.
+        self._record_written(self._maybe_optimize(out_path, key))
 
         info = _MapInfo(
             mode=mode, bit_depth=bit_depth, ext=ext, width=width, height=height
@@ -415,25 +457,51 @@ class MapCompositor(ptk.LoggingMixin):
         )
         return True
 
-    def _maybe_optimize(self, out_path: str, map_type: str) -> None:
+    def _record_written(self, path: str) -> None:
+        """Track a file this batch wrote. Idempotent — the mask-retry pass
+        re-saves the same path, and the post-pass must see it once.
+        """
+        if path not in self._written_paths:
+            self._written_paths.append(path)
+
+    def _discard_written(self, path: str) -> None:
+        """Untrack a file the engine wrote and then removed (the
+        OPENGL_ONLY / DIRECTX_ONLY prune of the opposite-format source).
+        """
+        try:
+            self._written_paths.remove(path)
+        except ValueError:
+            pass
+
+    def _maybe_optimize(self, out_path: str, map_type: str) -> str:
         """Run MapOptimizer.optimize_map on the just-saved file when enabled.
 
         Optimization rewrites the file in place with map-type-correct bit
         depth and (optionally) a tighter mode. No-op when disabled.
+
+        Returns the path the optimized map actually landed on — ``optimize_map``
+        resolves its own output name (affix / extension normalization), so the
+        result is not guaranteed to be ``out_path``. Falls back to ``out_path``
+        when disabled or on failure, so the caller always gets a live path to
+        track.
         """
         if not self.optimize_output:
-            return
+            return out_path
         try:
-            ptk.MapOptimizer.optimize_map(
-                out_path,
-                map_type=map_type,
-                optimize_bit_depth=True,
+            return (
+                ptk.MapOptimizer.optimize_map(
+                    out_path,
+                    map_type=map_type,
+                    optimize_bit_depth=True,
+                )
+                or out_path
             )
         except Exception as e:
             # Optimization is best-effort — never abort the batch.
             self.logger.warning(
                 f"optimize_map failed for <b>{os.path.basename(out_path)}</b>: {e}"
             )
+            return out_path
 
     def _alpha_composite_layers(
         self,
@@ -554,14 +622,25 @@ class MapCompositor(ptk.LoggingMixin):
         inventory = self._batch_map_types or set(sorted_images.keys())
 
         if mode is NormalOutputMode.BOTH:
-            if "Normal_OpenGL" in inventory:
-                return
-            if self._try_invert_normal(
-                result, typ, "Normal_DirectX", "Normal_OpenGL", output_dir, name, info
-            ):
-                self._warn_if_normal_format_mismatch(probe, declared="DirectX")
-                return
-            if "Normal_DirectX" not in inventory:
+            # Emit the complement of whichever format this map is, and only
+            # when it's genuinely absent from the batch — that keeps the
+            # anti-clobber guard while staying symmetric. Testing the
+            # *counterpart* rather than short-circuiting on OpenGL matters:
+            # a GL-only batch is the common case, and the blanket guard left
+            # it with no DirectX complement at all. The DX/GL variant sets
+            # are disjoint, so at most one branch applies.
+            if in_dx and "Normal_OpenGL" not in inventory:
+                if self._try_invert_normal(
+                    result,
+                    typ,
+                    "Normal_DirectX",
+                    "Normal_OpenGL",
+                    output_dir,
+                    name,
+                    info,
+                ):
+                    self._warn_if_normal_format_mismatch(probe, declared="DirectX")
+            elif in_gl and "Normal_DirectX" not in inventory:
                 if self._try_invert_normal(
                     result,
                     typ,
@@ -605,10 +684,12 @@ class MapCompositor(ptk.LoggingMixin):
             result, typ, src_set, dst_set, output_dir, name, info
         ):
             self._warn_if_normal_format_mismatch(probe, declared=declared)
+            pruned = os.path.join(output_dir, f"{name}_{typ}.{info.ext}")
             try:
-                os.remove(os.path.join(output_dir, f"{name}_{typ}.{info.ext}"))
+                os.remove(pruned)
             except OSError:
                 pass
+            self._discard_written(pruned)
 
     def _warn_if_normal_format_mismatch(
         self, image: Image.Image, declared: str
@@ -647,7 +728,9 @@ class MapCompositor(ptk.LoggingMixin):
             return False
         new_type = map_types[dst_set][index]
         inverted = ptk.invert_channels(result, "g")
-        inverted.save(os.path.join(output_dir, f"{name}_{new_type}.{info.ext}"))
+        inverted_path = os.path.join(output_dir, f"{name}_{new_type}.{info.ext}")
+        inverted.save(inverted_path)
+        self._record_written(inverted_path)
         title = (
             f"{new_type.rstrip('_')} {info.mode} {info.bit_depth} "
             f"{info.ext.upper()} {info.width}x{info.height}:"

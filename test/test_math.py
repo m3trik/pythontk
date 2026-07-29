@@ -1202,6 +1202,89 @@ class MathTest(BaseTestCase):
         with self.assertRaises(ValueError):
             MathUtils.step_offset(0.13, 0.0, 1)
 
+    def test_uv_tile_margin_is_half_gutter_and_invariant(self):
+        """The tile border is half the island gutter, at every map size."""
+        for size in (1024, 2048, 4096, 8192):
+            with self.subTest(map_size=size):
+                self.assertAlmostEqual(
+                    MathUtils.uv_tile_margin(size),
+                    MathUtils.calculate_uv_padding(size, normalize=True) / 2,
+                )
+                self.assertAlmostEqual(MathUtils.uv_tile_margin(size), 1 / 512)
+
+    def test_majority_tile(self):
+        """The bulk of a layout defines its tile; strays don't drag the target."""
+        self.assertEqual(
+            MathUtils.majority_tile(
+                [(0.1, 0.1, 0.4, 0.4), (0.5, 0.2, 0.9, 0.6), (3.1, 2.1, 3.4, 2.4)]
+            ),
+            (0, 0),
+        )
+        # The winner needn't be the origin tile.
+        self.assertEqual(
+            MathUtils.majority_tile(
+                [(1.1, 0.1, 1.4, 0.4), (1.5, 0.2, 1.9, 0.6), (0.1, 0.1, 0.4, 0.4)]
+            ),
+            (1, 0),
+        )
+        # A lone box is its own majority — nothing to gather.
+        self.assertEqual(MathUtils.majority_tile([(3.2, 2.2, 3.6, 2.6)]), (3, 2))
+        self.assertIsNone(MathUtils.majority_tile([]))
+
+    def test_fit_into_tile_already_inside(self):
+        """A box already inside the (margin-inset) tile does not move."""
+        self.assertEqual(
+            MathUtils.fit_into_tile((0.2, 0.2, 0.8, 0.8), (0, 0)), (0.0, 0.0)
+        )
+        self.assertEqual(
+            MathUtils.fit_into_tile((2.1, 1.3, 2.4, 1.6), (2, 1)), (0.0, 0.0)
+        )
+
+    def test_fit_into_tile_whole_tile_translation(self):
+        """A box in another tile keeps its sub-tile position — offsets are whole tiles."""
+        du, dv = MathUtils.fit_into_tile((2.1, 0.2, 2.4, 0.5), (0, 0))
+        self.assertEqual((du, dv), (-2.0, 0.0))
+        du, dv = MathUtils.fit_into_tile((0.25, 0.25, 0.75, 0.75), (3, 2))
+        self.assertEqual((du, dv), (3.0, 2.0))
+
+    def test_fit_into_tile_straddler_clamps(self):
+        """A box straddling a tile border is pulled fully inside."""
+        du, dv = MathUtils.fit_into_tile((0.9, 0.1, 1.2, 0.4), (0, 0))
+        self.assertAlmostEqual(du, -0.2)
+        self.assertAlmostEqual(dv, 0.0)
+        # And onto a non-origin tile.
+        du, dv = MathUtils.fit_into_tile((0.9, 0.1, 1.2, 0.4), (1, 0))
+        self.assertAlmostEqual(du, 0.1)
+
+    def test_fit_into_tile_margin(self):
+        """The margin insets the usable tile on every border."""
+        margin = 0.002
+        du, dv = MathUtils.fit_into_tile((0.0, 0.999, 0.3, 1.299), (0, 0), margin)
+        self.assertAlmostEqual(du, margin)  # min edge pushed off the border
+        self.assertAlmostEqual(dv, (1.0 - margin) - 1.299)  # max edge pulled in
+
+    def test_fit_into_tile_oversize_is_centered(self):
+        """A box larger than the inset tile is centered, splitting the overhang."""
+        margin = 0.01
+        du, dv = MathUtils.fit_into_tile((0.3, -0.2, 1.8, 1.4), (0, 0), margin)
+        self.assertAlmostEqual((0.3 + du + 1.8 + du) / 2, 0.5)
+        self.assertAlmostEqual((-0.2 + dv + 1.4 + dv) / 2, 0.5)
+
+    def test_fit_into_tile_full_coverage_shell_does_not_move(self):
+        """A shell spanning the target tile exactly stays put.
+
+        Anchoring an edge instead pushed the common full-coverage layout off
+        the far border by the whole margin — the tile it already filled.
+        """
+        margin = MathUtils.uv_tile_margin(4096)
+        self.assertEqual(
+            MathUtils.fit_into_tile((0.0, 0.0, 1.0, 1.0), (0, 0), margin), (0.0, 0.0)
+        )
+        # And from another tile it comes back to exact coverage.
+        du, dv = MathUtils.fit_into_tile((3.0, 2.0, 4.0, 3.0), (0, 0), margin)
+        self.assertAlmostEqual(du, -3.0)
+        self.assertAlmostEqual(dv, -2.0)
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)
