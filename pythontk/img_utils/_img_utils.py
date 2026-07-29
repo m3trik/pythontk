@@ -1810,6 +1810,47 @@ class ImgUtils(HelpMixin):
             return (result * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
         return result.astype(dtype, copy=False)
 
+    @classmethod
+    def rasterize_uv_triangles(
+        cls,
+        triangles,
+        size: int = 512,
+        supersample: int = 4,
+    ) -> "np.ndarray":
+        """Rasterize filled UV-space triangles into a single-channel coverage image.
+
+        General polygon-coverage primitive (region masks, UV-shell fills,
+        coverage checks): the caller supplies triangles in normalized UV
+        space, this fills them at ``supersample``× resolution and box-filters
+        down, so edges carry the same anti-aliased falloff a baked texture
+        has. V is flipped to image coordinates ((0,0) = top-left) to match
+        how UV-mapped textures are stored on disk.
+
+        Parameters:
+            triangles: (N, 3, 2) array-like of UV coordinates (V up, usually
+                in [0,1] — values outside are clipped to the image edge).
+            size: Output square resolution in pixels.
+            supersample: Coverage oversampling factor (1 = hard edges).
+
+        Returns:
+            (size, size) uint8 coverage array (0 outside, 255 inside,
+            anti-aliased edges between).
+        """
+        tris = np.asarray(triangles, dtype=float).reshape(-1, 3, 2)
+        ss = max(1, int(supersample))
+        dim = int(size) * ss
+        mask = np.zeros((dim, dim), dtype=np.uint8)
+        for tri in tris:
+            px = np.clip(tri[:, 0] * dim, 0, dim - 1)
+            py = np.clip((1.0 - tri[:, 1]) * dim, 0, dim - 1)
+            cls._fill_triangle(mask, np.stack([px, py], axis=1).astype(np.int32))
+        if ss > 1:
+            mask = (
+                mask.reshape(size, ss, size, ss).astype(np.float32).mean(axis=(1, 3))
+            )
+            mask = np.clip(np.rint(mask), 0, 255).astype(np.uint8)
+        return mask
+
     @staticmethod
     def _fill_triangle(mask, tri):
         """Fill a 2D triangle (3x2 int pixel coords) into ``mask`` with 255 (numpy edge test)."""

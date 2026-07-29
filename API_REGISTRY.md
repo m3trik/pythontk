@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-25_
+_Generated: 2026-07-29_
 
 ## Index
 
@@ -35,6 +35,7 @@ _Generated: 2026-07-25_
 - [`core_utils/engines/textures/map_registry.py`](#core_utils--engines--textures--map_registry)
 - [`core_utils/engines/textures/mat_report.py`](#core_utils--engines--textures--mat_report) — DCC-agnostic formatters for material / texture info reports.
 - [`core_utils/engines/textures/output_template.py`](#core_utils--engines--textures--output_template) — Per-map output-format templates — the "export preset" layer.
+- [`core_utils/engines/textures/region_masks.py`](#core_utils--engines--textures--region_masks) — Region-mask engine — named face-group masks that gate texture regions at runtime.
 - [`core_utils/execution_monitor/_dialog_viewer.py`](#core_utils--execution_monitor--_dialog_viewer) — Subprocess-based dialog viewer for custom button labels.
 - [`core_utils/execution_monitor/_execution_monitor.py`](#core_utils--execution_monitor--_execution_monitor)
 - [`core_utils/execution_monitor/_gif_viewer.py`](#core_utils--execution_monitor--_gif_viewer)
@@ -59,6 +60,7 @@ _Generated: 2026-07-25_
 - [`core_utils/script_run.py`](#core_utils--script_run) — Run a script in an external app, block until it exits, and collect an artifact.
 - [`core_utils/script_template.py`](#core_utils--script_template) — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
+- [`core_utils/status_badge.py`](#core_utils--status_badge) — Shields.io status badges embedded in a markdown file.
 - [`core_utils/symbol_record.py`](#core_utils--symbol_record) — SymbolRecord - the shared public-API symbol shape.
 - [`core_utils/task_factory.py`](#core_utils--task_factory) — Generic task/check pipeline primitive -- host- and Qt-free.
 - [`core_utils/template_set.py`](#core_utils--template_set) — A discoverable, user-extensible collection of schema-validated template files.
@@ -69,10 +71,12 @@ _Generated: 2026-07-25_
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`file_utils/temp_artifacts.py`](#file_utils--temp_artifacts) — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - [`file_utils/usd.py`](#file_utils--usd) — Zero-dependency USD (OpenUSD) file utilities.
+- [`file_utils/uv_unwrap/_uv_unwrap.py`](#file_utils--uv_unwrap--_uv_unwrap)
 - [`file_utils/workspace.py`](#file_utils--workspace) — Shared project-workspace model + ``workspace.mel`` codec.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
+- [`geo_utils/uv_pack.py`](#geo_utils--uv_pack) — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
 - [`img_utils/exposure_equalizer.py`](#img_utils--exposure_equalizer) — Cross-set exposure / white-balance equalization.
 - [`img_utils/image_curator.py`](#img_utils--image_curator) — Perceptual-hash + sharpness curation for large image sets.
@@ -658,6 +662,45 @@ Per-map output-format templates — the "export preset" layer.
   - `OutputTemplates.get(cls, profile: Optional[str]) -> OutputTemplate` *(class)* — Return the built-in template for *profile* (a ``WF`` key), or the default.
   - `OutputTemplates.resolve(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec` *(class)* — Resolve the :class:`OutputSpec` for *map_type* under *profile*.
 
+<a id="core_utils--engines--textures--region_masks"></a>
+### `core_utils/engines/textures/region_masks.py`
+
+Region-mask engine — named face-group masks that gate texture regions at runtime.
+
+- **[`class RegionGroup`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L66)** — One named region group.
+  - `RegionGroup.to_dict(self) -> dict`
+  - `RegionGroup.coerce(cls, group: Union['RegionGroup', dict]) -> 'RegionGroup'` *(class)* — Accept a ``RegionGroup`` or its plain-dict form.
+- **[`class RegionMaskManifest`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L109)** — The wire schema joining DCC-authored groups to their game-engine consumer.
+  - `RegionMaskManifest.vertex_color(cls, groups: Sequence[Union[RegionGroup, dict]], color_set: str = 'emissiveGroups') -> 'RegionMaskManifest'` *(class)* — Manifest for membership riding in a mesh color set.
+  - `RegionMaskManifest.channels(cls, groups: Sequence[Union[RegionGroup, dict]], mask: str, resolution: int, uv_channel: int = 0) -> 'RegionMaskManifest'` *(class)* — Manifest for membership rasterized into an RGBA mask texture.
+  - `RegionMaskManifest.to_dict(self) -> dict` — Wire form: encoding-irrelevant fields are omitted, not null.
+  - `RegionMaskManifest.to_json(self, indent: Optional[int] = None) -> str`
+  - `RegionMaskManifest.from_dict(cls, data: dict) -> 'RegionMaskManifest'` *(class)*
+  - `RegionMaskManifest.from_json(cls, text: str) -> 'RegionMaskManifest'` *(class)*
+  - `RegionMaskManifest.save(self, path: str) -> str`
+  - `RegionMaskManifest.load(cls, path: str) -> 'RegionMaskManifest'` *(class)*
+- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L225)** — Slot-assignment model for region groups — persistence injected.
+  - `RegionGroupRegistry.empty(self) -> dict`
+  - `RegionGroupRegistry.read(self) -> dict` — The stored registry, or a fresh empty one (never raises).
+  - `RegionGroupRegistry.write(self, registry: dict) -> None` — Persist *registry*, or clear the channel when it holds nothing.
+  - `RegionGroupRegistry.sanitize(name: str) -> str` *(static)* — Coerce *name* to a DCC-safe identifier, or raise.
+  - `RegionGroupRegistry.groups(self, registry: Optional[dict] = None) -> List[dict]` — Groups in slot order as ``{"name", "slot", "default"[, "attr"]}``
+  - `RegionGroupRegistry.next_slot(self, registry: dict) -> int` — Lowest slot that is neither used nor retired.
+  - `RegionGroupRegistry.add(self, name: str, default: float = 1.0) -> Tuple[int, bool]` — Register *name* (no-op for an existing group).
+  - `RegionGroupRegistry.remove(self, name: str) -> Optional[int]` — Drop *name* and retire its slot.
+  - `RegionGroupRegistry.set_default(self, name: str, default: float) -> float` — Set a group's default gate weight (clamped 0-1).
+  - `RegionGroupRegistry.set_attr(self, name: str, attr: Optional[str]) -> None` — Record — or clear, with ``attr=None`` — the DCC animation attribute
+  - `RegionGroupRegistry.compact(self) -> List[int]` — Reclaim retired slots.
+  - `RegionGroupRegistry.set_encoding(self, encoding: str, **info) -> None` — Record the encoding the last bake produced (plus mask info).
+  - `RegionGroupRegistry.manifest(self, color_set: Optional[str] = None) -> Optional[RegionMaskManifest]` — The manifest for the current registry, or None when it has no groups.
+- **[`class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L494)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
+  - `RegionMaskPacker.groups(self) -> List[RegionGroup]` *(property)*
+  - `RegionMaskPacker.add_group(self, name: str, uv_triangles, *, slot: Optional[int] = None, default: float = 1.0, attr: Optional[str] = None) -> RegionGroup` — Register a group and its UV coverage.
+  - `RegionMaskPacker.validate(self) -> List[str]` — Non-fatal authoring warnings (hard errors raise in ``add_group``).
+  - `RegionMaskPacker.rasterize(self) -> 'np.ndarray'` — Fill each group's slot channel;
+  - `RegionMaskPacker.write(self, mask_path: str, manifest_path: Optional[str] = None, uv_channel: int = 0) -> RegionMaskManifest` — Save the packed mask texture and its manifest sidecar.
+  - `RegionMaskPacker.preview(self, emissive, weights: Optional[Dict[str, float]] = None) -> 'Image.Image'` — Preview which texels glow for a given weight combination.
+
 <a id="core_utils--execution_monitor--_dialog_viewer"></a>
 ### `core_utils/execution_monitor/_dialog_viewer.py`
 
@@ -802,17 +845,17 @@ Class-scoped logging toolkit.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1360)** — A generic logging handler that writes logs to any widget supporting
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1363)** — A generic logging handler that writes logs to any widget supporting
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1416)** — In-memory capped ring buffer of log records.
+- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1419)** — In-memory capped ring buffer of log records.
   - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `RingBufferHandler.clear(self) -> None`
   - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1454)** — Mixin for formatting data as ASCII tables.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1457)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1587)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1590)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -1005,6 +1048,18 @@ Generic on-disk script-template discovery + ``__KEY__`` rendering.
   - `SingletonMixin.has_instance(cls, singleton_key: Optional[Any] = None) -> bool` *(class)*
   - `SingletonMixin.reset_instance(cls, singleton_key: Optional[Any] = None) -> None` *(class)*
 
+<a id="core_utils--status_badge"></a>
+### `core_utils/status_badge.py`
+
+Shields.io status badges embedded in a markdown file.
+
+- **[`class StatusBadge(_StatusBadgeInternal)`](pythontk/pythontk/core_utils/status_badge.py#L80)** — Render a shields.io badge and keep it up to date in a markdown file.
+  - `StatusBadge.url(cls, message: str, color: str, label: str = LABEL, style: Optional[str] = None) -> str` *(class)* — Build the shields.io image URL.
+  - `StatusBadge.render(cls, message: str, color: str, label: str = LABEL, link: str = '', style: Optional[str] = None) -> str` *(class)* — Return the badge as a markdown image, linked when ``link`` is given.
+  - `StatusBadge.test_status(cls, passed: int, failed: int) -> Tuple[str, str]` *(class)* — Map a test run to ``(message, color)``.
+  - `StatusBadge.update(cls, readme_path: PathLike, message: str, color: str, label: str = LABEL, link: str = '', style: Optional[str] = None) -> bool` *(class)* — Replace (or insert) the badge with this label in a markdown file.
+  - `StatusBadge.update_test_badge(cls, readme_path: PathLike, passed: int, failed: int, test_dir: Optional[PathLike] = None, link: Optional[str] = None, style: Optional[str] = None) -> bool` *(class)* — Stamp a test-status badge -- the ecosystem-standard entry point.
+
 <a id="core_utils--symbol_record"></a>
 ### `core_utils/symbol_record.py`
 
@@ -1021,6 +1076,8 @@ SymbolRecord - the shared public-API symbol shape.
 Generic task/check pipeline primitive -- host- and Qt-free.
 
 - **[`class TaskFactory`](pythontk/pythontk/core_utils/task_factory.py#L23)** — A factory class for managing and executing tasks in a scene export pipeline.
+  - `TaskFactory.stage_deferred_restore(self, key: str, restore: Callable) -> bool` — Register *restore* to run **after** the caller's real work — once per *key*.
+  - `TaskFactory.run_deferred_restores(self) -> None` — Run + clear every restore staged by :meth:`stage_deferred_restore`.
   - `TaskFactory.run_tasks(self, tasks: Dict[str, Any]) -> bool` — Run tasks and checks, returning True if all checks pass, False if any fail.
   - `TaskFactory.run_tasks_by_category(self, task_definitions: Dict[str, Any], check_definitions: Dict[str, Any]) -> bool` — Alternative method to run tasks and checks separately with better organization.
 
@@ -1120,12 +1177,12 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 
 Prefix-scoped temp artifacts with an explicit lifetime policy.
 
-- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L37)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files in one directory.
+- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L38)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files in one directory.
   - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
-- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L186)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L206)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
   - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
   - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
 
@@ -1148,6 +1205,18 @@ Zero-dependency USD (OpenUSD) file utilities.
   - `UsdMeshWriter.from_obj(cls, obj_path: str) -> Dict[str, Any]` *(class)* — Parse a Wavefront OBJ (+ its MTL) into :meth:`write` kwargs.
   - `UsdMeshWriter.obj_to_usd(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str` *(static)* — Convert an OBJ to a ``.usda`` layer beside it (or at *output_path*).
   - `UsdMeshWriter.obj_to_usdz(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str` *(static)* — Convert an OBJ (+ MTL textures) to a self-contained ``.usdz``.
+
+<a id="file_utils--uv_unwrap--_uv_unwrap"></a>
+### `file_utils/uv_unwrap/_uv_unwrap.py`
+
+- **[`class EngineSpec`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L116)** — Everything :class:`UvUnwrap` needs to drive one external unwrapper.
+- **[`class UvUnwrap(HelpMixin, _UvUnwrapInternal)`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L198)** — Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
+  - `UvUnwrap.resolve_method(cls, method: str) -> str` *(class)* — Map ``"hard"`` / ``"organic"`` to an engine key (keys pass through).
+  - `UvUnwrap.available_engines(cls) -> Dict[str, Optional[str]]` *(class)* — Map each engine name to its resolved executable path, or None.
+  - `UvUnwrap.resolve_engine(cls, engine: str, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve one engine's executable.
+  - `UvUnwrap.unwrap(cls, obj_in: str, obj_out: Optional[str] = None, *, engine: str = 'mof', overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, **params) -> str` *(class)* — Unwrap *obj_in* with *engine*;
+  - `UvUnwrap.hard_surface(cls, obj_in: str, obj_out: Optional[str] = None, **kwargs) -> str` *(class)* — Unwrap with Ministry of Flat -- the hard-surface path.
+  - `UvUnwrap.organic(cls, obj_in: str, obj_out: Optional[str] = None, **kwargs) -> str` *(class)* — Unwrap with Boundary First Flattening -- the organic path.
 
 <a id="file_utils--workspace"></a>
 ### `file_utils/workspace.py`
@@ -1207,6 +1276,17 @@ Rail-driven parametric surface — a general geometry primitive.
 - **[`class RailSurface`](pythontk/pythontk/geo_utils/rail_surface.py#L40)** — A parametric grid spanning from a rail, displaced by a caller field.
   - `RailSurface.grid_points(self, displace: Displace) -> Tuple[int, int, List[Vec]]` — Return ``(u_segs, v_segs, points)`` — the displaced grid, row-major.
 
+<a id="geo_utils--uv_pack"></a>
+### `geo_utils/uv_pack.py`
+
+UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
+
+- **[`class PackIslandsResult`](pythontk/pythontk/geo_utils/uv_pack.py#L96)** — Outcome of one :meth:`UvPack.pack_islands` run.
+- **[`class UvPack(HelpMixin)`](pythontk/pythontk/geo_utils/uv_pack.py#L123)** — Pack existing UV islands with the optional ``xatlas`` engine.
+  - `UvPack.resolve(cls, required: bool = True)` *(class)* — Return the ``xatlas`` module, or explain how to install it.
+  - `UvPack.available(cls) -> bool` *(class)* — True when the xatlas engine can be imported.
+  - `UvPack.pack_islands(cls, meshes: Sequence[Tuple[Any, Any]], padding: int = 4, rotate: bool = True, brute_force: bool = False, resolution: int = 0, pages: int = 1, align_to_axis: Optional[bool] = None) -> PackIslandsResult` *(class)* — Pack every mesh's UV islands together.
+
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
@@ -1247,6 +1327,7 @@ Rail-driven parametric surface — a general geometry primitive.
   - `ImgUtils.inset_atlas_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]` *(static)* — Shrink each atlas rect by a pixel gutter on every side.
   - `ImgUtils.assemble_atlas(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'` *(class)* — Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
   - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
+  - `ImgUtils.rasterize_uv_triangles(cls, triangles, size: int = 512, supersample: int = 4) -> 'np.ndarray'` *(class)* — Rasterize filled UV-space triangles into a single-channel coverage image.
   - `ImgUtils.rasterize_silhouette(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)` *(class)* — Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.
   - `ImgUtils.convert_rgb_to_gray(cls, data)` *(class)* — Convert an RGB Image data array to grayscale (luma weights).
   - `ImgUtils.convert_rgb_to_hsv(cls, image)` *(class)* — Convert an RGB image to HSV mode.
@@ -1317,6 +1398,9 @@ Background mask generation via rembg (optional dependency).
 - **[`class MathUtils(HelpMixin)`](pythontk/pythontk/math_utils/_math_utils.py#L15)**
   - `MathUtils.eval_expression(expression: str) -> str` *(static)* — Evaluate a math expression string (calculator engine).
   - `MathUtils.convert_length_unit(cls, value: float, from_unit: str, to_unit: str) -> str` *(class)* — Convert a length ``value`` between units (mm, cm, m, km, in, ft, yd, mi).
+  - `MathUtils.calculate_uv_padding(map_size: int, normalize: bool = False, factor: int = 256) -> float` *(static)* — Texture gutter width for a given map size — one rule, every consumer.
+  - `MathUtils.udim_to_tile(udim: int) -> Tuple[int, int]` *(static)* — UDIM tile number to its (u, v) tile offset — one rule, every packer.
+  - `MathUtils.max_axis_skew(axes, degenerate_length: float = 1e-09) -> float` *(static)* — Worst pairwise misalignment of a matrix's axis vectors — one rule, every consumer.
   - `MathUtils.linear_sum_assignment(cost_matrix: Sequence[Sequence[float]], maximize: bool = False) -> Tuple[List[int], List[int]]` *(static)* — Solve the linear sum assignment problem (Hungarian algorithm).
   - `MathUtils.kmeans_clustering(points: Sequence[Sequence[float]], k: int, max_iterations: int = 30, seed_indices: Optional[List[int]] = None) -> List[List[int]]` *(static)* — Perform K-Means clustering on a set of points.
   - `MathUtils.kmeans_1d(values: Sequence[float], k: int = 3, max_iterations: int = 10) -> Tuple[List[float], List[List[float]]]` *(static)* — Perform 1D K-Means clustering to find natural breakpoints in scalar data.
@@ -1352,6 +1436,7 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.point_segment_distance(p: Sequence[float], a: Sequence[float], b: Sequence[float]) -> float` *(static)* — Perpendicular distance from point ``p`` to the segment ``a``-``b``.
   - `MathUtils.nearest_power_of_two(value: int) -> int` *(static)* — Finds the nearest power of two for a given integer without using the math module.
   - `MathUtils.is_close_to_whole(value: float, tolerance: float = 0.0001) -> bool` *(static)* — Check if a float value is close to a whole number within tolerance.
+  - `MathUtils.step_offset(value: float, step: float, direction: int, snap: bool = False, tolerance: float = 1e-06) -> float` *(static)* — Offset that advances *value* one *step* along *direction* on a grid anchored at 0.
   - `MathUtils.round_value(value: float, mode: str = 'none', max_distance: float = 1.5) -> Union[int, float]` *(static)* — General-purpose rounding function with multiple modes.
   - `MathUtils.round_to_preferred(value: float, max_distance: float = 1.5) -> int` *(static)* — Round to aesthetically pleasing 'round' numbers (conservative approach).
   - `MathUtils.round_to_aggressive_preferred(cls, value: float) -> int` *(class)* — Round to aesthetically pleasing 'round' numbers (aggressive approach).

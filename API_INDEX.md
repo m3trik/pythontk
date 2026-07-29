@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-07-25_
+_Generated: 2026-07-29_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -186,6 +186,16 @@ _Generated: 2026-07-25_
 - `class OutputTemplates`
   - methods: get, resolve
 
+### `core_utils/engines/textures/region_masks.py` — Region-mask engine — named face-group masks that gate texture regions at runtime.
+- `class RegionGroup`
+  - methods: to_dict, coerce
+- `class RegionMaskManifest`
+  - methods: vertex_color, channels, to_dict, to_json, from_dict, from_json, save, load
+- `class RegionGroupRegistry`
+  - methods: empty, read, write, sanitize, groups, next_slot, add, remove, set_default, set_attr, compact, set_encoding, manifest
+- `class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`
+  - methods: groups, add_group, validate, rasterize, write, preview
+
 ### `core_utils/execution_monitor/_dialog_viewer.py` — Subprocess-based dialog viewer for custom button labels.
 - `run(title: str, message: str, force_label: str | None = None)`
 
@@ -315,13 +325,17 @@ _Generated: 2026-07-25_
 - `class SingletonMixin`
   - methods: instance, has_instance, reset_instance
 
+### `core_utils/status_badge.py` — Shields.io status badges embedded in a markdown file.
+- `class StatusBadge(_StatusBadgeInternal)`
+  - methods: url, render, test_status, update, update_test_badge
+
 ### `core_utils/symbol_record.py` — SymbolRecord - the shared public-API symbol shape.
 - `class SymbolRecord`
   - methods: as_dict, as_json, to_registry_row
 
 ### `core_utils/task_factory.py` — Generic task/check pipeline primitive -- host- and Qt-free.
 - `class TaskFactory`
-  - methods: run_tasks, run_tasks_by_category
+  - methods: stage_deferred_restore, run_deferred_restores, run_tasks, run_tasks_by_category
 
 ### `core_utils/template_set.py` — A discoverable, user-extensible collection of schema-validated template files.
 - `class TemplateSet`
@@ -362,6 +376,11 @@ _Generated: 2026-07-25_
 - `class UsdMeshWriter`
   - methods: write, from_obj, obj_to_usd, obj_to_usdz
 
+### `file_utils/uv_unwrap/_uv_unwrap.py`
+- `class EngineSpec`
+- `class UvUnwrap(HelpMixin, _UvUnwrapInternal)`
+  - methods: resolve_method, available_engines, resolve_engine, unwrap, hard_surface, organic
+
 ### `file_utils/workspace.py` — Shared project-workspace model + ``workspace.mel`` codec.
 - `class Workspace(_WorkspaceInternal)`
   - methods: marker_path, is_marked, load, save, create, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing, parse_workspace_mel, write_workspace_mel
@@ -378,9 +397,14 @@ _Generated: 2026-07-25_
 - `class RailSurface`
   - methods: grid_points
 
+### `geo_utils/uv_pack.py` — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
+- `class PackIslandsResult`
+- `class UvPack(HelpMixin)`
+  - methods: resolve, available, pack_islands
+
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, compute_atlas_layout, atlas_pixel_rects, inset_atlas_rects, assemble_atlas, radial_gradient, rasterize_silhouette, convert_rgb_to_gray, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, compute_atlas_layout, atlas_pixel_rects, inset_atlas_rects, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -400,7 +424,7 @@ _Generated: 2026-07-25_
 
 ### `math_utils/_math_utils.py`
 - `class MathUtils(HelpMixin)`
-  - methods: eval_expression, convert_length_unit, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance
+  - methods: eval_expression, convert_length_unit, calculate_uv_padding, udim_to_tile, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance
 
 ### `math_utils/noise.py`
 - `class BandLimitedNoise`

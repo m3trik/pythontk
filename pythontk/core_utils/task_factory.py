@@ -17,7 +17,7 @@ byte-identical in mayatk and blendertk; now the single source of truth.
 import contextlib
 import time
 from inspect import signature
-from typing import Dict, Any
+from typing import Callable, Dict, Any
 
 
 class TaskFactory:
@@ -26,6 +26,59 @@ class TaskFactory:
     def __init__(self, logger):
         self.logger = logger
         self._method_cache = {}
+        #: Restores registered by :meth:`stage_deferred_restore`, keyed so the
+        #: first stager of a given state wins. Insertion-ordered; run LIFO.
+        self._deferred_restores: Dict[str, Callable] = {}
+
+    # ------------------------------------------------------------------
+    # Deferred restores — the counterpart to the set_/revert_ pair
+    # ------------------------------------------------------------------
+
+    def stage_deferred_restore(self, key: str, restore: Callable) -> bool:
+        """Register *restore* to run **after** the caller's real work — once per *key*.
+
+        The ``set_<x>``/``revert_<x>`` pair runs its revert when
+        :meth:`run_tasks` returns (see :meth:`_get_revert_method`), i.e. *before*
+        the caller does whatever the tasks were preparing for. That is correct
+        only for mutations the real work does not read. Anything the work reads
+        as it runs — an exporter's working unit, its frame range, transient
+        scene objects that must ship and then vanish — cannot use that pair
+        without becoming inert, and stages here instead: the caller runs
+        :meth:`run_deferred_restores` once the work is done (typically from a
+        ``finally``, so every exit path is covered).
+
+        Keying makes staging idempotent and gives the *first* stager priority,
+        so a later task that builds on an already-staged mutation (widening a
+        frame range another task set) still restores the true original.
+
+        Parameters:
+            key: Identity of the state being staged.
+            restore: Zero-arg callable that puts the state back. Capture the
+                original value in its closure — nothing is stored for it.
+
+        Returns:
+            True when this call registered the restore (i.e. it was first).
+        """
+        if key in self._deferred_restores:
+            return False
+        self._deferred_restores[key] = restore
+        return True
+
+    def run_deferred_restores(self) -> None:
+        """Run + clear every restore staged by :meth:`stage_deferred_restore`.
+
+        LIFO, matching :meth:`_revert_states`. Each restore is isolated — a
+        failure is logged, never re-raised, since this normally runs from a
+        ``finally`` where raising would mask the original error. The registry is
+        cleared regardless, so a failed restore cannot make the next run treat
+        its stale key as already staged.
+        """
+        restores, self._deferred_restores = self._deferred_restores, {}
+        for key, restore in reversed(restores.items()):
+            try:
+                restore()
+            except Exception as e:
+                self.logger.warning(f"Deferred restore {key!r} failed: {e}")
 
     def _get_cached_method(self, method_name: str):
         """Get method with caching to avoid repeated getattr calls."""
@@ -282,7 +335,9 @@ class TaskFactory:
         Only ``set_<x>`` tasks pair with a ``revert_<x>``.  Note the timing:
         reverts run when ``run_tasks`` returns — BEFORE the actual export
         write — so only mutations the export itself doesn't depend on may be
-        reverted this way.
+        reverted this way. A task whose mutation the export *does* read must
+        return ``None`` (which disarms this pairing) and register its restore
+        with :meth:`stage_deferred_restore` instead.
         """
         if task_name.startswith("set_"):
             return getattr(self, f"revert_{task_name[4:]}", None)

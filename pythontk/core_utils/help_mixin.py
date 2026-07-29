@@ -122,7 +122,7 @@ class HelpMixin:
         if members is None and inherited and not brief and not sort and not private:
             # Default case: just use built-in help
             if returns:
-                return pydoc.render_doc(cls, title="%s")
+                return cls._render_plain(cls)
             help(cls)
             return None
 
@@ -157,7 +157,7 @@ class HelpMixin:
         else:
             # Use built-in help for full documentation
             if returns:
-                return pydoc.render_doc(member, title="%s")
+                return cls._render_plain(member)
             help(member)
             return None
 
@@ -344,6 +344,18 @@ class HelpMixin:
                 lines.append(f"        {line}")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _render_plain(target: Any) -> str:
+        """``pydoc`` rendering with terminal bold-overstrike stripped.
+
+        ``render_doc`` emits ``C\\bCl\\bla\\bas\\bss`` backspace pairs for bolding.
+        The printing path feeds those to the pager, which resolves them; a
+        *returned* string has no pager, and ``returns=True`` exists for
+        programmatic consumers (CLI, agent tooling, cross-process RPC) where the
+        escapes would surface as doubled-letter garbage.
+        """
+        return pydoc.plain(pydoc.render_doc(target, title="%s"))
 
     @staticmethod
     def _get_summary(docstring: str) -> str:
@@ -667,23 +679,30 @@ class HelpMixin:
             print(msg)
             return None
 
+        output = cls._signature_detail(name, member)
+        if returns:
+            return output
+        print(output)
+        return None
+
+    @classmethod
+    def _signature_detail(cls, name: str, member: Any) -> str:
+        """Render the parameter breakdown for an already-resolved *member*.
+
+        Split out from :meth:`signature` (which resolves a name against ``cls``)
+        so the same rendering serves objects that are not HelpMixin subclasses -
+        the ``python -m pythontk`` CLI inspects arbitrary resolved targets, and
+        would otherwise need its own copy of this formatting.
+        """
         if not callable(member):
-            msg = f"'{name}' is not callable"
-            if returns:
-                return msg
-            print(msg)
-            return None
+            return f"'{name}' is not callable"
 
         try:
             # Unwrap to get true signature
             unwrapped = inspect.unwrap(member)
             sig = inspect.signature(unwrapped)
         except (ValueError, TypeError) as e:
-            msg = f"Cannot retrieve signature: {e}"
-            if returns:
-                return msg
-            print(msg)
-            return None
+            return f"Cannot retrieve signature: {e}"
 
         lines = [f"{name}{sig}", ""]
         lines.append("Parameters:")
@@ -718,11 +737,7 @@ class HelpMixin:
                 f"Returns: {cls._format_annotation(sig.return_annotation)}"
             )
 
-        output = "\n".join(lines)
-        if returns:
-            return output
-        print(output)
-        return None
+        return "\n".join(lines)
 
     @staticmethod
     def _format_annotation(annotation: Any) -> str:

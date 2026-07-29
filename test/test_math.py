@@ -1002,6 +1002,63 @@ class MathTest(BaseTestCase):
         self.assertEqual(MathUtils.convert_length_unit(1, "cm", "parsec"), "Error")
         self.assertEqual(MathUtils.convert_length_unit("abc", "cm", "m"), "Error")
 
+    def test_calculate_uv_padding(self):
+        # Pixel gutter scales with the map: 1/256 of it.
+        self.assertEqual(MathUtils.calculate_uv_padding(1024), 4.0)
+        self.assertEqual(MathUtils.calculate_uv_padding(2048), 8.0)
+        self.assertEqual(MathUtils.calculate_uv_padding(4096), 16.0)
+        self.assertEqual(MathUtils.calculate_uv_padding(8192), 32.0)
+
+    def test_udim_to_tile(self):
+        # UDIM = 1001 + u + 10*v; u spans a 10-tile row, v is unbounded.
+        self.assertEqual(MathUtils.udim_to_tile(1001), (0, 0))
+        self.assertEqual(MathUtils.udim_to_tile(1010), (9, 0))  # row end
+        self.assertEqual(MathUtils.udim_to_tile(1011), (0, 1))  # wraps to next row
+        self.assertEqual(MathUtils.udim_to_tile(1012), (1, 1))
+        self.assertEqual(MathUtils.udim_to_tile(1101), (0, 10))
+
+    def test_calculate_uv_padding_normalized_is_map_size_invariant(self):
+        # The property packers rely on: the normalized gutter is 1/factor for
+        # EVERY map size, so baking it into a pack call is resolution-safe.
+        expected = 1 / 256
+        for size in (256, 512, 1024, 2048, 4096, 8192):
+            self.assertEqual(
+                MathUtils.calculate_uv_padding(size, normalize=True), expected
+            )
+        # A custom factor moves both forms together.
+        self.assertEqual(MathUtils.calculate_uv_padding(1024, factor=128), 8.0)
+        self.assertEqual(
+            MathUtils.calculate_uv_padding(1024, normalize=True, factor=128), 1 / 128
+        )
+
+    def test_max_axis_skew_orthogonal_reads_zero(self):
+        # Identity and pure (non-uniform) scale keep axes perpendicular.
+        self.assertEqual(
+            MathUtils.max_axis_skew([(1, 0, 0), (0, 1, 0), (0, 0, 1)]), 0.0
+        )
+        self.assertEqual(
+            MathUtils.max_axis_skew([(3, 0, 0), (0, 1, 0), (0, 0, 0.5)]), 0.0
+        )
+        # A rotated but orthogonal basis still reads ~0.
+        s = math.sqrt(0.5)
+        self.assertAlmostEqual(
+            MathUtils.max_axis_skew([(s, s, 0), (-s, s, 0), (0, 0, 1)]), 0.0
+        )
+
+    def test_max_axis_skew_measures_shear(self):
+        # X and the sheared Y axis (1,0,0)·(0.5,1,0): cos = 0.5/|Y| ≈ 0.4472.
+        skew = MathUtils.max_axis_skew([(1, 0, 0), (0.5, 1, 0), (0, 0, 1)])
+        self.assertAlmostEqual(skew, 0.5 / math.sqrt(1.25), places=9)
+        # The worst PAIR wins: a second, milder skew doesn't dilute it.
+        worse = MathUtils.max_axis_skew([(1, 0, 0), (0.5, 1, 0), (0.1, 0, 1)])
+        self.assertAlmostEqual(worse, 0.5 / math.sqrt(1.25), places=9)
+
+    def test_max_axis_skew_degenerate_axis_reads_zero(self):
+        # A zero-length axis has no direction to measure against.
+        self.assertEqual(
+            MathUtils.max_axis_skew([(0, 0, 0), (0.5, 1, 0), (0, 0, 1)]), 0.0
+        )
+
     def test_move_decimal_point_negative_places_exact(self):
         # Regression: negative `places` must stay in the exact Decimal domain.
         # Decimal(10 ** -1) captures the inexact float 0.1 -> 0.30000000000000004;
@@ -1101,6 +1158,50 @@ class MathTest(BaseTestCase):
             self.assertEqual(list(out), [255.0, 127.5, 0.0, 255.0])
         except ImportError:
             pass
+
+    def test_step_offset_relative(self):
+        """Relative mode is a plain signed step; sub-step drift is preserved."""
+        self.assertAlmostEqual(MathUtils.step_offset(0.13, 0.5, 1), 0.5)
+        self.assertAlmostEqual(MathUtils.step_offset(0.13, 0.5, -1), -0.5)
+        # A negative step is normalized — direction alone decides the sign.
+        self.assertAlmostEqual(MathUtils.step_offset(0.13, -0.5, 1), 0.5)
+        # Zero direction is a no-op, not an error.
+        self.assertEqual(MathUtils.step_offset(0.13, 0.5, 0), 0.0)
+
+    def test_step_offset_snap(self):
+        """Snap mode always lands on a multiple of the step."""
+        for value, step, direction, expected in (
+            (0.13, 0.5, 1, 0.37),  # off-grid: absorbs the drift first
+            (0.13, 0.5, -1, -0.13),
+            (0.5, 0.5, 1, 0.5),  # on-grid: advances a full step
+            (0.5, 0.5, -1, -0.5),
+            (0.0, 1.0, 1, 1.0),
+            (2.0, 1.0, -1, -1.0),
+            (-0.25, 0.5, 1, 0.25),  # negative UV space
+        ):
+            with self.subTest(value=value, step=step, direction=direction):
+                offset = MathUtils.step_offset(value, step, direction, snap=True)
+                self.assertAlmostEqual(offset, expected)
+                # The landing point is on the grid.
+                self.assertAlmostEqual((value + offset) % step, 0.0, places=6)
+
+    def test_step_offset_snap_float_error_is_on_grid(self):
+        """A value on a grid line only up to float error still advances a full step.
+
+        Without the tolerance this rounds the other way and the move collapses to
+        a ~0 offset, which reads as a dead button.
+        """
+        self.assertAlmostEqual(
+            MathUtils.step_offset(0.9999999, 0.5, 1, snap=True), 0.5, places=5
+        )
+        self.assertAlmostEqual(
+            MathUtils.step_offset(1.0000001, 0.5, -1, snap=True), -0.5, places=5
+        )
+
+    def test_step_offset_zero_step_raises(self):
+        with self.assertRaises(ValueError):
+            MathUtils.step_offset(0.13, 0.0, 1)
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

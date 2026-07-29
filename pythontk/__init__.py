@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.8.94"
+__version__ = "0.8.96"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -21,6 +21,7 @@ DEFAULT_INCLUDE = {
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",
     "file_utils.mesh_convert._mesh_convert": "MeshConvert",
+    "file_utils.uv_unwrap._uv_unwrap": "UvUnwrap",
     # Zero-dep USD primitives: sniffing, spec-compliant USDZ packaging, and a
     # usda mesh author + OBJ converters (the no-DCC publish path). DCC-native
     # USD I/O lives downstream in mayatk/blendertk ``env_utils.usd``.
@@ -48,6 +49,7 @@ DEFAULT_INCLUDE = {
     "geo_utils.polyline": "Polyline",
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",
+    "geo_utils.uv_pack": ["UvPack", "PackIslandsResult"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
         "ShotStore",
@@ -109,6 +111,12 @@ DEFAULT_INCLUDE = {
         "NormalOutputMode",
     ],
     "core_utils.engines.textures.map_optimizer": ["MapOptimizer", "Op"],
+    "core_utils.engines.textures.region_masks": [
+        "RegionGroup",
+        "RegionGroupRegistry",
+        "RegionMaskManifest",
+        "RegionMaskPacker",
+    ],
     "core_utils.engines.textures.mat_report": ["MatReport"],
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
@@ -125,6 +133,7 @@ DEFAULT_INCLUDE = {
     "core_utils.module_reloader": ["ModuleReloader", "ReloadReport", "reload_package"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
+    "core_utils.status_badge": ["StatusBadge"],
     "core_utils.app_launcher": "AppLauncher",
     "core_utils.app_installer": "AppInstaller",
     "core_utils.app_handoff": [

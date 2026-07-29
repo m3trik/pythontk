@@ -18,7 +18,6 @@ import argparse
 import datetime
 import io
 import os
-import re
 import sys
 import unittest
 from pathlib import Path
@@ -223,58 +222,28 @@ class DetailedTestResult(unittest.TextTestResult):
 def update_readme_badge(passed: int, failed: int, readme_path: Path) -> bool:
     """Update the README with a test status badge.
 
+    Thin wrapper over the ecosystem-wide SSoT (``ptk.StatusBadge``) so every
+    package's badge counts the same unit -- individual test cases, skips
+    excluded. See m3trik/docs/TEST_BADGE_STANDARD.md.
+
     Parameters:
-        passed: Number of passed tests.
-        failed: Number of failed tests.
+        passed: Number of passed tests (skips excluded).
+        failed: Number of failed tests (failures + errors).
         readme_path: Path to the README.md file.
 
     Returns:
         True if README was updated successfully.
     """
-    if not readme_path.exists():
-        print(f"README not found at {readme_path}")
+    from pythontk.core_utils.status_badge import StatusBadge
+
+    ok = StatusBadge.update_test_badge(
+        readme_path, passed, failed, test_dir=Path(__file__).resolve().parent
+    )
+    if not ok:
+        print(f"README badge not updated (missing or unwritable): {readme_path}")
         return False
 
-    content = readme_path.read_text(encoding="utf-8")
-
-    if failed == 0:
-        color = "brightgreen"
-        status = f"{passed} passed"
-    elif passed == 0:
-        color = "red"
-        status = f"{failed} failed"
-    else:
-        color = "orange"
-        status = f"{passed} passed, {failed} failed"
-
-    # Link target computed relative to the README's location
-    # (docs/README.md -> ../test/), so a regenerate can't break the link.
-    test_dir = Path(__file__).resolve().parent
-    link_target = Path(os.path.relpath(test_dir, readme_path.parent)).as_posix() + "/"
-    new_badge = f"[![Tests](https://img.shields.io/badge/Tests-{status.replace(' ', '%20').replace(',', '')}-{color}.svg)]({link_target})"
-
-    # Check if a Tests badge already exists and replace it
-    tests_badge_pattern = (
-        r"\[!\[Tests\]\(https://img\.shields\.io/badge/Tests-[^\)]+\)\]\([^\)]+\)"
-    )
-
-    if re.search(tests_badge_pattern, content):
-        # Replace existing badge
-        new_content = re.sub(tests_badge_pattern, new_badge, content)
-    else:
-        # Add badge after the Python badge line
-        python_badge_pattern = r"(\[!\[Python\]\(https://img\.shields\.io/badge/Python-[^\)]+\)\]\([^\)]+\))"
-        match = re.search(python_badge_pattern, content)
-        if match:
-            # Insert after Python badge
-            insert_pos = match.end()
-            new_content = content[:insert_pos] + "\n" + new_badge + content[insert_pos:]
-        else:
-            # Fallback: add at the very beginning
-            new_content = new_badge + "\n" + content
-
-    readme_path.write_text(new_content, encoding="utf-8")
-    print(f"\nREADME badge updated: {status}")
+    print(f"\nREADME badge updated: {StatusBadge.test_status(passed, failed)[0]}")
     return True
 
 

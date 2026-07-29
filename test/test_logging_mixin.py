@@ -195,6 +195,20 @@ class LoggerExtTest(BaseTestCase):
         self.logger.hide_logger_name(True)
         self.assertTrue(self.logger._hide_logger_name)
 
+    def test_log_link_params_accept_text_and_action_keys(self):
+        """Query params must accept any key — including ``text`` and
+        ``action``. Regression: a copy-action link
+        (``log_link("copy", "copy", text=payload)``) raised
+        ``TypeError: got multiple values for argument 'text'`` because the
+        label/verb parameters were not positional-only.
+        """
+        LoggerExt.patch(self.logger)
+        link = self.logger.log_link("copy", "copy", text="a b", action="x")
+        self.assertIn('href="action://copy?', link)
+        self.assertIn("text=a+b", link)
+        self.assertIn("action=x", link)
+        self.assertIn(">copy</a>", link)
+
     def test_spam_prevention_enabled(self):
         """Test spam prevention is enabled by default."""
         LoggerExt.patch(self.logger)

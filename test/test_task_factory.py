@@ -65,6 +65,14 @@ class _Recorder(TaskFactory):
         self.calls.append(("check_empty", value))
         return []  # a natural "no messages" shape -- must not crash
 
+    def set_deferred(self, value):
+        """A task whose mutation the real work READS: it must survive run_tasks."""
+        self.calls.append(("set_deferred", value))
+        self.stage_deferred_restore(
+            "deferred", lambda: self.calls.append(("restore_deferred",))
+        )
+        return None  # disarms the too-early set_/revert_ pairing
+
 
 class TaskFactoryTest(unittest.TestCase):
     def test_no_tasks_returns_true(self):
@@ -149,6 +157,43 @@ class TaskFactoryTest(unittest.TestCase):
         r = _Recorder()
         r.run_tasks({"task_two": {"a": 3, "b": 4}})
         self.assertIn(("task_two", 3, 4), r.calls)
+
+    # -- deferred restores: the counterpart to the too-early set_/revert_ pair --
+
+    def test_deferred_restore_survives_run_tasks(self):
+        """The whole point: a mutation the caller's real work READS must still
+        be in place when run_tasks returns, unlike a revert_-paired one."""
+        r = _Recorder()
+        r.run_tasks({"set_deferred": True})
+        self.assertNotIn(("restore_deferred",), r.calls)
+        self.assertIn("deferred", r._deferred_restores)
+
+        r.run_deferred_restores()
+        self.assertIn(("restore_deferred",), r.calls)
+        self.assertFalse(r._deferred_restores)
+
+    def test_deferred_restore_is_first_wins_per_key(self):
+        """A later stager of the same key must not displace the first
+        capture — that is what lets one task build on another's mutation."""
+        r = _Recorder()
+        self.assertTrue(r.stage_deferred_restore("k", lambda: r.calls.append(("first",))))
+        self.assertFalse(r.stage_deferred_restore("k", lambda: r.calls.append(("second",))))
+        r.run_deferred_restores()
+        self.assertEqual([c for c in r.calls if c[0] in ("first", "second")], [("first",)])
+
+    def test_deferred_restores_run_lifo_and_isolate_failures(self):
+        r = _Recorder()
+        r.stage_deferred_restore("a", lambda: r.calls.append(("restore_a",)))
+        r.stage_deferred_restore("boom", lambda: 1 / 0)
+        r.stage_deferred_restore("b", lambda: r.calls.append(("restore_b",)))
+
+        r.run_deferred_restores()  # must not raise — it runs from a finally
+        self.assertEqual(
+            [c[0] for c in r.calls if c[0].startswith("restore_")],
+            ["restore_b", "restore_a"],
+        )
+        # Cleared even though one restore raised, so the next run re-stages.
+        self.assertFalse(r._deferred_restores)
 
 
 if __name__ == "__main__":

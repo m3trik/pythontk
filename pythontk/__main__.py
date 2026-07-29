@@ -2,21 +2,23 @@
 # coding=utf-8
 """Command-line entry to HelpMixin introspection.
 
-    python -m pythontk.help <dotted.path> [member] [options]
+    python -m pythontk <dotted.path> [member] [options]
 
 Resolve a class or object by dotted path and print its help, source, location,
 or signature - the same introspection ``HelpMixin`` exposes in-process, made
-reachable from a shell or an agent without writing a REPL snippet.
+reachable from a shell or an agent without writing a REPL snippet. Unlike the
+static API registry it reads the *live* object, so ``--source``/``--where``
+report what is actually loaded.
 
 Everything in this module is private on purpose: it is a CLI shell, not public
-API, so the registry walker (which skips modules with no public surface) leaves
-it out.
+API. ``__main__.py`` is also skipped outright by the registry walker, so the
+public surface is unaffected.
 
 Examples:
-    python -m pythontk.help pythontk.CoreUtils
-    python -m pythontk.help pythontk.CoreUtils listify --json
-    python -m pythontk.help pythontk.FileUtils get_file_contents --source
-    python -m pythontk.help pythontk.CoreUtils --members methods --brief
+    python -m pythontk pythontk.CoreUtils
+    python -m pythontk pythontk.CoreUtils listify --json
+    python -m pythontk pythontk.FileUtils get_file_contents --source
+    python -m pythontk pythontk.CoreUtils --members methods --brief
 """
 import importlib
 import inspect
@@ -36,9 +38,16 @@ def _resolve(dotted: str):
     """
     parts = dotted.split(".")
     for i in range(len(parts), 0, -1):
+        candidate = ".".join(parts[:i])
         try:
-            obj = importlib.import_module(".".join(parts[:i]))
-        except ImportError:
+            obj = importlib.import_module(candidate)
+        except ModuleNotFoundError as exc:
+            # Only a genuinely absent candidate should fall through to a shorter
+            # prefix. A ModuleNotFoundError naming something *else* means the
+            # module exists but its own imports are broken - reporting the target
+            # as merely "unresolvable" would bury the actual cause.
+            if exc.name and not candidate.startswith(exc.name):
+                raise
             continue
         try:
             for attr in parts[i:]:
@@ -69,46 +78,49 @@ def _main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     obj = _resolve(args.target)
-    is_help_cls = isinstance(obj, type) and issubclass(obj, HelpMixin)
 
-    # Class + member: use the class's own HelpMixin methods (richest output).
-    if is_help_cls and args.member:
-        if args.source:
+    # A HelpMixin subclass answers for itself - its own methods give the richest
+    # output, and each takes the member name as an optional first argument, so
+    # the whole-class and single-member cases are one path. ``members``/``brief``
+    # are ignored by the member-specific branches inside ``help``.
+    if isinstance(obj, type) and issubclass(obj, HelpMixin):
+        if args.signature:
+            if not args.member:
+                # ASCII only: this reaches stderr, which is cp1252 on a stock
+                # Windows console and would raise on a fancier character.
+                raise SystemExit(
+                    "--signature needs a member, e.g. pythontk.CoreUtils listify"
+                )
+            print(obj.signature(args.member, returns=True))
+        elif args.source:
             print(obj.source(args.member, returns=True))
         elif args.where:
             print(obj.where(args.member, returns=True))
-        elif args.signature:
-            print(obj.signature(args.member, returns=True))
         elif args.json:
-            print(obj.help(args.member, as_json=True))
+            print(obj.help(args.member, members=args.members, as_json=True))
         else:
-            print(obj.help(args.member, brief=args.brief, returns=True))
-        return 0
-
-    # Class alone.
-    if is_help_cls:
-        if args.source:
-            print(obj.source(returns=True))
-        elif args.where:
-            print(obj.where(returns=True))
-        elif args.json:
-            print(obj.help(members=args.members, brief=args.brief, as_json=True))
-        else:
-            print(obj.help(members=args.members, brief=args.brief, returns=True))
+            print(
+                obj.help(
+                    args.member, members=args.members, brief=args.brief, returns=True
+                )
+            )
         return 0
 
     # Any other object (module, function, non-HelpMixin class).
+    name = args.member or getattr(obj, "__name__", str(obj))
     if args.member:
         obj = getattr(obj, args.member)
-    if args.source:
-        target = inspect.unwrap(obj) if callable(obj) else obj
+    target = inspect.unwrap(obj) if callable(obj) else obj
+    if args.signature:
+        # Reuses HelpMixin's renderer rather than reimplementing it here.
+        print(HelpMixin._signature_detail(name, obj))
+    elif args.source:
         try:
             print(inspect.getsource(target))
         except (OSError, TypeError):
             print("no source available")
     elif args.where:
         try:
-            target = inspect.unwrap(obj) if callable(obj) else obj
             src_file = inspect.getsourcefile(target)
             _, line = inspect.getsourcelines(target)
             print(f"{src_file}:{line}" if src_file else "built-in")
