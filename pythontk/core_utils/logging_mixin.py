@@ -876,7 +876,7 @@ class LoggerExt:
         return width
 
     @staticmethod
-    def _log_link(text: str, action: str, **params: str) -> str:
+    def _log_link(text: str, action: str, /, **params: str) -> str:
         """Return an HTML ``<a>`` tag for embedding clickable links in log messages.
 
         The link uses a custom ``action://`` URI scheme that is never opened
@@ -887,6 +887,9 @@ class LoggerExt:
             text:   Visible link label (HTML-escaped automatically).
             action: Action verb (e.g. ``"select"``, ``"reveal"``).
             **params: Arbitrary key-value pairs appended as query string.
+                Any key is valid — ``text``/``action`` included (the label
+                and verb parameters are positional-only), so e.g. a copy
+                action can pass its payload as ``text=...``.
 
         Returns:
             An ``<a href="action://ACTION?k=v&…">text</a>`` string that can

@@ -132,6 +132,95 @@ class MathUtils(HelpMixin):
             return "Error"
 
     @staticmethod
+    def calculate_uv_padding(
+        map_size: int, normalize: bool = False, factor: int = 256
+    ) -> float:
+        """Texture gutter width for a given map size — one rule, every consumer.
+
+        The gutter (bleed margin between UV islands, and between an island and the
+        tile edge) has to scale with the map or it is either wasteful at high
+        resolutions or too thin to survive mip-mapping at low ones. Tying it to a
+        fixed fraction of the map does both.
+
+        Parameters:
+            map_size (int): Map size in pixels (width or height).
+            normalize (bool): Return the padding as a fraction of the map instead
+                of pixels.
+            factor (int): Divisor setting the gutter. 256 (default) = 1/256 of the map.
+
+        Returns:
+            float: Padding in pixels, or normalized to 0-1 units when *normalize*.
+
+        The normalized result is map-size-INVARIANT — ``(size / factor) / size`` is
+        ``1 / factor`` for every size — which is what makes it safe to bake into a
+        packer: the same call yields 4 px at 1024, 8 px at 2048, 16 px at 4096, and
+        always the same fraction of the tile.
+
+        Example:
+            MathUtils.calculate_uv_padding(4096)                  -> 16.0
+            MathUtils.calculate_uv_padding(4096, normalize=True)  -> 0.00390625
+        """
+        padding = map_size / factor
+        return padding / map_size if normalize else padding
+
+    @staticmethod
+    def udim_to_tile(udim: int) -> Tuple[int, int]:
+        """UDIM tile number to its (u, v) tile offset — one rule, every packer.
+
+        The UDIM scheme is ``1001 + u + 10 * v`` with u spanning a 10-tile row
+        (0-9) and v unbounded; the returned offsets are the tile's bottom-left
+        corner in UV units, ready to anchor a pack box.
+
+        Parameters:
+            udim (int): UDIM tile number, e.g. 1001.
+
+        Returns:
+            tuple: ``(u, v)`` integer tile offsets.
+
+        Example:
+            MathUtils.udim_to_tile(1001)  -> (0, 0)
+            MathUtils.udim_to_tile(1012)  -> (1, 1)
+        """
+        return (udim - 1001) % 10, (udim - 1001) // 10
+
+    @staticmethod
+    def max_axis_skew(axes, degenerate_length: float = 1e-9) -> float:
+        """Worst pairwise misalignment of a matrix's axis vectors — one rule, every consumer.
+
+        Measures how far a transform's axes are from mutually perpendicular:
+        the maximum absolute cosine between any pair of the three axis vectors.
+        0.0 means a fully orthogonal basis; anything above a caller's tolerance
+        is shear. This is the condition the FBX format cannot represent (its
+        "Non-orthogonal matrix support" warning), so both DCC engines' transform
+        diagnostics share this measurement. Pure scale — uniform or not — keeps
+        axes perpendicular and reads 0.0 here.
+
+        Parameters:
+            axes: Three axis vectors (any iterables of 3 floats) — the basis
+                rows or columns of a transform matrix.
+            degenerate_length (float): Axes shorter than this are treated as
+                zero-scale; their direction is meaningless, so 0.0 is returned.
+
+        Returns:
+            float: Max abs cosine across the three axis pairs, in 0.0-1.0.
+
+        Example:
+            MathUtils.max_axis_skew([(1, 0, 0), (0, 2, 0), (0, 0, 0.5)])  -> 0.0
+            MathUtils.max_axis_skew([(1, 0, 0), (0.5, 1, 0), (0, 0, 1)])  # sheared > 0
+        """
+        vectors = [tuple(axis) for axis in axes]
+        lengths = [math.sqrt(sum(c * c for c in v)) for v in vectors]
+        if any(length < degenerate_length for length in lengths):
+            return 0.0
+        return max(
+            abs(
+                sum(a * b for a, b in zip(vectors[i], vectors[j]))
+                / (lengths[i] * lengths[j])
+            )
+            for i, j in ((0, 1), (0, 2), (1, 2))
+        )
+
+    @staticmethod
     def linear_sum_assignment(
         cost_matrix: Sequence[Sequence[float]],
         maximize: bool = False,
@@ -1529,6 +1618,59 @@ class MathUtils(HelpMixin):
             is_close_to_whole(9.9999) #returns: True
         """
         return abs(value - round(value)) <= tolerance
+
+    @staticmethod
+    def step_offset(
+        value: float,
+        step: float,
+        direction: int,
+        snap: bool = False,
+        tolerance: float = 1e-6,
+    ) -> float:
+        """Offset that advances *value* one *step* along *direction* on a grid anchored at 0.
+
+        Two modes, both returning a *relative* offset (add it to ``value``):
+
+        - ``snap=False`` (relative): a plain ``direction * step``. Any sub-step
+          drift in ``value`` is preserved.
+        - ``snap=True``: moves to the next grid line in ``direction``, so the
+          result always lands on a multiple of ``step``. A value already on a
+          grid line advances a full step; an off-grid value first absorbs the
+          drift.
+
+        Parameters:
+            value (float): The current coordinate.
+            step (float): Grid spacing. Must be non-zero; the sign is ignored.
+            direction (int): ``+1`` / ``-1``. Zero yields no offset.
+            snap (bool): Snap to the grid rather than offsetting relatively.
+            tolerance (float): Grid-line epsilon, in units of *step*, guarding
+                against a value that is on a line only up to float error being
+                treated as off-grid (which would make the button appear dead).
+
+        Returns:
+            float: The relative offset to apply to *value*.
+
+        Example:
+            step_offset(0.13, 0.5, 1) #returns: 0.5
+            step_offset(0.13, 0.5, 1, snap=True) #returns: 0.37  (lands on 0.5)
+            step_offset(0.13, 0.5, -1, snap=True) #returns: -0.13 (lands on 0.0)
+            step_offset(0.5, 0.5, 1, snap=True) #returns: 0.5    (lands on 1.0)
+        """
+        if not direction:
+            return 0.0
+        step = abs(step)
+        if not step:
+            raise ValueError("step must be non-zero.")
+
+        if not snap:
+            return step if direction > 0 else -step
+
+        quotient = value / step
+        if direction > 0:
+            line = math.floor(quotient + tolerance) + 1
+        else:
+            line = math.ceil(quotient - tolerance) - 1
+        return line * step - value
 
     @staticmethod
     def round_value(

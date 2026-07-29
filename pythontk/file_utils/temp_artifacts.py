@@ -28,6 +28,7 @@ import atexit
 import hashlib
 import os
 import tempfile
+import threading
 import time
 from typing import Any, Callable, List, NamedTuple, Optional, Sequence
 
@@ -56,6 +57,15 @@ class TempArtifacts(LoggingMixin):
 
     POLICIES = ("scoped", "session", "detached")
 
+    # Process-wide monotonic tag source. Deliberately NOT per-instance: distinct
+    # stores routinely share one dir+prefix namespace (``CachedArtifact`` builds a
+    # fresh scoped store per ``get``), and ``time_ns`` resolution on Windows
+    # (~15ms) is far coarser than the gap between two allocations - so a
+    # per-instance counter let two stores mint the same tag and hand back the same
+    # path. The lock makes the read-modify-write atomic for concurrent producers.
+    _tag_lock = threading.Lock()
+    _last_tag_ns = 0
+
     def __init__(
         self,
         prefix: str,
@@ -82,7 +92,6 @@ class TempArtifacts(LoggingMixin):
         self._tracked: List[str] = []
         self._atexit_registered = False
         self._swept = False
-        self._last_ns = 0
 
     # ------------------------------------------------------------------ allocation
     def path(self, extension: str = ".tmp", name: Optional[str] = None) -> str:
@@ -100,13 +109,24 @@ class TempArtifacts(LoggingMixin):
         if not self._swept:
             self._swept = True
             self.sweep_stale()
-        if name is not None:
-            tag = name
-        else:  # monotonic per instance — Windows' time_ns is too coarse to be unique
-            ns = max(time.time_ns(), self._last_ns + 1)
-            self._last_ns = ns
-            tag = f"{ns:x}"
+        tag = name if name is not None else f"{self._next_tag_ns():x}"
         return self.register(os.path.join(self.dir, f"{self.prefix}_{tag}{extension}"))
+
+    @classmethod
+    def _next_tag_ns(cls) -> int:
+        """A strictly-increasing ns-scale tag, unique process-wide.
+
+        ``time.time_ns`` alone cannot carry this: its resolution is coarser than
+        the interval between two allocations, so the counter floor supplies the
+        distinctness the clock can't. Writes target :class:`TempArtifacts`
+        explicitly rather than ``cls`` - assigning through a subclass would bind a
+        *shadowing* class attribute and hand that subclass its own counter,
+        reintroducing the very collision across the base/subclass pair.
+        """
+        with TempArtifacts._tag_lock:
+            ns = max(time.time_ns(), TempArtifacts._last_tag_ns + 1)
+            TempArtifacts._last_tag_ns = ns
+            return ns
 
     def register(self, path: str) -> str:
         """Adopt *path* (e.g. a side artifact a tool wrote) into this lifecycle."""

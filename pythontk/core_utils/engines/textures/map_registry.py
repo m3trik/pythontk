@@ -423,6 +423,21 @@ class MapRegistry(SingletonMixin):
             workflows=[WF.STD],
             resolution_critical=True,
         ),
+        "Emissive_Mask": MapType(
+            name="Emissive_Mask",
+            # Region-group gate mask (see engines/textures/region_masks.py):
+            # per-channel group coverage, not color data — linear, never packed
+            # into other maps, and safe to scale down with the other masks.
+            aliases=[
+                "EmissiveMask",
+                "EmissiveGroups",
+                "EMask",
+            ],
+            color_space="Linear",
+            mode="RGBA",
+            default_background=(0, 0, 0, 0),
+            scale_as_mask=True,
+        ),
         "Detail_Mask": MapType(
             name="Detail_Mask",
             aliases=[

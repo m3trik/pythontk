@@ -240,6 +240,21 @@ class TestAppLauncherSessions(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             AppLauncher.launch_in_session("ls", session=1)
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows-only API")
+    def test_active_console_session_id_no_session_returns_none(self):
+        """WTSGetActiveConsoleSessionId returns DWORD 0xFFFFFFFF when no user
+        is logged on — but ctypes' default c_int restype surfaces that as -1,
+        which the sentinel comparison must still recognize."""
+        import ctypes
+        from unittest.mock import patch
+
+        with patch.object(
+            ctypes.windll.kernel32,
+            "WTSGetActiveConsoleSessionId",
+            return_value=-1,
+        ):
+            self.assertIsNone(AppLauncher.active_console_session_id())
+
 
 if __name__ == "__main__":
     unittest.main()

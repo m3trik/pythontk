@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-2148%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-2273%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -214,7 +214,7 @@ Beyond the data-type utilities, `core_utils` supplies the machinery the layers a
 - **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges and of mayatk's `MayaConnection`.
 - **`QcLog` / `QcGate`** — structured run logs and threshold-based acceptance gates for batch pipelines.
 - **`HierarchyPath` / `HierarchyIndexer` / `HierarchyMatching` / `HierarchyAnalyzer` / `HierarchyDiff`** — delimited-path hierarchy toolkit: `HierarchyPath` is the single home for path-string primitives (namespace cleaning, split/join, leaf/parent/tail); indexing and exact / tail-path / fuzzy matching build on it; the analyzer detects *moved* items (deterministic best-pair assignment), and `HierarchyDiff.from_differences` turns analyzer records into a JSON-serializable diff.
-- **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in.
+- **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in. Reachable from a shell (or an agent) without a REPL snippet via `python -m pythontk <dotted.path> [member] [--json|--source|--where|--signature|--brief]`; it reads the *live* object, so it answers what the static [`API_REGISTRY.md`](../API_REGISTRY.md) cannot.
 
 ## Links
 

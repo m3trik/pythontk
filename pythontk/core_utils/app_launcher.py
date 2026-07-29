@@ -177,7 +177,9 @@ class AppLauncher:
         try:
             import ctypes
 
-            sid = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId()
+            # ctypes' default c_int restype surfaces the DWORD sentinel
+            # 0xFFFFFFFF as -1; mask back to unsigned so the check fires.
+            sid = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId() & 0xFFFFFFFF
             if sid == 0xFFFFFFFF:
                 return None
             return int(sid)

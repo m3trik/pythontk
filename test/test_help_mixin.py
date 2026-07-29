@@ -85,6 +85,24 @@ class HelpMixinTest(BaseTestCase):
         self.assertIsInstance(result, str)
         self.assertIn("SampleClass", result)
 
+    def test_help_returns_plain_text_not_terminal_overstrike(self):
+        """Regression: ``returns=True`` must not leak pydoc's bold overstrike.
+
+        ``pydoc.render_doc`` emits ``C\\bCl\\bla\\bas\\bss`` backspace sequences for
+        terminal bolding. The printing path hands those to the pager, which
+        resolves them - but ``returns=True`` exists precisely for programmatic
+        consumers (the ``python -m pythontk`` CLI, agent tooling, cross-process
+        RPC), where they surface as doubled-letter garbage in a captured string.
+        Both the class and single-member paths render through ``render_doc``.
+        """
+        for label, result in (
+            ("class", SampleClass.help(returns=True)),
+            ("member", SampleClass.help("public_method", returns=True)),
+        ):
+            with self.subTest(path=label):
+                self.assertNotIn("\x08", result)
+                self.assertNotIn("SSaammppllee", result)
+
     def test_help_returns_none_when_returns_false(self):
         """Test that help() returns None when printing (default)."""
         # Capture stdout

@@ -25,7 +25,9 @@ import os
 import time
 import shutil
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 from pythontk.file_utils.temp_artifacts import CachedArtifact, TempArtifacts
 
@@ -58,6 +60,48 @@ class TestAllocation(TempArtifactsBase):
             self.assertEqual(os.path.dirname(p), self.dir)
             self.assertTrue(os.path.basename(p).startswith("myprefix_"))
             self.assertTrue(p.endswith(".fbx"))
+
+    def test_path_is_unique_across_instances_in_one_clock_tick(self):
+        """Regression: the tag counter must be process-wide, not per-instance.
+
+        Distinct stores routinely share one dir+prefix namespace -
+        ``CachedArtifact`` builds a fresh scoped store per ``get``. The counter
+        was reset to 0 in ``__init__``, so two stores allocating inside a single
+        ``time_ns`` tick (Windows' ~15ms resolution is far coarser than two
+        back-to-back allocations) both minted the same tag and handed back the
+        *same path* - the producer's output silently overwriting the other's.
+        """
+        frozen = 1_700_000_000_000_000_000
+        with mock.patch.object(time, "time_ns", return_value=frozen):
+            a = TempArtifacts("shared", dir=self.dir).path(extension=".out")
+            b = TempArtifacts("shared", dir=self.dir).path(extension=".out")
+        self.assertNotEqual(a, b)
+
+    def test_path_is_unique_across_threads(self):
+        """The tag counter's read-modify-write must be atomic.
+
+        Concurrent producers share the class-level counter; without the lock two
+        threads can read the same value and mint the same tag. Time is frozen so
+        the counter - not the clock - is what has to provide the distinctness.
+        """
+        frozen = 1_700_000_000_000_000_000
+        results, lock = [], threading.Lock()
+
+        def allocate():
+            ta = TempArtifacts("threaded", dir=self.dir)
+            paths = [ta.path(extension=".out") for _ in range(20)]
+            with lock:
+                results.extend(paths)
+
+        with mock.patch.object(time, "time_ns", return_value=frozen):
+            threads = [threading.Thread(target=allocate) for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        self.assertEqual(len(results), 160)
+        self.assertEqual(len(set(results)), 160)
 
     def test_path_fixed_name_is_deterministic(self):
         ta = TempArtifacts("pfx", dir=self.dir)
