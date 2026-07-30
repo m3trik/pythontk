@@ -1202,6 +1202,84 @@ class MathTest(BaseTestCase):
         with self.assertRaises(ValueError):
             MathUtils.step_offset(0.13, 0.0, 1)
 
+    def test_next_clear_offset_parks_against_the_nearest_blocker(self):
+        box = (0.0, 0.1, 0.3, 0.3)
+        blocker = (0.0, 1.0, 0.3, 1.4)
+
+        offset = MathUtils.next_clear_offset(box, [blocker], 1, 1, margin=0.002)
+
+        # The box's top edge lands one margin under the blocker's bottom.
+        self.assertAlmostEqual(box[3] + offset, blocker[1] - 0.002)
+
+    def test_next_clear_offset_skips_a_gap_too_small_to_fit(self):
+        """The whole point of validating fit: a naive nearest-edge rule would
+        land the box in the A-B gap and overlap A."""
+        a, b = (0.0, 1.0, 0.3, 1.4), (0.0, 1.5, 0.3, 1.9)  # 0.1 gap
+        box = (0.0, 0.1, 0.3, 0.3)  # 0.2 tall — cannot fit between them
+        margin = 0.002
+
+        first = MathUtils.next_clear_offset(box, [a, b], 1, 1, margin=margin)
+        parked = (box[0], box[1] + first, box[2], box[3] + first)
+        self.assertAlmostEqual(parked[3], a[1] - margin)  # under A
+
+        second = MathUtils.next_clear_offset(parked, [a, b], 1, 1, margin=margin)
+        landed = (parked[0], parked[1] + second, parked[2], parked[3] + second)
+        self.assertAlmostEqual(landed[1], b[3] + margin)  # jumped clear of B
+        # It overlaps neither shell it passed.
+        for other in (a, b):
+            self.assertFalse(other[3] > landed[1] and other[1] < landed[3])
+
+    def test_next_clear_offset_walk_is_reversible(self):
+        a, b = (0.0, 1.0, 0.3, 1.4), (0.0, 1.5, 0.3, 1.9)
+        start = (0.0, 0.1, 0.3, 0.3)
+        margin = 0.002
+
+        box, forward = start, []
+        while (off := MathUtils.next_clear_offset(box, [a, b], 1, 1, margin=margin)):
+            forward.append(off)
+            box = (box[0], box[1] + off, box[2], box[3] + off)
+        self.assertEqual(len(forward), 2)
+
+        while (off := MathUtils.next_clear_offset(box, [a, b], 1, -1, margin=margin)):
+            box = (box[0], box[1] + off, box[2], box[3] + off)
+        # Back to the first landing spot (not the start — nothing lies below it).
+        self.assertAlmostEqual(box[3], a[1] - margin)
+
+    def test_next_clear_offset_ignores_blockers_out_of_the_lane(self):
+        """A shell beside the travel lane is not in the way."""
+        box = (0.0, 0.1, 0.3, 0.3)
+        beside = (0.5, 1.0, 0.8, 1.4)  # no u overlap
+        self.assertIsNone(MathUtils.next_clear_offset(box, [beside], 1, 1))
+        # Touching lanes don't block either (edge-adjacent, not overlapping).
+        self.assertIsNone(
+            MathUtils.next_clear_offset(box, [(0.3, 1.0, 0.6, 1.4)], 1, 1)
+        )
+
+    def test_next_clear_offset_returns_none_when_nothing_is_ahead(self):
+        box = (0.0, 1.0, 0.3, 1.2)
+        behind = (0.0, 0.1, 0.3, 0.4)
+        self.assertIsNone(MathUtils.next_clear_offset(box, [behind], 1, 1))
+        self.assertIsNone(MathUtils.next_clear_offset(box, [], 1, 1))
+        self.assertIsNone(MathUtils.next_clear_offset(box, [behind], 1, 0))
+
+    def test_next_clear_offset_already_parked_advances_past(self):
+        """A box sitting exactly at the margin must not return a ~0 offset."""
+        blocker = (0.0, 1.0, 0.3, 1.4)
+        margin = 0.002
+        parked = (0.0, 0.798, 0.3, 1.0 - margin)
+
+        offset = MathUtils.next_clear_offset(parked, [blocker], 1, 1, margin=margin)
+
+        self.assertIsNotNone(offset)
+        self.assertGreater(offset, 0.1)
+        self.assertAlmostEqual(parked[1] + offset, blocker[3] + margin)
+
+    def test_next_clear_offset_works_on_the_u_axis(self):
+        box = (0.1, 0.0, 0.3, 0.3)
+        blocker = (1.0, 0.0, 1.4, 0.3)
+        offset = MathUtils.next_clear_offset(box, [blocker], 0, 1, margin=0.002)
+        self.assertAlmostEqual(box[2] + offset, blocker[0] - 0.002)
+
     def test_uv_tile_margin_is_half_gutter_and_invariant(self):
         """The tile border is half the island gutter, at every map size."""
         for size in (1024, 2048, 4096, 8192):

@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 
 # From this package:
 from pythontk.img_utils._img_utils import ImgUtils
-from pythontk.str_utils._str_utils import StrUtils
 from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 from pythontk.core_utils.engines.textures.output_template import OutputTemplates
 from .conversions import ConversionRegistry
@@ -56,6 +55,25 @@ class TextureProcessor:
     used_maps: set = field(default_factory=set)
     created_files: set = field(default_factory=set)
     _image_cache: dict = field(default_factory=dict)
+
+    def output_path_for(self, map_type: str, ext: Optional[str] = None) -> str:
+        """The canonical path ``save_map`` writes ``map_type`` to.
+
+        Lets callers probe for an existing output (e.g. channel extraction
+        reusing a real loose map instead of overwriting it) without duplicating
+        the naming convention.
+
+        Parameters:
+            map_type: Map-type suffix (leading underscores stripped).
+            ext: Extension override; defaults to the processor's ``ext``.
+
+        Returns:
+            str: ``<output_dir>/<base_name>_<map_type>.<ext>``.
+        """
+        ext = (ext or self.ext or DEFAULT_EXTENSION).lstrip(".")
+        return os.path.join(
+            self.output_dir, f"{self.base_name}_{map_type.lstrip('_')}.{ext}"
+        )
 
     def get_cached_image(self, path: str) -> "Image.Image":
         """Load an image with caching to avoid redundant disk I/O.
@@ -134,14 +152,8 @@ class TextureProcessor:
         ]:
             ext = ALPHA_EXTENSION
 
-        # Generate output path
-        filename = StrUtils.replace_placeholders(
-            "{base_name}{suffix}.{ext}",
-            base_name=self.base_name,
-            suffix=suffix,
-            ext=ext,
-        )
-        output_path = os.path.join(self.output_dir, filename)
+        # Generate output path (same convention output_path_for exposes)
+        output_path = self.output_path_for(suffix, ext)
 
         # Ensure output directory exists
         try:
@@ -447,6 +459,18 @@ class TextureProcessor:
         """Mark map types as consumed."""
         self.used_maps.update(map_types)
 
+    def _cache_unpacked(self, **channels) -> None:
+        """Cache unpacked channel images into the inventory — gaps only.
+
+        Provided files always win: a loose Metallic supplied by the caller must
+        never be replaced by the R channel extracted from a packed map that was
+        unpacked for a *different* channel (e.g. asking MSAO for its AO used to
+        clobber a real loose Metallic with the extraction).
+        """
+        for map_type, image in channels.items():
+            if not self.inventory.get(map_type):
+                self.inventory[map_type] = image
+
     def resolve_smoothness_channel(
         self,
     ) -> Tuple[Optional[Union[str, "Image.Image"]], bool]:
@@ -638,8 +662,7 @@ class TextureProcessor:
             source_path, self.output_dir, optimize=False, save=False
         )
 
-        self.inventory["Metallic"] = metallic_img
-        self.inventory["Smoothness"] = smoothness_img
+        self._cache_unpacked(Metallic=metallic_img, Smoothness=smoothness_img)
         if self.logger:
             self.logger.info(
                 "Unpacked Metallic and Smoothness from packed map",
@@ -682,10 +705,12 @@ class TextureProcessor:
             source_path, self.output_dir, optimize=False, save=False
         )
 
-        self.inventory["Metallic"] = metallic_img
-        self.inventory["AO"] = ao_img
-        self.inventory["Ambient_Occlusion"] = self.inventory["AO"]
-        self.inventory["Smoothness"] = smoothness_img
+        self._cache_unpacked(
+            Metallic=metallic_img,
+            AO=ao_img,
+            Ambient_Occlusion=ao_img,
+            Smoothness=smoothness_img,
+        )
         if self.logger:
             self.logger.info(
                 "Unpacked Metallic, AO, and Smoothness from MSAO map",
@@ -737,10 +762,12 @@ class TextureProcessor:
             source_path, self.output_dir, optimize=False, save=False
         )
 
-        self.inventory["Metallic"] = metallic_img
-        self.inventory["Roughness"] = roughness_img
-        self.inventory["AO"] = ao_img
-        self.inventory["Ambient_Occlusion"] = self.inventory["AO"]
+        self._cache_unpacked(
+            Metallic=metallic_img,
+            Roughness=roughness_img,
+            AO=ao_img,
+            Ambient_Occlusion=ao_img,
+        )
         if self.logger:
             self.logger.info(
                 "Unpacked Metallic, Roughness, and AO from MRAO map",
@@ -786,10 +813,12 @@ class TextureProcessor:
             source_path, self.output_dir, optimize=False, save=False
         )
 
-        self.inventory["AO"] = ao_img
-        self.inventory["Ambient_Occlusion"] = self.inventory["AO"]
-        self.inventory["Roughness"] = roughness_img
-        self.inventory["Metallic"] = metallic_img
+        self._cache_unpacked(
+            AO=ao_img,
+            Ambient_Occlusion=ao_img,
+            Roughness=roughness_img,
+            Metallic=metallic_img,
+        )
         if self.logger:
             self.logger.info(
                 "Unpacked AO, Roughness, and Metallic from ORM map",
@@ -832,8 +861,7 @@ class TextureProcessor:
             source_path, self.output_dir, optimize=False, save=False
         )
 
-        self.inventory["Base_Color"] = base_color_img
-        self.inventory["Opacity"] = opacity_img
+        self._cache_unpacked(Base_Color=base_color_img, Opacity=opacity_img)
         if self.logger:
             self.logger.info(
                 "Unpacked Base Color and Opacity from Albedo+Transparency map",

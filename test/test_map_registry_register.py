@@ -196,5 +196,136 @@ class TestRegisteredTypeThroughFactory(RegistryStateGuard):
         self.assertEqual(ImgUtils.ensure_image(ao, "L").getpixel((8, 8)), 55)
 
 
+class TestPackedMapContract(RegistryStateGuard):
+    """A packed map must declare `replaces` + `config_key` at definition time.
+
+    Regression class: Albedo_Transparency and Metallic_Smoothness shipped
+    without `replaces`, so packing a channel (opacity into the albedo) left the
+    separate map it absorbed in the set — both then wired into the same
+    material slot downstream. The contract is enforced in
+    ``MapType.__post_init__`` so the next packed map type can't repeat it.
+    """
+
+    def test_packed_map_without_replaces_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "replaces"):
+            MapType(
+                name="RMA",
+                aliases=["RoughMetalAO"],
+                is_packed=True,
+                config_key="rma_map",
+            )
+
+    def test_packed_map_without_config_key_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "config_key"):
+            MapType(
+                name="RMA",
+                aliases=["RoughMetalAO"],
+                is_packed=True,
+                replaces=["Roughness", "Metallic", "Ambient_Occlusion"],
+            )
+
+    def test_replaces_without_is_packed_is_rejected(self):
+        """The operative field can't bypass the contract.
+
+        `filter_redundant_maps` keys precedence off `replaces`, not `is_packed`
+        — and with no `config_key` the direction gate is skipped, so this shape
+        would silently supersede its components in every preset.
+        """
+        with self.assertRaisesRegex(ValueError, "is_packed"):
+            MapType(
+                name="RMA",
+                aliases=["RoughMetalAO"],
+                replaces=["Roughness", "Metallic", "Ambient_Occlusion"],
+                config_key="rma_map",
+            )
+
+    def test_packed_map_with_full_contract_is_accepted(self):
+        m = MapType(
+            name="RMA",
+            aliases=["RoughMetalAO"],
+            is_packed=True,
+            replaces=["Roughness", "Metallic", "Ambient_Occlusion"],
+            channels={"R": "Roughness", "G": "Metallic", "B": "Ambient_Occlusion"},
+            config_key="rma_map",
+        )
+        self.assertTrue(m.is_packed)
+
+    def test_packed_map_without_channels_is_rejected(self):
+        """Coverage-aware filtering needs the per-channel layout."""
+        with self.assertRaisesRegex(ValueError, "channels"):
+            MapType(
+                name="RMA",
+                aliases=["RoughMetalAO"],
+                is_packed=True,
+                replaces=["Roughness", "Metallic", "Ambient_Occlusion"],
+                config_key="rma_map",
+            )
+
+    def test_channel_type_missing_from_replaces_is_rejected(self):
+        """A carried type the map doesn't replace would double-wire its slot.
+
+        The live catch: MSAO carried Smoothness in its alpha but didn't list it
+        in `replaces`, so a loose Smoothness stayed wired beside the mask map.
+        """
+        with self.assertRaisesRegex(ValueError, "carries"):
+            MapType(
+                name="RMA",
+                aliases=["RoughMetalAO"],
+                is_packed=True,
+                replaces=["Roughness", "Metallic"],  # AO carried but not replaced
+                channels={"R": "Roughness", "G": "Metallic", "B": "Ambient_Occlusion"},
+                config_key="rma_map",
+            )
+
+    def test_optional_channels_are_exempt_from_replaces_consistency(self):
+        """A '?' filler channel (MSAO's Detail) needn't be in `replaces`."""
+        m = MapType(
+            name="RMA",
+            aliases=["RoughMetalAO"],
+            is_packed=True,
+            replaces=["Roughness", "Metallic", "Ambient_Occlusion"],
+            channels={
+                "R": "Roughness",
+                "G": "Metallic",
+                "B": "Ambient_Occlusion",
+                "A": "Detail_Mask?",
+            },
+            config_key="rma_map",
+        )
+        self.assertEqual(
+            m.carried_types(), ["Roughness", "Metallic", "Ambient_Occlusion"]
+        )
+        self.assertIn("Detail_Mask", m.carried_types(include_optional=True))
+
+    def test_unpacked_maps_are_exempt(self):
+        """Loose maps carry nothing — the contract must not burden them."""
+        m = MapType(name="Curvature", aliases=["Curv"], mode="L")
+        self.assertFalse(m.is_packed)
+
+    def test_every_registered_packed_map_satisfies_the_contract(self):
+        """Sweep the live registry: is_packed or replaces → the full trio.
+
+        __post_init__ guards construction; this guards against the contract
+        being weakened there without this suite noticing.
+        """
+        for name, m in MapRegistry._maps.items():
+            if not (m.is_packed or m.replaces):
+                continue
+            self.assertTrue(m.is_packed, f"'{name}' has replaces but not is_packed")
+            self.assertTrue(m.replaces, f"packed map '{name}' declares no replaces")
+            self.assertTrue(
+                m.config_key, f"packed map '{name}' declares no config_key"
+            )
+            self.assertTrue(
+                m.channels, f"packed map '{name}' declares no channels layout"
+            )
+            for carried in m.carried_types():
+                self.assertIn(
+                    carried,
+                    m.replaces,
+                    f"packed map '{name}' carries {carried} but doesn't replace it",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

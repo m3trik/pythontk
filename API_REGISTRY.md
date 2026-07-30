@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-29_
+_Generated: 2026-07-30_
 
 ## Index
 
@@ -61,6 +61,7 @@ _Generated: 2026-07-29_
 - [`core_utils/script_template.py`](#core_utils--script_template) — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - [`core_utils/singleton_mixin.py`](#core_utils--singleton_mixin)
 - [`core_utils/status_badge.py`](#core_utils--status_badge) — Shields.io status badges embedded in a markdown file.
+- [`core_utils/step_toggle.py`](#core_utils--step_toggle) — Timed multi-step press toggles.
 - [`core_utils/symbol_record.py`](#core_utils--symbol_record) — SymbolRecord - the shared public-API symbol shape.
 - [`core_utils/task_factory.py`](#core_utils--task_factory) — Generic task/check pipeline primitive -- host- and Qt-free.
 - [`core_utils/template_set.py`](#core_utils--template_set) — A discoverable, user-extensible collection of schema-validated template files.
@@ -469,7 +470,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.register_conversion(cls, conversion: MapConversion)` *(class)* — Register a custom map conversion (extensibility).
   - `MapFactory.get_map_fallbacks(cls, map_type: str) -> Tuple[str, ...]` *(class)* — Get fallback map types for a given map type.
   - `MapFactory.get_precedence_rules(cls) -> Dict[str, List[str]]` *(class)* — Returns a dictionary of map precedence rules.
-  - `MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, List[str]], config: Dict[str, Any] = None) -> None` *(class)* — Resolve packed/loose map redundancy in-place.
+  - `MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, Any], config: Dict[str, Any] = None, extract_missing: bool = True) -> Dict[str, Dict[str, str]]` *(class)* — Resolve packed/loose map redundancy in-place — losslessly.
   - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
   - `MapFactory.pack_transparency_into_albedo(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…
   - `MapFactory.pack_smoothness_into_metallic(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
@@ -546,7 +547,7 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L778)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L787)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -556,7 +557,8 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 ``TextureProcessor`` -- shared processing context for the MapFactory.
 
-- **[`class TextureProcessor`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L43)** — Shared context and processor for all map operations.
+- **[`class TextureProcessor`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L42)** — Shared context and processor for all map operations.
+  - `TextureProcessor.output_path_for(self, map_type: str, ext: Optional[str] = None) -> str` — The canonical path ``save_map`` writes ``map_type`` to.
   - `TextureProcessor.get_cached_image(self, path: str) -> 'Image.Image'` — Load an image with caching to avoid redundant disk I/O.
   - `TextureProcessor.save_map(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str` — Saves and optimizes a map, enforcing mode and naming conventions.
   - `TextureProcessor.resolve_map(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]` — Intelligently resolve a map from inventory with fallback conversions.
@@ -617,7 +619,8 @@ Plan, assess, and apply map (texture) optimizations.
 
 - **[`class WF`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L8)** — Workflow identifiers.
 - **[`class MapType`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L45)** — Defines the properties of a texture map type.
-- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L71)** — Central registry for map type definitions.
+  - `MapType.carried_types(self, include_optional: bool = False) -> List[str]` — The map types this packed map's channels carry.
+- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L144)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.register(self, map_type: MapType, overwrite: bool = False) -> MapType` — Register a new map type (or replace an existing one) at runtime.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
@@ -1061,6 +1064,21 @@ Shields.io status badges embedded in a markdown file.
   - `StatusBadge.update(cls, readme_path: PathLike, message: str, color: str, label: str = LABEL, link: str = '', style: Optional[str] = None) -> bool` *(class)* — Replace (or insert) the badge with this label in a markdown file.
   - `StatusBadge.update_test_badge(cls, readme_path: PathLike, passed: int, failed: int, test_dir: Optional[PathLike] = None, link: Optional[str] = None, style: Optional[str] = None) -> bool` *(class)* — Stamp a test-status badge -- the ecosystem-standard entry point.
 
+<a id="core_utils--step_toggle"></a>
+### `core_utils/step_toggle.py`
+
+Timed multi-step press toggles.
+
+- **[`class StepToggle`](pythontk/pythontk/core_utils/step_toggle.py#L25)** — A press stepper: ``0`` (home) -> ``1`` -> ...
+  - `StepToggle.get(cls, name: str, **kwargs) -> 'StepToggle'` *(class)* — The shared toggle registered under *name*, created on first call.
+  - `StepToggle.clear(cls, name: Optional[str] = None) -> None` *(class)* — Drop the shared toggle *name* (or every one when ``None``).
+  - `StepToggle.state(self) -> int` *(property)* — The current step: ``0`` at home, else ``1..steps``.
+  - `StepToggle.at_home(self) -> bool` *(property)* — True while the toggle sits at its home (un-stepped) state.
+  - `StepToggle.began_cycle(self) -> bool` *(property)* — True when the last :meth:`advance` *started* a cycle — the moment to
+  - `StepToggle.reset(self) -> None` — Return to home without acting — state, timing, context and payload.
+  - `StepToggle.advance(self, steps: Optional[int] = None, context: Any = None, timeout: Optional[float] = None) -> int` — Register a press and return the new state.
+  - `StepToggle.scales(steps: int, spread: float = 0.15, gain: float = 1.45) -> List[float]` *(static)* — Multiplier ramp for an ``N``-step toggle — one factor per step.
+
 <a id="core_utils--symbol_record"></a>
 ### `core_utils/symbol_record.py`
 
@@ -1404,6 +1422,7 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.udim_to_tile(udim: int) -> Tuple[int, int]` *(static)* — UDIM tile number to its (u, v) tile offset — one rule, every packer.
   - `MathUtils.majority_tile(bounds) -> Optional[Tuple[int, int]]` *(static)* — The tile most of the given UV boxes occupy — one rule, every gatherer.
   - `MathUtils.fit_into_tile(bounds: Tuple[float, float, float, float], tile: Tuple[int, int], margin: float = 0.0) -> Tuple[float, float]` *(static)* — Relative offset that moves a UV bounding box inside a unit tile — one rule, every gatherer.
+  - `MathUtils.next_clear_offset(bounds: Tuple[float, float, float, float], blockers, axis: int, direction: int, margin: float = 0.0, tolerance: float = 1e-09) -> Optional[float]` *(static)* — Offset that parks a box in the next gap along an axis — one rule, every nudger.
   - `MathUtils.max_axis_skew(axes, degenerate_length: float = 1e-09) -> float` *(static)* — Worst pairwise misalignment of a matrix's axis vectors — one rule, every consumer.
   - `MathUtils.linear_sum_assignment(cost_matrix: Sequence[Sequence[float]], maximize: bool = False) -> Tuple[List[int], List[int]]` *(static)* — Solve the linear sum assignment problem (Hungarian algorithm).
   - `MathUtils.kmeans_clustering(points: Sequence[Sequence[float]], k: int, max_iterations: int = 30, seed_indices: Optional[List[int]] = None) -> List[List[int]]` *(static)* — Perform K-Means clustering on a set of points.

@@ -922,11 +922,14 @@ class MapFactory(LoggingMixin):
 
     @classmethod
     def filter_redundant_maps(
-        cls, sorted_maps: Dict[str, List[str]], config: Dict[str, Any] = None
-    ) -> None:
-        """Resolve packed/loose map redundancy in-place.
+        cls,
+        sorted_maps: Dict[str, Any],
+        config: Dict[str, Any] = None,
+        extract_missing: bool = True,
+    ) -> Dict[str, Dict[str, str]]:
+        """Resolve packed/loose map redundancy in-place — losslessly.
 
-        A packed map (ORM/MSAO/MRAO) and its loose components (Metallic,
+        A packed map (ORM/MSAO/MRAO/…) and its loose components (Metallic,
         Roughness, AO, …) are mutually redundant — wiring both fights over the
         same material slots. Which one wins depends on the target workflow:
 
@@ -935,20 +938,55 @@ class MapFactory(LoggingMixin):
           its loose components, which are dropped.
         - **Unpacked workflow** — ``config`` is supplied and the packed map is
           *not* requested (e.g. the "PBR Metallic/Roughness" preset with
-          ``mask_map=False``): the packed map is itself the redundant one and is
-          dropped in favor of the present loose components, so the separate
-          Metallic/Roughness/AO maps connect instead of the mask map.
+          ``mask_map=False``): the packed map is redundant *where its channels
+          are covered*. Coverage is judged per channel against the map's
+          declared ``channels`` layout, dynamically: a channel counts as
+          covered when its type — or any loose type the conversion registry can
+          derive it from (Roughness covers a Smoothness channel) — survives the
+          drop. Channels nothing covers are **extracted to real loose maps**
+          from the packed source before it is dropped, so no data is ever lost
+          (the shipped example: an MSAO beside loose Metallic/Roughness but no
+          separate AO used to lose its AO channel here). When extraction is
+          unavailable (``extract_missing=False``, missing Pillow, or the packed
+          entry is not a readable file), the packed map is kept and its loose
+          components retire instead — the lossless direction.
+        - A packed map with **no loose components present** is the sole source
+          of its channels and is kept regardless of workflow.
 
-        Modifies the sorted_maps dictionary in-place.
+        Modifies ``sorted_maps`` in place. Values may be file paths or lists of
+        paths (both caller shapes are preserved).
 
         Parameters:
-            sorted_maps: Dictionary of map types to file path(s). Mutated in place.
-            config: Optional workflow config. When provided, redundancy direction
-                follows each packed map's ``config_key`` flag (plus
-                ``force_packed_maps``). When omitted, packed maps always win.
+            sorted_maps: ``{map_type: path-or-[paths]}``. Mutated in place.
+            config: Optional workflow config. When provided, redundancy
+                direction follows each packed map's ``config_key`` flag (plus
+                ``force_packed_maps``); ``dry_run`` plans extractions without
+                writing them. When omitted, packed maps always win.
+            extract_missing: Allow extracting uncovered channels to files.
+
+        Returns:
+            dict: ``{"dropped": {map_type: reason}, "extracted": {map_type: path}}``.
         """
+        report: Dict[str, Dict[str, str]] = {"dropped": {}, "extracted": {}}
         precedence_rules = cls.get_precedence_rules()
         registry = cls._map_registry
+
+        def drop(map_type: str, reason: str) -> None:
+            cls.logger.info(
+                f"Skipping {map_type} map ({reason})",
+                extra={"preset": "highlight"},
+            )
+            del sorted_maps[map_type]
+            report["dropped"][map_type] = reason
+
+        def first_path(value) -> Optional[str]:
+            if isinstance(value, (list, tuple)):
+                value = value[0] if value else None
+            return value if isinstance(value, str) else None
+
+        def is_loose(map_type: str) -> bool:
+            map_def = registry.get(map_type)
+            return not (map_def and map_def.is_packed)
 
         for dominant, redundants in precedence_rules.items():
             if not (dominant in sorted_maps and sorted_maps[dominant]):
@@ -957,8 +995,8 @@ class MapFactory(LoggingMixin):
             # Does the target workflow actually want this packed map as output?
             # Default True keeps legacy "packed wins" behavior when no config.
             packed_requested = True
+            map_def = registry.get(dominant)
             if config is not None:
-                map_def = registry.get(dominant)
                 key = map_def.config_key if map_def else None
                 if key:
                     packed_requested = bool(config.get(key)) or bool(
@@ -969,19 +1007,136 @@ class MapFactory(LoggingMixin):
                 # Packed map supersedes its loose components.
                 for redundant in redundants:
                     if redundant in sorted_maps:
-                        cls.logger.info(
-                            f"Skipping {redundant} map (replaced by {dominant})",
-                            extra={"preset": "highlight"},
-                        )
-                        del sorted_maps[redundant]
-            elif any(r in sorted_maps and sorted_maps[r] for r in redundants):
-                # Unpacked workflow with loose components present: drop the packed
-                # map so the separate maps win the material slots.
+                        drop(redundant, f"superseded by {dominant}")
+                continue
+
+            if not any(r in sorted_maps and sorted_maps[r] for r in redundants):
+                continue  # sole source of its channels — keep it
+
+            # Unpacked workflow with loose components present. Judge coverage
+            # per declared channel: covered when the carried type — or a loose
+            # type a registered conversion derives it from — survives the drop.
+            present = {
+                t for t, v in sorted_maps.items() if v and t != dominant and is_loose(t)
+            }
+
+            def channel_covered(carried_type: str) -> bool:
+                if carried_type in present:
+                    return True
+                for conv in cls._conversion_registry.get_conversions_for(
+                    carried_type
+                ):
+                    if (
+                        len(conv.source_types) == 1
+                        and conv.source_types[0] in present
+                    ):
+                        return True
+                return False
+
+            carried = map_def.carried_types() if map_def else []
+            uncovered = [t for t in carried if not channel_covered(t)]
+
+            if uncovered:
+                extracted = None
+                if extract_missing:
+                    extracted = cls._extract_channels_from_packed(
+                        dominant,
+                        first_path(sorted_maps[dominant]),
+                        uncovered,
+                        config,
+                    )
+                if extracted is None:
+                    # Can't recover the uncovered channels — keeping the packed
+                    # map is the only lossless direction; its loose components
+                    # retire so the slots still have one source each.
+                    reason = (
+                        f"superseded by {dominant} (its "
+                        f"{', '.join(uncovered)} channel has no loose source; "
+                        "extraction unavailable)"
+                    )
+                    for redundant in redundants:
+                        if redundant in sorted_maps:
+                            drop(redundant, reason)
+                    continue
+
+                as_list = isinstance(sorted_maps[dominant], (list, tuple))
+                for map_type, path in extracted.items():
+                    sorted_maps[map_type] = [path] if as_list else path
+                    report["extracted"][map_type] = path
+                    cls.logger.info(
+                        f"Extracted {map_type} from {dominant} ({path})",
+                        extra={"preset": "highlight"},
+                    )
+
+            drop(dominant, "superseded by separate maps")
+
+        return report
+
+    @classmethod
+    def _extract_channels_from_packed(
+        cls,
+        packed_type: str,
+        packed_path: Optional[str],
+        targets: List[str],
+        config: Dict[str, Any] = None,
+    ) -> Optional[Dict[str, str]]:
+        """Extract ``targets`` from a packed map into loose files beside it.
+
+        Reuses the conversion registry (the same unpack conversions
+        ``prepare_maps`` runs on) and the ``TextureProcessor`` save pipeline —
+        so naming, mode enforcement, and ``dry_run`` behave exactly like every
+        other generated map. All-or-nothing: if any target cannot be derived,
+        returns None so the caller can fall back to keeping the packed map.
+
+        Parameters:
+            packed_type: The packed map's canonical type (e.g. "MSAO").
+            packed_path: Path to the packed texture file.
+            targets: Map types to extract (uncovered channels only).
+            config: Workflow config (``dry_run`` is honored by ``save_map``).
+
+        Returns:
+            dict | None: ``{map_type: saved_path}``, or None when unavailable.
+        """
+        if Image is None or not (packed_path and os.path.isfile(packed_path)):
+            return None
+
+        context = TextureProcessor(
+            inventory={packed_type: packed_path},
+            config=dict(config or {}),
+            output_dir=os.path.dirname(packed_path),
+            base_name=cls.get_base_texture_name(packed_path),
+            ext=(config or {}).get("output_extension")
+            or os.path.splitext(packed_path)[1].lstrip("."),
+            conversion_registry=cls._conversion_registry,
+            logger=cls.logger,
+        )
+
+        extracted: Dict[str, str] = {}
+        for target in targets:
+            # A real loose map already on disk under the canonical name wins —
+            # overwriting it with extracted channel data would destroy user
+            # files the caller simply didn't list.
+            candidate = context.output_path_for(target)
+            if os.path.isfile(candidate):
                 cls.logger.info(
-                    f"Skipping {dominant} map (separate maps present)",
+                    f"Reusing existing {target} map instead of extracting "
+                    f"from {packed_type}: {candidate}",
                     extra={"preset": "highlight"},
                 )
-                del sorted_maps[dominant]
+                extracted[target] = candidate
+                continue
+
+            try:
+                image = context.resolve_map(target, allow_conversion=True)
+            except Exception as e:
+                cls.logger.warning(f"Extracting {target} from {packed_type}: {e}")
+                return None
+            if not image:
+                return None
+            extracted[target] = context.save_map(
+                image, target, source_images=[packed_path]
+            )
+        return extracted
 
     @classmethod
     def prepare_maps(
@@ -1276,8 +1431,12 @@ class MapFactory(LoggingMixin):
     def _build_map_inventory(textures: List[str]) -> Dict[str, str]:
         """Build map inventory using ImgUtils."""
         inventory = {}
-        # Sort textures by length descending to prefer more specific names (e.g. Mixed_AO over AO)
-        for texture in sorted(textures, key=len, reverse=True):
+        # Prefer more specific FILENAMES (Mixed_AO over AO) when two files
+        # resolve to the same type — basename length, not full-path length,
+        # which would let a longer directory name decide the winner.
+        for texture in sorted(
+            textures, key=lambda t: len(os.path.basename(t)), reverse=True
+        ):
             map_type = MapFactory.resolve_map_type(texture)
             if map_type and map_type not in inventory:
                 inventory[map_type] = texture

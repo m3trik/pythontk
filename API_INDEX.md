@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-07-29_
+_Generated: 2026-07-30_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -161,7 +161,7 @@ _Generated: 2026-07-29_
 
 ### `core_utils/engines/textures/map_factory/processor.py` — ``TextureProcessor`` -- shared processing context for the MapFactory.
 - `class TextureProcessor`
-  - methods: get_cached_image, save_map, resolve_map, mark_used, resolve_smoothness_channel, resolve_roughness_channel, convert_specular_to_metallic, convert_smoothness_to_roughness, convert_roughness_to_smoothness, convert_specular_to_roughness, convert_dx_to_gl, convert_gl_to_dx, convert_bump_to_normal, extract_gloss_from_spec, copy_map, unpack_metallic_smoothness, get_metallic_from_packed, get_smoothness_from_packed, get_roughness_from_packed, unpack_msao, get_metallic_from_msao, get_smoothness_from_msao, get_roughness_from_msao, get_ao_from_msao, unpack_mrao, get_metallic_from_mrao, get_roughness_from_mrao, get_smoothness_from_mrao, get_ao_from_mrao, unpack_orm, get_ao_from_orm, get_roughness_from_orm, get_smoothness_from_orm, get_metallic_from_orm, unpack_albedo_transparency, get_base_color_from_albedo_transparency, get_opacity_from_albedo_transparency, create_orm_map, create_mrao_map, create_mask_map, create_metallic_smoothness_map
+  - methods: output_path_for, get_cached_image, save_map, resolve_map, mark_used, resolve_smoothness_channel, resolve_roughness_channel, convert_specular_to_metallic, convert_smoothness_to_roughness, convert_roughness_to_smoothness, convert_specular_to_roughness, convert_dx_to_gl, convert_gl_to_dx, convert_bump_to_normal, extract_gloss_from_spec, copy_map, unpack_metallic_smoothness, get_metallic_from_packed, get_smoothness_from_packed, get_roughness_from_packed, unpack_msao, get_metallic_from_msao, get_smoothness_from_msao, get_roughness_from_msao, get_ao_from_msao, unpack_mrao, get_metallic_from_mrao, get_roughness_from_mrao, get_smoothness_from_mrao, get_ao_from_mrao, unpack_orm, get_ao_from_orm, get_roughness_from_orm, get_smoothness_from_orm, get_metallic_from_orm, unpack_albedo_transparency, get_base_color_from_albedo_transparency, get_opacity_from_albedo_transparency, create_orm_map, create_mrao_map, create_mask_map, create_metallic_smoothness_map
 
 ### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
 - `class Op`
@@ -171,6 +171,7 @@ _Generated: 2026-07-29_
 ### `core_utils/engines/textures/map_registry.py`
 - `class WF`
 - `class MapType`
+  - methods: carried_types
 - `class MapRegistry(SingletonMixin)`
   - methods: get, register, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
 
@@ -329,6 +330,10 @@ _Generated: 2026-07-29_
 - `class StatusBadge(_StatusBadgeInternal)`
   - methods: url, render, test_status, update, update_test_badge
 
+### `core_utils/step_toggle.py` — Timed multi-step press toggles.
+- `class StepToggle`
+  - methods: get, clear, state, at_home, began_cycle, reset, advance, scales
+
 ### `core_utils/symbol_record.py` — SymbolRecord - the shared public-API symbol shape.
 - `class SymbolRecord`
   - methods: as_dict, as_json, to_registry_row
@@ -424,7 +429,7 @@ _Generated: 2026-07-29_
 
 ### `math_utils/_math_utils.py`
 - `class MathUtils(HelpMixin)`
-  - methods: eval_expression, convert_length_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance
+  - methods: eval_expression, convert_length_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, next_clear_offset, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance
 
 ### `math_utils/noise.py`
 - `class BandLimitedNoise`

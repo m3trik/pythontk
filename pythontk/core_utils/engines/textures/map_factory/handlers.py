@@ -756,8 +756,17 @@ class NormalMapHandler(WorkflowHandler):
                     "Generated normal map from Bump/Height",
                     extra={"preset": "highlight"},
                 )
-            context.mark_used("Bump", "Height")
-            source = context.inventory.get("Bump") or context.inventory.get("Height")
+            # Mark only the map the conversion actually consumed (Bump is
+            # preferred by the registered conversions). Height drives its own
+            # engine slot (parallax/displacement) — marking it used when the
+            # normal came from Bump would swallow a real Height map that must
+            # still pass through.
+            if context.inventory.get("Bump"):
+                context.mark_used("Bump")
+                source = context.inventory["Bump"]
+            else:
+                context.mark_used("Height")
+                source = context.inventory.get("Height")
             sources = [source] if source else []
             return context.save_map(normal, target_key, source_images=sources)
 
