@@ -65,7 +65,80 @@ class MapType:
     config_key: Optional[str] = (
         None  # SSoT for the config flag gating this packed map as a desired OUTPUT (note MSAO -> "mask_map", not "msao_map"). filter_redundant_maps consults it (where the map declares `replaces`) to choose packed vs. separate maps.
     )
+    channels: Dict[str, str] = field(
+        default_factory=dict
+    )  # Packed maps only: what each channel carries in the CANONICAL layout, e.g. ORM {"R": "Ambient_Occlusion", "G": "Roughness", "B": "Metallic"}. A trailing "?" marks an optional/filler channel (MSAO's Detail) that redundancy coverage must not demand. SSoT for coverage-aware filtering and channel extraction.
     workflows: List[str] = field(default_factory=list)  # Workflows that use this map
+
+    def carried_types(self, include_optional: bool = False) -> List[str]:
+        """The map types this packed map's channels carry.
+
+        Parameters:
+            include_optional: Include channels marked optional (trailing ``"?"``).
+
+        Returns:
+            list[str]: Canonical map-type names, in channel order.
+        """
+        types = []
+        for carried in self.channels.values():
+            optional = carried.endswith("?")
+            if optional and not include_optional:
+                continue
+            types.append(carried.rstrip("?"))
+        return types
+
+    def __post_init__(self):
+        # A partial packed-map contract is a latent wiring bug, not a valid
+        # definition. `filter_redundant_maps` keys its precedence rules off
+        # `replaces` (not `is_packed`), reads `config_key` for direction, and
+        # `channels` for per-channel coverage/extraction — so each omission
+        # fails differently, and silently:
+        #   - `is_packed` without `replaces`/`config_key`: nothing ever retires
+        #     the separate maps the packed map absorbed; both wire into the same
+        #     material slots (the shipped example: packing opacity into
+        #     Albedo_Transparency left the old Opacity map connected).
+        #   - `replaces` without `config_key`: the direction gate is skipped and
+        #     the map supersedes its components in EVERY preset, unpacked ones
+        #     included.
+        #   - `replaces` without `is_packed`: the marker lies to sweeps/tools
+        #     that enumerate packed maps.
+        #   - missing `channels`: coverage-aware filtering can't know what the
+        #     map carries, so dropping it in an unpacked workflow silently
+        #     loses the channels no loose map covers.
+        # Fail at definition time so the next packed map type can't repeat any
+        # of them. Loose maps (none of these fields) are untouched.
+        if self.is_packed or self.replaces or self.channels:
+            missing = [
+                f
+                for f, v in (
+                    ("is_packed", self.is_packed),
+                    ("replaces", self.replaces),
+                    ("config_key", self.config_key),
+                    ("channels", self.channels),
+                )
+                if not v
+            ]
+            if missing:
+                raise ValueError(
+                    f"Map type '{self.name}' declares a partial packed-map contract "
+                    f"(missing {' and '.join(missing)}): a map that packs others "
+                    "must set `is_packed=True`, declare the maps it `replaces`, "
+                    "name the `config_key` that directs packed-vs-separate per "
+                    "workflow, and declare its per-channel `channels` layout."
+                )
+            # Consistency: every carried type must be in `replaces`, or the
+            # loose map a channel duplicates would never be retired when the
+            # packed map wins (found live: MSAO carried Smoothness in its alpha
+            # but didn't replace it, so a loose Smoothness stayed wired).
+            unreplaced = [
+                t for t in self.carried_types() if t not in self.replaces
+            ]
+            if unreplaced:
+                raise ValueError(
+                    f"Map type '{self.name}' carries {unreplaced} in its channels "
+                    "but does not list them in `replaces` — the loose map a "
+                    "channel duplicates must be retired when the packed map wins."
+                )
 
 
 class MapRegistry(SingletonMixin):
@@ -149,7 +222,13 @@ class MapRegistry(SingletonMixin):
             color_space="sRGB",
             mode="RGBA",
             default_background=(0, 0, 0, 255),
+            is_packed=True,
             input_fallbacks=["Base_Color"],
+            # The albedo it packs and the alpha it packs both drive slots the
+            # separate maps drive; without this, packing opacity into the albedo
+            # leaves the old Opacity map wired alongside it.
+            replaces=["Base_Color", "Diffuse", "Opacity"],
+            channels={"RGB": "Base_Color", "A": "Opacity"},
             config_key="albedo_transparency",
             workflows=WF.ALL_ENGINES,
             resolution_critical=True,
@@ -250,6 +329,7 @@ class MapRegistry(SingletonMixin):
             scale_as_mask=True,
             output_fallbacks=["Ambient_Occlusion", "Roughness", "Metallic"],
             replaces=["Metallic", "Ambient_Occlusion", "Roughness"],
+            channels={"R": "Ambient_Occlusion", "G": "Roughness", "B": "Metallic"},
             config_key="orm_map",
             workflows=[WF.UE, WF.GLTF, WF.GODOT],
         ),
@@ -282,12 +362,24 @@ class MapRegistry(SingletonMixin):
                 "Metallic",
                 "Ambient_Occlusion",
                 "Roughness",
+                # Carried in the alpha channel — omitting it left a loose
+                # Smoothness map wired alongside the mask map (the channels
+                # consistency check in __post_init__ now enforces this).
+                "Smoothness",
                 "Specular",
                 "Glossiness",
                 "Detail",
                 "Detail_Mask",
                 "Metallic_Smoothness",
             ],
+            # Canonical HDRP Mask Map layout; Detail is a filler channel
+            # ("?") — coverage must not demand a loose Detail_Mask for it.
+            channels={
+                "R": "Metallic",
+                "G": "Ambient_Occlusion",
+                "B": "Detail_Mask?",
+                "A": "Smoothness",
+            },
             config_key="mask_map",
             workflows=[WF.HDRP],
         ),
@@ -324,6 +416,7 @@ class MapRegistry(SingletonMixin):
                 "Smoothness",
                 "Glossiness",
             ],
+            channels={"R": "Metallic", "G": "Roughness", "B": "Ambient_Occlusion"},
             config_key="mrao_map",
             workflows=[],
         ),
@@ -347,6 +440,8 @@ class MapRegistry(SingletonMixin):
             is_packed=True,
             scale_as_mask=True,
             output_fallbacks=["Metallic", "Smoothness"],
+            replaces=["Metallic", "Roughness", "Smoothness", "Glossiness"],
+            channels={"RGB": "Metallic", "A": "Smoothness"},
             config_key="metallic_smoothness",
             workflows=[WF.URP, WF.SPEC],
         ),

@@ -944,6 +944,89 @@ class TestTextureProcessorLogic(unittest.TestCase):
             f"None cached into inventory: {self.context.inventory}",
         )
 
+    def test_unpack_fills_gaps_without_clobbering_loose_maps(self):
+        """Regression: asking a packed map for one channel replaced a REAL
+        loose sibling with the extraction — e.g. get_ao_from_msao overwrote a
+        provided loose Metallic file with the MSAO R channel."""
+        import tempfile
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            msao_path = os.path.join(tmp, "asset_MSAO.png")
+            Image.merge(
+                "RGBA", [Image.new("L", (8, 8), v) for v in (30, 200, 0, 90)]
+            ).save(msao_path)
+
+            context = TextureProcessor(
+                inventory={
+                    "MSAO": msao_path,
+                    "Metallic": "loose_metallic.png",  # provided file must win
+                },
+                config={},
+                output_dir=tmp,
+                base_name="asset",
+                ext="png",
+                conversion_registry=ConversionRegistry(),
+            )
+            context.unpack_msao(msao_path)
+
+            self.assertEqual(
+                context.inventory["Metallic"],
+                "loose_metallic.png",
+                "unpack replaced a provided loose map with its extraction",
+            )
+            # The genuinely missing channels were filled from the packed map.
+            self.assertIsNotNone(context.inventory.get("Ambient_Occlusion"))
+            self.assertIsNotNone(context.inventory.get("Smoothness"))
+
+    def test_normal_from_bump_does_not_swallow_height(self):
+        """Regression: generating a normal from Bump marked Height used too,
+        so a real Height map (parallax/displacement slot) never passed
+        through."""
+        import tempfile
+        from PIL import Image
+        from pythontk.core_utils.engines.textures.map_factory.handlers import (
+            NormalMapHandler,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bump = os.path.join(tmp, "asset_Bump.png")
+            height = os.path.join(tmp, "asset_Height.png")
+            Image.new("L", (8, 8), 128).save(bump)
+            Image.new("L", (8, 8), 64).save(height)
+
+            context = TextureProcessor(
+                inventory={"Bump": bump, "Height": height},
+                config={"normal_type": "OpenGL", "dry_run": True},
+                output_dir=tmp,
+                base_name="asset",
+                ext="png",
+                conversion_registry=MapFactory._conversion_registry,
+            )
+            result = NormalMapHandler().process(context)
+
+            self.assertIsNotNone(result, "normal not generated from bump")
+            self.assertIn("Bump", context.used_maps)
+            self.assertNotIn(
+                "Height",
+                context.used_maps,
+                "Height swallowed by a Bump-sourced normal",
+            )
+
+    def test_build_map_inventory_prefers_specific_basename(self):
+        """Specificity is judged on the filename, not the full path — a longer
+        directory must not decide which same-type file wins."""
+        generic_in_long_dir = "/a/very/long/directory/name/here/x_AO.png"
+        specific_in_short_dir = "/d/x_Mixed_AO.png"
+        inventory = MapFactory._build_map_inventory(
+            [generic_in_long_dir, specific_in_short_dir]
+        )
+        self.assertEqual(
+            inventory.get("Ambient_Occlusion"),
+            specific_in_short_dir,
+            "full-path length outweighed filename specificity",
+        )
+
     def test_save_map_dry_run_without_logger(self):
         """Regression: save_map's dry-run path crashed when the processor was
         constructed without a logger (a public, supported configuration)."""

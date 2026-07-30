@@ -294,6 +294,87 @@ class MathUtils(HelpMixin):
         return tuple(offsets)
 
     @staticmethod
+    def next_clear_offset(
+        bounds: Tuple[float, float, float, float],
+        blockers,
+        axis: int,
+        direction: int,
+        margin: float = 0.0,
+        tolerance: float = 1e-9,
+    ) -> Optional[float]:
+        """Offset that parks a box in the next gap along an axis — one rule, every nudger.
+
+        Walks a box past its neighbours instead of over a fixed grid: the
+        landing spots considered are one *margin* short of each blocker's near
+        edge and one *margin* past its far edge, and the nearest spot **strictly
+        ahead whose landed box overlaps nothing** wins. Because each spot is
+        validated for fit, a gap too small for the box is skipped rather than
+        landed in, so repeated calls step cleanly from neighbour to neighbour.
+
+        Blockers that do not overlap the box on the perpendicular axis are not
+        in its lane and are ignored entirely — moving along *axis* never changes
+        that overlap, so this is exactly a 2D overlap test.
+
+        Parameters:
+            bounds (tuple): ``(u_min, v_min, u_max, v_max)`` of the moving box.
+            blockers (iterable): ``(u_min, v_min, u_max, v_max)`` boxes to
+                avoid. The moving box must not be among them.
+            axis (int): ``0`` = u / horizontal, ``1`` = v / vertical.
+            direction (int): ``+1`` / ``-1``. Zero yields None.
+            margin (float): Clearance left between the box and the blocker it
+                parks against. Default 0.0.
+            tolerance (float): Slack below which a candidate counts as "not
+                actually ahead" — keeps a box already parked at the margin from
+                returning a ~0 offset, which would read as a dead button.
+
+        Returns:
+            float: The relative offset to apply along *axis*, or None when no
+            blocker lies ahead in the lane (the caller falls back to its own
+            rule, e.g. a grid snap).
+
+        Example:
+            # A 0.2-tall box below two shells, the gap between them too small.
+            MathUtils.next_clear_offset(
+                (0.0, 0.1, 0.3, 0.3), [(0.0, 1.0, 0.3, 1.4), (0.0, 1.5, 0.3, 1.9)], 1, 1
+            )  -> 0.7   # parks just under the lower shell
+        """
+        if not direction:
+            return None
+
+        lo, hi = (0, 2) if axis == 0 else (1, 3)
+        perp_lo, perp_hi = (1, 3) if axis == 0 else (0, 2)
+        box_lo, box_hi = bounds[lo], bounds[hi]
+        span = box_hi - box_lo
+
+        # Only same-lane blockers can ever be hit, so this one filter serves both
+        # candidate generation and the fit test below.
+        lane = [
+            b
+            for b in blockers
+            if b[perp_hi] > bounds[perp_lo] and b[perp_lo] < bounds[perp_hi]
+        ]
+        if not lane:
+            return None
+
+        candidates = []
+        for other in lane:
+            for landed_lo in (other[lo] - margin - span, other[hi] + margin):
+                offset = landed_lo - box_lo
+                if direction > 0 and offset > tolerance:
+                    candidates.append(offset)
+                elif direction < 0 and offset < -tolerance:
+                    candidates.append(offset)
+
+        for offset in sorted(candidates, key=abs):
+            landed_lo, landed_hi = box_lo + offset, box_hi + offset
+            if all(
+                b[hi] <= landed_lo + tolerance or b[lo] >= landed_hi - tolerance
+                for b in lane
+            ):
+                return offset
+        return None
+
+    @staticmethod
     def max_axis_skew(axes, degenerate_length: float = 1e-9) -> float:
         """Worst pairwise misalignment of a matrix's axis vectors — one rule, every consumer.
 

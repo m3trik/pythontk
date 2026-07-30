@@ -130,6 +130,7 @@ DEFAULT_INCLUDE = {
     "core_utils.color": ["Color", "ColorPair", "Palette"],
     "core_utils.hierarchy_utils.hierarchy_diff": "HierarchyDiff",
     "core_utils.singleton_mixin": "SingletonMixin",
+    "core_utils.step_toggle": ["StepToggle"],
     "core_utils.module_reloader": ["ModuleReloader", "ReloadReport", "reload_package"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
