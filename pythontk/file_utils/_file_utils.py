@@ -110,6 +110,58 @@ class FileUtils(HelpMixin):
             return None
 
     @staticmethod
+    def format_bytes(size_bytes, unknown: str = "(unknown)") -> str:
+        """Render a byte count using the largest unit that keeps the number small.
+
+        GB for >=1 GB, MB for >=1 MB, KB for >=1 KB, otherwise raw bytes. File
+        sizes in a single listing routinely span six orders of magnitude (an
+        icon next to a 4K texture), so a fixed unit always looks wrong for half
+        the rows.
+
+        Parameters:
+            size_bytes (int | float | None): Byte count. Non-numeric input is
+                returned as ``str(size_bytes)`` so partially-populated records
+                render without a guard at every call site.
+            unknown (str): Rendered for ``None``.
+
+        Returns:
+            str: e.g. "512 bytes", "2.0 KB", "2.00 MB", "3.00 GB".
+        """
+        if size_bytes is None:
+            return unknown
+        try:
+            n = float(size_bytes)
+        except (TypeError, ValueError):
+            return str(size_bytes)
+        if n >= 1024**3:
+            return f"{n / 1024**3:,.2f} GB"
+        if n >= 1024**2:
+            return f"{n / 1024**2:,.2f} MB"
+        if n >= 1024:
+            return f"{n / 1024:,.1f} KB"
+        return f"{int(n):,} bytes"
+
+    @classmethod
+    def format_bytes_delta(cls, before, after, unknown: str = "(unknown)") -> str:
+        """Render a ``before -> after`` size transition with a percent delta.
+
+        Parameters:
+            before (int | None): Original byte count.
+            after (int | None): Resulting byte count.
+            unknown (str): Rendered for a missing side.
+
+        Returns:
+            str: e.g. "12.00 MB -> 3.00 MB (-75%)". The percentage is omitted
+                when either side is missing or *before* is zero.
+        """
+        rendered = f"{cls.format_bytes(before, unknown)} -> {cls.format_bytes(after, unknown)}"
+        try:
+            pct = (float(after) - float(before)) / float(before) * 100
+        except (TypeError, ValueError, ZeroDivisionError):
+            return rendered
+        return f"{rendered} ({pct:+.0f}%)"
+
+    @staticmethod
     def create_dir(filepath: str) -> None:
         """Create a directory if one doesn't already exist.
 

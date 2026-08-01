@@ -426,6 +426,35 @@ class StrTest(BaseTestCase):
         self.assertEqual(StrUtils.rreplace("", "a", "b"), "")
 
     # -------------------------------------------------------------------------
+    # collapse_delimiter_runs Tests
+    # -------------------------------------------------------------------------
+
+    def test_collapse_delimiter_runs_basic(self):
+        """Test runs of the delimiter collapse to a single one."""
+        self.assertEqual(
+            StrUtils.collapse_delimiter_runs("vdat____Shape702"), "vdat_Shape702"
+        )
+
+    def test_collapse_delimiter_runs_trailing(self):
+        """Test trailing runs are stripped by default."""
+        self.assertEqual(StrUtils.collapse_delimiter_runs("Crate__"), "Crate")
+        self.assertEqual(
+            StrUtils.collapse_delimiter_runs("Crate__", strip_trailing=False), "Crate_"
+        )
+
+    def test_collapse_delimiter_runs_leading_preserved(self):
+        """Test a leading delimiter (legality prefix) survives."""
+        self.assertEqual(
+            StrUtils.collapse_delimiter_runs("_Lead__x"), "_Lead_x"
+        )
+
+    def test_collapse_delimiter_runs_noop_and_edge(self):
+        """Test clean names and non-string input pass through."""
+        self.assertEqual(StrUtils.collapse_delimiter_runs("a_b_c"), "a_b_c")
+        self.assertEqual(StrUtils.collapse_delimiter_runs(""), "")
+        self.assertIsNone(StrUtils.collapse_delimiter_runs(None))
+
+    # -------------------------------------------------------------------------
     # truncate Tests
     # -------------------------------------------------------------------------
 

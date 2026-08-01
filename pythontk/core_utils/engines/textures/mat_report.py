@@ -20,6 +20,9 @@ import html as _html
 import urllib.parse as _urlparse
 from typing import Any, Dict, List
 
+# From this package:
+from pythontk.file_utils._file_utils import FileUtils
+
 
 class MatReport:
     """Pure record→text/HTML formatters for material & texture info reports."""
@@ -27,23 +30,14 @@ class MatReport:
     # ---- shared helpers ----------------------------------------------------
     @staticmethod
     def _fmt_size_auto(size_bytes) -> str:
-        """Render a byte count using the largest unit that keeps the number in single/triple
-        digits — GB for >=1 GB, MB for >=1 MB, KB for >=1 KB, otherwise raw bytes. Texture
-        reports span six orders of magnitude (cube faces / LUTs to 4K diffuse) so a fixed unit
-        always looks wrong for half the table."""
-        if size_bytes is None:
-            return "(unknown)"
-        try:
-            n = float(size_bytes)
-        except (TypeError, ValueError):
-            return str(size_bytes)
-        if n >= 1024**3:
-            return f"{n / 1024**3:,.2f} GB"
-        if n >= 1024**2:
-            return f"{n / 1024**2:,.2f} MB"
-        if n >= 1024:
-            return f"{n / 1024:,.1f} KB"
-        return f"{int(n):,} bytes"
+        """Render a byte count in the largest unit that keeps the number short.
+
+        Thin alias for :meth:`pythontk.FileUtils.format_bytes` — the same
+        rendering is needed by the optimizer's size reporting, so the
+        implementation lives on ``FileUtils`` (SSoT) and this name is kept
+        for the report formatters below.
+        """
+        return FileUtils.format_bytes(size_bytes)
 
     @staticmethod
     def _path_as_link(path: str) -> str:

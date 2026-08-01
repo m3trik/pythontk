@@ -61,7 +61,7 @@ _Generated: 2026-08-01_
 
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py` — Schema for a *behavior* template file, defined as a dataclass.
 - `class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`
-  - methods: format_markdown
+  - methods: format_markdown, validate_duration, validate_verify, validate_attributes
 
 ### `core_utils/engines/shots/manifest/manifest_engine.py` — Shot Manifest engine — pure planning/orchestration core with scene hooks.
 - `class ShotManifest(_ShotManifestInternal)`
@@ -87,7 +87,7 @@ _Generated: 2026-08-01_
 ### `core_utils/engines/shots/manifest/mapping/_spec.py` — Schema for a CSV *mapping* file, defined as a dataclass.
 - `class AudioMethod`
 - `class MappingSpec(SchemaSpec, _MappingSpecInternal)`
-  - methods: format_markdown
+  - methods: format_markdown, validate_audio_resolve, validate_default_behaviors
 
 ### `core_utils/engines/shots/manifest/range_resolver.py` — Range resolution algorithm for the Shot Manifest.
 - `class RangeResolver`
@@ -166,7 +166,7 @@ _Generated: 2026-08-01_
 ### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
 - `class Op`
 - `class MapOptimizer(HelpMixin)`
-  - methods: plan, apply, optimize_map, batch_optimize_maps, assess
+  - methods: plan, project, apply, optimize_map, format_result, batch_optimize_maps, assess
 
 ### `core_utils/engines/textures/map_registry.py`
 - `class WF`
@@ -283,7 +283,7 @@ _Generated: 2026-08-01_
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: pip, get_local_dependency_order
+  - methods: pip, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, list_outdated_packages, is_outdated
 
 ### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - `class Codec`
@@ -352,7 +352,7 @@ _Generated: 2026-08-01_
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, free_space, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
+  - methods: is_valid, is_cloud_placeholder, free_space, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
 
 ### `file_utils/mesh_cleaner.py` — Mesh repair / cleanup via PyMeshLab (optional dependency).
 - `class MeshCleaner`
@@ -471,7 +471,7 @@ _Generated: 2026-08-01_
 
 ### `str_utils/_str_utils.py`
 - `class StrUtils(CoreUtils)`
-  - methods: strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, truncate, get_trailing_integers, find_str, find_str_and_format, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`

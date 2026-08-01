@@ -266,8 +266,17 @@ class HelpMixin:
     @classmethod
     def _get_member_type(cls, klass: type, name: str, member: Any) -> str:
         """Determine the type of a class member."""
-        # Check the class dict for the raw descriptor
-        raw = klass.__dict__.get(name)
+        # Find the raw descriptor on whichever class in the MRO defines it.
+        # Looking only at ``klass.__dict__`` misclassified every INHERITED
+        # descriptor: the lookup missed, so a property fell through to the
+        # ``callable`` test and reported as "attribute", and an inherited
+        # static/classmethod reported as a plain "method". Classes here are
+        # routinely composed from capability mixins, so most descriptors are
+        # inherited.
+        raw = next(
+            (k.__dict__[name] for k in inspect.getmro(klass) if name in k.__dict__),
+            None,
+        )
 
         if isinstance(raw, classmethod):
             return "classmethod"
