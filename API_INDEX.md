@@ -61,7 +61,7 @@ _Generated: 2026-08-01_
 
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py` — Schema for a *behavior* template file, defined as a dataclass.
 - `class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`
-  - methods: format_markdown
+  - methods: format_markdown, validate_duration, validate_verify, validate_attributes
 
 ### `core_utils/engines/shots/manifest/manifest_engine.py` — Shot Manifest engine — pure planning/orchestration core with scene hooks.
 - `class ShotManifest(_ShotManifestInternal)`
@@ -87,7 +87,7 @@ _Generated: 2026-08-01_
 ### `core_utils/engines/shots/manifest/mapping/_spec.py` — Schema for a CSV *mapping* file, defined as a dataclass.
 - `class AudioMethod`
 - `class MappingSpec(SchemaSpec, _MappingSpecInternal)`
-  - methods: format_markdown
+  - methods: format_markdown, validate_audio_resolve, validate_default_behaviors
 
 ### `core_utils/engines/shots/manifest/range_resolver.py` — Range resolution algorithm for the Shot Manifest.
 - `class RangeResolver`
@@ -283,7 +283,7 @@ _Generated: 2026-08-01_
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: pip, get_local_dependency_order
+  - methods: pip, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, list_outdated_packages, is_outdated
 
 ### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - `class Codec`

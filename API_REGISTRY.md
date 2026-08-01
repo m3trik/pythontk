@@ -263,6 +263,9 @@ Schema for a *behavior* template file, defined as a dataclass.
 
 - **[`class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L74)** — Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``).
   - `BehaviorSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.
+  - `BehaviorSpec.validate_duration(value: Any) -> List[str]` *(static)* — ``duration`` is a frame count or the literal ``"from_source"``.
+  - `BehaviorSpec.validate_verify(value: Any) -> List[str]` *(static)*
+  - `BehaviorSpec.validate_attributes(value: Any) -> List[str]` *(static)* — ``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}.
 
 <a id="core_utils--engines--shots--manifest--manifest_engine"></a>
 ### `core_utils/engines/shots/manifest/manifest_engine.py`
@@ -319,6 +322,8 @@ Schema for a CSV *mapping* file, defined as a dataclass.
 - **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L29)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
 - **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L112)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
   - `MappingSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.
+  - `MappingSpec.validate_audio_resolve(value: Any) -> List[str]` *(static)* — Validate the polymorphic ``audio_resolve`` block.
+  - `MappingSpec.validate_default_behaviors(value: Any) -> List[str]` *(static)* — Validate the ``default_behaviors`` block ({kind: [behavior names]}).
 
 <a id="core_utils--engines--shots--manifest--range_resolver"></a>
 ### `core_utils/engines/shots/manifest/range_resolver.py`
@@ -950,6 +955,22 @@ Reusable module attribute resolver for package-style imports.
 - **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L423)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
+  - `PackageManager.start_version_check(self, package_name=None, python_path=None) -> None` — Start a version check in a background thread.
+  - `PackageManager.new_version_available(self) -> bool` *(property)* — Check if a new version of the package is available.
+  - `PackageManager.installed_ver(self) -> str` *(property)* — Get the installed version of the package.
+  - `PackageManager.latest_ver(self) -> str` *(property)* — Get the latest version of the package from PyPI.
+  - `PackageManager.check_version(self, package_name=None, python_path=None) -> None` — Check the installed and latest versions of the package.
+  - `PackageManager.update_version(filepath: str, change: str = 'increment', version_part: str = 'patch', max_version_parts: tuple = (99, 99), version_regex: str = '__version__\\s*=\\s*[\'\\"](\\d+)\\.(\\d+)\\.(\\d+)[\'\\"]') -> str` *(static)* — Update the version number in a text file.
+  - `PackageManager.update_requirements(file_path=None, inc=None, exc=None) -> list` *(static)* — Update the requirements.txt file with current versions of packages.
+  - `PackageManager.install(self, package_name)` — Install a package.
+  - `PackageManager.uninstall(self, package_name)` — Uninstall a package.
+  - `PackageManager.list_packages(self)` — List installed packages.
+  - `PackageManager.package_details(self, package_name)` — Show details of a specific package.
+  - `PackageManager.update(self, package_name)` — Update a package to the latest version.
+  - `PackageManager.installed_version(self, package_name)` — Get the installed version of a package.
+  - `PackageManager.latest_version(self, package_name)` — Get the latest version of a package from PyPI using the standard library.
+  - `PackageManager.list_outdated_packages(self)` — List all outdated packages.
+  - `PackageManager.is_outdated(self, package_name: str) -> bool` — Efficiently check if a specific package is outdated.
 
 <a id="core_utils--preset_store"></a>
 ### `core_utils/preset_store.py`
