@@ -590,6 +590,38 @@ class StrUtils(CoreUtils):
             return str(new).join(string.rsplit(old))
 
     @staticmethod
+    def collapse_delimiter_runs(string, delimiter="_", strip_trailing=True):
+        """Collapse consecutive delimiter runs to a single delimiter.
+
+        Cleans the separator residue left behind when tokens are removed
+        from a delimited name: stripping ``tok`` from ``a__tok__tokB``
+        yields ``a____B`` — this collapses it to ``a_B``. Leading
+        delimiters are preserved (a leading ``_`` can be a deliberate
+        legality prefix); trailing runs are stripped by default.
+
+        Parameters:
+            string (str): The string to clean.
+            delimiter (str): The delimiter whose runs to collapse.
+            strip_trailing (bool): Also remove any trailing delimiter run.
+
+        Returns:
+            (str)
+
+        Example:
+            collapse_delimiter_runs('vdat____Shape702') #returns: 'vdat_Shape702'
+            collapse_delimiter_runs('Crate__') #returns: 'Crate'
+            collapse_delimiter_runs('_LeadingKept__x') #returns: '_LeadingKept_x'
+        """
+        if not string or not isinstance(string, str):
+            return string
+
+        d = re.escape(delimiter)
+        result = re.sub(f"{d}{{2,}}", delimiter, string)
+        if strip_trailing:
+            result = re.sub(f"{d}+$", "", result)
+        return result
+
+    @staticmethod
     @CoreUtils.listify(threading=True)
     def truncate(string, length=75, mode="start", insert=".."):
         """Shorten the given string to the given length.

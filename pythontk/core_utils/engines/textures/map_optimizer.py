@@ -151,6 +151,7 @@ class MapOptimizer(HelpMixin):
                 Op(
                     kind="depalettize",
                     description=f"Depalettize for resize: {mode} -> {new_mode}",
+                    params={"target_mode": new_mode},
                 )
             )
             mode = new_mode
@@ -227,6 +228,7 @@ class MapOptimizer(HelpMixin):
                     Op(
                         kind="force_pot",
                         description=f"Force POT: {width}x{height} -> {pw}x{ph}",
+                        params={"size": (pw, ph)},
                     )
                 )
                 width, height = pw, ph
@@ -268,6 +270,41 @@ class MapOptimizer(HelpMixin):
                 mode = sb_target_mode
 
         return ops
+
+    @staticmethod
+    def project(
+        plan: List[Op],
+        width: int,
+        height: int,
+        mode: str,
+    ) -> Tuple[int, int, str]:
+        """Replay ``plan``'s op params to get the post-apply size and mode.
+
+        Pure arithmetic over the plan — no pixel work — so a caller that only
+        wants to *show* the outcome (a dry run, a report row) doesn't pay for
+        a resize. Every op that changes size or mode carries the resulting
+        value in its params, making this a replay rather than a second copy
+        of :meth:`plan`'s decision logic.
+
+        Parameters:
+            plan: Ops from :meth:`plan`.
+            width, height, mode: The source image's starting state.
+
+        Returns:
+            tuple: ``(width, height, mode)`` after the plan would run.
+        """
+        for op in plan:
+            if op.kind in ("depalettize", "mode_coerce"):
+                mode = op.params.get("target_mode", mode)
+            elif op.kind == "resize":
+                size = op.params.get("size")
+                if size is not None:
+                    width = height = size
+            elif op.kind == "force_pot":
+                size = op.params.get("size")
+                if size is not None:
+                    width, height = size
+        return width, height, mode
 
     @classmethod
     def apply(
@@ -376,7 +413,14 @@ class MapOptimizer(HelpMixin):
                 )
                 return final_output_path
 
+        # Read the source's on-disk size before any archive/overwrite step can
+        # move or replace it — it's the "from" half of the size report below.
+        size_before = (
+            os.path.getsize(texture_path) if os.path.isfile(texture_path) else None
+        )
+
         image = ImgUtils.ensure_image(texture_path)
+        dims_before = image.size
 
         plan = cls.plan(
             image,
@@ -430,9 +474,45 @@ class MapOptimizer(HelpMixin):
 
         print(
             f"Saved optimized texture: {final_output_path} "
-            f"({image.size[0]}x{image.size[1]}, {ImgUtils.format_bit_depth(image)})"
+            f"({cls.format_result(final_output_path, size_before, dims_before, image)})"
         )
         return final_output_path
+
+    @staticmethod
+    def format_result(
+        output_path: str,
+        size_before: Optional[int],
+        dims_before: Optional[Tuple[int, int]],
+        image: "Image.Image",
+    ) -> str:
+        """Render the one-line result summary for an optimized map.
+
+        File size is the point of optimizing, so it leads the unchanged
+        dimension/bit-depth pair with a ``before -> after`` transition. A
+        dimension pair that didn't change renders once rather than as a
+        no-op arrow.
+
+        Parameters:
+            output_path: Path just written (stat'd for the resulting size).
+            size_before: Source byte count, or None when unknown.
+            dims_before: Source ``(width, height)``, or None when unknown.
+            image: The saved image (supplies final dims + bit depth).
+
+        Returns:
+            str: e.g. ``"4096x4096 -> 2048x2048, 24bit (8x3), 12.00 MB ->
+                3.00 MB (-75%)"``.
+        """
+        width, height = image.size
+        dims = f"{width}x{height}"
+        if dims_before and tuple(dims_before) != (width, height):
+            dims = f"{dims_before[0]}x{dims_before[1]} -> {dims}"
+
+        size_after = (
+            os.path.getsize(output_path) if os.path.isfile(output_path) else None
+        )
+        sizes = FileUtils.format_bytes_delta(size_before, size_after)
+
+        return f"{dims}, {ImgUtils.format_bit_depth(image)}, {sizes}"
 
     @classmethod
     def batch_optimize_maps(cls, directory: str, **kwargs):
@@ -460,11 +540,15 @@ class MapOptimizer(HelpMixin):
         map_type: str = None,
         allow_palette: bool = False,
         image: "Image.Image" = None,
+        output_type: str = None,
+        output_profile: str = None,
+        predict_size: bool = False,
     ) -> Dict[str, Any]:
         """Predict whether :meth:`optimize_map` would change ``texture_path``.
 
         Read-only wrapper around :meth:`plan`. Returns a dict the UI / report
-        callers can render without re-deriving decision strings.
+        callers can render without re-deriving decision strings. This is the
+        dry-run twin of :meth:`optimize_map` — nothing on disk is touched.
 
         Parameters:
             texture_path: Path to the texture file.
@@ -472,6 +556,19 @@ class MapOptimizer(HelpMixin):
                 Same semantics as :meth:`optimize_map`.
             image: Optional pre-loaded ``PIL.Image.Image`` to skip the
                 redundant header read for callers that already have one open.
+            output_type: Output format the run would write (e.g. "png"). Only
+                affects the predicted extension / size; None keeps the source's.
+            output_profile: Output-template profile the run would use. Resolved
+                exactly as :meth:`optimize_map` resolves it, so a profile that
+                dictates the extension / bit depth / compression is reflected
+                in the prediction rather than silently ignored.
+            predict_size: Also report the resulting *byte* count. Costs a real
+                encode (the plan is applied to a copy and written to a scratch
+                file that is immediately discarded), so it is opt-in — bulk
+                report callers assessing every texture in a scene shouldn't
+                pay for it. Compression ratios can't be derived from
+                dimensions and mode, so this is the only honest way to
+                answer "how much smaller?" before committing.
 
         Returns:
             dict with:
@@ -479,6 +576,11 @@ class MapOptimizer(HelpMixin):
                 reasons (list[str]): Per-op descriptions from the plan.
                 current (dict): {path, name, width, height, mode, format,
                     size_bytes, bit_depth, map_type}.
+                predicted (dict): {width, height, mode, bit_depth, ext, path,
+                    size_bytes}. ``path`` is where a default-location run would
+                    write. ``size_bytes`` is None unless *predict_size* was
+                    requested (or the encode failed, in which case
+                    ``size_error`` carries the reason).
                 target_mode (str | None): Map-type-driven target mode, when
                     one exists.
                 error (str): Only present when the file could not be read.
@@ -494,6 +596,7 @@ class MapOptimizer(HelpMixin):
                     "path": texture_path,
                     "name": os.path.basename(texture_path),
                 },
+                "predicted": {},
                 "target_mode": None,
             }
 
@@ -518,6 +621,7 @@ class MapOptimizer(HelpMixin):
                     "name": os.path.basename(texture_path),
                     "size_bytes": size_bytes,
                 },
+                "predicted": {},
                 "target_mode": None,
             }
 
@@ -543,6 +647,53 @@ class MapOptimizer(HelpMixin):
                 target_mode = op.params.get("target_mode")
                 break
 
+        # Resolve the profile the way optimize_map does — an active profile can
+        # dictate the extension, bit depth, and compression, all of which move
+        # the predicted size.
+        spec = (
+            OutputTemplates.resolve(map_type_key, output_profile)
+            if output_profile
+            else None
+        )
+        if spec and not output_type:
+            output_type = spec.ext
+
+        # Replay the plan for the projected size/mode (cheap), then optionally
+        # encode for the projected byte count (not cheap — hence opt-in).
+        new_width, new_height, new_mode = cls.project(ops, width, height, mode)
+        out_ext = (
+            (output_type or FileUtils.format_path(texture_path, "ext"))
+            .lower()
+            .lstrip(".")
+        )
+        predicted: Dict[str, Any] = {
+            "width": new_width,
+            "height": new_height,
+            "mode": new_mode,
+            "bit_depth": ImgUtils.format_bit_depth(new_mode),
+            "ext": out_ext,
+            # Same resolve call optimize_map makes, so a dry run names the file
+            # the real run would write (the map-type suffix gets normalized
+            # here — predicting it by hand would drift).
+            "path": MapFactory.resolve_texture_filename(
+                texture_path,
+                MapFactory.resolve_map_type(texture_path, key=False) or "",
+                ext=output_type,
+            ),
+            "size_bytes": None,
+        }
+        if predict_size:
+            predicted_bytes, size_error = cls._encoded_size(
+                image,
+                ops,
+                out_ext,
+                bit_depth=spec.bit_depth if spec else None,
+                compression=spec.compression if spec else None,
+            )
+            predicted["size_bytes"] = predicted_bytes
+            if size_error:
+                predicted["size_error"] = size_error
+
         return {
             "recommended": bool(ops),
             "reasons": [op.description for op in ops],
@@ -557,5 +708,50 @@ class MapOptimizer(HelpMixin):
                 "bit_depth": ImgUtils.format_bit_depth(mode),
                 "map_type": map_type_key,
             },
+            "predicted": predicted,
             "target_mode": target_mode,
         }
+
+    @classmethod
+    def _encoded_size(
+        cls,
+        image: "Image.Image",
+        plan: List[Op],
+        ext: str,
+        bit_depth: Optional[int] = None,
+        compression: Optional[str] = None,
+    ) -> Tuple[Optional[int], Optional[str]]:
+        """Byte count ``plan`` would produce, measured by a throwaway encode.
+
+        Routes through :meth:`ImgUtils.save_image` — the same writer
+        :meth:`optimize_map` uses, with the same profile-driven bit depth and
+        compression — so format dispatch (Pillow / cv2 / DDS) and mode fixups
+        are identical to the real run instead of an approximation that could
+        drift from it.
+
+        The caller's image is passed through uncopied: every op in
+        :meth:`apply` rebinds rather than mutating in place, which is the same
+        invariant :meth:`optimize_map` already relies on, and copying an 8K
+        texture just to throw it away is a real cost on the dry-run path.
+
+        Returns:
+            tuple: ``(size_bytes, error)`` — exactly one is non-None.
+        """
+        import shutil
+        import tempfile
+
+        scratch = tempfile.mkdtemp(prefix="map_optimizer_dryrun_")
+        try:
+            probe = os.path.join(scratch, f"probe.{ext}")
+            ImgUtils.save_image(
+                cls.apply(image, plan),
+                probe,
+                optimize=True,
+                bit_depth=bit_depth,
+                compression=compression,
+            )
+            return os.path.getsize(probe), None
+        except Exception as e:
+            return None, str(e)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)

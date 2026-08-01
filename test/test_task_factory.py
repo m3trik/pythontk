@@ -65,6 +65,18 @@ class _Recorder(TaskFactory):
         self.calls.append(("check_empty", value))
         return []  # a natural "no messages" shape -- must not crash
 
+    def check_none(self, value):
+        self.calls.append(("check_none", value))
+        return None  # no verdict at all -- must fail closed
+
+    def check_bare_messages(self, value):
+        self.calls.append(("check_bare_messages", value))
+        return ["problem: verdict bool missing"]  # malformed (bool, messages)
+
+    def check_boom(self, value):
+        self.calls.append(("check_boom", value))
+        raise RuntimeError("check boom")
+
     def set_deferred(self, value):
         """A task whose mutation the real work READS: it must survive run_tasks."""
         self.calls.append(("set_deferred", value))
@@ -120,6 +132,44 @@ class TaskFactoryTest(unittest.TestCase):
     def test_empty_sequence_check_result_is_failure_not_crash(self):
         # An empty tuple/list result is falsy -> failed check, never IndexError.
         self.assertFalse(_Recorder().run_tasks({"check_empty": True}))
+
+    def test_none_check_result_fails_closed(self):
+        # A check that returns no verdict at all must count as a failure.
+        self.assertFalse(_Recorder().run_tasks({"check_none": True}))
+
+    def test_raising_check_aborts_the_run_but_cleanup_still_happens(self):
+        # Fail-closed by design: a check that RAISES propagates (aborting the
+        # whole run) rather than being recorded as a failed check -- pinned so
+        # a refactor can't silently soften it. Cleanup must still hold: set_
+        # state from the task pass is reverted, and staged deferred restores
+        # survive for the caller's finally.
+        r = _Recorder()
+        with self.assertRaises(RuntimeError):
+            r.run_tasks({"set_flag": True, "set_deferred": True, "check_boom": True})
+        self.assertIn(("revert_flag", "ORIGINAL"), r.calls)
+        self.assertIn("deferred", r._deferred_restores)
+        r.run_deferred_restores()  # the caller's finally
+        self.assertIn(("restore_deferred",), r.calls)
+
+    def test_bare_message_list_check_passes_but_warns_malformed(self):
+        # Hazard pin: a check that forgets the bool verdict and returns a bare
+        # non-empty message list PASSES (element 0 is a truthy string). That
+        # verdict is kept for backward compatibility, but the malformed shape
+        # must be loud -- a WARNING naming the check.
+        r = _Recorder()
+        self.assertTrue(r.run_tasks({"check_bare_messages": True}))
+        warnings = [str(c.args[0]) for c in r.logger.warning.call_args_list]
+        self.assertTrue(
+            any("check_bare_messages" in w and "malformed" in w for w in warnings),
+            f"expected a malformed-shape warning, got: {warnings}",
+        )
+
+    def test_well_formed_check_results_do_not_warn_malformed(self):
+        # (bool, messages) tuples -- pass or fail -- must stay warning-free.
+        r = _Recorder()
+        r.run_tasks({"check_ok": True, "check_bad": True})
+        warnings = [str(c.args[0]) for c in r.logger.warning.call_args_list]
+        self.assertFalse([w for w in warnings if "malformed" in w], warnings)
 
     def test_reverts_run_lifo(self):
         r = _Recorder()

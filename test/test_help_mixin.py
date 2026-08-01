@@ -76,6 +76,78 @@ class ChildClass(SampleClass):
         return "child"
 
 
+class _CapabilityMixin:
+    """A private capability mixin — the shape this repo composes classes from."""
+
+    @property
+    def mixin_property(self) -> int:
+        """A property contributed by a private base."""
+        return 1
+
+    @staticmethod
+    def mixin_static() -> str:
+        """A staticmethod contributed by a private base."""
+        return "static"
+
+    @classmethod
+    def mixin_class(cls) -> str:
+        """A classmethod contributed by a private base."""
+        return "cls"
+
+    def mixin_method(self) -> str:
+        """A plain method contributed by a private base."""
+        return "method"
+
+
+class ComposedClass(_CapabilityMixin, HelpMixin):
+    """A public class composed from a private capability mixin."""
+
+    def own_method(self) -> str:
+        """A method defined directly on the composed class."""
+        return "own"
+
+
+class InheritedDescriptorKindTest(BaseTestCase):
+    """``_get_member_type`` must classify INHERITED descriptors correctly."""
+
+    def _kinds(self, cls):
+        return {
+            r.name: r.kind
+            for r in cls._collect_records(inherited=True, private=False)
+        }
+
+    def test_inherited_descriptors_keep_their_kind(self):
+        """Regression: the raw descriptor was looked up in the immediate
+        ``__dict__`` only, so anything inherited missed the lookup and fell
+        through to the ``callable`` test — an inherited property reported as
+        "attribute" and an inherited static/classmethod as a plain "method".
+        Classes here are routinely composed from capability mixins, so most
+        descriptors are inherited.
+        """
+        kinds = self._kinds(ComposedClass)
+        self.assertEqual(kinds.get("mixin_property"), "property")
+        self.assertEqual(kinds.get("mixin_static"), "staticmethod")
+        self.assertEqual(kinds.get("mixin_class"), "classmethod")
+        self.assertEqual(kinds.get("mixin_method"), "method")
+        self.assertEqual(kinds.get("own_method"), "method")
+
+    def test_own_descriptors_still_classified(self):
+        """The directly-declared case must not regress."""
+        kinds = self._kinds(SampleClass)
+        self.assertEqual(kinds.get("doubled"), "property")
+        self.assertEqual(kinds.get("static_helper"), "staticmethod")
+        self.assertEqual(kinds.get("from_string"), "classmethod")
+        self.assertEqual(kinds.get("public_method"), "method")
+
+    def test_kinds_survive_a_subclass(self):
+        """A subclass sees its parent's descriptors with the same kinds."""
+        kinds = self._kinds(ChildClass)
+        self.assertEqual(kinds.get("doubled"), "property")
+        self.assertEqual(kinds.get("static_helper"), "staticmethod")
+        self.assertEqual(kinds.get("from_string"), "classmethod")
+        self.assertEqual(kinds.get("child_method"), "method")
+
+
 class HelpMixinTest(BaseTestCase):
     """HelpMixin test class."""
 

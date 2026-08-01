@@ -284,6 +284,21 @@ class TaskFactory:
         all_checks_passed = True
 
         for check_name, result in check_results.items():
+            if (
+                isinstance(result, (tuple, list))
+                and result
+                and not isinstance(result[0], bool)
+            ):
+                # Malformed (bool, messages) shape — e.g. a bare non-empty
+                # message list, whose truthy first string would silently PASS.
+                # The verdict stays element 0's truthiness for backward
+                # compatibility; just make the bad shape loud.
+                self.logger.warning(
+                    f"check '{check_name}' returned a malformed result "
+                    f"(expected (bool, messages), got {type(result).__name__} "
+                    f"with {type(result[0]).__name__} first element); treating "
+                    f"first element's truthiness as the verdict"
+                )
             if not self._is_success(result):
                 failed_checks.append(check_name)
                 all_checks_passed = False

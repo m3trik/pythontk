@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-07-30_
+_Generated: 2026-08-01_
 
 ## Index
 
@@ -263,6 +263,9 @@ Schema for a *behavior* template file, defined as a dataclass.
 
 - **[`class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L74)** — Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``).
   - `BehaviorSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.
+  - `BehaviorSpec.validate_duration(value: Any) -> List[str]` *(static)* — ``duration`` is a frame count or the literal ``"from_source"``.
+  - `BehaviorSpec.validate_verify(value: Any) -> List[str]` *(static)*
+  - `BehaviorSpec.validate_attributes(value: Any) -> List[str]` *(static)* — ``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}.
 
 <a id="core_utils--engines--shots--manifest--manifest_engine"></a>
 ### `core_utils/engines/shots/manifest/manifest_engine.py`
@@ -319,6 +322,8 @@ Schema for a CSV *mapping* file, defined as a dataclass.
 - **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L29)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
 - **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L112)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
   - `MappingSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.
+  - `MappingSpec.validate_audio_resolve(value: Any) -> List[str]` *(static)* — Validate the polymorphic ``audio_resolve`` block.
+  - `MappingSpec.validate_default_behaviors(value: Any) -> List[str]` *(static)* — Validate the ``default_behaviors`` block ({kind: [behavior names]}).
 
 <a id="core_utils--engines--shots--manifest--range_resolver"></a>
 ### `core_utils/engines/shots/manifest/range_resolver.py`
@@ -609,10 +614,12 @@ Plan, assess, and apply map (texture) optimizations.
 - **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L67)** — One operation in an optimization plan.
 - **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L80)** — Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
+  - `MapOptimizer.project(plan: List[Op], width: int, height: int, mode: str) -> Tuple[int, int, str]` *(static)* — Replay ``plan``'s op params to get the post-apply size and mode.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
   - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.format_result(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str` *(static)* — Render the one-line result summary for an optimized map.
   - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
-  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
+  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
 
 <a id="core_utils--engines--textures--map_registry"></a>
 ### `core_utils/engines/textures/map_registry.py`
@@ -644,7 +651,7 @@ Plan, assess, and apply map (texture) optimizations.
 
 DCC-agnostic formatters for material / texture info reports.
 
-- **[`class MatReport`](pythontk/pythontk/core_utils/engines/textures/mat_report.py#L24)** — Pure record→text/HTML formatters for material & texture info reports.
+- **[`class MatReport`](pythontk/pythontk/core_utils/engines/textures/mat_report.py#L27)** — Pure record→text/HTML formatters for material & texture info reports.
   - `MatReport.format_texture_info_text(cls, info_list: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_texture_info`` output as a plain-text report.
   - `MatReport.format_texture_info_html(cls, info_list: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_texture_info`` output as styled HTML.
   - `MatReport.format_mat_info_text(cls, records: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_mat_info`` output as a plain-text report.
@@ -948,6 +955,22 @@ Reusable module attribute resolver for package-style imports.
 - **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L423)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
+  - `PackageManager.start_version_check(self, package_name=None, python_path=None) -> None` — Start a version check in a background thread.
+  - `PackageManager.new_version_available(self) -> bool` *(property)* — Check if a new version of the package is available.
+  - `PackageManager.installed_ver(self) -> str` *(property)* — Get the installed version of the package.
+  - `PackageManager.latest_ver(self) -> str` *(property)* — Get the latest version of the package from PyPI.
+  - `PackageManager.check_version(self, package_name=None, python_path=None) -> None` — Check the installed and latest versions of the package.
+  - `PackageManager.update_version(filepath: str, change: str = 'increment', version_part: str = 'patch', max_version_parts: tuple = (99, 99), version_regex: str = '__version__\\s*=\\s*[\'\\"](\\d+)\\.(\\d+)\\.(\\d+)[\'\\"]') -> str` *(static)* — Update the version number in a text file.
+  - `PackageManager.update_requirements(file_path=None, inc=None, exc=None) -> list` *(static)* — Update the requirements.txt file with current versions of packages.
+  - `PackageManager.install(self, package_name)` — Install a package.
+  - `PackageManager.uninstall(self, package_name)` — Uninstall a package.
+  - `PackageManager.list_packages(self)` — List installed packages.
+  - `PackageManager.package_details(self, package_name)` — Show details of a specific package.
+  - `PackageManager.update(self, package_name)` — Update a package to the latest version.
+  - `PackageManager.installed_version(self, package_name)` — Get the installed version of a package.
+  - `PackageManager.latest_version(self, package_name)` — Get the latest version of a package from PyPI using the standard library.
+  - `PackageManager.list_outdated_packages(self)` — List all outdated packages.
+  - `PackageManager.is_outdated(self, package_name: str) -> bool` — Efficiently check if a specific package is outdated.
 
 <a id="core_utils--preset_store"></a>
 ### `core_utils/preset_store.py`
@@ -1143,6 +1166,8 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.is_valid(filepath: str, expected_type: Optional[str] = None) -> bool` *(static)* — Check if a path is valid, optionally requiring a specific type ('file' or 'dir').
   - `FileUtils.is_cloud_placeholder(filepath: str) -> bool` *(static)* — Return True if *filepath* is an online-only cloud-sync placeholder.
   - `FileUtils.free_space(path: str) -> Optional[int]` *(static)* — Return free space (bytes) on the volume that holds *path*.
+  - `FileUtils.format_bytes(size_bytes, unknown: str = '(unknown)') -> str` *(static)* — Render a byte count using the largest unit that keeps the number small.
+  - `FileUtils.format_bytes_delta(cls, before, after, unknown: str = '(unknown)') -> str` *(class)* — Render a ``before -> after`` size transition with a percent delta.
   - `FileUtils.create_dir(filepath: str) -> None` *(static)* — Create a directory if one doesn't already exist.
   - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str` *(static)* — Return the next available versioned path for `filepath`.
   - `FileUtils.get_dir_contents(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)` *(static)* — Get the contents of a directory and any of its children.
@@ -1577,6 +1602,7 @@ One-shot batch pipeline over :class:`RpcClient`.
   - `StrUtils.get_text_between_delimiters(string, start_delim, end_delim, as_string=False)` *(static)* — Get any text between the specified start and end delimiters in the given string.
   - `StrUtils.insert(cls, src, ins, at, occurrence=1, before=False)` *(class)* — Insert character(s) into a string at a given location.
   - `StrUtils.rreplace(string, old, new='', count=None)` *(static)* — Replace occurrances in a string from right to left.
+  - `StrUtils.collapse_delimiter_runs(string, delimiter='_', strip_trailing=True)` *(static)* — Collapse consecutive delimiter runs to a single delimiter.
   - `StrUtils.truncate(string, length=75, mode='start', insert='..')` *(static)* — Shorten the given string to the given length.
   - `StrUtils.get_trailing_integers(string, inc=0, as_string=False)` *(static)* — Returns any integers from the end of the given string.
   - `StrUtils.find_str(find, strings, regex=False, ignore_case=False)` *(static)* — Filter for elements that containing the given string in a list of strings.

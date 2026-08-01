@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-07-30",
+  "generated_at": "2026-08-01",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -1050,6 +1050,33 @@
               "summary": "Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.",
               "line": 116,
               "deprecated": false
+            },
+            {
+              "name": "validate_duration",
+              "qualname": "BehaviorSpec.validate_duration",
+              "kind": "staticmethod",
+              "signature": "(value: Any) -> List[str]",
+              "summary": "``duration`` is a frame count or the literal ``\"from_source\"``.",
+              "line": 34,
+              "deprecated": false
+            },
+            {
+              "name": "validate_verify",
+              "qualname": "BehaviorSpec.validate_verify",
+              "kind": "staticmethod",
+              "signature": "(value: Any) -> List[str]",
+              "summary": "",
+              "line": 43,
+              "deprecated": false
+            },
+            {
+              "name": "validate_attributes",
+              "qualname": "BehaviorSpec.validate_attributes",
+              "kind": "staticmethod",
+              "signature": "(value: Any) -> List[str]",
+              "summary": "``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}.",
+              "line": 52,
+              "deprecated": false
             }
           ]
         }
@@ -1361,6 +1388,24 @@
               "signature": "(cls) -> str",
               "summary": "Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.",
               "line": 134,
+              "deprecated": false
+            },
+            {
+              "name": "validate_audio_resolve",
+              "qualname": "MappingSpec.validate_audio_resolve",
+              "kind": "staticmethod",
+              "signature": "(value: Any) -> List[str]",
+              "summary": "Validate the polymorphic ``audio_resolve`` block.",
+              "line": 81,
+              "deprecated": false
+            },
+            {
+              "name": "validate_default_behaviors",
+              "qualname": "MappingSpec.validate_default_behaviors",
+              "kind": "staticmethod",
+              "signature": "(value: Any) -> List[str]",
+              "summary": "Validate the ``default_behaviors`` block ({kind: [behavior names]}).",
+              "line": 98,
               "deprecated": false
             }
           ]
@@ -3457,12 +3502,21 @@
               "deprecated": false
             },
             {
+              "name": "project",
+              "qualname": "MapOptimizer.project",
+              "kind": "staticmethod",
+              "signature": "(plan: List[Op], width: int, height: int, mode: str) -> Tuple[int, int, str]",
+              "summary": "Replay ``plan``'s op params to get the post-apply size and mode.",
+              "line": 275,
+              "deprecated": false
+            },
+            {
               "name": "apply",
               "qualname": "MapOptimizer.apply",
               "kind": "classmethod",
               "signature": "(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'",
               "summary": "Execute ``plan`` against ``image``.",
-              "line": 273,
+              "line": 310,
               "deprecated": false
             },
             {
@@ -3471,7 +3525,16 @@
               "kind": "classmethod",
               "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str",
               "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
-              "line": 299,
+              "line": 336,
+              "deprecated": false
+            },
+            {
+              "name": "format_result",
+              "qualname": "MapOptimizer.format_result",
+              "kind": "staticmethod",
+              "signature": "(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str",
+              "summary": "Render the one-line result summary for an optimized map.",
+              "line": 482,
               "deprecated": false
             },
             {
@@ -3480,16 +3543,16 @@
               "kind": "classmethod",
               "signature": "(cls, directory: str, **kwargs)",
               "summary": "Batch optimizes all maps in a directory.",
-              "line": 438,
+              "line": 518,
               "deprecated": false
             },
             {
               "name": "assess",
               "qualname": "MapOptimizer.assess",
               "kind": "classmethod",
-              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None) -> Dict[str, Any]",
+              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False) -> Dict[str, Any]",
               "summary": "Predict whether :meth:`optimize_map` would change ``texture_path``.",
-              "line": 454,
+              "line": 534,
               "deprecated": false
             }
           ]
@@ -3698,7 +3761,7 @@
         {
           "name": "MatReport",
           "summary": "Pure record→text/HTML formatters for material & texture info reports.",
-          "line": 24,
+          "line": 27,
           "bases": [],
           "members": [
             {
@@ -3707,7 +3770,7 @@
               "kind": "classmethod",
               "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
               "summary": "Render ``get_texture_info`` output as a plain-text report.",
-              "line": 63,
+              "line": 57,
               "deprecated": false
             },
             {
@@ -3716,7 +3779,7 @@
               "kind": "classmethod",
               "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
               "summary": "Render ``get_texture_info`` output as styled HTML.",
-              "line": 81,
+              "line": 75,
               "deprecated": false
             },
             {
@@ -3725,7 +3788,7 @@
               "kind": "classmethod",
               "signature": "(cls, records: List[Dict[str, Any]]) -> str",
               "summary": "Render ``get_mat_info`` output as a plain-text report.",
-              "line": 94,
+              "line": 88,
               "deprecated": false
             },
             {
@@ -3734,7 +3797,7 @@
               "kind": "classmethod",
               "signature": "(cls, records: List[Dict[str, Any]]) -> str",
               "summary": "Render ``get_mat_info`` output as styled HTML.",
-              "line": 135,
+              "line": 129,
               "deprecated": false
             }
           ]
@@ -4377,7 +4440,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]",
               "summary": "Get source code for the class or a specific member.",
-              "line": 513,
+              "line": 522,
               "deprecated": false
             },
             {
@@ -4386,7 +4449,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]",
               "summary": "Get the file and line number where the class or member is defined.",
-              "line": 560,
+              "line": 569,
               "deprecated": false
             },
             {
@@ -4395,7 +4458,7 @@
               "kind": "classmethod",
               "signature": "(cls, *, brief: bool = False, returns: bool = False) -> Optional[str]",
               "summary": "Show the method resolution order (inheritance chain) for this class.",
-              "line": 609,
+              "line": 618,
               "deprecated": false
             },
             {
@@ -4404,7 +4467,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, *, returns: bool = False) -> Optional[str]",
               "summary": "Get detailed signature information for a method.",
-              "line": 654,
+              "line": 663,
               "deprecated": false
             },
             {
@@ -4413,7 +4476,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: Optional[str] = None, *, returns: bool = False, as_dict: bool = False, as_json: bool = False) -> Any",
               "summary": "Classify a member or list all members with their classifications.",
-              "line": 766,
+              "line": 775,
               "deprecated": false
             },
             {
@@ -4422,7 +4485,7 @@
               "kind": "classmethod",
               "signature": "(cls, members: Optional[str] = None, *, inherited: bool = True, private: bool = False, sort: bool = True, returns: bool = False, as_dict: bool = False, as_json: bool = False) -> Any",
               "summary": "Get a list of member names.",
-              "line": 917,
+              "line": 926,
               "deprecated": false
             },
             {
@@ -4431,7 +4494,7 @@
               "kind": "staticmethod",
               "signature": "(target, name=None, *, brief=False, returns=False, as_dict=False, as_json=False)",
               "summary": "Get help for any Python object (class, function, module, method, etc.).",
-              "line": 972,
+              "line": 981,
               "deprecated": false
             }
           ]
@@ -5708,6 +5771,150 @@
               "summary": "Sort a list of local repository paths based on their pyproject.toml dependencies.",
               "line": 542,
               "deprecated": false
+            },
+            {
+              "name": "start_version_check",
+              "qualname": "PackageManager.start_version_check",
+              "kind": "method",
+              "signature": "(self, package_name=None, python_path=None) -> None",
+              "summary": "Start a version check in a background thread.",
+              "line": 160,
+              "deprecated": false
+            },
+            {
+              "name": "new_version_available",
+              "qualname": "PackageManager.new_version_available",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "Check if a new version of the package is available.",
+              "line": 184,
+              "deprecated": false
+            },
+            {
+              "name": "installed_ver",
+              "qualname": "PackageManager.installed_ver",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "Get the installed version of the package.",
+              "line": 200,
+              "deprecated": false
+            },
+            {
+              "name": "latest_ver",
+              "qualname": "PackageManager.latest_ver",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "Get the latest version of the package from PyPI.",
+              "line": 209,
+              "deprecated": false
+            },
+            {
+              "name": "check_version",
+              "qualname": "PackageManager.check_version",
+              "kind": "method",
+              "signature": "(self, package_name=None, python_path=None) -> None",
+              "summary": "Check the installed and latest versions of the package.",
+              "line": 217,
+              "deprecated": false
+            },
+            {
+              "name": "update_version",
+              "qualname": "PackageManager.update_version",
+              "kind": "staticmethod",
+              "signature": "(filepath: str, change: str = 'increment', version_part: str = 'patch', max_version_parts: tuple = (99, 99), version_regex: str = '__version__\\\\s*=\\\\s*[\\'\\\\\"](\\\\d+)\\\\.(\\\\d+)\\\\.(\\\\d+)[\\'\\\\\"]') -> str",
+              "summary": "Update the version number in a text file.",
+              "line": 260,
+              "deprecated": false
+            },
+            {
+              "name": "update_requirements",
+              "qualname": "PackageManager.update_requirements",
+              "kind": "staticmethod",
+              "signature": "(file_path=None, inc=None, exc=None) -> list",
+              "summary": "Update the requirements.txt file with current versions of packages.",
+              "line": 361,
+              "deprecated": false
+            },
+            {
+              "name": "install",
+              "qualname": "PackageManager.install",
+              "kind": "method",
+              "signature": "(self, package_name)",
+              "summary": "Install a package.",
+              "line": 33,
+              "deprecated": false
+            },
+            {
+              "name": "uninstall",
+              "qualname": "PackageManager.uninstall",
+              "kind": "method",
+              "signature": "(self, package_name)",
+              "summary": "Uninstall a package.",
+              "line": 41,
+              "deprecated": false
+            },
+            {
+              "name": "list_packages",
+              "qualname": "PackageManager.list_packages",
+              "kind": "method",
+              "signature": "(self)",
+              "summary": "List installed packages.",
+              "line": 49,
+              "deprecated": false
+            },
+            {
+              "name": "package_details",
+              "qualname": "PackageManager.package_details",
+              "kind": "method",
+              "signature": "(self, package_name)",
+              "summary": "Show details of a specific package.",
+              "line": 57,
+              "deprecated": false
+            },
+            {
+              "name": "update",
+              "qualname": "PackageManager.update",
+              "kind": "method",
+              "signature": "(self, package_name)",
+              "summary": "Update a package to the latest version.",
+              "line": 65,
+              "deprecated": false
+            },
+            {
+              "name": "installed_version",
+              "qualname": "PackageManager.installed_version",
+              "kind": "method",
+              "signature": "(self, package_name)",
+              "summary": "Get the installed version of a package.",
+              "line": 73,
+              "deprecated": false
+            },
+            {
+              "name": "latest_version",
+              "qualname": "PackageManager.latest_version",
+              "kind": "method",
+              "signature": "(self, package_name)",
+              "summary": "Get the latest version of a package from PyPI using the standard library.",
+              "line": 78,
+              "deprecated": false
+            },
+            {
+              "name": "list_outdated_packages",
+              "qualname": "PackageManager.list_outdated_packages",
+              "kind": "method",
+              "signature": "(self)",
+              "summary": "List all outdated packages.",
+              "line": 104,
+              "deprecated": false
+            },
+            {
+              "name": "is_outdated",
+              "qualname": "PackageManager.is_outdated",
+              "kind": "method",
+              "signature": "(self, package_name: str) -> bool",
+              "summary": "Efficiently check if a specific package is outdated.",
+              "line": 122,
+              "deprecated": false
             }
           ]
         }
@@ -6835,12 +7042,30 @@
               "deprecated": false
             },
             {
+              "name": "format_bytes",
+              "qualname": "FileUtils.format_bytes",
+              "kind": "staticmethod",
+              "signature": "(size_bytes, unknown: str = '(unknown)') -> str",
+              "summary": "Render a byte count using the largest unit that keeps the number small.",
+              "line": 113,
+              "deprecated": false
+            },
+            {
+              "name": "format_bytes_delta",
+              "qualname": "FileUtils.format_bytes_delta",
+              "kind": "classmethod",
+              "signature": "(cls, before, after, unknown: str = '(unknown)') -> str",
+              "summary": "Render a ``before -> after`` size transition with a percent delta.",
+              "line": 145,
+              "deprecated": false
+            },
+            {
               "name": "create_dir",
               "qualname": "FileUtils.create_dir",
               "kind": "staticmethod",
               "signature": "(filepath: str) -> None",
               "summary": "Create a directory if one doesn't already exist.",
-              "line": 113,
+              "line": 165,
               "deprecated": false
             },
             {
@@ -6849,7 +7074,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str",
               "summary": "Return the next available versioned path for `filepath`.",
-              "line": 131,
+              "line": 183,
               "deprecated": false
             },
             {
@@ -6858,7 +7083,7 @@
               "kind": "staticmethod",
               "signature": "(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)",
               "summary": "Get the contents of a directory and any of its children.",
-              "line": 213,
+              "line": 265,
               "deprecated": false
             },
             {
@@ -6867,7 +7092,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, create_dir: bool = False, logger=None) -> bool",
               "summary": "Open the file explorer at the given path.",
-              "line": 398,
+              "line": 450,
               "deprecated": false
             },
             {
@@ -6876,7 +7101,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, as_list=False, encoding='utf-8') -> None",
               "summary": "Get each line of a text file as indices of a list.",
-              "line": 447,
+              "line": 499,
               "deprecated": false
             },
             {
@@ -6885,7 +7110,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, lines)",
               "summary": "Write the given list contents to the given file.",
-              "line": 466,
+              "line": 518,
               "deprecated": false
             },
             {
@@ -6894,7 +7119,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, content: str, encoding: str = 'utf-8') -> None",
               "summary": "Write text to a file atomically.",
-              "line": 480,
+              "line": 532,
               "deprecated": false
             },
             {
@@ -6903,7 +7128,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str",
               "summary": "Copies a file to a specified folder, ensuring the folder exists.",
-              "line": 529,
+              "line": 581,
               "deprecated": false
             },
             {
@@ -6912,7 +7137,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]",
               "summary": "Moves one or more files to a specified folder.",
-              "line": 568,
+              "line": 620,
               "deprecated": false
             },
             {
@@ -6921,7 +7146,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, _runner=None)",
               "summary": "Open the OS file manager showing ``path`` (selecting the file when supported, else",
-              "line": 636,
+              "line": 688,
               "deprecated": false
             },
             {
@@ -6930,7 +7155,7 @@
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 671,
+              "line": 723,
               "deprecated": false
             },
             {
@@ -6939,7 +7164,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 754,
+              "line": 806,
               "deprecated": false
             },
             {
@@ -6948,7 +7173,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 824,
+              "line": 876,
               "deprecated": false
             },
             {
@@ -6957,7 +7182,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 869,
+              "line": 921,
               "deprecated": false
             },
             {
@@ -6966,7 +7191,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 922,
+              "line": 974,
               "deprecated": false
             },
             {
@@ -6975,7 +7200,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 944,
+              "line": 996,
               "deprecated": false
             },
             {
@@ -6984,7 +7209,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 1065,
+              "line": 1117,
               "deprecated": false
             },
             {
@@ -6993,7 +7218,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Set the current json filepath.",
-              "line": 1224,
+              "line": 1276,
               "deprecated": false
             },
             {
@@ -7002,7 +7227,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Get the current json filepath.",
-              "line": 1236,
+              "line": 1288,
               "deprecated": false
             },
             {
@@ -7011,7 +7236,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, value, file=None)",
               "summary": "Parameters:",
-              "line": 1248,
+              "line": 1300,
               "deprecated": false
             },
             {
@@ -7020,7 +7245,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, file=None)",
               "summary": "Parameters:",
-              "line": 1285,
+              "line": 1337,
               "deprecated": false
             }
           ]
@@ -9673,12 +9898,21 @@
               "deprecated": false
             },
             {
+              "name": "collapse_delimiter_runs",
+              "qualname": "StrUtils.collapse_delimiter_runs",
+              "kind": "staticmethod",
+              "signature": "(string, delimiter='_', strip_trailing=True)",
+              "summary": "Collapse consecutive delimiter runs to a single delimiter.",
+              "line": 593,
+              "deprecated": false
+            },
+            {
               "name": "truncate",
               "qualname": "StrUtils.truncate",
               "kind": "staticmethod",
               "signature": "(string, length=75, mode='start', insert='..')",
               "summary": "Shorten the given string to the given length.",
-              "line": 594,
+              "line": 626,
               "deprecated": false
             },
             {
@@ -9687,7 +9921,7 @@
               "kind": "staticmethod",
               "signature": "(string, inc=0, as_string=False)",
               "summary": "Returns any integers from the end of the given string.",
-              "line": 649,
+              "line": 681,
               "deprecated": false
             },
             {
@@ -9696,7 +9930,7 @@
               "kind": "staticmethod",
               "signature": "(find, strings, regex=False, ignore_case=False)",
               "summary": "Filter for elements that containing the given string in a list of strings.",
-              "line": 676,
+              "line": 708,
               "deprecated": false
             },
             {
@@ -9705,7 +9939,7 @@
               "kind": "classmethod",
               "signature": "(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)",
               "summary": "Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…",
-              "line": 774,
+              "line": 806,
               "deprecated": false
             },
             {
@@ -9714,7 +9948,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str",
               "summary": "Re-format the suffix for the given string.",
-              "line": 935,
+              "line": 967,
               "deprecated": false
             },
             {
@@ -9723,7 +9957,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Strip a configured prefix and/or suffix from a string, case-insensitively.",
-              "line": 994,
+              "line": 1026,
               "deprecated": false
             },
             {
@@ -9732,7 +9966,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str",
               "summary": "Infer ``\"prefix\"`` or ``\"suffix\"`` from *delimiter* placement in *text*.",
-              "line": 1047,
+              "line": 1079,
               "deprecated": false
             },
             {
@@ -9741,7 +9975,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, mode: str = 'auto', *, default: str = 'prefix', delimiter: str = '_') -> Tuple[str, str]",
               "summary": "Split an affix string into a ``(prefix, suffix)`` pair per *mode*.",
-              "line": 1095,
+              "line": 1127,
               "deprecated": false
             },
             {
@@ -9750,7 +9984,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Idempotently apply a prefix and/or suffix to a string.",
-              "line": 1144,
+              "line": 1176,
               "deprecated": false
             },
             {
@@ -9759,7 +9993,7 @@
               "kind": "staticmethod",
               "signature": "(index: int) -> str",
               "summary": "Excel-column-style alphabetic label for a 0-based index.",
-              "line": 1178,
+              "line": 1210,
               "deprecated": false
             },
             {
@@ -9768,7 +10002,7 @@
               "kind": "staticmethod",
               "signature": "(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]",
               "summary": "Generate ``count`` sequential labels for naming sibling items.",
-              "line": 1206,
+              "line": 1238,
               "deprecated": false
             },
             {
@@ -9777,7 +10011,7 @@
               "kind": "staticmethod",
               "signature": "(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]",
               "summary": "Reduce a batch of names to a shared base form, then disambiguate",
-              "line": 1247,
+              "line": 1279,
               "deprecated": false
             },
             {
@@ -9786,7 +10020,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, stamp='%m-%d-%Y  %H:%M')",
               "summary": "Attach or detach a modified timestamp and date to/from a given file path.",
-              "line": 1355,
+              "line": 1387,
               "deprecated": false
             }
           ]
