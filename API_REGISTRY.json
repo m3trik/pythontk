@@ -1050,33 +1050,6 @@
               "summary": "Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.",
               "line": 116,
               "deprecated": false
-            },
-            {
-              "name": "validate_duration",
-              "qualname": "BehaviorSpec.validate_duration",
-              "kind": "staticmethod",
-              "signature": "(value: Any) -> List[str]",
-              "summary": "``duration`` is a frame count or the literal ``\"from_source\"``.",
-              "line": 34,
-              "deprecated": false
-            },
-            {
-              "name": "validate_verify",
-              "qualname": "BehaviorSpec.validate_verify",
-              "kind": "staticmethod",
-              "signature": "(value: Any) -> List[str]",
-              "summary": "",
-              "line": 43,
-              "deprecated": false
-            },
-            {
-              "name": "validate_attributes",
-              "qualname": "BehaviorSpec.validate_attributes",
-              "kind": "staticmethod",
-              "signature": "(value: Any) -> List[str]",
-              "summary": "``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}.",
-              "line": 52,
-              "deprecated": false
             }
           ]
         }
@@ -1388,24 +1361,6 @@
               "signature": "(cls) -> str",
               "summary": "Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.",
               "line": 134,
-              "deprecated": false
-            },
-            {
-              "name": "validate_audio_resolve",
-              "qualname": "MappingSpec.validate_audio_resolve",
-              "kind": "staticmethod",
-              "signature": "(value: Any) -> List[str]",
-              "summary": "Validate the polymorphic ``audio_resolve`` block.",
-              "line": 81,
-              "deprecated": false
-            },
-            {
-              "name": "validate_default_behaviors",
-              "qualname": "MappingSpec.validate_default_behaviors",
-              "kind": "staticmethod",
-              "signature": "(value: Any) -> List[str]",
-              "summary": "Validate the ``default_behaviors`` block ({kind: [behavior names]}).",
-              "line": 98,
               "deprecated": false
             }
           ]
@@ -5770,150 +5725,6 @@
               "signature": "(paths: List[Union[str, Path]]) -> List[Path]",
               "summary": "Sort a list of local repository paths based on their pyproject.toml dependencies.",
               "line": 542,
-              "deprecated": false
-            },
-            {
-              "name": "start_version_check",
-              "qualname": "PackageManager.start_version_check",
-              "kind": "method",
-              "signature": "(self, package_name=None, python_path=None) -> None",
-              "summary": "Start a version check in a background thread.",
-              "line": 160,
-              "deprecated": false
-            },
-            {
-              "name": "new_version_available",
-              "qualname": "PackageManager.new_version_available",
-              "kind": "property",
-              "signature": "(self) -> bool",
-              "summary": "Check if a new version of the package is available.",
-              "line": 184,
-              "deprecated": false
-            },
-            {
-              "name": "installed_ver",
-              "qualname": "PackageManager.installed_ver",
-              "kind": "property",
-              "signature": "(self) -> str",
-              "summary": "Get the installed version of the package.",
-              "line": 200,
-              "deprecated": false
-            },
-            {
-              "name": "latest_ver",
-              "qualname": "PackageManager.latest_ver",
-              "kind": "property",
-              "signature": "(self) -> str",
-              "summary": "Get the latest version of the package from PyPI.",
-              "line": 209,
-              "deprecated": false
-            },
-            {
-              "name": "check_version",
-              "qualname": "PackageManager.check_version",
-              "kind": "method",
-              "signature": "(self, package_name=None, python_path=None) -> None",
-              "summary": "Check the installed and latest versions of the package.",
-              "line": 217,
-              "deprecated": false
-            },
-            {
-              "name": "update_version",
-              "qualname": "PackageManager.update_version",
-              "kind": "staticmethod",
-              "signature": "(filepath: str, change: str = 'increment', version_part: str = 'patch', max_version_parts: tuple = (99, 99), version_regex: str = '__version__\\\\s*=\\\\s*[\\'\\\\\"](\\\\d+)\\\\.(\\\\d+)\\\\.(\\\\d+)[\\'\\\\\"]') -> str",
-              "summary": "Update the version number in a text file.",
-              "line": 260,
-              "deprecated": false
-            },
-            {
-              "name": "update_requirements",
-              "qualname": "PackageManager.update_requirements",
-              "kind": "staticmethod",
-              "signature": "(file_path=None, inc=None, exc=None) -> list",
-              "summary": "Update the requirements.txt file with current versions of packages.",
-              "line": 361,
-              "deprecated": false
-            },
-            {
-              "name": "install",
-              "qualname": "PackageManager.install",
-              "kind": "method",
-              "signature": "(self, package_name)",
-              "summary": "Install a package.",
-              "line": 33,
-              "deprecated": false
-            },
-            {
-              "name": "uninstall",
-              "qualname": "PackageManager.uninstall",
-              "kind": "method",
-              "signature": "(self, package_name)",
-              "summary": "Uninstall a package.",
-              "line": 41,
-              "deprecated": false
-            },
-            {
-              "name": "list_packages",
-              "qualname": "PackageManager.list_packages",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "List installed packages.",
-              "line": 49,
-              "deprecated": false
-            },
-            {
-              "name": "package_details",
-              "qualname": "PackageManager.package_details",
-              "kind": "method",
-              "signature": "(self, package_name)",
-              "summary": "Show details of a specific package.",
-              "line": 57,
-              "deprecated": false
-            },
-            {
-              "name": "update",
-              "qualname": "PackageManager.update",
-              "kind": "method",
-              "signature": "(self, package_name)",
-              "summary": "Update a package to the latest version.",
-              "line": 65,
-              "deprecated": false
-            },
-            {
-              "name": "installed_version",
-              "qualname": "PackageManager.installed_version",
-              "kind": "method",
-              "signature": "(self, package_name)",
-              "summary": "Get the installed version of a package.",
-              "line": 73,
-              "deprecated": false
-            },
-            {
-              "name": "latest_version",
-              "qualname": "PackageManager.latest_version",
-              "kind": "method",
-              "signature": "(self, package_name)",
-              "summary": "Get the latest version of a package from PyPI using the standard library.",
-              "line": 78,
-              "deprecated": false
-            },
-            {
-              "name": "list_outdated_packages",
-              "qualname": "PackageManager.list_outdated_packages",
-              "kind": "method",
-              "signature": "(self)",
-              "summary": "List all outdated packages.",
-              "line": 104,
-              "deprecated": false
-            },
-            {
-              "name": "is_outdated",
-              "qualname": "PackageManager.is_outdated",
-              "kind": "method",
-              "signature": "(self, package_name: str) -> bool",
-              "summary": "Efficiently check if a specific package is outdated.",
-              "line": 122,
               "deprecated": false
             }
           ]
