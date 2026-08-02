@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.1"
+__version__ = "0.9.3"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -34,12 +34,14 @@ DEFAULT_INCLUDE = {
     "file_utils.temp_artifacts": ["TempArtifacts", "CachedArtifact"],
     # Shared project-workspace model + workspace.mel codec (zero-dep). One
     # project folder serves Maya (which parses the marker natively) and
-    # blendertk (whose current-workspace resolver builds on this).
+    # blendertk (whose current-workspace resolver builds on this); one
+    # unnamespaced template store defines how BOTH build a new one.
     "file_utils.workspace": [
         "WORKSPACE_MARKER",
         "DEFAULT_FILE_RULES",
         "RULE_NICE_NAMES",
         "Workspace",
+        "WorkspaceTemplates",
     ],
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",

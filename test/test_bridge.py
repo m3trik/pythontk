@@ -13,6 +13,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from pythontk.core_utils import script_template
@@ -264,6 +265,26 @@ class HandoffSendTest(unittest.TestCase):
 
     def _bridge(self):
         return _StubScriptBridge(self.tmp, self.launched)
+
+    def test_launch_env_hook_shapes_child_env_and_never_costs_the_send(self):
+        # The hook's env reaches the launcher...
+        seen = {}
+
+        def _capturing_launch(app, args=None, detached=True, env=None, **kw):
+            seen["env"] = env
+            return object()
+
+        app_handoff.AppLauncher.launch = staticmethod(_capturing_launch)
+        br = self._bridge()
+        # The deliverer holds the spec (wired at __init__) -- swap it there.
+        br.deliverer.spec = replace(br.deliverer.spec, launch_env=lambda: {"CLEAN": "1"})
+        self.assertIsNotNone(br.send(template="import", mode=SEND_TO))
+        self.assertEqual(seen["env"], {"CLEAN": "1"})
+        # ...and a RAISING hook degrades to the inherited env instead of
+        # killing the send (sanitizing is best-effort by contract).
+        br.deliverer.spec = replace(br.deliverer.spec, launch_env=lambda: 1 / 0)
+        self.assertIsNotNone(br.send(template="import", mode=SEND_TO))
+        self.assertIsNone(seen["env"])
 
     def test_send_renders_writes_and_launches(self):
         br = self._bridge()

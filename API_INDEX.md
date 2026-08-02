@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-01_
+_Generated: 2026-08-02_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -34,7 +34,7 @@ _Generated: 2026-08-01_
 
 ### `core_utils/app_launcher.py`
 - `class AppLauncher`
-  - methods: launch, run, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
+  - methods: launch, handoff_env, run, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
 
 ### `core_utils/class_property.py`
 - `class ClassProperty`
@@ -388,7 +388,9 @@ _Generated: 2026-08-01_
 
 ### `file_utils/workspace.py` — Shared project-workspace model + ``workspace.mel`` codec.
 - `class Workspace(_WorkspaceInternal)`
-  - methods: marker_path, is_marked, load, save, create, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing, parse_workspace_mel, write_workspace_mel
+  - methods: marker_path, is_marked, load, save, create, promote, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing, for_path, parse_workspace_mel, write_workspace_mel
+- `class WorkspaceTemplates(object)`
+  - methods: store, list, rules, save, delete
 
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`

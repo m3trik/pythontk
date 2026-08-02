@@ -288,6 +288,12 @@ class ScriptLaunchSpec:
     template_extension: str = ".py"
     modes: Tuple[str, ...] = (SEND_TO,)
     payload_prefix: str = "handoff"
+    # Optional launch-time child-env factory (``None`` = inherit this process's env).
+    # A callable, not a dict: the env must reflect launch-time state, and the spec is
+    # built at import time. Bridges use it to keep source-app-private vars (e.g. an
+    # ``OCIO`` pointing inside the source install -- see ``AppLauncher.handoff_env``)
+    # from leaking into the target app.
+    launch_env: Optional[Callable[[], Optional[Dict[str, str]]]] = None
 
 
 class ScriptLaunchDeliverer(Deliverer):
@@ -344,10 +350,26 @@ class ScriptLaunchDeliverer(Deliverer):
             f"{script_path}"
         )
 
+        # Sanitizing the child env is best-effort by contract: a failing hook must
+        # never cost the user the send itself -- degrade to the inherited env.
+        env = None
+        if self.spec.launch_env is not None:
+            try:
+                env = self.spec.launch_env()
+            except Exception:
+                bridge.logger.warning(
+                    "launch_env hook failed; launching with the inherited "
+                    "environment.",
+                    exc_info=True,
+                )
+
         # FRESH instance every time -- never attach to a running session. Detached:
         # control returns immediately.
         proc = AppLauncher.launch(
-            bridge.app_path, args=self.spec.launch_args(script_path), detached=True
+            bridge.app_path,
+            args=self.spec.launch_args(script_path),
+            detached=True,
+            env=env,
         )
         if proc is None:
             bridge.logger.error(

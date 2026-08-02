@@ -198,6 +198,56 @@ class TestAppLauncher(unittest.TestCase):
                 self.assertEqual(found, exe_path)
 
 
+class TestHandoffEnv(unittest.TestCase):
+    """handoff_env — strip a source-app-private OCIO, inherit everything else.
+
+    Regression: a DCC bridge launches app B from inside app A, so B inherits A's
+    env; an OCIO pointing inside A's own install (Blender's bundled v2.5 config)
+    failed Maya 2025's color-management init on every send.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        self.root = tempfile.mkdtemp(prefix="ptk_handoff_")
+        self.config = os.path.join(self.root, "datafiles", "config.ocio")
+        os.makedirs(os.path.dirname(self.config))
+        open(self.config, "w").close()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_private_ocio_is_stripped(self):
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"OCIO": self.config}):
+            env = AppLauncher.handoff_env(self.root)
+            self.assertIsNotNone(env)
+            self.assertNotIn("OCIO", env)
+            # The rest of the environment rides along untouched.
+            self.assertEqual(env.get("PATH"), os.environ.get("PATH"))
+
+    def test_foreign_ocio_inherits(self):
+        from unittest.mock import patch
+
+        import tempfile
+
+        foreign = os.path.join(tempfile.gettempdir(), "studio_config.ocio")
+        with patch.dict(os.environ, {"OCIO": foreign}):
+            self.assertIsNone(AppLauncher.handoff_env(self.root))
+
+    def test_no_ocio_or_no_root_inherits(self):
+        from unittest.mock import patch
+
+        env_no_ocio = {k: v for k, v in os.environ.items() if k != "OCIO"}
+        with patch.dict(os.environ, env_no_ocio, clear=True):
+            self.assertIsNone(AppLauncher.handoff_env(self.root))
+        with patch.dict(os.environ, {"OCIO": self.config}):
+            self.assertIsNone(AppLauncher.handoff_env(None))
+
+
 class TestAppLauncherSessions(unittest.TestCase):
     """Interactive-session detection + launch (added for headless DCC/SDK driving)."""
 

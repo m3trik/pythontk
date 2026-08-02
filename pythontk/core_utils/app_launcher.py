@@ -68,6 +68,43 @@ class AppLauncher:
             return None
 
     @staticmethod
+    def handoff_env(source_root):
+        """Child env for launching a DIFFERENT app: this process's env, minus its
+        app-private ``OCIO`` config.
+
+        A DCC hand-off launches app B from inside app A, so B inherits A's whole
+        environment -- including an ``OCIO`` var pointing INSIDE A's own install
+        tree (e.g. Blender's bundled ``ocio_profile_version: 2.5`` config), which
+        B's OpenColorIO runtime may be unable to load: Maya 2025 (OCIO 2.3) then
+        fails color-management init on every bridge launch. A config *outside*
+        the source install (a studio ACES pipeline config) is deliberate
+        cross-app state and passes through untouched.
+
+        :param source_root: The RUNNING app's installation root. ``OCIO`` is
+                            stripped only when its path lies under this tree.
+        :return: A copied env dict without ``OCIO``, or ``None`` (= inherit
+                 unchanged) when there is nothing to strip.
+        """
+        from pathlib import Path
+
+        ocio = os.environ.get("OCIO")
+        if not (ocio and source_root):
+            return None
+        try:
+            private = Path(ocio).resolve().is_relative_to(Path(source_root).resolve())
+        except (OSError, ValueError):
+            return None
+        if not private:
+            return None
+        env = dict(os.environ)
+        del env["OCIO"]
+        logger.info(
+            f"Launch env: dropped OCIO ({ocio}) -- private to the running app's "
+            f"install ({source_root}); the target app gets its own default."
+        )
+        return env
+
+    @staticmethod
     def run(
         app_identifier,
         args=None,

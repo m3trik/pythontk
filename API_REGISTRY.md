@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-01_
+_Generated: 2026-08-02_
 
 ## Index
 
@@ -153,11 +153,11 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
 - **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L277)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L293)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L299)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L388)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L410)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context (subclass hook).
   - `ScriptLaunchBridge.render_template(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]` — Render *template*'s body with *payload_path* + *params* (no launch).
   - `ScriptLaunchBridge.list_template_modes(self) -> List[Tuple[str, str]]` — ``[(stem, mode), ...]`` for the bridge's template directory.
@@ -175,6 +175,7 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
 - **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L13)** — A utility class for launching applications on Windows and Linux.
   - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
+  - `AppLauncher.handoff_env(source_root)` *(static)* — Child env for launching a DIFFERENT app: this process's env, minus its
   - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False)` *(static)* — Execute an application synchronously and return its result.
   - `AppLauncher.current_session_id()` *(static)* — Windows session id of the *current* process.
   - `AppLauncher.active_console_session_id()` *(static)* — Session id of the physically logged-in console (interactive desktop).
@@ -1267,20 +1268,28 @@ Zero-dependency USD (OpenUSD) file utilities.
 
 Shared project-workspace model + ``workspace.mel`` codec.
 
-- **[`class Workspace(_WorkspaceInternal)`](pythontk/pythontk/file_utils/workspace.py#L127)** — A project workspace: root directory + named file rules.
+- **[`class Workspace(_WorkspaceInternal)`](pythontk/pythontk/file_utils/workspace.py#L134)** — A project workspace: root directory + named file rules.
   - `Workspace.marker_path(self) -> str` *(property)*
   - `Workspace.is_marked(self) -> bool` *(property)*
   - `Workspace.load(cls, root: str) -> 'Workspace'` *(class)* — The workspace at *root* — rules parsed from its marker when present,
   - `Workspace.save(self, create_dirs: bool = False, remove: Sequence[str] = ()) -> 'Workspace'` — Persist the rules to the marker file (merge-preserving — see
   - `Workspace.create(cls, root: str, rules: Optional[Dict[str, str]] = None, create_dirs: bool = True) -> 'Workspace'` *(class)* — Create (or promote) *root* as a marked workspace.
+  - `Workspace.promote(cls, root: str, scene_exts: Sequence[str] = (), rules: Optional[Dict[str, str]] = None) -> Optional['Workspace']` *(class)* — Mark *root* as a project by describing the layout it ALREADY has.
   - `Workspace.resolve(self, *rule_names: str, default: Optional[str] = None) -> Optional[str]` — Absolute directory for the first present rule;
   - `Workspace.resolve_dir(self, rule_names: Sequence[str], conventions: Sequence[str] = (), default: Optional[str] = None) -> Optional[str]` — Semantic directory lookup: rule → first *existing* conventional
   - `Workspace.scene_dir(self) -> str` *(property)* — Where scene files live (rule ``scene``/``mayaAscii``/``mayaBinary``,
   - `Workspace.source_images_dir(self) -> str` *(property)* — Where textures live (rule ``sourceImages``, an existing
   - `Workspace.find(cls, root_dir: str, recursive: bool = False, scene_exts: Sequence[str] = (), require_marker: bool = False) -> List['Workspace']` *(class)* — Workspaces under *root_dir* (the root itself included).
   - `Workspace.find_containing(cls, path: str) -> Optional['Workspace']` *(class)* — The nearest marked workspace containing *path* (file or directory),
+  - `Workspace.for_path(cls, path: str) -> Optional['Workspace']` *(class)* — The workspace *path* belongs to: the nearest marked ancestor
   - `Workspace.parse_workspace_mel(source: str) -> Dict[str, str]` *(static)* — File rules from a ``workspace.mel`` — *source* is a path or the file's text.
   - `Workspace.write_workspace_mel(path: str, rules: Dict[str, str], preserve: bool = True, remove: Sequence[str] = ()) -> bool` *(static)* — Write / merge file *rules* into the ``workspace.mel`` at *path*.
+- **[`class WorkspaceTemplates(object)`](pythontk/pythontk/file_utils/workspace.py#L526)** — Named file-rule sets — the persistent answer to *how a NEW project is built*.
+  - `WorkspaceTemplates.store(cls) -> Any` *(class)* — The backing :class:`pythontk.PresetStore`.
+  - `WorkspaceTemplates.list(cls) -> List[str]` *(class)* — Saved template names.
+  - `WorkspaceTemplates.rules(cls, name: Optional[str] = None) -> Dict[str, str]` *(class)* — File rules of the *name*d template — default: the active (last-saved)
+  - `WorkspaceTemplates.save(cls, name: str, rules: Dict[str, str]) -> str` *(class)* — Save *rules* as template *name* and make it the active default.
+  - `WorkspaceTemplates.delete(cls, name: str) -> bool` *(class)* — Delete template *name* (the store keeps its active pointer
 
 <a id="geo_utils--pointcloud"></a>
 ### `geo_utils/pointcloud.py`
