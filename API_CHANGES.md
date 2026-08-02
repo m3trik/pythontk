@@ -1,6 +1,6 @@
 # pythontk — API Changes
 
-_Diff vs prior baseline. Generated 2026-08-01._
+_Diff vs prior baseline. Generated 2026-08-02._
 
 ## Added (21)
 

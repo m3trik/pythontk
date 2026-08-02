@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-08-01",
+  "generated_at": "2026-08-02",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -372,7 +372,7 @@
         {
           "name": "ScriptLaunchDeliverer",
           "summary": "Render a template, write it next to the payload, launch a **fresh** app on it.",
-          "line": 293,
+          "line": 299,
           "bases": [
             "Deliverer"
           ],
@@ -383,7 +383,7 @@
               "kind": "method",
               "signature": "(self, bridge: HandoffBridge, request: HandoffRequest) -> bool",
               "summary": "",
-              "line": 312,
+              "line": 318,
               "deprecated": false
             },
             {
@@ -392,7 +392,7 @@
               "kind": "method",
               "signature": "(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
               "summary": "",
-              "line": 331,
+              "line": 337,
               "deprecated": false
             },
             {
@@ -401,7 +401,7 @@
               "kind": "method",
               "signature": "(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]",
               "summary": "Return the rendered script body for *request*'s template, or ``None`` on miss.",
-              "line": 366,
+              "line": 388,
               "deprecated": false
             }
           ]
@@ -409,7 +409,7 @@
         {
           "name": "ScriptLaunchBridge",
           "summary": "A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.",
-          "line": 388,
+          "line": 410,
           "bases": [
             "HandoffBridge"
           ],
@@ -420,7 +420,7 @@
               "kind": "method",
               "signature": "(self, params: Dict[str, Any]) -> Dict[str, str]",
               "summary": "Format *params* into a ``__KEY__`` substitution context (subclass hook).",
-              "line": 409,
+              "line": 431,
               "deprecated": false
             },
             {
@@ -429,7 +429,7 @@
               "kind": "method",
               "signature": "(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]",
               "summary": "Render *template*'s body with *payload_path* + *params* (no launch).",
-              "line": 413,
+              "line": 435,
               "deprecated": false
             },
             {
@@ -438,7 +438,7 @@
               "kind": "method",
               "signature": "(self) -> List[Tuple[str, str]]",
               "summary": "``[(stem, mode), ...]`` for the bridge's template directory.",
-              "line": 428,
+              "line": 450,
               "deprecated": false
             },
             {
@@ -447,7 +447,7 @@
               "kind": "method",
               "signature": "(self) -> List[Path]",
               "summary": "User-visible template paths for the bridge.",
-              "line": 434,
+              "line": 456,
               "deprecated": false
             }
           ]
@@ -508,12 +508,21 @@
               "deprecated": false
             },
             {
+              "name": "handoff_env",
+              "qualname": "AppLauncher.handoff_env",
+              "kind": "staticmethod",
+              "signature": "(source_root)",
+              "summary": "Child env for launching a DIFFERENT app: this process's env, minus its",
+              "line": 71,
+              "deprecated": false
+            },
+            {
               "name": "run",
               "qualname": "AppLauncher.run",
               "kind": "staticmethod",
               "signature": "(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False)",
               "summary": "Execute an application synchronously and return its result.",
-              "line": 71,
+              "line": 108,
               "deprecated": false
             },
             {
@@ -522,7 +531,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "Windows session id of the *current* process.",
-              "line": 146,
+              "line": 183,
               "deprecated": false
             },
             {
@@ -531,7 +540,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "Session id of the physically logged-in console (interactive desktop).",
-              "line": 168,
+              "line": 205,
               "deprecated": false
             },
             {
@@ -540,7 +549,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "True if the current process is in an interactive session (non-zero —",
-              "line": 191,
+              "line": 228,
               "deprecated": false
             },
             {
@@ -549,7 +558,7 @@
               "kind": "staticmethod",
               "signature": "(explicit=None)",
               "summary": "Locate a helper able to launch a process into *another* interactive",
-              "line": 203,
+              "line": 240,
               "deprecated": false
             },
             {
@@ -558,7 +567,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier, args=None, session=None, cwd=None, launcher=None, accept_eula=True)",
               "summary": "Launch an application into a specific interactive Windows session.",
-              "line": 230,
+              "line": 267,
               "deprecated": false
             },
             {
@@ -567,7 +576,7 @@
               "kind": "staticmethod",
               "signature": "(process, timeout=15, check_fn=None)",
               "summary": "Waits until the application is ready.",
-              "line": 287,
+              "line": 324,
               "deprecated": false
             },
             {
@@ -576,7 +585,7 @@
               "kind": "staticmethod",
               "signature": "(pid)",
               "summary": "Returns a list of window titles owned by the given PID.",
-              "line": 367,
+              "line": 404,
               "deprecated": false
             },
             {
@@ -585,7 +594,7 @@
               "kind": "staticmethod",
               "signature": "(path, user_scope=True)",
               "summary": "Appends a directory to the system PATH.",
-              "line": 400,
+              "line": 437,
               "deprecated": false
             },
             {
@@ -594,7 +603,7 @@
               "kind": "staticmethod",
               "signature": "(root_paths, executable_name, depth=3)",
               "summary": "Scans directories for a specific executable.",
-              "line": 450,
+              "line": 487,
               "deprecated": false
             },
             {
@@ -603,7 +612,7 @@
               "kind": "staticmethod",
               "signature": "(path)",
               "summary": "Checks if the path is permanently stored in the system configuration (e.g.",
-              "line": 489,
+              "line": 526,
               "deprecated": false
             },
             {
@@ -612,7 +621,7 @@
               "kind": "staticmethod",
               "signature": "(scan_globs)",
               "summary": "Yield existing files matching *scan_globs*;",
-              "line": 550,
+              "line": 587,
               "deprecated": false
             },
             {
@@ -621,7 +630,7 @@
               "kind": "staticmethod",
               "signature": "(*, env_vars=(), location_env_vars=(), app_names=(), scan_globs=())",
               "summary": "Resolve a target application executable;",
-              "line": 590,
+              "line": 627,
               "deprecated": false
             },
             {
@@ -630,7 +639,7 @@
               "kind": "staticmethod",
               "signature": "(app_identifier)",
               "summary": "Attempts to locate the executable for the given application identifier.",
-              "line": 634,
+              "line": 671,
               "deprecated": false
             },
             {
@@ -639,7 +648,7 @@
               "kind": "staticmethod",
               "signature": "(process_name)",
               "summary": "Returns a list of PIDs of running processes matching the given name.",
-              "line": 661,
+              "line": 698,
               "deprecated": false
             },
             {
@@ -648,7 +657,7 @@
               "kind": "staticmethod",
               "signature": "(pid, force=False)",
               "summary": "Terminates the process with the given PID.",
-              "line": 715,
+              "line": 752,
               "deprecated": false
             }
           ]
@@ -7680,7 +7689,7 @@
         {
           "name": "Workspace",
           "summary": "A project workspace: root directory + named file rules.",
-          "line": 127,
+          "line": 134,
           "bases": [
             "_WorkspaceInternal"
           ],
@@ -7691,7 +7700,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "",
-              "line": 157,
+              "line": 164,
               "deprecated": false
             },
             {
@@ -7700,7 +7709,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 161,
+              "line": 168,
               "deprecated": false
             },
             {
@@ -7709,7 +7718,7 @@
               "kind": "classmethod",
               "signature": "(cls, root: str) -> 'Workspace'",
               "summary": "The workspace at *root* — rules parsed from its marker when present,",
-              "line": 166,
+              "line": 173,
               "deprecated": false
             },
             {
@@ -7718,7 +7727,7 @@
               "kind": "method",
               "signature": "(self, create_dirs: bool = False, remove: Sequence[str] = ()) -> 'Workspace'",
               "summary": "Persist the rules to the marker file (merge-preserving — see",
-              "line": 174,
+              "line": 181,
               "deprecated": false
             },
             {
@@ -7727,7 +7736,16 @@
               "kind": "classmethod",
               "signature": "(cls, root: str, rules: Optional[Dict[str, str]] = None, create_dirs: bool = True) -> 'Workspace'",
               "summary": "Create (or promote) *root* as a marked workspace.",
-              "line": 192,
+              "line": 199,
+              "deprecated": false
+            },
+            {
+              "name": "promote",
+              "qualname": "Workspace.promote",
+              "kind": "classmethod",
+              "signature": "(cls, root: str, scene_exts: Sequence[str] = (), rules: Optional[Dict[str, str]] = None) -> Optional['Workspace']",
+              "summary": "Mark *root* as a project by describing the layout it ALREADY has.",
+              "line": 219,
               "deprecated": false
             },
             {
@@ -7736,7 +7754,7 @@
               "kind": "method",
               "signature": "(self, *rule_names: str, default: Optional[str] = None) -> Optional[str]",
               "summary": "Absolute directory for the first present rule;",
-              "line": 216,
+              "line": 271,
               "deprecated": false
             },
             {
@@ -7745,7 +7763,7 @@
               "kind": "method",
               "signature": "(self, rule_names: Sequence[str], conventions: Sequence[str] = (), default: Optional[str] = None) -> Optional[str]",
               "summary": "Semantic directory lookup: rule → first *existing* conventional",
-              "line": 224,
+              "line": 279,
               "deprecated": false
             },
             {
@@ -7754,7 +7772,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Where scene files live (rule ``scene``/``mayaAscii``/``mayaBinary``,",
-              "line": 244,
+              "line": 299,
               "deprecated": false
             },
             {
@@ -7763,7 +7781,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Where textures live (rule ``sourceImages``, an existing",
-              "line": 252,
+              "line": 305,
               "deprecated": false
             },
             {
@@ -7772,7 +7790,7 @@
               "kind": "classmethod",
               "signature": "(cls, root_dir: str, recursive: bool = False, scene_exts: Sequence[str] = (), require_marker: bool = False) -> List['Workspace']",
               "summary": "Workspaces under *root_dir* (the root itself included).",
-              "line": 271,
+              "line": 324,
               "deprecated": false
             },
             {
@@ -7781,7 +7799,16 @@
               "kind": "classmethod",
               "signature": "(cls, path: str) -> Optional['Workspace']",
               "summary": "The nearest marked workspace containing *path* (file or directory),",
-              "line": 340,
+              "line": 393,
+              "deprecated": false
+            },
+            {
+              "name": "for_path",
+              "qualname": "Workspace.for_path",
+              "kind": "classmethod",
+              "signature": "(cls, path: str) -> Optional['Workspace']",
+              "summary": "The workspace *path* belongs to: the nearest marked ancestor",
+              "line": 412,
               "deprecated": false
             },
             {
@@ -7790,7 +7817,7 @@
               "kind": "staticmethod",
               "signature": "(source: str) -> Dict[str, str]",
               "summary": "File rules from a ``workspace.mel`` — *source* is a path or the file's text.",
-              "line": 359,
+              "line": 432,
               "deprecated": false
             },
             {
@@ -7799,7 +7826,62 @@
               "kind": "staticmethod",
               "signature": "(path: str, rules: Dict[str, str], preserve: bool = True, remove: Sequence[str] = ()) -> bool",
               "summary": "Write / merge file *rules* into the ``workspace.mel`` at *path*.",
-              "line": 382,
+              "line": 455,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "WorkspaceTemplates",
+          "summary": "Named file-rule sets — the persistent answer to *how a NEW project is built*.",
+          "line": 526,
+          "bases": [
+            "object"
+          ],
+          "members": [
+            {
+              "name": "store",
+              "qualname": "WorkspaceTemplates.store",
+              "kind": "classmethod",
+              "signature": "(cls) -> Any",
+              "summary": "The backing :class:`pythontk.PresetStore`.",
+              "line": 548,
+              "deprecated": false
+            },
+            {
+              "name": "list",
+              "qualname": "WorkspaceTemplates.list",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[str]",
+              "summary": "Saved template names.",
+              "line": 578,
+              "deprecated": false
+            },
+            {
+              "name": "rules",
+              "qualname": "WorkspaceTemplates.rules",
+              "kind": "classmethod",
+              "signature": "(cls, name: Optional[str] = None) -> Dict[str, str]",
+              "summary": "File rules of the *name*d template — default: the active (last-saved)",
+              "line": 583,
+              "deprecated": false
+            },
+            {
+              "name": "save",
+              "qualname": "WorkspaceTemplates.save",
+              "kind": "classmethod",
+              "signature": "(cls, name: str, rules: Dict[str, str]) -> str",
+              "summary": "Save *rules* as template *name* and make it the active default.",
+              "line": 602,
+              "deprecated": false
+            },
+            {
+              "name": "delete",
+              "qualname": "WorkspaceTemplates.delete",
+              "kind": "classmethod",
+              "signature": "(cls, name: str) -> bool",
+              "summary": "Delete template *name* (the store keeps its active pointer",
+              "line": 610,
               "deprecated": false
             }
           ]

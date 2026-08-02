@@ -20,6 +20,7 @@ from pythontk.file_utils.workspace import (
     RULE_NICE_NAMES,
     WORKSPACE_MARKER,
     Workspace,
+    WorkspaceTemplates,
 )
 
 # A realistic Maya-authored file: header comment, variables, spaced rule names,
@@ -212,6 +213,59 @@ class WorkspaceModelTest(unittest.TestCase):
             marked.source_images_dir, os.path.join(marked.root, "sourceimages")
         )
 
+    def test_promote_describes_a_flat_folder(self):
+        root = os.path.join(self.tmp, "flat")
+        os.makedirs(os.path.join(root, "textures"))
+        open(os.path.join(root, "a.blend"), "w").close()
+        ws = Workspace.promote(root, scene_exts=(".blend",))
+        self.assertTrue(ws.is_marked)
+        self.assertEqual(ws.rules["scene"], ".")
+        self.assertEqual(ws.rules["sourceImages"], "textures")
+        self.assertFalse(os.path.isdir(os.path.join(root, "scenes")))  # creates nothing
+
+    def test_promote_keeps_conventional_layout_alone(self):
+        root = os.path.join(self.tmp, "tidy")
+        os.makedirs(os.path.join(root, "scenes"))
+        os.makedirs(os.path.join(root, "sourceimages"))
+        os.makedirs(os.path.join(root, "textures"))
+        open(os.path.join(root, "scenes", "a.ma"), "w").close()
+        ws = Workspace.promote(root, scene_exts=(".ma", ".mb"))
+        self.assertEqual(ws.rules["scene"], "scenes")
+        # sourceimages/ exists, so textures/ is NOT what the rule should point at
+        self.assertEqual(ws.rules["sourceImages"], "sourceimages")
+
+    def test_promote_scene_exts_are_per_dcc(self):
+        """A .blend at the root is not a scene to a Maya-flavored promotion."""
+        root = os.path.join(self.tmp, "blendonly")
+        os.makedirs(root)
+        open(os.path.join(root, "a.blend"), "w").close()
+        self.assertEqual(
+            Workspace.promote(root, scene_exts=(".ma", ".mb")).rules["scene"], "scenes"
+        )
+
+    def test_promote_does_not_grow_alias_rules_a_caller_omitted(self):
+        root = os.path.join(self.tmp, "custom")
+        os.makedirs(root)
+        open(os.path.join(root, "a.ma"), "w").close()
+        ws = Workspace.promote(root, scene_exts=(".ma",), rules={"scene": "scenes"})
+        self.assertEqual(ws.rules["scene"], ".")
+        self.assertNotIn("mayaAscii", ws.rules)
+
+    def test_promote_is_non_destructive(self):
+        root = os.path.join(self.tmp, "keep")
+        os.makedirs(root)
+        Workspace.promote(root)
+        with open(os.path.join(root, WORKSPACE_MARKER), "a", encoding="utf-8") as f:
+            f.write('//note\nworkspace -fr "customRule" "custom";\n')
+        again = Workspace.promote(root)
+        self.assertEqual(again.rules["customRule"], "custom")
+        with open(again.marker_path, encoding="utf-8") as f:
+            self.assertIn("//note", f.read())
+
+    def test_promote_rejects_a_missing_root(self):
+        self.assertIsNone(Workspace.promote(os.path.join(self.tmp, "nope")))
+        self.assertIsNone(Workspace.promote(""))
+
     def test_nice_names_cover_the_default_template(self):
         """Every default rule renders with a Project Window label (rule editors fall back
         to the raw key only for custom rules)."""
@@ -273,6 +327,25 @@ class WorkspaceDiscoveryTest(unittest.TestCase):
         found = Workspace.find(self.tmp, scene_exts=(".blend",), require_marker=True)
         self.assertEqual([os.path.basename(w.root) for w in found], ["marked"])
 
+    def test_for_path_marked_ancestor(self):
+        self._touch("proj", WORKSPACE_MARKER)
+        scene = self._touch("proj", "scenes", "shot.blend")
+        ws = Workspace.for_path(scene)
+        self.assertEqual(os.path.basename(ws.root), "proj")
+        self.assertTrue(ws.is_marked)
+
+    def test_for_path_falls_back_to_own_folder_unmarked(self):
+        loose = self._touch("loose", "thing.blend")
+        ws = Workspace.for_path(loose)
+        self.assertEqual(os.path.basename(ws.root), "loose")
+        self.assertFalse(ws.is_marked)
+
+    def test_for_path_edge_cases(self):
+        self.assertIsNone(Workspace.for_path(""))
+        self.assertIsNone(
+            Workspace.for_path(os.path.join(self.tmp, "nope", "deeper", "x.ma"))
+        )
+
     def test_find_containing(self):
         self._touch("proj", WORKSPACE_MARKER)
         blend = self._touch("proj", "scenes", "shot.blend")
@@ -284,6 +357,73 @@ class WorkspaceDiscoveryTest(unittest.TestCase):
     def test_find_invalid_root(self):
         self.assertEqual(Workspace.find(""), [])
         self.assertEqual(Workspace.find(os.path.join(self.tmp, "nope")), [])
+
+
+class WorkspaceTemplatesTest(unittest.TestCase):
+    """The shared, unnamespaced named-rule-set store both DCC adapters read."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="ptk_ws_tpl_")
+        # Sandbox the preset root — never touch the user's live templates.
+        self._prev_root = os.environ.get("UITK_PRESETS_ROOT")
+        os.environ["UITK_PRESETS_ROOT"] = os.path.join(self.tmp, "presets")
+
+    def tearDown(self):
+        if self._prev_root is None:
+            os.environ.pop("UITK_PRESETS_ROOT", None)
+        else:
+            os.environ["UITK_PRESETS_ROOT"] = self._prev_root
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_store_is_unnamespaced(self):
+        """No owning package: a workspace.mel is a SHARED project, so mayatk and
+        blendertk must resolve one and the same template directory."""
+        store = WorkspaceTemplates.store()
+        self.assertEqual(store.package, "")
+        # Directly under the config root — no "<package>/" segment in between.
+        self.assertEqual(store.user_dir.name, WorkspaceTemplates.STORE_NAME)
+        self.assertEqual(
+            os.path.normcase(str(store.user_dir.parent)),
+            os.path.normcase(os.path.join(self.tmp, "presets")),
+        )
+
+    def test_rules_default_to_the_standard_set(self):
+        self.assertEqual(WorkspaceTemplates.rules(), DEFAULT_FILE_RULES)
+
+    def test_save_makes_it_the_active_default(self):
+        WorkspaceTemplates.save("studio", {"scene": "shots", "sourceImages": "tex"})
+        self.assertEqual(
+            WorkspaceTemplates.rules(), {"scene": "shots", "sourceImages": "tex"}
+        )
+        self.assertIn("studio", WorkspaceTemplates.list())
+
+    def test_named_lookup_and_meta_strip(self):
+        WorkspaceTemplates.save("gui", {"_meta": {"version": 1}, "scene": "shots"})
+        # "_meta" is uitk PresetManager bookkeeping, never a file rule.
+        self.assertEqual(WorkspaceTemplates.rules("gui"), {"scene": "shots"})
+
+    def test_delete_falls_back_to_the_standard_set(self):
+        WorkspaceTemplates.save("studio", {"scene": "shots"})
+        self.assertTrue(WorkspaceTemplates.delete("studio"))
+        self.assertEqual(WorkspaceTemplates.rules(), DEFAULT_FILE_RULES)
+
+    def test_unknown_name_falls_back(self):
+        self.assertEqual(WorkspaceTemplates.rules("nope"), DEFAULT_FILE_RULES)
+
+    def test_empty_template_never_yields_empty_rules(self):
+        """A rule set that saved empty must not build ruleless projects."""
+        WorkspaceTemplates.save("blank", {})
+        self.assertEqual(WorkspaceTemplates.rules("blank"), DEFAULT_FILE_RULES)
+
+    def test_legacy_per_package_dir_is_migrated(self):
+        """Templates saved before the store was shared (blendertk-namespaced)
+        survive the move — they are user data."""
+        root = WorkspaceTemplates.store().user_dir.parent
+        legacy = root / "blendertk" / WorkspaceTemplates.STORE_NAME
+        legacy.mkdir(parents=True, exist_ok=True)
+        (legacy / "old.json").write_text('{"scene": "legacy"}', encoding="utf-8")
+        self.assertIn("old", WorkspaceTemplates.list())
+        self.assertEqual(WorkspaceTemplates.rules("old"), {"scene": "legacy"})
 
 
 if __name__ == "__main__":

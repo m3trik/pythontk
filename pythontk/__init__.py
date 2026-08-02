@@ -34,12 +34,14 @@ DEFAULT_INCLUDE = {
     "file_utils.temp_artifacts": ["TempArtifacts", "CachedArtifact"],
     # Shared project-workspace model + workspace.mel codec (zero-dep). One
     # project folder serves Maya (which parses the marker natively) and
-    # blendertk (whose current-workspace resolver builds on this).
+    # blendertk (whose current-workspace resolver builds on this); one
+    # unnamespaced template store defines how BOTH build a new one.
     "file_utils.workspace": [
         "WORKSPACE_MARKER",
         "DEFAULT_FILE_RULES",
         "RULE_NICE_NAMES",
         "Workspace",
+        "WorkspaceTemplates",
     ],
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",

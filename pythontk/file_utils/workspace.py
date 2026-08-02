@@ -22,6 +22,8 @@ adapters). Three composable primitives:
 - :class:`Workspace` — the model: root + rules, semantic directory resolution
   (rule → existing conventional folder → default), load/save/create, and
   discovery (:meth:`Workspace.find`, :meth:`Workspace.find_containing`).
+- :class:`WorkspaceTemplates` — named rule sets: the persistent answer to
+  "how is a *new* project built?", shared by every DCC adapter.
 
 Downstream: ``mayatk`` keeps ``cmds.workspace`` as the in-Maya authority for
 the *active* project (Maya parses the marker natively); ``blendertk`` — which
@@ -33,7 +35,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 #: The marker file that makes a directory a workspace (Maya's project file).
 WORKSPACE_MARKER = "workspace.mel"
@@ -101,6 +103,11 @@ RULE_NICE_NAMES: Dict[str, str] = {
     "OBJexport": "OBJ export",
     "alembicCache": "Alembic Cache",
 }
+
+#: Rules that name where scene files live, most specific first. One tuple so the
+#: readers (:attr:`Workspace.scene_dir`) and the writer (:meth:`Workspace.promote`)
+#: can never disagree about which rules mean "scene".
+SCENE_RULES: Sequence[str] = ("scene", "mayaAscii", "mayaBinary")
 
 _HEADER = "//Maya Project Definition"
 
@@ -208,6 +215,54 @@ class Workspace(_WorkspaceInternal):
             ws.rules.setdefault(k, v)
         return ws.save(create_dirs=create_dirs)
 
+    @classmethod
+    def promote(
+        cls,
+        root: str,
+        scene_exts: Sequence[str] = (),
+        rules: Optional[Dict[str, str]] = None,
+    ) -> Optional["Workspace"]:
+        """Mark *root* as a project by describing the layout it ALREADY has.
+
+        The inverse of :meth:`create`, which imposes a layout: this reads one.
+        Scene files sitting directly in *root* (matched by *scene_exts*, e.g.
+        ``(".ma", ".mb")`` or ``(".blend",)``) mean the scene rule is ``.``;
+        an existing ``textures/`` with no ``sourceimages/`` means that is where
+        textures live. Everything else comes from *rules* (default
+        :data:`DEFAULT_FILE_RULES`). Creates no directories and — via
+        :meth:`create` — never clobbers an existing marker's rules.
+
+        Both DCC adapters call this rather than each describing a folder their
+        own way; a divergence here would make the two disagree about the same
+        project, which is the one thing the shared format exists to prevent.
+        Returns None when *root* is not an existing directory.
+        """
+        if not (root and os.path.isdir(root)):
+            return None
+        out = dict(DEFAULT_FILE_RULES) if rules is None else dict(rules)
+
+        def _has(sub: str) -> bool:
+            return os.path.isdir(os.path.join(root, sub))
+
+        exts = tuple(e.lower() for e in scene_exts)
+        try:
+            flat = bool(exts) and any(
+                f.lower().endswith(exts) for f in os.listdir(root)
+            )
+        except OSError:
+            flat = False
+        if flat and not _has("scenes"):
+            primary, *aliases = SCENE_RULES
+            out[primary] = "."
+            # Only aliases already in play — a caller's custom rule set shouldn't
+            # silently grow per-format rules it never asked for.
+            for alias in aliases:
+                if alias in out:
+                    out[alias] = "."
+        if _has("textures") and not _has("sourceimages"):
+            out["sourceImages"] = "textures"
+        return cls.create(root, rules=out, create_dirs=False)
+
     # -------------------------------------------------------------- resolution
     def _abs(self, value: str) -> str:
         v = str(value)
@@ -244,9 +299,7 @@ class Workspace(_WorkspaceInternal):
     def scene_dir(self) -> str:
         """Where scene files live (rule ``scene``/``mayaAscii``/``mayaBinary``,
         an existing ``scenes/``, else the root)."""
-        return self.resolve_dir(
-            ("scene", "mayaAscii", "mayaBinary"), ("scenes",), default="."
-        )
+        return self.resolve_dir(SCENE_RULES, ("scenes",), default=".")
 
     @property
     def source_images_dir(self) -> str:
@@ -355,6 +408,26 @@ class Workspace(_WorkspaceInternal):
             cur = nxt
         return None
 
+    @classmethod
+    def for_path(cls, path: str) -> Optional["Workspace"]:
+        """The workspace *path* belongs to: the nearest marked ancestor
+        (:meth:`find_containing`), else its own folder as an *unmarked*
+        workspace — so a casual folder-of-scenes still resolves to something
+        with working rule lookups. None when *path* is empty or its folder
+        doesn't exist.
+
+        The tail of every DCC adapter's current-workspace resolver; they differ
+        only in how they pick the ambient path (Maya's active project, Blender's
+        session pin + open file), not in how a path is resolved.
+        """
+        if not path:
+            return None
+        ws = cls.find_containing(path)
+        if ws is not None:
+            return ws
+        d = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
+        return cls.load(d) if os.path.isdir(d) else None
+
     @staticmethod
     def parse_workspace_mel(source: str) -> Dict[str, str]:
         """File rules from a ``workspace.mel`` — *source* is a path or the file's text.
@@ -448,6 +521,96 @@ class Workspace(_WorkspaceInternal):
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         return True
+
+
+class WorkspaceTemplates(object):
+    """Named file-rule sets — the persistent answer to *how a NEW project is built*.
+
+    Deliberately **unnamespaced** (``user_config_root()/workspace_templates``,
+    no owning package): a ``workspace.mel`` is a shared Maya/Blender project, so
+    the templates that define one are shared too. A template saved from
+    Blender's Workspace Editor is what Maya's ``create_workspace`` builds from,
+    and the reverse — one studio layout, both DCCs.
+
+    The *active* template (the store's ``.active`` pointer, set by :meth:`save`)
+    is the default every new workspace is seeded from; with none saved,
+    :meth:`rules` falls back to :data:`DEFAULT_FILE_RULES`.
+    """
+
+    #: Preset-collection name under the ecosystem user-config root.
+    STORE_NAME = "workspace_templates"
+
+    #: Pre-2026-08 per-package locations, migrated into the shared store on first
+    #: access (the concept was Blender-only before Maya grew the twin API).
+    _LEGACY_PACKAGES = ("blendertk",)
+
+    @classmethod
+    def store(cls) -> Any:
+        """The backing :class:`pythontk.PresetStore`.
+
+        Built fresh per call — construction is field assignment only, and a
+        cached instance would freeze an already-resolved ``user_dir``, defeating
+        the ``$UITK_PRESETS_ROOT`` sandbox tests rely on.
+        """
+        from pythontk.core_utils.preset_store import PresetStore
+
+        store = PresetStore(cls.STORE_NAME)
+        cls._migrate_legacy(store)
+        return store
+
+    @classmethod
+    def _migrate_legacy(cls, store):
+        """One-time copy of per-package template dirs into the shared store."""
+        import shutil
+
+        if store.user_dir.exists():
+            return
+        for package in cls._LEGACY_PACKAGES:
+            legacy = store.user_dir.parent / package / cls.STORE_NAME
+            if legacy.is_dir():
+                try:
+                    shutil.copytree(legacy, store.user_dir)
+                except OSError:
+                    pass
+                return
+
+    @classmethod
+    def list(cls) -> List[str]:
+        """Saved template names."""
+        return cls.store().list()
+
+    @classmethod
+    def rules(cls, name: Optional[str] = None) -> Dict[str, str]:
+        """File rules of the *name*d template — default: the active (last-saved)
+        one, else :data:`DEFAULT_FILE_RULES`. Never returns an empty dict."""
+        store = cls.store()
+        name = name or store.active
+        if name:
+            try:
+                data = store.load(name)
+            except (KeyError, ValueError, OSError):
+                data = None
+            if isinstance(data, dict):
+                # Templates saved through uitk's PresetManager carry a "_meta"
+                # version block — bookkeeping, not a file rule.
+                rules = {str(k): str(v) for k, v in data.items() if k != "_meta"}
+                if rules:
+                    return rules
+        return dict(DEFAULT_FILE_RULES)
+
+    @classmethod
+    def save(cls, name: str, rules: Dict[str, str]) -> str:
+        """Save *rules* as template *name* and make it the active default."""
+        store = cls.store()
+        store.save(name, dict(rules))
+        store.active = name
+        return name
+
+    @classmethod
+    def delete(cls, name: str) -> bool:
+        """Delete template *name* (the store keeps its active pointer
+        consistent). True when a file was removed."""
+        return cls.store().delete(name)
 
 
 # -----------------------------------------------------------------------------
