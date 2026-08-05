@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-02_
+_Generated: 2026-08-05_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -21,12 +21,14 @@ _Generated: 2026-08-02_
 - `class Deliverer`
   - methods: preflight, deliver
 - `class HandoffBridge(LoggingMixin)`
-  - methods: app_path, params_defaults, merge_params, send
+  - methods: app_path, headless_app_path, params_defaults, merge_params, send, import_roots
 - `class ScriptLaunchSpec`
 - `class ScriptLaunchDeliverer(Deliverer)`
   - methods: preflight, deliver, render
+- `class ScriptRunDeliverer(ScriptLaunchDeliverer)`
+  - methods: run, deliver
 - `class ScriptLaunchBridge(HandoffBridge)`
-  - methods: render_context, render_template, list_template_modes, list_templates
+  - methods: render_context, save_as, resolve_save_path, render_template, list_template_modes, list_templates
 
 ### `core_utils/app_installer.py`
 - `class AppInstaller`
@@ -34,7 +36,7 @@ _Generated: 2026-08-02_
 
 ### `core_utils/app_launcher.py`
 - `class AppLauncher`
-  - methods: launch, handoff_env, run, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
+  - methods: launch, process_environ, handoff_env, run, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
 
 ### `core_utils/class_property.py`
 - `class ClassProperty`
@@ -132,7 +134,7 @@ _Generated: 2026-08-02_
 
 ### `core_utils/engines/textures/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
 - `class MapFactory(LoggingMixin)`
-  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
+  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, get_tile_token, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, resolve_normal_maps, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
 
 ### `core_utils/engines/textures/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
 - `class MapConversion`
@@ -173,7 +175,7 @@ _Generated: 2026-08-02_
 - `class MapType`
   - methods: carried_types
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, register, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
+  - methods: get, register, select_normal_type, resolve_type_from_channel, split_tile_token, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`
@@ -320,7 +322,7 @@ _Generated: 2026-08-02_
 
 ### `core_utils/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - `class ScriptTemplate(_ScriptTemplateInternal)`
-  - methods: list_templates, template_modes, list_template_modes, render_template
+  - methods: list_templates, declared_modes, template_modes, list_template_modes, render_template
 
 ### `core_utils/singleton_mixin.py`
 - `class SingletonMixin`
@@ -369,7 +371,7 @@ _Generated: 2026-08-02_
 
 ### `file_utils/temp_artifacts.py` — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - `class TempArtifacts(LoggingMixin)`
-  - methods: path, register, cleanup, sweep_stale
+  - methods: path, dir_path, register, cleanup, sweep_stale
 - `class CachedArtifact(LoggingMixin)`
   - methods: key, get
 

@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-02_
+_Generated: 2026-08-05_
 
 ## Index
 
@@ -138,27 +138,34 @@ _Generated: 2026-08-02_
 
 Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
-- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L42)** — Declarative target-application executable-discovery config (data, not code).
+- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L49)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
   - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
-- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L73)** — The unit of work threaded through the skeleton.
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L80)** — The unit of work threaded through the skeleton.
   - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
-- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L93)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
-- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L108)** — Strategy: hand a produced :class:`Payload` to the target app.
+- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L100)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L115)** — Strategy: hand a produced :class:`Payload` to the target app.
   - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
-- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L129)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L136)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
+  - `HandoffBridge.headless_app_path(self) -> Optional[str]` *(property)* — Executable for a BLOCKING/headless run;
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
   - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L277)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L299)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+  - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L363)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L388)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L410)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
-  - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context (subclass hook).
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L529)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+  - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None)` *(static)*
+  - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L670)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+  - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
+  - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
+  - `ScriptLaunchBridge.resolve_save_path(cls, out_path: str) -> str` *(class)* — Absolute *out_path*, with :attr:`save_extensions`' default appended if bare.
   - `ScriptLaunchBridge.render_template(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]` — Render *template*'s body with *payload_path* + *params* (no launch).
   - `ScriptLaunchBridge.list_template_modes(self) -> List[Tuple[str, str]]` — ``[(stem, mode), ...]`` for the bridge's template directory.
   - `ScriptLaunchBridge.list_templates(self) -> List[Path]` — User-visible template paths for the bridge.
@@ -175,6 +182,7 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
 - **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L13)** — A utility class for launching applications on Windows and Linux.
   - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
+  - `AppLauncher.process_environ()` *(static)* — The LIVE process environment -- what a child would actually inherit.
   - `AppLauncher.handoff_env(source_root)` *(static)* — Child env for launching a DIFFERENT app: this process's env, minus its
   - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False)` *(static)* — Execute an application synchronously and return its result.
   - `AppLauncher.current_session_id()` *(static)* — Windows session id of the *current* process.
@@ -467,6 +475,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.resolve_color_space(cls, file: str, default: str = 'Linear') -> str` *(class)* — Resolve the working color space ("sRGB" or "Linear") for a texture by filename.
   - `MapFactory.resolve_texture_filename(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str` *(class)* — Generates a correctly formatted filename while preserving the original suffix and file extension.
   - `MapFactory.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
+  - `MapFactory.get_tile_token(cls, filepath_or_filename: str) -> str` *(class)* — The UDIM / UV-tile token on a texture filename, or ``""``.
   - `MapFactory.group_textures_by_set(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]` *(class)* — Groups texture maps into sets based on matching base names.
   - `MapFactory.filter_images_by_type(cls, files, types='')` *(class)* — Parameters:
   - `MapFactory.sort_images_by_type(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]` *(class)* — Sort image files by map type based on the input format.
@@ -476,6 +485,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.register_conversion(cls, conversion: MapConversion)` *(class)* — Register a custom map conversion (extensibility).
   - `MapFactory.get_map_fallbacks(cls, map_type: str) -> Tuple[str, ...]` *(class)* — Get fallback map types for a given map type.
   - `MapFactory.get_precedence_rules(cls) -> Dict[str, List[str]]` *(class)* — Returns a dictionary of map precedence rules.
+  - `MapFactory.resolve_normal_maps(cls, sorted_maps: Dict[str, Any], target_format: Optional[str] = None, convert: bool = True) -> Dict[str, Dict[str, str]]` *(class)* — Reduce an inventory to exactly ONE normal map — optionally in a given convention.
   - `MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, Any], config: Dict[str, Any] = None, extract_missing: bool = True) -> Dict[str, Dict[str, str]]` *(class)* — Resolve packed/loose map redundancy in-place — losslessly.
   - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
   - `MapFactory.pack_transparency_into_albedo(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…
@@ -553,7 +563,7 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L787)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L789)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -631,6 +641,9 @@ Plan, assess, and apply map (texture) optimizations.
 - **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L144)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.register(self, map_type: MapType, overwrite: bool = False) -> MapType` — Register a new map type (or replace an existing one) at runtime.
+  - `MapRegistry.select_normal_type(cls, available) -> Optional[str]` *(class)* — The single normal map type a shader should wire, out of those present.
+  - `MapRegistry.resolve_type_from_channel(cls, channel: str) -> Optional[str]` *(class)* — Canonical map type for a logical shader channel, or None if unmapped.
+  - `MapRegistry.split_tile_token(cls, name_only: str) -> Tuple[str, str]` *(class)* — Split a trailing UDIM / UV-tile token off an extension-less filename.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
   - `MapRegistry.get_suffix_strip_pattern(self) -> Optional[str]` — Regex matching one trailing map-type suffix (any registered alias).
   - `MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]` — Generate the workflow presets dictionary.
@@ -1062,8 +1075,9 @@ Run a script in an external app, block until it exits, and collect an artifact.
 
 Generic on-disk script-template discovery + ``__KEY__`` rendering.
 
-- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L52)** — ScriptTemplate — module namespace.
+- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L58)** — ScriptTemplate — module namespace.
   - `ScriptTemplate.list_templates(template_dir, extension: str = '.py') -> List[Path]` *(static)* — Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).
+  - `ScriptTemplate.declared_modes(template_path, field: str = 'BRIDGE_MODES') -> Optional[Tuple[str, ...]]` *(static)* — Return exactly what a template declares via ``<field> = (...)``.
   - `ScriptTemplate.template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]` *(static)* — Return the modes a template declares via its ``<field> = (...)`` tuple.
   - `ScriptTemplate.list_template_modes(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]` *(static)* — Return ``[(stem, mode), ...]`` for every (template, mode) pairing.
   - `ScriptTemplate.render_template(template_path, context: Dict[str, str]) -> str` *(static)* — Substitute ``__KEY__`` placeholders in *template_path* using *context*.
@@ -1222,12 +1236,13 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 
 Prefix-scoped temp artifacts with an explicit lifetime policy.
 
-- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L38)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files in one directory.
+- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L39)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
   - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
+  - `TempArtifacts.dir_path(self, name: Optional[str] = None, create: bool = True) -> str` — Return a tracked ``<prefix>_<tag>/`` DIRECTORY path in :attr:`dir`.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
-- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L206)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L248)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
   - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
   - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
 
@@ -1245,7 +1260,7 @@ Zero-dependency USD (OpenUSD) file utilities.
   - `UsdzPackager.package(cls, files: Sequence[Union[str, Tuple[str, str]]], output_path: str, default_layer: Optional[str] = None) -> str` *(class)* — Package *files* into a ``.usdz`` at *output_path*.
   - `UsdzPackager.from_layer(cls, layer_path: str, output_path: str) -> str` *(class)* — Build a self-contained ``.usdz`` from a ``.usda`` text layer.
   - `UsdzPackager.verify(path: str) -> Dict[str, Any]` *(static)* — Structurally verify a ``.usdz``;
-- **[`class UsdMeshWriter`](pythontk/pythontk/file_utils/usd.py#L366)** — Author a single textured mesh as a ``.usda`` text layer (no ``pxr``).
+- **[`class UsdMeshWriter`](pythontk/pythontk/file_utils/usd.py#L369)** — Author a single textured mesh as a ``.usda`` text layer (no ``pxr``).
   - `UsdMeshWriter.write(cls, path: str, points: Sequence[Sequence[float]], face_vertex_counts: Sequence[int], face_vertex_indices: Sequence[int], uvs: Optional[Sequence[Sequence[float]]] = None, normals: Optional[Sequence[Sequence[float]]] = None, textures: Optional[Dict[str, str]] = None, name: str = 'Model', up_axis: str = 'Y', meters_per_unit: float = 1.0, double_sided: bool = False) -> str` *(class)* — Write the mesh to *path* as a ``.usda`` layer;
   - `UsdMeshWriter.from_obj(cls, obj_path: str) -> Dict[str, Any]` *(class)* — Parse a Wavefront OBJ (+ its MTL) into :meth:`write` kwargs.
   - `UsdMeshWriter.obj_to_usd(obj_path: str, output_path: Optional[str] = None, **write_opts: Any) -> str` *(static)* — Convert an OBJ to a ``.usda`` layer beside it (or at *output_path*).
