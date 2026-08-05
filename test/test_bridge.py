@@ -26,8 +26,10 @@ from pythontk.core_utils.app_handoff import (
     Payload,
     ScriptLaunchBridge,
     ScriptLaunchSpec,
+    SAVE_AS,
     SEND_TO,
 )
+from pythontk.core_utils.script_run import ScriptRunResult
 
 
 class TemplatesTest(unittest.TestCase):
@@ -77,6 +79,23 @@ class TemplatesTest(unittest.TestCase):
         # 'bogus' isn't in the allowed set -> dropped; only 'send_to' survives.
         self.assertEqual(
             script_template.ScriptTemplate.template_modes(path), ("send_to",)
+        )
+
+    def test_declared_modes_reports_the_raw_declaration(self):
+        """The strict read: what the template SAYS, with no assumed mode."""
+        path = self._write("a.py", "BRIDGE_MODES = ('send_to', 'bogus')\n")
+        self.assertEqual(
+            script_template.ScriptTemplate.declared_modes(path), ("send_to", "bogus")
+        )
+
+    def test_declared_modes_is_none_when_unannotated(self):
+        """``None`` (not ``()``) marks "declares nothing" -- what makes the lenient
+        fallback safe to apply only where it belongs."""
+        self.assertIsNone(
+            script_template.ScriptTemplate.declared_modes(self._write("a.py", "x = 1\n"))
+        )
+        self.assertIsNone(
+            script_template.ScriptTemplate.declared_modes(self.tmp / "nope.py")
         )
 
     def test_template_modes_missing_file_fallback(self):
@@ -367,6 +386,246 @@ class HandoffContractTest(unittest.TestCase):
         br = HandoffBridge()
         with self.assertRaises(NotImplementedError):
             br._deliver(Payload(primary="x.fbx"), HandoffRequest())
+
+    def test_scene_objects_defaults_to_unsupported(self):
+        """``None`` = "this host can't enumerate itself" -> save_as uses the selection."""
+        self.assertIsNone(HandoffBridge()._scene_objects())
+
+
+class _StubSaveBridge(_StubScriptBridge):
+    """A stub bridge with BOTH routes wired: detached send + blocking save_as."""
+
+    save_extensions = (".stub", ".stubb")
+
+    def __init__(self, template_dir, launched, runs, **kw):
+        # Set BEFORE super().__init__: that is where the mode->deliverer registry is
+        # built, so a run_spec assigned afterwards would never be wired in.
+        self.run_spec = ScriptLaunchSpec(
+            app=AppSpec(name="StubApp"),
+            template_dir=Path(template_dir),
+            launch_args=lambda script: ["--headless", script],
+            modes=(SAVE_AS,),
+            timeout=42,
+        )
+        super().__init__(template_dir, launched, **kw)
+        self._runs = runs
+
+    def _scene_objects(self):
+        return ["sceneA", "sceneB", "sceneC"]
+
+
+class HandoffSaveAsTest(unittest.TestCase):
+    """``save_as``: one export pipeline, delivered blocking, judged by the artifact.
+
+    The point of the mode registry is that the SAME produce step feeds both routes --
+    these pin that the blocking route reuses it rather than growing a second exporter.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "import.py").write_text(
+            "BRIDGE_MODES = ('send_to',)\nFBX = r\"__FBX_PATH__\"\nSCALE = __SCALE__\n",
+            encoding="utf-8",
+        )
+        (self.tmp / "_save_scene.py").write_text(
+            "BRIDGE_MODES = ('save_as',)\n"
+            'FBX = r"__FBX_PATH__"\n'
+            'OUT = r"__OUT_FILE__"\n'
+            "SCALE = __SCALE__\n",
+            encoding="utf-8",
+        )
+        self.launched, self.runs = [], []
+
+        # Stub the blocking runner: record the call, create the artifact it promised.
+        self._orig_run = app_handoff.ScriptRunDeliverer.run
+
+        def _fake_run(app_exe, script_text, *, artifact, launch_args, timeout, env=None):
+            self.runs.append(
+                {
+                    "app": app_exe,
+                    "script": script_text,
+                    "artifact": artifact,
+                    "args": list(launch_args("S.py")),
+                    "timeout": timeout,
+                    "env": env,
+                }
+            )
+            Path(artifact).write_text("saved", encoding="utf-8")
+            return ScriptRunResult(
+                artifact=artifact,
+                returncode=0,
+                output="",
+                duration=0.5,
+                script_path="S.py",
+            )
+
+        app_handoff.ScriptRunDeliverer.run = staticmethod(_fake_run)
+
+    def tearDown(self):
+        app_handoff.ScriptRunDeliverer.run = staticmethod(self._orig_run)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _bridge(self):
+        return _StubSaveBridge(self.tmp, self.launched, self.runs)
+
+    def test_save_as_runs_headless_and_returns_the_artifact(self):
+        br = self._bridge()
+        out = self.tmp / "asset.stub"
+        result = br.save_as(str(out))
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["mode"], SAVE_AS)
+        self.assertEqual(result["template"], "_save_scene")
+        self.assertEqual(Path(result["output"]), out)
+        self.assertEqual(result["returncode"], 0)
+        # Blocking route only -- nothing was launched detached.
+        self.assertEqual(self.launched, [])
+        self.assertEqual(len(self.runs), 1)
+        self.assertEqual(self.runs[0]["args"], ["--headless", "S.py"])
+        self.assertEqual(self.runs[0]["timeout"], 42)  # from the run spec
+
+    def test_out_file_is_substituted_into_the_template(self):
+        import re
+
+        br = self._bridge()
+        out = self.tmp / "asset.stub"
+        br.save_as(str(out))
+        body = self.runs[0]["script"]
+        staged = br.deliverers[SAVE_AS]._staging_path(str(out))
+        # The template writes the STAGING sibling; the caller's path is the promotion
+        # target, not what the child app is told to save.
+        self.assertIn(f'OUT = r"{staged.replace(chr(92), "/")}"', body)
+        self.assertIn("SCALE = 1.0", body)  # params ride along as usual
+        self.assertFalse(re.findall(r"__[A-Z][A-Z0-9_]*__", body))  # all substituted
+
+    def test_defaults_to_the_whole_scene_not_the_selection(self):
+        """"Save the scene as ..." is about the scene; ``send`` stays selection-first."""
+        br = self._bridge()
+        br.save_as(str(self.tmp / "asset.stub"))
+        self.assertEqual(br.exported[-1][0], ("sceneA", "sceneB", "sceneC"))
+
+        br.send(template="import", mode=SEND_TO)
+        self.assertEqual(br.exported[-1][0], ("objA", "objB"))
+
+    def test_explicit_objects_win(self):
+        br = self._bridge()
+        br.save_as(str(self.tmp / "asset.stub"), ["only", "these"])
+        self.assertEqual(br.exported[-1][0], ("only", "these"))
+
+    def test_bare_path_gets_the_default_extension(self):
+        br = self._bridge()
+        result = br.save_as(str(self.tmp / "asset"))
+        self.assertTrue(result["output"].endswith(".stub"))
+        # An accepted alternative extension is left alone.
+        result = br.save_as(str(self.tmp / "asset.stubb"))
+        self.assertTrue(result["output"].endswith(".stubb"))
+
+    def test_timeout_override_reaches_the_runner(self):
+        br = self._bridge()
+        br.save_as(str(self.tmp / "asset.stub"), timeout=7)
+        self.assertEqual(self.runs[0]["timeout"], 7)
+
+    def test_missing_artifact_is_a_handled_failure(self):
+        """A raising runner is reported, never propagated at the caller."""
+        br = self._bridge()
+
+        def _boom(*a, **kw):
+            raise RuntimeError("no artifact")
+
+        app_handoff.ScriptRunDeliverer.run = staticmethod(_boom)
+        self.assertIsNone(br.save_as(str(self.tmp / "asset.stub")))
+
+    def test_a_failed_run_leaves_no_staging_file_behind(self):
+        """An EMPTY artifact is a failure the runner reports WITHOUT removing, and a
+        timeout kills the child mid-write -- neither may litter the output folder."""
+        br = self._bridge()
+        out = self.tmp / "asset.stub"
+        staging = Path(br.deliverers[SAVE_AS]._staging_path(str(out)))
+
+        def _half_written(app_exe, script_text, *, artifact, **kw):
+            Path(artifact).write_text("", encoding="utf-8")  # empty == failure
+            raise RuntimeError("did not produce the expected artifact")
+
+        app_handoff.ScriptRunDeliverer.run = staticmethod(_half_written)
+        self.assertIsNone(br.save_as(str(out)))
+        self.assertFalse(staging.exists(), "staging file left in the output folder")
+
+    def test_a_failed_promotion_keeps_the_result(self):
+        """If only the RENAME fails, the scene is written -- discarding it would throw
+        away the run the user waited for; it is kept and named in the error."""
+        br = self._bridge()
+        out = self.tmp / "asset.stub"
+        staging = Path(br.deliverers[SAVE_AS]._staging_path(str(out)))
+
+        orig_replace = app_handoff.os.replace
+        app_handoff.os.replace = lambda *a, **kw: (_ for _ in ()).throw(
+            OSError("target is locked")
+        )
+        try:
+            self.assertIsNone(br.save_as(str(out)))
+        finally:
+            app_handoff.os.replace = orig_replace
+        self.assertTrue(staging.is_file(), "the written scene was discarded")
+
+    def test_a_failed_save_leaves_an_existing_file_intact(self):
+        """The runner CLEARS the artifact path first, so a save-over must be staged.
+
+        Without staging, "save over my scene" would destroy the previous file the
+        moment the target app failed for any reason.
+        """
+        br = self._bridge()
+        out = self.tmp / "asset.stub"
+        out.write_text("PRECIOUS", encoding="utf-8")
+
+        def _boom(*a, **kw):
+            raise RuntimeError("target app died")
+
+        app_handoff.ScriptRunDeliverer.run = staticmethod(_boom)
+        self.assertIsNone(br.save_as(str(out)))
+        self.assertEqual(out.read_text(encoding="utf-8"), "PRECIOUS")
+
+    def test_the_staging_sibling_keeps_the_extension_and_is_promoted(self):
+        """Templates branch on the extension (``.mb`` -> mayaBinary), so it must survive."""
+        staging = app_handoff.ScriptRunDeliverer._staging_path(r"C:\out\asset.mb")
+        self.assertTrue(staging.endswith(".mb"))
+        self.assertEqual(Path(staging).parent, Path(r"C:\out"))
+        self.assertNotEqual(Path(staging).name, "asset.mb")
+
+        br = self._bridge()
+        out = self.tmp / "asset.stub"
+        self.assertIsNotNone(br.save_as(str(out)))
+        # The child wrote the sibling; the caller sees only the promoted final file.
+        self.assertEqual(self.runs[0]["artifact"], br.deliverers[SAVE_AS]._staging_path(str(out)))
+        self.assertTrue(out.is_file())
+        self.assertFalse(Path(self.runs[0]["artifact"]).exists())
+
+    def test_send_only_bridge_reports_instead_of_raising(self):
+        br = _StubScriptBridge(self.tmp, self.launched)  # no run_spec
+        self.assertIsNone(br.save_as(str(self.tmp / "asset.stub")))
+        self.assertEqual(self.runs, [])
+
+    def test_modes_dispatch_to_distinct_deliverers(self):
+        br = self._bridge()
+        self.assertIsInstance(
+            br.deliverers[SEND_TO], app_handoff.ScriptLaunchDeliverer
+        )
+        self.assertIsInstance(br.deliverers[SAVE_AS], app_handoff.ScriptRunDeliverer)
+        # An unregistered mode falls back to the default strategy (back-compat).
+        self.assertIs(
+            br._deliverer_for(HandoffRequest(mode="other")), br.deliverer
+        )
+
+    def test_registry_is_instance_owned(self):
+        """A class-level dict would leak one bridge's strategies into every other."""
+        first, second = self._bridge(), self._bridge()
+        self.assertIsNot(first.deliverers, second.deliverers)
+        self.assertEqual(HandoffBridge.deliverers, {})
+
+    def test_save_as_rejects_a_template_that_does_not_declare_the_mode(self):
+        br = self._bridge()
+        self.assertIsNone(br.save_as(str(self.tmp / "a.stub"), template="import"))
+        self.assertEqual(self.runs, [])
+        self.assertEqual(br.exported, [])  # aborted in preflight, before exporting
 
 
 if __name__ == "__main__":

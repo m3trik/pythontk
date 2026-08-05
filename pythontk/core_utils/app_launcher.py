@@ -68,6 +68,51 @@ class AppLauncher:
             return None
 
     @staticmethod
+    def process_environ():
+        """The LIVE process environment -- what a child would actually inherit.
+
+        ``os.environ`` is a snapshot taken at interpreter init (plus Python-side
+        changes). A HOST app that embeds Python and sets a variable at the C
+        level afterwards is invisible to the snapshot, yet every child process
+        inherits the real value: Blender 5.x sets ``OCIO`` to its bundled
+        v2.5 config during color-management init, so ``os.environ`` showed no
+        ``OCIO`` while a child ``cmd /c echo %%OCIO%%`` printed Blender's config
+        (measured live -- the mechanism behind Maya's color-management init
+        failing on every bridge send). Windows: decode the live block via
+        ``GetEnvironmentStringsW``. Elsewhere ``os.environ`` is returned as-is
+        (the same C-level blindness exists, but no supported host currently
+        exercises it off-Windows).
+        """
+        if platform.system().lower() != "windows":
+            return dict(os.environ)
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetEnvironmentStringsW.restype = ctypes.c_void_p
+        ptr = kernel32.GetEnvironmentStringsW()
+        if not ptr:
+            return dict(os.environ)
+        try:
+            env = {}
+            offset = ptr
+            while True:
+                entry = ctypes.wstring_at(offset)
+                if not entry:
+                    break
+                # Advance by the UTF-16 byte length + terminator, not len(entry):
+                # a non-BMP character is ONE Python char but TWO UTF-16 code
+                # units, and undercounting desyncs the rest of the block walk.
+                offset += len(entry.encode("utf-16-le")) + 2
+                key, sep, value = entry.partition("=")
+                # Skip the hidden per-drive CWD entries ("=C:=C:\\..."), whose
+                # key is empty -- children rebuild those themselves.
+                if key and sep:
+                    env[key] = value
+            return env
+        finally:
+            kernel32.FreeEnvironmentStringsW(ctypes.c_void_p(ptr))
+
+    @staticmethod
     def handoff_env(source_root):
         """Child env for launching a DIFFERENT app: this process's env, minus its
         app-private ``OCIO`` config.
@@ -80,6 +125,11 @@ class AppLauncher:
         the source install (a studio ACES pipeline config) is deliberate
         cross-app state and passes through untouched.
 
+        Reads (and, when stripping, copies) the LIVE process environment via
+        :meth:`process_environ`, never ``os.environ`` -- Blender sets ``OCIO``
+        at the C level AFTER Python init, so the snapshot can neither see nor
+        strip the very variable this hook exists for.
+
         :param source_root: The RUNNING app's installation root. ``OCIO`` is
                             stripped only when its path lies under this tree.
         :return: A copied env dict without ``OCIO``, or ``None`` (= inherit
@@ -87,7 +137,8 @@ class AppLauncher:
         """
         from pathlib import Path
 
-        ocio = os.environ.get("OCIO")
+        environ = AppLauncher.process_environ()
+        ocio = environ.get("OCIO")
         if not (ocio and source_root):
             return None
         try:
@@ -96,7 +147,7 @@ class AppLauncher:
             return None
         if not private:
             return None
-        env = dict(os.environ)
+        env = dict(environ)
         del env["OCIO"]
         logger.info(
             f"Launch env: dropped OCIO ({ocio}) -- private to the running app's "

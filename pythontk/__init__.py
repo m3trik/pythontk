@@ -143,6 +143,7 @@ DEFAULT_INCLUDE = {
         "HandoffBridge",
         "ScriptLaunchBridge",
         "ScriptLaunchDeliverer",
+        "ScriptRunDeliverer",
         "ScriptLaunchSpec",
         "AppSpec",
         "Deliverer",

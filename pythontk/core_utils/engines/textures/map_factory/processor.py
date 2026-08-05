@@ -48,6 +48,10 @@ class TextureProcessor:
     base_name: str
     ext: Optional[str]
     conversion_registry: ConversionRegistry
+    # UDIM / UV-tile token (with its leading separator) shared by every map in
+    # this set, re-appended after the map-type suffix so the output stays a
+    # readable tile sequence and two tiles of one material cannot collide.
+    tile_token: str = ""
     # When set (a WF profile key), per-map output format/bit-depth/compression is
     # resolved from the profile's template instead of the single global ``ext``.
     output_profile: Optional[str] = None
@@ -68,11 +72,15 @@ class TextureProcessor:
             ext: Extension override; defaults to the processor's ``ext``.
 
         Returns:
-            str: ``<output_dir>/<base_name>_<map_type>.<ext>``.
+            str: ``<output_dir>/<base_name>_<map_type><tile_token>.<ext>``.
+            The tile token trails the map type so the result reads as a tile
+            sequence (``rock_Normal_OpenGL.1001.png``) the way Maya and
+            Substance expect, rather than burying the tile mid-name.
         """
         ext = (ext or self.ext or DEFAULT_EXTENSION).lstrip(".")
         return os.path.join(
-            self.output_dir, f"{self.base_name}_{map_type.lstrip('_')}.{ext}"
+            self.output_dir,
+            f"{self.base_name}_{map_type.lstrip('_')}{self.tile_token}.{ext}",
         )
 
     def get_cached_image(self, path: str) -> "Image.Image":

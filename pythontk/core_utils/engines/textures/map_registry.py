@@ -742,14 +742,158 @@ class MapRegistry(SingletonMixin):
             self.__class__._resolve_cache = {}
         return self._sorted_candidates
 
+    # Logical PBR channel -> canonical map type. The join between "what socket a
+    # shader read this texture from" (the DCCs' vocabulary) and "what kind of map
+    # it is" (this registry's). Both live above pythontk and cannot import each
+    # other, so the table belongs here.
+    #
+    # Deliberately conservative: a channel says only which INPUT consumed the
+    # file, never how it is packed. An MSAO wired into a metallic slot is still an
+    # MSAO, and only its FILENAME reveals that. So this is the fallback for files
+    # that classify to nothing -- never a replacement for filename classification.
+    LOGICAL_CHANNEL_TYPES = {
+        "baseColor": "Base_Color",
+        "emission": "Emissive",
+        "specular": "Specular",
+        "roughness": "Roughness",
+        "metallic": "Metallic",
+        "opacity": "Opacity",
+        "normal": "Normal",
+        "ambientOcclusion": "Ambient_Occlusion",
+        # Blender-side only: a Bump node and a Normal Map node feed the SAME
+        # Principled input, so that producer can tell the two apart where Maya's
+        # single ``normalCamera`` plug cannot. Kept in the shared vocabulary so
+        # one table serves both directions.
+        "bump": "Bump",
+        "height": "Height",
+    }
+
+    # Every tangent-space normal map type, in the order a shader should PREFER
+    # them. An explicitly tagged map outranks the ambiguous generic one: its
+    # convention is known, so it can be corrected, while "Normal" can only be
+    # guessed at (and flipping a guess inverts a map that may already be right).
+    #
+    # Lives here for the same reason LOGICAL_CHANNEL_TYPES does: mayatk and
+    # blendertk both need this exact ordering and cannot import each other, so
+    # two hardcoded copies would be free to drift (measured: they already had —
+    # blendertk tried "Normal" FIRST, shadowing a labeled map with an unlabeled
+    # one). Also the membership set for "is this a normal map type".
+    NORMAL_TYPES = ("Normal_OpenGL", "Normal_DirectX", "Normal")
+
+    @classmethod
+    def select_normal_type(cls, available) -> Optional[str]:
+        """The single normal map type a shader should wire, out of those present.
+
+        `Normal`, `Normal_OpenGL` and `Normal_DirectX` are three distinct map
+        types, so redundancy filtering never collapses them — a set carrying two
+        drives one shader input twice and the last connection silently wins.
+        Callers use this to pick exactly one.
+
+        Parameters:
+            available: Any container of map-type names (a dict keyed by type
+                works — membership is all that is tested).
+
+        Returns:
+            str | None: The winning type, or None when none is present.
+        """
+        return next((t for t in cls.NORMAL_TYPES if t in available), None)
+
+    @classmethod
+    def resolve_type_from_channel(cls, channel: str) -> Optional[str]:
+        """Canonical map type for a logical shader channel, or None if unmapped.
+
+        Case-insensitive. Use ONLY for a file whose filename carries no map-type
+        token -- see :attr:`LOGICAL_CHANNEL_TYPES` for why this must not override
+        a successful filename classification.
+        """
+        if not channel:
+            return None
+        wanted = str(channel).strip().lower()
+        for name, map_type in cls.LOGICAL_CHANNEL_TYPES.items():
+            if name.lower() == wanted:
+                return map_type
+        return None
+
+    # A trailing UDIM / UV-tile token, with its leading separator. Three forms:
+    #   .1001        4-digit UDIM, restricted to the real range 1001-1999
+    #                (1000 + u+1 + v*10, u 0-9). DOT-delimited only -- see below.
+    #   .<UDIM>      unexpanded token as Maya/Substance write it (also <UVTILE>)
+    #   .u1_v1       Mari/Mudbox explicit UV tile
+    # The bare-digit form is deliberately dot-only: `_1024` / `_2048` is the
+    # everyday resolution tag, and 1024 sits squarely inside the UDIM range, so
+    # accepting `_####` would silently rename every `wall_Normal_1024.png`.
+    # The token forms that cannot be confused with anything else (`<UDIM>`,
+    # `u#_v#`) are accepted after either separator.
+    _TILE_TOKEN_PATTERN = re.compile(
+        r"(?:"
+        r"\.1[0-9]{3}"
+        r"|[._]<(?:UDIM|UVTILE)>"
+        r"|[._]u[0-9]+_v[0-9]+"
+        r")$",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def split_tile_token(cls, name_only: str) -> Tuple[str, str]:
+        """Split a trailing UDIM / UV-tile token off an extension-less filename.
+
+        ``os.path.splitext`` removes only the extension, so a tiled filename
+        reaches alias matching as ``rock_Normal.1001`` — ending in no map-type
+        alias at all. Every consumer of the taxonomy (classification, base-name
+        grouping, the factory's inventory) therefore has to strip the tile token
+        first, and re-append it when naming outputs so two tiles can't collide.
+
+        Parameters:
+            name_only: A filename with its extension already removed.
+
+        Returns:
+            tuple[str, str]: ``(stem_without_token, token)``. The token keeps its
+            leading separator so ``stem + token`` is the input verbatim; it is
+            ``""`` when the name carries no tile token.
+        """
+        match = cls._TILE_TOKEN_PATTERN.search(name_only)
+        if not match:
+            return name_only, ""
+        return name_only[: match.start()], match.group(0)
+
+    @staticmethod
+    def _short_alias_boundary(name_only: str, index: int) -> Optional[str]:
+        """What kind of word boundary a short alias starting at *index* sits on.
+
+        Returns:
+            str | None: ``"separator"`` for an explicit delimiter (``rock_AO``)
+            or the alias standing alone (``N.png``); ``"camel"`` for a
+            lowercase->uppercase step (``rockN``); ``None`` for a digit or
+            uppercase predecessor, which is what a model/part number looks like
+            (``Agilent_E4419B``, ``Agilent_PSG``, ``Agilent_8757D``).
+
+        The two boundary kinds carry different evidence, and the caller demands
+        different things of each. A separator is an explicit authoring decision,
+        so the alias may be spelled in any case (``rock_ao``). A CamelCase step
+        is inferred from case alone, so it only counts when the alias actually
+        starts with a capital -- otherwise every ordinary word ending in an
+        alias letter would classify (``wood_green`` -> ``n`` -> Normal).
+        """
+        if index <= 0:
+            return "separator"
+        prev = name_only[index - 1]
+        if prev in "_-. ":
+            return "separator"
+        return "camel" if prev.islower() else None
+
     def resolve_type_from_path(self, path: str) -> Optional[str]:
         """Resolve the map type key from a file path.
 
         Prioritizes longer matches to prevent short aliases (e.g. 'S') from
         matching longer names (e.g. 'Smoothness').
+
+        A trailing UDIM / UV-tile token is stripped first (see
+        :meth:`split_tile_token`) so a tiled map classifies exactly like its
+        untiled twin.
         """
         filename = os.path.basename(path)
         name_only, _ = os.path.splitext(filename)
+        name_only, _tile = self.split_tile_token(name_only)
 
         # Check cache first
         if self._resolve_cache is not None and name_only in self._resolve_cache:
@@ -761,19 +905,32 @@ class MapRegistry(SingletonMixin):
         for alias, map_name in all_candidates:
             # Logic for short aliases (<= 3 chars)
             if len(alias) <= 3:
-                # Must match case for first letter, rest case-insensitive
-                # And must be at the end of the string
+                # Must sit at the end of the string, on a real word boundary.
                 if name_only.lower().endswith(alias.lower()):
-                    # Check case sensitivity for short aliases
                     suffix_start_index = len(name_only) - len(alias)
                     suffix_in_name = name_only[suffix_start_index:]
 
-                    # If alias starts with uppercase, require uppercase in filename
-                    if alias[0].isupper():
-                        if suffix_in_name[0] == alias[0]:
-                            result = map_name
-                            break
-                    else:
+                    # A short alias glued to the tail of a model/part number is a
+                    # false positive that silently wires a color map into the
+                    # wrong socket ("Agilent_E4419B" -> "B" -> Bump, measured on
+                    # a production scene). Require a real boundary first; the
+                    # sibling MapFactory.resolve_map_type(key=False) path has
+                    # always demanded one, so this makes the two agree.
+                    boundary = self._short_alias_boundary(
+                        name_only, suffix_start_index
+                    )
+                    if boundary is None:
+                        continue
+
+                    # After a separator the suffix is explicit, so honor the
+                    # everyday lowercase spellings ("rock_ao", "rock_nrm", and
+                    # the classic _d/_n/_s convention) — get_suffix_strip_pattern
+                    # has always stripped those case-insensitively, so requiring
+                    # a capital here made base names and classification disagree.
+                    # A CamelCase boundary is inferred from case alone and keeps
+                    # demanding the capital: without it every word ending in an
+                    # alias letter would classify ("wood_green" -> "n").
+                    if boundary == "separator" or suffix_in_name[0].isupper():
                         result = map_name
                         break
             else:
@@ -799,8 +956,12 @@ class MapRegistry(SingletonMixin):
           (``brick_ao`` → ``brick``) — the explicit ``_`` boundary makes false
           positives unlikely.
         - Attached suffixes are case-insensitive only when longer than 3 chars;
-          short ones require a capital first letter (``brickAO``, not
-          ``brickao``) so ordinary words aren't misread as map types.
+          short ones require a capital first letter AND a lowercase character
+          immediately before them (``brickAO``, not ``brickao`` and not
+          ``Agilent_E4419B``) so ordinary words and model numbers aren't misread
+          as map types. That lowercase-boundary rule is the same one
+          :meth:`resolve_type_from_path` applies, so base names and classification
+          agree about what counts as a suffix.
 
         Returns:
             str | None: The compiled-ready pattern, or None when no maps are
@@ -834,7 +995,13 @@ class MapRegistry(SingletonMixin):
                         p_short_parts.append(f"{first}(?i:{rest})")
                     else:
                         p_short_parts.append(re.escape(s))
-                attached_parts.append("|".join(p_short_parts))
+                # Require a CamelCase step down from lowercase ("rockN"), matching
+                # resolve_type_from_path's boundary rule. Without it a short alias
+                # glued to a model number is stripped as a suffix
+                # ("Agilent_E4419B" -> "Agilent_E4419") while the resolver -- which
+                # does enforce the boundary -- reports no map type at all, so base
+                # names and classification disagree and texture SETS mis-group.
+                attached_parts.append(f"(?<=[a-z])(?:{'|'.join(p_short_parts)})")
 
             pattern_attached = f"(?:{'|'.join(attached_parts)})$"
 

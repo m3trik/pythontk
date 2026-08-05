@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-from pythontk.core_utils.engines.textures.map_registry import WF
+from pythontk.core_utils.engines.textures.map_registry import WF, MapRegistry
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,10 @@ class OutputTemplates:
         "Displacement": OutputSpec("png", 16),
         "Bump": OutputSpec("png", 16),
     }
-    _NORMAL_TYPES = ("Normal", "Normal_OpenGL", "Normal_DirectX")
+    # The registry owns the taxonomy; a local copy would silently miss a normal
+    # type added there (a new one would keep the default container instead of
+    # the profile's).
+    _NORMAL_TYPES = MapRegistry.NORMAL_TYPES
 
     # Profile-agnostic fallback (no profile, or an unknown one).
     DEFAULT = OutputTemplate(default=OutputSpec("png", 8), overrides=dict(_PRECISION_16))

@@ -211,6 +211,13 @@ class UvUnwrap(HelpMixin, _UvUnwrapInternal):
     vertex count, face count and winding), so a caller can map UVs back by
     component index rather than by spatial sampling.
 
+    They differ in how they index the UVs they write. BFF deduplicates its
+    ``vt`` table, sharing an index wherever two faces meet inside an island.
+    Ministry of Flat does not: it emits one ``vt`` per face corner even where
+    the coordinates are bit-identical. A consumer whose UVs are indexed rather
+    than per-corner (Maya, not Blender) therefore sees every edge as a UV
+    border and must weld coincident UVs after reading the file.
+
     Success is judged by the *output file*, not the exit code: Ministry of Flat
     returns 1 even on a completely successful run, so a returncode check would
     reject every result it produces.

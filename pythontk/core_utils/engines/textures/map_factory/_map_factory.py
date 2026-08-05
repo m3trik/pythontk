@@ -622,13 +622,19 @@ class MapFactory(LoggingMixin):
         # Determine output file extension (preserve original unless explicitly changed)
         ext = f".{ext.lower().lstrip('.')}" if ext else f".{original_ext}"
 
+        # A tile token trails the map type (matching TextureProcessor.output_path_for)
+        # so the output is still a readable tile sequence AND two tiles of the same
+        # material resolve to different paths instead of overwriting each other.
+        tile_token = cls.get_tile_token(texture_path)
+
         # Construct the final filename correctly
         new_name = StrUtils.replace_placeholders(
-            "{prefix}{base_name}_{map_type}{suffix}{ext}",
+            "{prefix}{base_name}_{map_type}{suffix}{tile}{ext}",
             prefix=prefix or "",
             base_name=base_name,
             map_type=map_type,
             suffix=suffix,
+            tile=tile_token,
             ext=ext,
         )
 
@@ -665,6 +671,13 @@ class MapFactory(LoggingMixin):
         filename = os.path.basename(str(filepath_or_filename))
         base_name, _ = os.path.splitext(filename)
 
+        # A UDIM/UV-tile token sits AFTER the map-type suffix, so it has to come
+        # off before the suffix is reachable. It is dropped rather than restored:
+        # this is the MATERIAL's name (and the texture-set key's stem), which every
+        # tile of a set shares. `get_tile_token` reads the token back for output
+        # naming; `group_textures_by_set` re-appends it to keep tiles separable.
+        base_name, _tile = cls._map_registry.split_tile_token(base_name)
+
         # Canonical suffix pattern lives on the registry (the alias owner) so
         # this and ImgUtils.get_base_texture_name can never drift apart.
         pattern = cls._map_registry.get_suffix_strip_pattern()
@@ -680,6 +693,28 @@ class MapFactory(LoggingMixin):
         ).rstrip("_")
 
     @classmethod
+    def get_tile_token(cls, filepath_or_filename: str) -> str:
+        """The UDIM / UV-tile token on a texture filename, or ``""``.
+
+        The counterpart to :meth:`get_base_texture_name`, which drops the token:
+        together they split a tiled filename into the part every tile of a
+        material shares and the part that distinguishes one tile from the next.
+        Output naming re-appends this so two tiles cannot resolve to one path.
+
+        Parameters:
+            filepath_or_filename (str): A texture path or name.
+
+        Returns:
+            str: The token including its leading separator (``".1001"``,
+            ``"_<UDIM>"``), or ``""`` when the name carries none.
+        """
+        ImgUtils.assert_pathlike(filepath_or_filename, "filepath_or_filename")
+
+        filename = os.path.basename(str(filepath_or_filename))
+        name_only, _ = os.path.splitext(filename)
+        return cls._map_registry.split_tile_token(name_only)[1]
+
+    @classmethod
     def group_textures_by_set(
         cls,
         image_paths: List[str],
@@ -687,6 +722,13 @@ class MapFactory(LoggingMixin):
         suffix: str = "",
     ) -> Dict[str, List[str]]:
         """Groups texture maps into sets based on matching base names.
+
+        A UDIM/UV-tile token keeps its own set: one tile is one complete,
+        independently processable collection of maps (its own image data, its
+        own output file), so ``rock.1001`` and ``rock.1002`` are separate keys
+        while the maps WITHIN each tile group together. Collapsing tiles into
+        one set instead would overflow the factory's one-path-per-map-type
+        inventory and silently drop every tile but the last.
 
         Parameters:
             image_paths (List[str]): A list of full image file paths.
@@ -697,7 +739,7 @@ class MapFactory(LoggingMixin):
 
         Returns:
             Dict[str, List[str]]: A dictionary where:
-                - Keys are unique base texture names.
+                - Keys are unique base texture names (``<base><tile token>``).
                 - Values are lists of associated texture files.
         """
         texture_sets = {}
@@ -705,10 +747,11 @@ class MapFactory(LoggingMixin):
             base_name = cls.get_base_texture_name(
                 path, prefix=prefix, suffix=suffix
             )
-            if base_name not in texture_sets:
-                texture_sets[base_name] = []
+            key = f"{base_name}{cls.get_tile_token(path)}"
+            if key not in texture_sets:
+                texture_sets[key] = []
 
-            texture_sets[base_name].append(path)
+            texture_sets[key].append(path)
 
         return texture_sets
 
@@ -921,6 +964,128 @@ class MapFactory(LoggingMixin):
         return cls._map_registry.get_precedence_rules()
 
     @classmethod
+    def resolve_normal_maps(
+        cls,
+        sorted_maps: Dict[str, Any],
+        target_format: Optional[str] = None,
+        convert: bool = True,
+    ) -> Dict[str, Dict[str, str]]:
+        """Reduce an inventory to exactly ONE normal map — optionally in a given convention.
+
+        The sibling of :meth:`filter_redundant_maps`, for the redundancy that
+        one cannot see. `Normal`, `Normal_OpenGL` and `Normal_DirectX` are three
+        distinct map types with no ``replaces`` relationship, so redundancy
+        filtering never collapses them — yet they all drive the SAME shader
+        input. A set carrying two wires that input twice and the last connection
+        silently wins.
+
+        ``target_format`` additionally guarantees the survivor's handedness.
+        Every consumer needs the same reduction but corrects the convention
+        differently: a renderer whose shading graph can flip green does it
+        there and passes ``None``; one that cannot has to correct the FILE and
+        names its own convention. Neither is knowledge this layer has, which is
+        exactly why the convention is a parameter rather than a branch.
+
+        An explicitly tagged map of the opposite convention is converted (green
+        inverted, written beside the source under the target's name). The
+        ambiguous generic ``Normal`` is NEVER converted: its convention is
+        unknown, so flipping it would invert a map that may already be correct.
+
+        Modifies ``sorted_maps`` in place, like :meth:`filter_redundant_maps`.
+        Values may be paths or lists of paths (both caller shapes preserved).
+
+        Parameters:
+            sorted_maps: ``{map_type: path-or-[paths]}``. Mutated in place.
+            target_format: ``"OpenGL"`` / ``"DirectX"`` (matched
+                case-insensitively) to guarantee the survivor's convention, or
+                None to keep whatever wins as-is. An unrecognised convention
+                warns and leaves the map untouched rather than inventing a type.
+            convert: Allow writing the converted sibling. When False a
+                mismatched map is kept unchanged rather than converted.
+
+        Returns:
+            dict: ``{"dropped": {map_type: reason}, "converted": {map_type: path}}``
+            — ``converted`` names the NEW type and path when a conversion ran,
+            so a caller tracking real files can pick it up.
+        """
+        report: Dict[str, Dict[str, str]] = {"dropped": {}, "converted": {}}
+        registry = cls._map_registry
+
+        present = [t for t in registry.NORMAL_TYPES if t in sorted_maps]
+        winner_type = registry.select_normal_type(sorted_maps)
+        if winner_type is None:
+            return report
+
+        for map_type in present:
+            if map_type == winner_type:
+                continue
+            cls.logger.info(
+                f"Skipping {map_type} map (superseded by the {winner_type} normal map)",
+                extra={"preset": "highlight"},
+            )
+            del sorted_maps[map_type]
+            report["dropped"][map_type] = (
+                f"superseded by the {winner_type} normal map"
+            )
+
+        if not target_format or not convert:
+            return report
+
+        # Convention name -> canonical map type, derived from the registry so a
+        # newly registered tagged type is understood without editing this, and
+        # so the caller's spelling is normalized. `convert_normal_map_format`
+        # takes its format case-insensitively, so a caller passing "opengl" is
+        # reasonable -- and would otherwise build the map type "Normal_opengl",
+        # putting a type nothing in the taxonomy recognises into the inventory.
+        conventions = {
+            t[len("Normal_") :].lower(): t
+            for t in registry.NORMAL_TYPES
+            if t.startswith("Normal_")
+        }
+        target_type = conventions.get(str(target_format).strip().lower())
+        if target_type is None:
+            cls.logger.warning(
+                f"Unknown normal map convention {target_format!r} "
+                f"(expected one of {sorted(conventions)}); leaving the map as-is."
+            )
+            return report
+
+        # Only an explicitly tagged opposite is convertible; the generic map's
+        # convention is unknown and a match needs no work.
+        if winner_type == target_type or winner_type not in conventions.values():
+            return report
+
+        value = sorted_maps[winner_type]
+        is_list = isinstance(value, (list, tuple))
+        source = (value[0] if value else None) if is_list else value
+        if not source:
+            return report  # nothing to convert (empty entry)
+        try:
+            converted = cls.convert_normal_map_format(
+                source, target_format=target_format.lower()
+            )
+        except Exception as error:
+            cls.logger.warning(
+                f"Could not convert {winner_type} to {target_type} ({error}); "
+                "keeping the source map."
+            )
+            return report
+
+        if not converted:
+            return report
+
+        del sorted_maps[winner_type]
+        sorted_maps[target_type] = [converted] if is_list else converted
+        # The source type leaves the inventory, so it belongs in `dropped` too:
+        # a caller mapping the report back onto its own list of real file paths
+        # would otherwise keep the original file alongside the converted one and
+        # wire the normal slot twice — the exact double-wire this method exists
+        # to prevent. Every type that leaves the inventory is reported.
+        report["dropped"][winner_type] = f"converted to {target_type}"
+        report["converted"][target_type] = converted
+        return report
+
+    @classmethod
     def filter_redundant_maps(
         cls,
         sorted_maps: Dict[str, Any],
@@ -1105,6 +1270,7 @@ class MapFactory(LoggingMixin):
             config=dict(config or {}),
             output_dir=os.path.dirname(packed_path),
             base_name=cls.get_base_texture_name(packed_path),
+            tile_token=cls.get_tile_token(packed_path),
             ext=(config or {}).get("output_extension")
             or os.path.splitext(packed_path)[1].lstrip("."),
             conversion_registry=cls._conversion_registry,
@@ -1370,6 +1536,7 @@ class MapFactory(LoggingMixin):
             config=workflow_config,
             output_dir=output_dir or os.path.dirname(reference_path),
             base_name=MapFactory.get_base_texture_name(reference_path),
+            tile_token=MapFactory.get_tile_token(reference_path),
             ext=workflow_config.get("output_extension", "png"),
             output_profile=workflow_config.get("output_profile"),
             conversion_registry=MapFactory._conversion_registry,
@@ -1643,6 +1810,21 @@ class MapFactory(LoggingMixin):
         corr(dR/dy, dG/dx) < 0  -> OpenGL
         corr(dR/dy, dG/dx) > 0  -> DirectX
         (Verified against a labeled real-world OpenGL map: r = -0.19.)
+
+        Measured behavior (synthetic height fields x {clean, JPEG q40-70,
+        quarter-res}, 42 cases): 40 correct, 2 indeterminate, 0 wrong-sign.
+        Real normal maps land at |r| ~ 0.64-0.95, far clear of the threshold;
+        non-normal inputs (photographs, random noise, flat fills, OBJECT-space
+        normals) all fall below it and return None rather than guessing.
+
+        Known blind spot: the statistic measures the RELATIVE handedness of the
+        two channels, so it cannot tell "G is inverted" from "R is inverted". A
+        map whose RED channel was flipped (an X- bake, or a mirrored-UV export)
+        reports the opposite convention with full confidence. Filename evidence
+        outranks this function wherever both exist -- which is why the caller
+        only consults it for a map classified as the ambiguous generic
+        ``Normal`` (see NormalMapHandler), never to override a ``Normal_OpenGL``
+        or ``Normal_DirectX`` tag.
 
         Parameters:
             image (str | PIL.Image.Image): Input normal map.

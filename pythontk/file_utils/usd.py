@@ -274,7 +274,7 @@ class UsdzPackager(_UsdzPackagerInternal):
             ValueError: *layer_path* is not a text (``usda``) layer.
         """
         import re
-        import tempfile
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         layer_path = os.path.abspath(os.path.expandvars(str(layer_path)))
         if UsdFile.sniff(layer_path) != "usda":
@@ -308,7 +308,10 @@ class UsdzPackager(_UsdzPackagerInternal):
 
         text = re.sub(r"@([^@\n]+)@", rewrite, text)
 
-        tmp_dir = tempfile.mkdtemp(prefix="ptk_usdz_layer_")
+        # Tracked scratch: the finally below still removes it on every exit, but
+        # a hard process death (a DCC crash mid-write) leaves nothing to run it --
+        # the prefix namespace lets a later run sweep the leftover by age.
+        tmp_dir = TempArtifacts("ptk_usdz_layer").dir_path()
         try:
             staged = os.path.join(tmp_dir, os.path.basename(layer_path))
             with open(staged, "w", encoding="utf-8", newline="\n") as fh:
@@ -774,7 +777,7 @@ class UsdMeshWriter:
         references, then packaged (layer first, textures under ``textures/``).
         The no-DCC publish path: OBJ in, AR-ready USDZ out, zero dependencies.
         """
-        import tempfile
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         data = UsdMeshWriter.from_obj(obj_path)
         if output_path is None:
@@ -790,7 +793,7 @@ class UsdMeshWriter:
         data["textures"] = textures or None
         data.update(write_opts)
 
-        tmp_dir = tempfile.mkdtemp(prefix="ptk_usdz_")
+        tmp_dir = TempArtifacts("ptk_usdz").dir_path()
         try:
             layer_name = data.get("name", "Model")
             layer = UsdMeshWriter.write(os.path.join(tmp_dir, layer_name), **data)
