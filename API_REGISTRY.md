@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-05_
+_Generated: 2026-08-06_
 
 ## Index
 
@@ -1585,8 +1585,9 @@ Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 
 Generic DCC plugin installer (symlink-first, copytree fallback).
 
-- **[`class PluginInstaller`](pythontk/pythontk/net_utils/rpc/installer.py#L34)** — PluginInstaller — module namespace.
-  - `PluginInstaller.install_plugin(plugin_src: Union[str, Path], dest: Union[str, Path], force: bool = False) -> Optional[Path]` *(static)* — Install *plugin_src* at *dest*.
+- **[`class PluginInstaller(_PluginInstallerInternal)`](pythontk/pythontk/net_utils/rpc/installer.py#L81)** — PluginInstaller — module namespace.
+  - `PluginInstaller.is_plugin_current(plugin_src: Union[str, Path], dest: Union[str, Path]) -> bool` *(static)* — True when *dest* already serves the current *plugin_src*.
+  - `PluginInstaller.install_plugin(plugin_src: Union[str, Path], dest: Union[str, Path], force: bool = False) -> Optional[Path]` *(static)* — Install *plugin_src* at *dest*, refreshing it when it has drifted.
   - `PluginInstaller.uninstall_plugin(dest: Union[str, Path]) -> bool` *(static)* — Remove a plugin install at *dest*.
   - `PluginInstaller.is_plugin_installed(dest: Union[str, Path]) -> bool` *(static)* — True if *dest* looks like an installed plugin (has ``__init__.py``).
 
@@ -1629,7 +1630,7 @@ One-shot batch pipeline over :class:`RpcClient`.
   - `StrUtils.collapse_delimiter_runs(string, delimiter='_', strip_trailing=True)` *(static)* — Collapse consecutive delimiter runs to a single delimiter.
   - `StrUtils.truncate(string, length=75, mode='start', insert='..')` *(static)* — Shorten the given string to the given length.
   - `StrUtils.get_trailing_integers(string, inc=0, as_string=False)` *(static)* — Returns any integers from the end of the given string.
-  - `StrUtils.find_str(find, strings, regex=False, ignore_case=False)` *(static)* — Filter for elements that containing the given string in a list of strings.
+  - `StrUtils.find_str(cls, find, strings, regex=False, ignore_case=False)` *(class)* — Filter for elements that containing the given string in a list of strings.
   - `StrUtils.find_str_and_format(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)` *(class)* — Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…
   - `StrUtils.format_suffix(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str` *(static)* — Re-format the suffix for the given string.
   - `StrUtils.strip_known_affix(string: str, prefix: str = '', suffix: str = '') -> str` *(static)* — Strip a configured prefix and/or suffix from a string, case-insensitively.

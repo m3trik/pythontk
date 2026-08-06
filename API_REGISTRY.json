@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-08-05",
+  "generated_at": "2026-08-06",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -2558,7 +2558,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…",
-              "line": 1680,
+              "line": 1764,
               "deprecated": false
             },
             {
@@ -2567,7 +2567,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.",
-              "line": 1738,
+              "line": 1822,
               "deprecated": false
             },
             {
@@ -2576,7 +2576,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]",
               "summary": "Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.",
-              "line": 1792,
+              "line": 1876,
               "deprecated": false
             },
             {
@@ -2585,7 +2585,7 @@
               "kind": "classmethod",
               "signature": "(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.",
-              "line": 1881,
+              "line": 1965,
               "deprecated": false
             },
             {
@@ -2594,7 +2594,7 @@
               "kind": "classmethod",
               "signature": "(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a bump/height map to a tangent-space normal map.",
-              "line": 1955,
+              "line": 2039,
               "deprecated": false
             },
             {
@@ -2603,7 +2603,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]",
               "summary": "Extracts gloss from a specific channel in the specular map.",
-              "line": 2114,
+              "line": 2198,
               "deprecated": false
             },
             {
@@ -2612,7 +2612,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]",
               "summary": "Converts Specular/Glossiness maps to PBR Metal/Rough.",
-              "line": 2148,
+              "line": 2232,
               "deprecated": false
             },
             {
@@ -2621,7 +2621,7 @@
               "kind": "classmethod",
               "signature": "(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'",
               "summary": "Computes Base Color from Specular workflow with better metal handling.",
-              "line": 2250,
+              "line": 2334,
               "deprecated": false
             },
             {
@@ -2630,7 +2630,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'",
               "summary": "Creates a metallic map from a specular (and optional glossiness) map.",
-              "line": 2306,
+              "line": 2390,
               "deprecated": false
             },
             {
@@ -2639,7 +2639,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'",
               "summary": "Estimates roughness from a specular map.",
-              "line": 2351,
+              "line": 2435,
               "deprecated": false
             },
             {
@@ -2648,7 +2648,7 @@
               "kind": "classmethod",
               "signature": "(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'",
               "summary": "Converts a Base Color map to a true Albedo map by:",
-              "line": 2399,
+              "line": 2483,
               "deprecated": false
             },
             {
@@ -2657,7 +2657,7 @@
               "kind": "staticmethod",
               "signature": "(map_type: str, available: dict) -> Optional[Any]",
               "summary": "Get the converted map based on the given map type and available maps.",
-              "line": 2441,
+              "line": 2525,
               "deprecated": false
             },
             {
@@ -2666,7 +2666,7 @@
               "kind": "classmethod",
               "signature": "(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.",
-              "line": 2491,
+              "line": 2575,
               "deprecated": false
             },
             {
@@ -2675,7 +2675,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']",
               "summary": "Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.",
-              "line": 2563,
+              "line": 2647,
               "deprecated": false
             },
             {
@@ -2684,7 +2684,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']",
               "summary": "Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.",
-              "line": 2665,
+              "line": 2749,
               "deprecated": false
             },
             {
@@ -2693,7 +2693,7 @@
               "kind": "classmethod",
               "signature": "(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Smoothness map to a Roughness map by inverting the grayscale values.",
-              "line": 2767,
+              "line": 2851,
               "deprecated": false
             },
             {
@@ -2702,7 +2702,7 @@
               "kind": "classmethod",
               "signature": "(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Roughness map to a Smoothness map by inverting the grayscale values.",
-              "line": 2820,
+              "line": 2904,
               "deprecated": false
             },
             {
@@ -2711,7 +2711,7 @@
               "kind": "classmethod",
               "signature": "(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.",
-              "line": 2873,
+              "line": 2957,
               "deprecated": false
             },
             {
@@ -2720,7 +2720,7 @@
               "kind": "classmethod",
               "signature": "(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpack Metallic, AO, and Smoothness from a combined MSAO texture.",
-              "line": 2908,
+              "line": 2992,
               "deprecated": false
             },
             {
@@ -2729,7 +2729,7 @@
               "kind": "classmethod",
               "signature": "(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpack Metallic, Roughness, and AO from a combined MRAO texture.",
-              "line": 2963,
+              "line": 3047,
               "deprecated": false
             },
             {
@@ -2738,7 +2738,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.",
-              "line": 3018,
+              "line": 3102,
               "deprecated": false
             },
             {
@@ -2747,7 +2747,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Metallic (RGB) and Smoothness (A) from a combined map.",
-              "line": 3039,
+              "line": 3123,
               "deprecated": false
             },
             {
@@ -2756,7 +2756,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Specular (RGB) and Glossiness (A) from a combined map.",
-              "line": 3061,
+              "line": 3145,
               "deprecated": false
             }
           ]
@@ -9862,16 +9862,27 @@
         {
           "name": "PluginInstaller",
           "summary": "PluginInstaller — module namespace.",
-          "line": 34,
-          "bases": [],
+          "line": 81,
+          "bases": [
+            "_PluginInstallerInternal"
+          ],
           "members": [
+            {
+              "name": "is_plugin_current",
+              "qualname": "PluginInstaller.is_plugin_current",
+              "kind": "staticmethod",
+              "signature": "(plugin_src: Union[str, Path], dest: Union[str, Path]) -> bool",
+              "summary": "True when *dest* already serves the current *plugin_src*.",
+              "line": 85,
+              "deprecated": false
+            },
             {
               "name": "install_plugin",
               "qualname": "PluginInstaller.install_plugin",
               "kind": "staticmethod",
               "signature": "(plugin_src: Union[str, Path], dest: Union[str, Path], force: bool = False) -> Optional[Path]",
-              "summary": "Install *plugin_src* at *dest*.",
-              "line": 38,
+              "summary": "Install *plugin_src* at *dest*, refreshing it when it has drifted.",
+              "line": 123,
               "deprecated": false
             },
             {
@@ -9880,7 +9891,7 @@
               "kind": "staticmethod",
               "signature": "(dest: Union[str, Path]) -> bool",
               "summary": "Remove a plugin install at *dest*.",
-              "line": 86,
+              "line": 176,
               "deprecated": false
             },
             {
@@ -9889,7 +9900,7 @@
               "kind": "staticmethod",
               "signature": "(dest: Union[str, Path]) -> bool",
               "summary": "True if *dest* looks like an installed plugin (has ``__init__.py``).",
-              "line": 101,
+              "line": 191,
               "deprecated": false
             }
           ]
@@ -10145,10 +10156,10 @@
             {
               "name": "find_str",
               "qualname": "StrUtils.find_str",
-              "kind": "staticmethod",
-              "signature": "(find, strings, regex=False, ignore_case=False)",
+              "kind": "classmethod",
+              "signature": "(cls, find, strings, regex=False, ignore_case=False)",
               "summary": "Filter for elements that containing the given string in a list of strings.",
-              "line": 708,
+              "line": 762,
               "deprecated": false
             },
             {
@@ -10157,7 +10168,7 @@
               "kind": "classmethod",
               "signature": "(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)",
               "summary": "Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…",
-              "line": 806,
+              "line": 833,
               "deprecated": false
             },
             {
@@ -10166,7 +10177,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str",
               "summary": "Re-format the suffix for the given string.",
-              "line": 967,
+              "line": 1118,
               "deprecated": false
             },
             {
@@ -10175,7 +10186,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Strip a configured prefix and/or suffix from a string, case-insensitively.",
-              "line": 1026,
+              "line": 1177,
               "deprecated": false
             },
             {
@@ -10184,7 +10195,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str",
               "summary": "Infer ``\"prefix\"`` or ``\"suffix\"`` from *delimiter* placement in *text*.",
-              "line": 1079,
+              "line": 1230,
               "deprecated": false
             },
             {
@@ -10193,7 +10204,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, mode: str = 'auto', *, default: str = 'prefix', delimiter: str = '_') -> Tuple[str, str]",
               "summary": "Split an affix string into a ``(prefix, suffix)`` pair per *mode*.",
-              "line": 1127,
+              "line": 1278,
               "deprecated": false
             },
             {
@@ -10202,7 +10213,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Idempotently apply a prefix and/or suffix to a string.",
-              "line": 1176,
+              "line": 1327,
               "deprecated": false
             },
             {
@@ -10211,7 +10222,7 @@
               "kind": "staticmethod",
               "signature": "(index: int) -> str",
               "summary": "Excel-column-style alphabetic label for a 0-based index.",
-              "line": 1210,
+              "line": 1361,
               "deprecated": false
             },
             {
@@ -10220,7 +10231,7 @@
               "kind": "staticmethod",
               "signature": "(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]",
               "summary": "Generate ``count`` sequential labels for naming sibling items.",
-              "line": 1238,
+              "line": 1389,
               "deprecated": false
             },
             {
@@ -10229,7 +10240,7 @@
               "kind": "staticmethod",
               "signature": "(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]",
               "summary": "Reduce a batch of names to a shared base form, then disambiguate",
-              "line": 1279,
+              "line": 1430,
               "deprecated": false
             },
             {
@@ -10238,7 +10249,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, stamp='%m-%d-%Y  %H:%M')",
               "summary": "Attach or detach a modified timestamp and date to/from a given file path.",
-              "line": 1387,
+              "line": 1538,
               "deprecated": false
             }
           ]

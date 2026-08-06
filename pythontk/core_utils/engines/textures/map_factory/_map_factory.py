@@ -1592,7 +1592,91 @@ class MapFactory(LoggingMixin):
                     if context.logger:
                         context.logger.warning(f"Error removing intermediate file: {e}")
 
-        return output_maps if output_maps else textures
+        result = output_maps if output_maps else textures
+
+        # Retire the inputs this run replaced. Opt-in: absent `old_files_folder`
+        # the sources are left exactly where they were (the long-standing
+        # default). When `result is textures` nothing was superseded, so the
+        # loop below finds no candidates and the folder is never created.
+        old_files_folder = workflow_config.get("old_files_folder")
+        if old_files_folder and not workflow_config.get("dry_run", False):
+            cls._archive_superseded(
+                textures,
+                result,
+                old_files_folder,
+                output_dir or os.path.dirname(reference_path),
+                logger=logger,
+            )
+
+        return result
+
+    @classmethod
+    def _archive_superseded(
+        cls,
+        sources: List[str],
+        outputs: List[str],
+        old_files_folder: str,
+        output_dir: str,
+        logger: Any = None,
+    ) -> List[str]:
+        """Move each source the output set replaced into the archive folder.
+
+        A source is *superseded* when it is not itself part of the result — it
+        was consumed into a packed map, re-encoded under a new extension, or
+        (the common case) canonicalized from an alias, which
+        :meth:`TextureProcessor.process_map` performs as a COPY. Without this
+        the alias survives beside its canonical twin and the folder accumulates
+        a duplicate per run.
+
+        Parameters:
+            sources: The set's input paths.
+            outputs: The paths this run is returning.
+            old_files_folder: Archive folder; relative names resolve against
+                ``output_dir``.
+            output_dir: Directory the run wrote to.
+            logger: Optional logger for per-file reporting.
+
+        Returns:
+            list[str]: The source paths that were archived.
+        """
+        kept = {
+            os.path.normcase(os.path.normpath(p))
+            for p in outputs
+            if isinstance(p, str)
+        }
+        archive_dir = (
+            old_files_folder
+            if os.path.isabs(old_files_folder)
+            else os.path.join(output_dir, old_files_folder)
+        )
+        archive_norm = os.path.normcase(os.path.normpath(archive_dir))
+
+        archived = []
+        for src in sources:
+            if not isinstance(src, str) or not os.path.isfile(src):
+                continue
+            src_norm = os.path.normcase(os.path.normpath(src))
+            if src_norm in kept:
+                continue
+            # Never re-archive something already sitting in the archive folder
+            # (a re-run over a directory that includes it).
+            if os.path.normcase(os.path.dirname(src_norm)) == archive_norm:
+                continue
+            try:
+                FileUtils.move_file(src, archive_dir, overwrite=True, create_dir=True)
+                archived.append(src)
+            except OSError as e:  # shutil.Error subclasses OSError
+                if logger:
+                    logger.warning(
+                        f"Could not archive '{os.path.basename(src)}': {e}"
+                    )
+
+        if archived and logger:
+            logger.info(
+                f"Archived {len(archived)} superseded map(s) to "
+                f"'{os.path.basename(archive_dir.rstrip(os.sep))}'"
+            )
+        return archived
 
     @staticmethod
     def _build_map_inventory(textures: List[str]) -> Dict[str, str]:

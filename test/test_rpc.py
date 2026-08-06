@@ -410,6 +410,121 @@ class TestRpcInstaller(unittest.TestCase):
             "copytree fallback must filter __pycache__",
         )
 
+    # -- Freshness: a copytree install is a snapshot, not a live link ----
+    #
+    # Regression guard. The DCC bridges call ``install_plugin`` on every
+    # hand-off, and the installer used to short-circuit on mere presence.
+    # On any machine without Developer Mode (so: the copytree fallback)
+    # that pinned the DCC to whatever ops the plugin shipped with the very
+    # first install -- a later package update that added an op left the DCC
+    # answering "unknown op", which reads as the feature silently not
+    # happening. Observed as Painter ignoring the panel's 4K Map
+    # Resolution because ``project.set_resolution`` had never been
+    # installed.
+
+    def _install_as_copy(self, **kwargs):
+        """Install via the copytree path (the drift-prone one)."""
+        with unittest.mock.patch("os.symlink", side_effect=OSError("denied")):
+            return PluginInstaller.install_plugin(self.src, self.dest, **kwargs)
+
+    def test_install_refreshes_copy_when_source_gains_a_file(self):
+        self._install_as_copy()
+        self.assertFalse((self.dest / "new_op.py").exists())
+
+        (self.src / "new_op.py").write_text("# added by an update", encoding="utf-8")
+
+        self._install_as_copy()
+        self.assertTrue(
+            (self.dest / "new_op.py").is_file(),
+            "A source file added after install must reach the destination.",
+        )
+
+    def test_install_refreshes_copy_when_a_file_changes(self):
+        self._install_as_copy()
+        (self.src / "extra.py").write_text("# rewritten", encoding="utf-8")
+
+        self._install_as_copy()
+        self.assertEqual(
+            (self.dest / "extra.py").read_text(encoding="utf-8"),
+            "# rewritten",
+            "An edited source file must be refreshed at the destination.",
+        )
+
+    def test_install_refreshes_nested_source_file(self):
+        """Drift below the top level counts too (the real case was ``ops/``)."""
+        self._install_as_copy()
+        (self.src / "ops").mkdir()
+        (self.src / "ops" / "setup.py").write_text("# nested", encoding="utf-8")
+
+        self._install_as_copy()
+        self.assertTrue((self.dest / "ops" / "setup.py").is_file())
+
+    def test_current_install_is_not_rebuilt(self):
+        """No drift -> no rebuild, so per-hand-off calls stay cheap and safe."""
+        self._install_as_copy()
+        marker = self.dest / "_marker.txt"
+        marker.write_text("untouched", encoding="utf-8")
+
+        self._install_as_copy()
+        self.assertTrue(
+            marker.is_file(), "A matching install must not be torn down."
+        )
+
+    def test_is_plugin_current_tracks_drift(self):
+        self.assertFalse(
+            PluginInstaller.is_plugin_current(self.src, self.dest),
+            "Nothing installed yet.",
+        )
+        self._install_as_copy()
+        self.assertTrue(PluginInstaller.is_plugin_current(self.src, self.dest))
+
+        # A file the destination doesn't have.
+        (self.src / "new_op.py").write_text("# added", encoding="utf-8")
+        self.assertFalse(PluginInstaller.is_plugin_current(self.src, self.dest))
+
+    def test_is_plugin_current_ignores_extra_destination_files(self):
+        """The DCC writes its own __pycache__ beside the plugin."""
+        self._install_as_copy()
+        (self.dest / "__pycache__").mkdir()
+        (self.dest / "__pycache__" / "extra.cpython-311.pyc").write_bytes(b"\x00")
+        self.assertTrue(PluginInstaller.is_plugin_current(self.src, self.dest))
+
+    def test_ignore_patterns_drive_both_the_copy_and_the_check(self):
+        """A pattern the copy honours must also be honoured by the freshness check.
+
+        If the two ever restate the exclusion list separately, a pattern added
+        to one side leaves every install permanently "stale" — and since the
+        bridges call install on every hand-off, that is a full rebuild each
+        time, not a cosmetic bug.
+        """
+        from pythontk.net_utils.rpc.installer import _PluginInstallerInternal
+
+        (self.src / "native.pyd").write_bytes(b"\x00")
+        with unittest.mock.patch.object(
+            _PluginInstallerInternal,
+            "_IGNORE",
+            ("__pycache__", "*.pyc", "*.pyo", "*.pyd"),
+        ):
+            self._install_as_copy()
+            self.assertFalse(
+                (self.dest / "native.pyd").exists(), "copy must honour _IGNORE"
+            )
+            self.assertTrue(
+                PluginInstaller.is_plugin_current(self.src, self.dest),
+                "the freshness check must honour the same _IGNORE",
+            )
+
+    def test_is_plugin_current_follows_symlink_target(self):
+        try:
+            PluginInstaller.install_plugin(self.src, self.dest)
+        except OSError:  # pragma: no cover -- symlinks unavailable
+            self.skipTest("symlinks not permitted on this machine")
+        if not self.dest.is_symlink():
+            self.skipTest("symlinks not permitted on this machine")
+        # A symlink tracks the source, so it is current by construction.
+        (self.src / "new_op.py").write_text("# added", encoding="utf-8")
+        self.assertTrue(PluginInstaller.is_plugin_current(self.src, self.dest))
+
     def test_uninstall_removes_plugin(self):
         PluginInstaller.install_plugin(self.src, self.dest)
         self.assertTrue(PluginInstaller.is_plugin_installed(self.dest))

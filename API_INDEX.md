@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-05_
+_Generated: 2026-08-06_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -460,8 +460,8 @@ _Generated: 2026-08-05_
   - methods: url, ping, invoke, list_ops, describe, connect, shutdown
 
 ### `net_utils/rpc/installer.py` — Generic DCC plugin installer (symlink-first, copytree fallback).
-- `class PluginInstaller`
-  - methods: install_plugin, uninstall_plugin, is_plugin_installed
+- `class PluginInstaller(_PluginInstallerInternal)`
+  - methods: is_plugin_current, install_plugin, uninstall_plugin, is_plugin_installed
 
 ### `net_utils/rpc/job.py` — One-shot batch pipeline over :class:`RpcClient`.
 - `class RpcJob`

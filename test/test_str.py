@@ -705,6 +705,234 @@ class StrTest(BaseTestCase):
         self.assertEqual(StrUtils.find_str_and_format([], "new", "*old*"), [])
 
     # -------------------------------------------------------------------------
+    # find_str_and_format - multi-term filters (per-term 'from')
+    # -------------------------------------------------------------------------
+
+    def test_find_str_and_format_multi_term_filter(self):
+        """A '|' filter must format each string against the term that matched it.
+
+        Regression: 'frm_ = fltr.strip("*")' collapsed the whole filter into one
+        literal ('pCube*|nurbs'), which is never a substring of any name -- so
+        matched strings silently came back unformatted.
+        """
+        lst = ["pCube1", "nurbsSphere1"]
+        self.assertEqual(
+            StrUtils.find_str_and_format(lst, "*box*", "pCube*|nurbs*"),
+            ["box1", "boxSphere1"],
+        )
+
+    def test_find_str_and_format_multi_term_filter_strip(self):
+        """Strip mode must also resolve 'from' per matching filter term."""
+        lst = ["pCube1", "nurbsSphere1"]
+        self.assertEqual(
+            StrUtils.find_str_and_format(lst, "", "*Cube*|*Sphere*"),
+            ["p1", "nurbs1"],
+        )
+
+    def test_find_str_and_format_preserves_duplicate_inputs(self):
+        """A filtered format returns one entry per input, duplicates included.
+
+        Regression: filtering delegated to find_str, which dedupes -- so two
+        objects sharing a short name collapsed to a single rename pair and only
+        the first of them was ever renamed.
+        """
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1", "pCube1"], "*box*", "*Cube*"),
+            ["pbox1", "pbox1"],
+        )
+
+    def test_find_str_and_format_preserves_input_order(self):
+        """Results stay parallel to the surviving inputs, duplicates included."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["arm_R", "arm_L", "arm_R"], "*_lt|*_rt", "*_L|*_R"
+            ),
+            ["arm_rt", "arm_lt", "arm_rt"],
+        )
+
+    def test_find_str_and_format_term_pairing(self):
+        """'|' terms in 'to' pair positionally with '|' terms in the filter."""
+        lst = ["arm_L", "arm_R"]
+        self.assertEqual(
+            StrUtils.find_str_and_format(lst, "*_lt|*_rt", "*_L|*_R"),
+            ["arm_lt", "arm_rt"],
+        )
+
+    def test_find_str_and_format_term_pairing_order_independent(self):
+        """Pairing follows the matching term, not the input ordering."""
+        lst = ["arm_R", "arm_L"]
+        self.assertEqual(
+            StrUtils.find_str_and_format(lst, "*_lt|*_rt", "*_L|*_R"),
+            ["arm_rt", "arm_lt"],
+        )
+
+    def test_find_str_and_format_single_to_term_applies_to_all(self):
+        """One 'to' term against many filter terms applies to every match."""
+        lst = ["pCube1", "nurbsSphere1"]
+        self.assertEqual(
+            StrUtils.find_str_and_format(lst, "**_GEO", "pCube*|nurbs*"),
+            ["pCube1_GEO", "nurbsSphere1_GEO"],
+        )
+
+    def test_find_str_and_format_pipe_literal_without_filter_terms(self):
+        """'|' in 'to' stays literal when the filter has no terms to pair with."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], "a|b", "*Cube*"), ["a|b"]
+        )
+
+    # -------------------------------------------------------------------------
+    # find_str_and_format - regex mode
+    # -------------------------------------------------------------------------
+
+    def test_find_str_and_format_regex_replace_chars(self):
+        """Regex mode must substitute via the compiled pattern, not a literal.
+
+        Regression: the regex source was used as a plain substring, so the
+        filter selected the right strings and then formatting was a no-op.
+        """
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["pCube1", "pCube2"], "*box*", r"pCube\d+", regex=True
+            ),
+            ["box", "box"],
+        )
+
+    def test_find_str_and_format_regex_replace_suffix(self):
+        """Regex replace-suffix must cut at the match, not blindly append."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], "*_GEO", r"Cube.*", regex=True),
+            ["p_GEO"],
+        )
+
+    def test_find_str_and_format_regex_replace_prefix(self):
+        """Regex replace-prefix must cut at the end of the match."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], "L_*", r"^pCube", regex=True),
+            ["L_1"],
+        )
+
+    def test_find_str_and_format_regex_strip(self):
+        """Regex strip must remove the matched span."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], "", r"Cube", regex=True), ["p1"]
+        )
+
+    def test_find_str_and_format_regex_preserves_asterisks(self):
+        """A regex filter must not be mangled by asterisk stripping.
+
+        Regression: 'fltr.strip("*")' turned '.*Cube.*' into '.*Cube.'.
+        """
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], "*box*", r".*Cube.*", regex=True),
+            ["box"],
+        )
+
+    def test_find_str_and_format_regex_ignore_case(self):
+        """ignore_case must reach the substitution in regex mode too."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["PCUBE1"], "*box*", "pcube", regex=True, ignore_case=True
+            ),
+            ["box1"],
+        )
+
+    def test_find_str_and_format_regex_alternation_is_not_a_term_split(self):
+        """In regex mode '|' stays alternation; it is not a term separator."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["arm_L", "arm_R"], "*_x", r"_L|_R", regex=True
+            ),
+            ["arm_x", "arm_x"],
+        )
+
+    # -------------------------------------------------------------------------
+    # find_str_and_format - capture-group backrefs (regex mode only)
+    # -------------------------------------------------------------------------
+
+    def test_find_str_and_format_backrefs_replace_chars(self):
+        """'\\1'/'\\2' in 'to' expand to filter capture groups."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["pCube1", "pCube2"], r"*\1_box_\2*", r"(p)Cube(\d+)", regex=True
+            ),
+            ["p_box_1", "p_box_2"],
+        )
+
+    def test_find_str_and_format_backrefs_append_suffix(self):
+        """Backrefs expand in append/replace modes, not just substitution."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["pCube1"], r"**_\1", r"Cube(\d+)", regex=True
+            ),
+            ["pCube1_1"],
+        )
+
+    def test_find_str_and_format_backrefs_named_group(self):
+        """Named groups expand via the standard '\\g<name>' form."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["pCube1"], r"*\g<idx>_GEO", r"Cube(?P<idx>\d+)", regex=True
+            ),
+            ["p1_GEO"],
+        )
+
+    def test_find_str_and_format_backrefs_not_expanded_without_regex(self):
+        """In wildcard mode a backslash sequence stays literal."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], r"*a\1b*", "*Cube*"), [r"pa\1b1"]
+        )
+
+    def test_find_str_and_format_invalid_backref_falls_back_to_literal(self):
+        """An unusable escape in 'to' must not raise; it is used verbatim."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], r"*bo\dx*", r"Cube", regex=True),
+            [r"pbo\dx1"],
+        )
+
+    def test_find_str_and_format_unknown_group_name_falls_back_to_literal(self):
+        """A named backref with no matching group must not raise either.
+
+        re.sub raises IndexError (not re.error) for an unknown group *name*, so
+        catching only re.error let it escape.
+        """
+        self.assertEqual(
+            StrUtils.find_str_and_format(
+                ["pCube1"], r"*\g<nope>*", r"Cube", regex=True
+            ),
+            [r"p\g<nope>1"],
+        )
+
+    def test_find_str_and_format_unknown_group_number_falls_back_to_literal(self):
+        """Same for a numbered backref past the pattern's group count."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], r"**_\3", r"Cube(\d)", regex=True),
+            [r"pCube1_\3"],
+        )
+
+    # -------------------------------------------------------------------------
+    # find_str_and_format - degenerate patterns
+    # -------------------------------------------------------------------------
+
+    def test_find_str_and_format_double_asterisk_is_noop(self):
+        """'**' appends an empty suffix -- it must not strip the match.
+
+        Regression: the replace_chars branch caught all-asterisk patterns first,
+        so '**' silently deleted the matched token.
+        """
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], "**", "*Cube*"), ["pCube1"]
+        )
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], "***", "*Cube*"), ["pCube1"]
+        )
+
+    def test_find_str_and_format_single_asterisk_truncates_at_match(self):
+        """'*' is replace-suffix with an empty payload."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["pCube1"], "*", "*Cube*"), ["p"]
+        )
+
+    # -------------------------------------------------------------------------
     # format_suffix Tests
     # -------------------------------------------------------------------------
 
