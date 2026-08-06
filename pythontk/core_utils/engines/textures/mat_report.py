@@ -12,7 +12,8 @@ Record schema (all keys optional unless noted):
 - **material record**: ``{"material": str, "type": str, "textures": [texture record, …]}``
 - **texture record**: ``{"file_node": str, "path": str, "name": str, "size": int (bytes),
   "width": int, "height": int, "mode": str, "format": str, "bit_depth": str,
-  "optimization": {"recommended": bool, "reasons": [str], "error": str}, "error": str}``
+  "optimization": {"recommended": bool, "reasons": [str], "warnings": [str],
+  "error": str}, "error": str}``
 - **texture-info record** (``get_texture_info``): ``{"name", "path", "size", "width",
   "height", "mode", "format"}``
 """
@@ -117,12 +118,19 @@ class MatReport:
                     continue
                 if "error" in opt:
                     lines.append(f"      Optimize:  (error: {opt['error']})")
-                elif opt.get("recommended"):
+                    continue
+                if opt.get("recommended"):
                     lines.append("      Optimize:  YES")
                     for r in opt.get("reasons", []):
                         lines.append(f"                 - {r}")
                 else:
                     lines.append("      Optimize:  no change recommended")
+                # Rendered outside the recommended/not branch: a budget warning is
+                # advisory, so it does NOT put an op in the plan — reporting it only
+                # under "Optimize: YES" would hide it in the one case it matters
+                # most, an over-budget map that needs no other work.
+                for w in opt.get("warnings", []):
+                    lines.append(f"      Budget:    {w}")
         return "\n".join(lines)
 
     @classmethod
@@ -183,7 +191,8 @@ class MatReport:
                     body_lines.append(
                         f"    <span style='color:#e58;'>Optimize:  (error: {esc(str(opt['error']))})</span>"
                     )
-                elif opt.get("recommended"):
+                    continue
+                if opt.get("recommended"):
                     body_lines.append("    <span style='color:#ec5;'>Optimize:  YES</span>")
                     for r in opt.get("reasons", []):
                         body_lines.append(
@@ -192,6 +201,13 @@ class MatReport:
                 else:
                     body_lines.append(
                         "    <span style='color:#888;'>Optimize:  no change recommended</span>"
+                    )
+                # Outside the branch, and in its own colour: advisory, so it adds no
+                # op to the plan and would otherwise be invisible on a map that needs
+                # no other work. See the text renderer for the full rationale.
+                for w in opt.get("warnings", []):
+                    body_lines.append(
+                        f"    <span style='color:#e9a;'>Budget:    {esc(str(w))}</span>"
                     )
             chunks.append(
                 "<pre style='font-family:monospace; margin:0 0 0 16px;'>"

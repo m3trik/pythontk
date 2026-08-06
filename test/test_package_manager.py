@@ -63,6 +63,107 @@ class PackageManagerTest(BaseTestCase):
         self.assertTrue(self.pkg_mgr._is_informational_message(info_msg))
         self.assertFalse(self.pkg_mgr._is_informational_message(error_msg))
 
+    def test_is_informational_message_modern_pip_wordings(self):
+        """pip >= 22 says 'A new release of pip IS available' (and prefixes
+        [notice]); the self-check can also fail with a WARNING. All are noise
+        from successful runs and must not contaminate parseable output."""
+        for msg in (
+            "[notice] A new release of pip is available: 23.2.1 -> 26.2.1",
+            "[notice] To update, run: python.exe -m pip install --upgrade pip",
+            "WARNING: There was an error checking the latest version of pip.",
+        ):
+            self.assertTrue(self.pkg_mgr._is_informational_message(msg), msg)
+
+    def test_list_packages_survives_stderr_noise(self):
+        """list_packages must return {name: version} even when pip emits
+        stderr noise a filter pattern doesn't anticipate."""
+        from unittest.mock import patch
+
+        raw = (
+            '[{"name": "uitk", "version": "1.3.54"}, '
+            '{"name": "tentacletk", "version": "0.13.42"}]'
+            "\nError:\nWARNING: unforeseen proxy chatter"
+            "\n[some bracketed noise line]"  # must not extend/derail the parse
+        )
+        with patch.object(PackageManager, "pip", return_value=raw):
+            result = self.pkg_mgr.list_packages()
+        self.assertEqual(
+            result, {"uitk": "1.3.54", "tentacletk": "0.13.42"}
+        )
+
+    def test_latest_versions_isolates_a_failing_lookup(self):
+        """One unreachable package must not lose the other answers, and must
+        report None rather than a version — a caller comparing installed !=
+        latest would otherwise read the failure as "outdated"."""
+        from unittest.mock import patch
+
+        def fake(name, timeout=None):
+            if name == "boom":
+                raise RuntimeError("index unreachable")
+            return "1.0"
+
+        with patch.object(PackageManager, "latest_version", side_effect=fake):
+            result = self.pkg_mgr.latest_versions(["a", "boom", "c"])
+
+        self.assertEqual(result, {"a": "1.0", "boom": None, "c": "1.0"})
+
+    def test_latest_versions_queries_concurrently(self):
+        """Sequential lookups multiply the socket timeout by the package count
+        (5 x 10s of a frozen DCC UI); they must overlap."""
+        import threading
+        import time
+        from unittest.mock import patch
+
+        active, peak, lock = 0, [0], threading.Lock()
+
+        def fake(name, timeout=None):
+            nonlocal active
+            with lock:
+                active += 1
+                peak[0] = max(peak[0], active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            return "1.0"
+
+        with patch.object(PackageManager, "latest_version", side_effect=fake):
+            self.pkg_mgr.latest_versions(["a", "b", "c", "d", "e"])
+
+        self.assertGreater(peak[0], 1, "lookups ran one at a time")
+
+    def test_list_packages_distinguishes_empty_env_from_unparseable_output(self):
+        """An empty environment legitimately prints ``[]``. Output with no JSON
+        array at all is a FAILURE, and returning {} for it would tell every
+        caller that nothing is installed — the ecosystem updater would then
+        offer to (re)install all five packages."""
+        from unittest.mock import patch
+
+        with patch.object(PackageManager, "pip", return_value="[]"):
+            self.assertEqual(self.pkg_mgr.list_packages(), {})  # genuinely empty
+
+        with patch.object(PackageManager, "pip", return_value="ERROR: pip exploded"):
+            with self.assertRaises(RuntimeError):
+                self.pkg_mgr.list_packages()
+
+    def test_latest_version_passes_a_socket_timeout(self):
+        """Without a timeout, urlopen blocks on the OS default (forever). This
+        runs on the UI thread of a DCC — an unreachable/slow index would hang
+        Maya or Blender rather than reporting a failed check, and the caller
+        asks once per ecosystem package."""
+        from unittest.mock import patch, MagicMock
+
+        response = MagicMock()
+        response.read.return_value = b'{"info": {"version": "1.2.3"}}'
+        response.__enter__ = lambda s: s
+        response.__exit__ = lambda *a: False
+
+        with patch("urllib.request.urlopen", return_value=response) as urlopen:
+            self.assertEqual(self.pkg_mgr.latest_version("uitk"), "1.2.3")
+
+        _args, kwargs = urlopen.call_args
+        self.assertIn("timeout", kwargs, "urlopen must be given a timeout")
+        self.assertGreater(kwargs["timeout"], 0)
+
     def test_is_list_format(self):
         """Test detecting list format output."""
         list_lines = [

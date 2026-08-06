@@ -80,6 +80,46 @@ class TestMatInfoFormatters(unittest.TestCase):
         self.assertIn("error: boom", MatReport.format_mat_info_text(recs))
         self.assertIn("error: boom", MatReport.format_mat_info_html(recs))
 
+    def _budget_records(self, recommended):
+        """A texture carrying an advisory budget warning from ``assess``."""
+        return [{
+            "material": "m", "type": "t",
+            "textures": [{"name": "x.png", "path": "/x.png", "size": 1,
+                          "optimization": {
+                              "recommended": recommended,
+                              "reasons": ["resize to 1024"] if recommended else [],
+                              "warnings": ["Over delivery budget: 4096x4096 & more"],
+                          }}],
+        }]
+
+    def test_budget_warning_renders_without_a_recommendation(self):
+        """The case that matters most: over budget, but no op to perform. Gating
+        this on ``recommended`` would hide exactly the texture worth flagging."""
+        recs = self._budget_records(recommended=False)
+
+        text = MatReport.format_mat_info_text(recs)
+        self.assertIn("no change recommended", text)
+        self.assertIn("Budget:    Over delivery budget: 4096x4096", text)
+        self.assertIn("Budget:    Over delivery budget: 4096x4096", MatReport.format_mat_info_html(recs))
+
+    def test_budget_warning_renders_alongside_reasons(self):
+        recs = self._budget_records(recommended=True)
+
+        text = MatReport.format_mat_info_text(recs)
+        self.assertIn("- resize to 1024", text)
+        self.assertIn("Budget:    Over delivery budget", text)
+
+    def test_budget_warning_is_escaped_in_html(self):
+        html = MatReport.format_mat_info_html(self._budget_records(recommended=False))
+        self.assertIn("4096x4096 &amp; more", html)
+        self.assertNotIn("4096x4096 & more", html)
+
+    def test_records_without_warnings_are_unaffected(self):
+        # The key is absent from every pre-existing record; .get must not invent
+        # a Budget line for them.
+        self.assertNotIn("Budget:", MatReport.format_mat_info_text(self.RECORDS))
+        self.assertNotIn("Budget:", MatReport.format_mat_info_html(self.RECORDS))
+
 
 class TestTextureInfoFormatters(unittest.TestCase):
     INFO = [{"name": "a.png", "path": "/t/a.png", "size": 1024,

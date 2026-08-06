@@ -8,7 +8,7 @@ drive so they classify and process maps *identically* without importing each
 other:
 
 - ``map_registry`` — the **domain model**: the PBR map-type taxonomy, per-target
-  workflow presets (Unity / UE / glTF / Godot), and fallback / precedence /
+  workflow presets (Unity / UE / glTF-WebXR / Godot), and fallback / precedence /
   alias-resolution rules. Depends on nothing but ``core_utils`` — the clean core.
   Extensible at runtime via ``MapRegistry().register(MapType(...))`` — custom
   types then resolve by filename and flow through the factory like built-ins.
@@ -18,8 +18,11 @@ other:
   orchestrator.
 - ``map_optimizer`` — a pure **plan → apply** optimizer (``MapOptimizer``) with a
   read-only ``assess`` twin, mirroring the shots engine's plan/apply split.
-- ``output_template`` — the per-map export **config model** (container / bit
-  depth / DDS compression, keyed by workflow profile).
+- ``output_template`` — the per-map export **config model**, keyed by workflow
+  profile: hard specs (container / bit depth / DDS compression) plus an advisory
+  ``DeliveryBudget`` (size ceiling / POT) that is reported, not enforced, unless
+  a caller opts in. WebXR delivery lives here, on the glTF profile's budget —
+  not as a workflow of its own.
 - ``map_compositor`` — composites prepared maps into channel-packed atlases.
 - ``mat_report`` — a pure **view** (text / HTML) over the material + optimization
   record schema.

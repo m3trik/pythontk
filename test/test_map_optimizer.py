@@ -12,7 +12,7 @@ import shutil
 import tempfile
 import unittest
 
-from pythontk import FileUtils, ImgUtils
+from pythontk import DeliveryBudget, FileUtils, ImgUtils, OutputTemplates
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer, Op
 
 
@@ -85,11 +85,18 @@ class TestProject(unittest.TestCase):
     plan()'s decision logic."""
 
     def test_replays_resize_and_mode(self):
+        # A resize op carries the full (w, h) it resolved to — one scalar could
+        # only ever describe a square, which is what used to squash non-square
+        # maps.
         plan = [
-            Op("resize", "", {"size": 512}),
+            Op("resize", "", {"size": (512, 512)}),
             Op("mode_coerce", "", {"target_mode": "RGB"}),
         ]
         self.assertEqual(MapOptimizer.project(plan, 2048, 2048, "P"), (512, 512, "RGB"))
+
+    def test_replays_a_non_square_resize(self):
+        plan = [Op("resize", "", {"size": (512, 256)})]
+        self.assertEqual(MapOptimizer.project(plan, 2048, 1024, "RGB"), (512, 256, "RGB"))
 
     def test_replays_force_pot(self):
         plan = [Op("force_pot", "", {"size": (256, 128)})]
@@ -99,6 +106,47 @@ class TestProject(unittest.TestCase):
 
     def test_empty_plan_is_identity(self):
         self.assertEqual(MapOptimizer.project([], 64, 32, "L"), (64, 32, "L"))
+
+
+class TestPotCeiling(unittest.TestCase):
+    """POT must never snap back over a max_size the caller just imposed.
+
+    A ceiling is a hard constraint; rounding to the NEAREST power of two after
+    honoring it silently undoes it (measured: 256x256 with max_size=200 resized
+    to 200, then snapped back up to 256).
+    """
+
+    def test_pot_never_rounds_back_over_an_explicit_max_size(self):
+        image = ImgUtils.create_image("RGB", (256, 256))
+        plan = MapOptimizer.plan(image, max_size=200, force_pot=True)
+        width, height, _mode = MapOptimizer.project(plan, 256, 256, "RGB")
+        self.assertLessEqual(width, 200, "the max_size ceiling was not honored")
+        self.assertEqual((width, height), (128, 128))
+
+    def test_pot_cannot_cross_the_ceiling_when_no_resize_fired(self):
+        """The source already fits under max_size, so no resize op runs — but
+        snapping to the NEAREST power of two can still cross the ceiling on its
+        own (200 under a 250 limit snaps to 256). Keying the downward snap off
+        "did a resize happen" misses this entirely."""
+        image = ImgUtils.create_image("RGB", (200, 200))
+        plan = MapOptimizer.plan(image, max_size=250, force_pot=True)
+        width, height, _mode = MapOptimizer.project(plan, 200, 200, "RGB")
+        self.assertLessEqual(width, 250, "POT snapped past the ceiling")
+        self.assertEqual((width, height), (128, 128))
+
+    def test_pot_keeps_nearest_when_it_stays_under_the_ceiling(self):
+        """Clamping must only engage where the snap would actually violate the
+        limit — a legal upward snap is still the closest match."""
+        image = ImgUtils.create_image("RGB", (200, 200))
+        plan = MapOptimizer.plan(image, max_size=2048, force_pot=True)
+        self.assertEqual(MapOptimizer.project(plan, 200, 200, "RGB")[:2], (256, 256))
+
+    def test_pot_without_a_ceiling_still_snaps_to_nearest(self):
+        """No ceiling means no constraint to violate — a caller asking for POT
+        wants the closest match, which is the long-standing behavior."""
+        image = ImgUtils.create_image("RGB", (200, 200))
+        plan = MapOptimizer.plan(image, force_pot=True)
+        self.assertEqual(MapOptimizer.project(plan, 200, 200, "RGB")[:2], (256, 256))
 
 
 class TestAssessPrediction(_TextureFixture):
@@ -273,6 +321,226 @@ class TestOptimizeReporting(_TextureFixture):
         self.assertTrue(
             os.path.isfile(os.path.join(self.test_dir, "old", os.path.basename(path)))
         )
+
+
+class TestDeliveryBudget(_TextureFixture):
+    """The advisory tier end-to-end: reported by default, applied only on opt-in.
+
+    Registers a tiny throwaway profile rather than exercising a shipped one — a
+    128px ceiling keeps the fixtures small, and the built-in budgets are free to
+    be re-tuned without dragging these assertions along.
+    """
+
+    PROFILE = "_test_delivery_budget"
+
+    def setUp(self):
+        super().setUp()
+        OutputTemplates.BUILTIN[self.PROFILE] = OutputTemplates._build(
+            "png", budget=DeliveryBudget(max_size=128, force_pot=True)
+        )
+
+    def tearDown(self):
+        OutputTemplates.BUILTIN.pop(self.PROFILE, None)
+        super().tearDown()
+
+    def test_assess_reports_without_planning_a_resize(self):
+        path = self.texture(size=(256, 256))
+
+        result = MapOptimizer.assess(path, output_profile=self.PROFILE)
+
+        self.assertTrue(result["warnings"])
+        self.assertIn("256x256", result["warnings"][0])
+        self.assertEqual(result["predicted"]["width"], 256)  # nothing resampled
+        self.assertFalse([r for r in result["reasons"] if "Resize" in r])
+
+    def test_assess_enforces_on_opt_in(self):
+        path = self.texture(size=(256, 256))
+
+        result = MapOptimizer.assess(
+            path, output_profile=self.PROFILE, enforce_budget=True
+        )
+
+        self.assertEqual(result["predicted"]["width"], 128)
+        self.assertEqual(result["warnings"], [])  # inside budget by construction
+
+    def test_warnings_key_is_always_present(self):
+        """Consumers can render it unconditionally — including on the error paths."""
+        path = self.texture(size=(64, 64))
+
+        self.assertEqual(MapOptimizer.assess(path)["warnings"], [])
+        missing = MapOptimizer.assess(os.path.join(self.test_dir, "nope.png"))
+        self.assertEqual(missing["warnings"], [])
+
+    def test_non_pot_is_flagged_independently_of_size(self):
+        path = self.texture(size=(100, 100))  # under the ceiling, but not POT
+
+        warnings = MapOptimizer.assess(path, output_profile=self.PROFILE)["warnings"]
+
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("power-of-two", warnings[0].lower())
+
+    def test_optimize_map_leaves_pixels_alone_by_default(self):
+        path = self.texture(size=(256, 256))
+
+        written = MapOptimizer.optimize_map(path, output_profile=self.PROFILE)
+
+        self.assertEqual(ImgUtils.ensure_image(written).size, (256, 256))
+
+    def test_optimize_map_warns_by_default(self):
+        import io
+        from contextlib import redirect_stdout
+
+        path = self.texture(size=(256, 256))
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            MapOptimizer.optimize_map(path, output_profile=self.PROFILE)
+
+        self.assertIn("Over delivery budget", buffer.getvalue())
+
+    def test_optimize_map_applies_the_budget_on_opt_in(self):
+        path = self.texture(size=(256, 256))
+
+        written = MapOptimizer.optimize_map(
+            path, output_profile=self.PROFILE, enforce_budget=True
+        )
+
+        self.assertEqual(ImgUtils.ensure_image(written).size, (128, 128))
+
+    def test_explicit_max_size_outranks_the_budget(self):
+        """Same precedence as output_type over the template's ext."""
+        path = self.texture(size=(256, 256))
+
+        written = MapOptimizer.optimize_map(
+            path, max_size=64, output_profile=self.PROFILE, enforce_budget=True
+        )
+
+        self.assertEqual(ImgUtils.ensure_image(written).size, (64, 64))
+
+    def test_an_oversized_explicit_max_size_still_warns(self):
+        """The report is against what gets written, not against the source — an
+        explicit ceiling that overshoots the profile is exactly the case a
+        silent budget would hide. (256 is POT, so the POT step can't move it.)"""
+        path = self.texture(size=(512, 512))
+
+        result = MapOptimizer.assess(
+            path, max_size=256, output_profile=self.PROFILE, enforce_budget=True
+        )
+
+        self.assertEqual(result["predicted"]["width"], 256)  # explicit wins
+        self.assertTrue(any("Over delivery budget" in w for w in result["warnings"]))
+
+    def test_budget_never_upscales(self):
+        """A *delivery* budget exists to make an asset cheaper. POT snapping
+        rounds to the NEAREST power of two, so a budget-driven snap used to
+        round 1536 UP to 2048 (+78% pixels) and then report itself as within
+        budget — the exact opposite of the flag's purpose."""
+        path = self.texture(size=(96, 96))  # nearest POT is 128 (up), floor is 64
+
+        written = MapOptimizer.optimize_map(
+            path, output_profile=self.PROFILE, enforce_budget=True
+        )
+        with ImgUtils.ensure_image(written) as out:
+            self.assertLessEqual(out.size[0], 96, "budget must never upscale")
+            self.assertEqual(out.size, (64, 64))
+
+    def test_explicit_force_pot_false_opts_out_of_the_budget(self):
+        """``optimize_map``'s docstring promises an explicit argument outranks
+        the budget. ``force_pot or budget.force_pot`` cannot honor that — False
+        is indistinguishable from unset."""
+        path = self.texture(size=(96, 96))
+
+        written = MapOptimizer.optimize_map(
+            path, output_profile=self.PROFILE, enforce_budget=True, force_pot=False
+        )
+        with ImgUtils.ensure_image(written) as out:
+            self.assertEqual(out.size, (96, 96), "explicit False must disable POT")
+
+    def test_resize_preserves_aspect_ratio(self):
+        """The resize step drove both edges from one scalar, squashing every
+        non-square map to a square. Harmless while only an explicit max_size
+        reached it; automatic for every budgeted profile once enforce_budget
+        existed."""
+        path = self.texture(size=(256, 128))
+
+        result = MapOptimizer.assess(
+            path, max_size=128, force_pot=False, output_profile=self.PROFILE
+        )
+        self.assertEqual(
+            (result["predicted"]["width"], result["predicted"]["height"]), (128, 64)
+        )
+
+        written = MapOptimizer.optimize_map(
+            path, max_size=128, force_pot=False, output_profile=self.PROFILE
+        )
+        with ImgUtils.ensure_image(written) as out:
+            self.assertEqual(out.size, (128, 64))
+
+    def test_apply_honors_the_planned_pot_size(self):
+        """``apply`` is a pure dispatcher by contract — re-deciding a size it
+        was handed is the drift the plan/apply split exists to prevent."""
+        image = ImgUtils.create_image("RGB", (96, 96))
+        plan = MapOptimizer.plan(image, force_pot=True, pot_mode="down")
+        self.assertEqual(MapOptimizer.apply(image, plan).size, (64, 64))
+
+    def test_the_two_twins_resolve_a_profile_identically(self):
+        """Both read the profile through one helper — pinned here because a
+        second copy of the precedence rules is what makes a dry run start
+        describing a different run than the one that follows it.
+
+        Asserted across the twins (what ``assess`` predicts == what
+        ``optimize_map`` writes); comparing ``_resolve_profile`` to itself
+        passed unconditionally and would survive re-inlining the rules.
+        """
+        for enforce in (False, True):
+            for explicit in (None, 64):
+                with self.subTest(enforce=enforce, explicit=explicit):
+                    path = self.texture(
+                        name=f"twin_{enforce}_{explicit}.png", size=(256, 256)
+                    )
+                    predicted = MapOptimizer.assess(
+                        path,
+                        max_size=explicit,
+                        output_profile=self.PROFILE,
+                        enforce_budget=enforce,
+                    )["predicted"]
+                    written = MapOptimizer.optimize_map(
+                        path,
+                        max_size=explicit,
+                        output_profile=self.PROFILE,
+                        enforce_budget=enforce,
+                    )
+                    with ImgUtils.ensure_image(written) as out:
+                        self.assertEqual(
+                            (predicted["width"], predicted["height"]), out.size
+                        )
+
+        # The precedence itself, stated once: an enforced budget fills a gap
+        # (the caller said nothing == None), never overrides. A budget-sourced
+        # POT snaps DOWN so it cannot inflate the asset.
+        _, _, _, filled, pot, mode = MapOptimizer._resolve_profile(
+            self.PROFILE, "Base_Color", None, None, None, True
+        )
+        self.assertEqual((filled, pot, mode), (128, True, "down"))
+        _, _, _, kept, _, _ = MapOptimizer._resolve_profile(
+            self.PROFILE, "Base_Color", None, 64, None, True
+        )
+        self.assertEqual(kept, 64)
+        _, _, _, _, pot_opt_out, _ = MapOptimizer._resolve_profile(
+            self.PROFILE, "Base_Color", None, None, False, True
+        )
+        self.assertFalse(pot_opt_out, "an explicit False must outrank the budget")
+        _, _, _, untouched, pot_off, _ = MapOptimizer._resolve_profile(
+            self.PROFILE, "Base_Color", None, None, None, False
+        )
+        self.assertEqual((untouched, pot_off), (None, False))
+
+    def test_no_profile_means_no_budget(self):
+        path = self.texture(size=(256, 256))
+
+        self.assertEqual(MapOptimizer.assess(path, enforce_budget=True)["warnings"], [])
+        written = MapOptimizer.optimize_map(path, enforce_budget=True)
+        self.assertEqual(ImgUtils.ensure_image(written).size, (256, 256))
 
 
 if __name__ == "__main__":

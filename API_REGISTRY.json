@@ -2913,7 +2913,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "",
-              "line": 146,
+              "line": 137,
               "deprecated": false
             }
           ]
@@ -2921,7 +2921,7 @@
         {
           "name": "MRAOMapHandler",
           "summary": "Handles MRAO packing (Metallic R, Roughness G, AO B by default).",
-          "line": 159,
+          "line": 150,
           "bases": [
             "WorkflowHandler"
           ],
@@ -2932,7 +2932,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> bool",
               "summary": "",
-              "line": 167,
+              "line": 158,
               "deprecated": false
             },
             {
@@ -2941,7 +2941,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> Optional[str]",
               "summary": "",
-              "line": 180,
+              "line": 171,
               "deprecated": false
             },
             {
@@ -2950,7 +2950,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "",
-              "line": 238,
+              "line": 229,
               "deprecated": false
             }
           ]
@@ -2958,7 +2958,7 @@
         {
           "name": "MaskMapHandler",
           "summary": "Handles Unity HDRP Mask Map (MSAO).",
-          "line": 253,
+          "line": 244,
           "bases": [
             "WorkflowHandler"
           ],
@@ -2969,7 +2969,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> bool",
               "summary": "",
-              "line": 256,
+              "line": 247,
               "deprecated": false
             },
             {
@@ -2978,7 +2978,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> Optional[str]",
               "summary": "",
-              "line": 269,
+              "line": 260,
               "deprecated": false
             },
             {
@@ -2987,7 +2987,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "",
-              "line": 336,
+              "line": 327,
               "deprecated": false
             }
           ]
@@ -2995,7 +2995,7 @@
         {
           "name": "MetallicSmoothnessHandler",
           "summary": "Handles packed Metallic+Smoothness.",
-          "line": 349,
+          "line": 340,
           "bases": [
             "WorkflowHandler"
           ],
@@ -3006,7 +3006,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> bool",
               "summary": "",
-              "line": 352,
+              "line": 343,
               "deprecated": false
             },
             {
@@ -3015,7 +3015,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> Optional[str]",
               "summary": "",
-              "line": 376,
+              "line": 367,
               "deprecated": false
             },
             {
@@ -3024,7 +3024,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "",
-              "line": 411,
+              "line": 402,
               "deprecated": false
             }
           ]
@@ -3032,7 +3032,7 @@
         {
           "name": "SeparateMetallicRoughnessHandler",
           "summary": "Handles separate metallic and roughness maps.",
-          "line": 422,
+          "line": 413,
           "bases": [
             "WorkflowHandler"
           ],
@@ -3043,7 +3043,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> bool",
               "summary": "",
-              "line": 425,
+              "line": 416,
               "deprecated": false
             },
             {
@@ -3052,7 +3052,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> List[str]",
               "summary": "Returns list since this produces multiple maps.",
-              "line": 429,
+              "line": 420,
               "deprecated": false
             },
             {
@@ -3061,7 +3061,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "",
-              "line": 455,
+              "line": 446,
               "deprecated": false
             }
           ]
@@ -3069,7 +3069,7 @@
         {
           "name": "BaseColorHandler",
           "summary": "Handles base color / albedo with optional packing.",
-          "line": 459,
+          "line": 450,
           "bases": [
             "WorkflowHandler"
           ],
@@ -3080,7 +3080,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> bool",
               "summary": "",
-              "line": 462,
+              "line": 453,
               "deprecated": false
             },
             {
@@ -3089,7 +3089,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> Optional[str]",
               "summary": "",
-              "line": 465,
+              "line": 456,
               "deprecated": false
             },
             {
@@ -3098,7 +3098,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "",
-              "line": 600,
+              "line": 591,
               "deprecated": false
             }
           ]
@@ -3106,7 +3106,7 @@
         {
           "name": "NormalMapHandler",
           "summary": "Handles normal map format conversion.",
-          "line": 611,
+          "line": 602,
           "bases": [
             "WorkflowHandler"
           ],
@@ -3117,7 +3117,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> bool",
               "summary": "",
-              "line": 614,
+              "line": 605,
               "deprecated": false
             },
             {
@@ -3126,7 +3126,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> Optional[str]",
               "summary": "",
-              "line": 617,
+              "line": 608,
               "deprecated": false
             },
             {
@@ -3135,7 +3135,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "",
-              "line": 779,
+              "line": 770,
               "deprecated": false
             }
           ]
@@ -3143,7 +3143,7 @@
         {
           "name": "OutputFallbackHandler",
           "summary": "Handles outputting fallback maps for failed requests.",
-          "line": 789,
+          "line": 780,
           "bases": [
             "WorkflowHandler"
           ],
@@ -3154,7 +3154,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> bool",
               "summary": "",
-              "line": 792,
+              "line": 783,
               "deprecated": false
             },
             {
@@ -3163,7 +3163,7 @@
               "kind": "method",
               "signature": "(self, context: TextureProcessor) -> List[str]",
               "summary": "",
-              "line": 795,
+              "line": 786,
               "deprecated": false
             },
             {
@@ -3172,7 +3172,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "",
-              "line": 848,
+              "line": 839,
               "deprecated": false
             }
           ]
@@ -3580,14 +3580,14 @@
         {
           "name": "Op",
           "summary": "One operation in an optimization plan.",
-          "line": 67,
+          "line": 71,
           "bases": [],
           "members": []
         },
         {
           "name": "MapOptimizer",
           "summary": "Plan, assess, and apply map (texture) optimizations.",
-          "line": 80,
+          "line": 84,
           "bases": [
             "HelpMixin"
           ],
@@ -3596,9 +3596,9 @@
               "name": "plan",
               "qualname": "MapOptimizer.plan",
               "kind": "classmethod",
-              "signature": "(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]",
+              "signature": "(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest') -> List[Op]",
               "summary": "Return the ordered list of operations :meth:`apply` would run.",
-              "line": 95,
+              "line": 131,
               "deprecated": false
             },
             {
@@ -3607,7 +3607,7 @@
               "kind": "staticmethod",
               "signature": "(plan: List[Op], width: int, height: int, mode: str) -> Tuple[int, int, str]",
               "summary": "Replay ``plan``'s op params to get the post-apply size and mode.",
-              "line": 275,
+              "line": 325,
               "deprecated": false
             },
             {
@@ -3616,16 +3616,16 @@
               "kind": "classmethod",
               "signature": "(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'",
               "summary": "Execute ``plan`` against ``image``.",
-              "line": 310,
+              "line": 356,
               "deprecated": false
             },
             {
               "name": "optimize_map",
               "qualname": "MapOptimizer.optimize_map",
               "kind": "classmethod",
-              "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str",
+              "signature": "(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False) -> str",
               "summary": "Optimizes a texture by resizing, setting bit depth, and adjusting image type.",
-              "line": 336,
+              "line": 442,
               "deprecated": false
             },
             {
@@ -3634,7 +3634,7 @@
               "kind": "staticmethod",
               "signature": "(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str",
               "summary": "Render the one-line result summary for an optimized map.",
-              "line": 482,
+              "line": 608,
               "deprecated": false
             },
             {
@@ -3643,16 +3643,16 @@
               "kind": "classmethod",
               "signature": "(cls, directory: str, **kwargs)",
               "summary": "Batch optimizes all maps in a directory.",
-              "line": 518,
+              "line": 644,
               "deprecated": false
             },
             {
               "name": "assess",
               "qualname": "MapOptimizer.assess",
               "kind": "classmethod",
-              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False) -> Dict[str, Any]",
+              "signature": "(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False) -> Dict[str, Any]",
               "summary": "Predict whether :meth:`optimize_map` would change ``texture_path``.",
-              "line": 534,
+              "line": 660,
               "deprecated": false
             }
           ]
@@ -3674,7 +3674,7 @@
         {
           "name": "MapType",
           "summary": "Defines the properties of a texture map type.",
-          "line": 45,
+          "line": 55,
           "bases": [],
           "members": [
             {
@@ -3683,7 +3683,7 @@
               "kind": "method",
               "signature": "(self, include_optional: bool = False) -> List[str]",
               "summary": "The map types this packed map's channels carry.",
-              "line": 73,
+              "line": 83,
               "deprecated": false
             }
           ]
@@ -3691,7 +3691,7 @@
         {
           "name": "MapRegistry",
           "summary": "Central registry for map type definitions.",
-          "line": 144,
+          "line": 154,
           "bases": [
             "SingletonMixin"
           ],
@@ -3702,7 +3702,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[MapType]",
               "summary": "Get a map type by name.",
-              "line": 668,
+              "line": 712,
               "deprecated": false
             },
             {
@@ -3711,7 +3711,7 @@
               "kind": "method",
               "signature": "(self, map_type: MapType, overwrite: bool = False) -> MapType",
               "summary": "Register a new map type (or replace an existing one) at runtime.",
-              "line": 682,
+              "line": 726,
               "deprecated": false
             },
             {
@@ -3720,7 +3720,7 @@
               "kind": "classmethod",
               "signature": "(cls, available) -> Optional[str]",
               "summary": "The single normal map type a shader should wire, out of those present.",
-              "line": 784,
+              "line": 828,
               "deprecated": false
             },
             {
@@ -3729,7 +3729,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel: str) -> Optional[str]",
               "summary": "Canonical map type for a logical shader channel, or None if unmapped.",
-              "line": 802,
+              "line": 846,
               "deprecated": false
             },
             {
@@ -3738,7 +3738,7 @@
               "kind": "classmethod",
               "signature": "(cls, name_only: str) -> Tuple[str, str]",
               "summary": "Split a trailing UDIM / UV-tile token off an extension-less filename.",
-              "line": 837,
+              "line": 881,
               "deprecated": false
             },
             {
@@ -3747,7 +3747,7 @@
               "kind": "method",
               "signature": "(self, path: str) -> Optional[str]",
               "summary": "Resolve the map type key from a file path.",
-              "line": 884,
+              "line": 928,
               "deprecated": false
             },
             {
@@ -3756,7 +3756,7 @@
               "kind": "method",
               "signature": "(self) -> Optional[str]",
               "summary": "Regex matching one trailing map-type suffix (any registered alias).",
-              "line": 947,
+              "line": 991,
               "deprecated": false
             },
             {
@@ -3765,7 +3765,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Dict[str, Any]]",
               "summary": "Generate the workflow presets dictionary.",
-              "line": 1013,
+              "line": 1057,
               "deprecated": false
             },
             {
@@ -3774,7 +3774,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[str, ...]]",
               "summary": "Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.",
-              "line": 1036,
+              "line": 1080,
               "deprecated": false
             },
             {
@@ -3783,7 +3783,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Every registered canonical name and alias, sorted longest-first.",
-              "line": 1044,
+              "line": 1088,
               "deprecated": false
             },
             {
@@ -3792,7 +3792,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[str, ...]]",
               "summary": "Generate the input fallback dictionary.",
-              "line": 1059,
+              "line": 1103,
               "deprecated": false
             },
             {
@@ -3801,7 +3801,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[str, ...]]",
               "summary": "Generate the output fallback dictionary.",
-              "line": 1067,
+              "line": 1111,
               "deprecated": false
             },
             {
@@ -3810,7 +3810,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, List[str]]",
               "summary": "Generate the precedence rules dictionary.",
-              "line": 1075,
+              "line": 1119,
               "deprecated": false
             },
             {
@@ -3819,7 +3819,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Get list of map types that should be scaled as masks.",
-              "line": 1085,
+              "line": 1129,
               "deprecated": false
             },
             {
@@ -3828,7 +3828,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Get list of map types whose surface detail requires full resolution.",
-              "line": 1089,
+              "line": 1133,
               "deprecated": false
             },
             {
@@ -3837,7 +3837,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> bool",
               "summary": "True when surface detail for ``name`` requires full resolution.",
-              "line": 1093,
+              "line": 1137,
               "deprecated": false
             },
             {
@@ -3846,7 +3846,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Get list of maps that should be passed through if not consumed.",
-              "line": 1102,
+              "line": 1146,
               "deprecated": false
             },
             {
@@ -3855,7 +3855,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[int, int, int, int]]",
               "summary": "Generate the map backgrounds dictionary.",
-              "line": 1107,
+              "line": 1151,
               "deprecated": false
             },
             {
@@ -3864,7 +3864,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, str]",
               "summary": "Generate the map modes dictionary.",
-              "line": 1115,
+              "line": 1159,
               "deprecated": false
             },
             {
@@ -3873,7 +3873,7 @@
               "kind": "method",
               "signature": "(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]",
               "summary": "Resolve configuration from presets, dicts, and kwargs.",
-              "line": 1119,
+              "line": 1163,
               "deprecated": false
             }
           ]
@@ -3888,7 +3888,7 @@
         {
           "name": "MatReport",
           "summary": "Pure record→text/HTML formatters for material & texture info reports.",
-          "line": 27,
+          "line": 28,
           "bases": [],
           "members": [
             {
@@ -3897,7 +3897,7 @@
               "kind": "classmethod",
               "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
               "summary": "Render ``get_texture_info`` output as a plain-text report.",
-              "line": 57,
+              "line": 58,
               "deprecated": false
             },
             {
@@ -3906,7 +3906,7 @@
               "kind": "classmethod",
               "signature": "(cls, info_list: List[Dict[str, Any]]) -> str",
               "summary": "Render ``get_texture_info`` output as styled HTML.",
-              "line": 75,
+              "line": 76,
               "deprecated": false
             },
             {
@@ -3915,7 +3915,7 @@
               "kind": "classmethod",
               "signature": "(cls, records: List[Dict[str, Any]]) -> str",
               "summary": "Render ``get_mat_info`` output as a plain-text report.",
-              "line": 88,
+              "line": 89,
               "deprecated": false
             },
             {
@@ -3924,7 +3924,7 @@
               "kind": "classmethod",
               "signature": "(cls, records: List[Dict[str, Any]]) -> str",
               "summary": "Render ``get_mat_info`` output as styled HTML.",
-              "line": 129,
+              "line": 137,
               "deprecated": false
             }
           ]
@@ -3939,7 +3939,7 @@
         {
           "name": "OutputSpec",
           "summary": "How a single map is written to disk.",
-          "line": 26,
+          "line": 43,
           "bases": [],
           "members": [
             {
@@ -3948,7 +3948,7 @@
               "kind": "method",
               "signature": "(self) -> dict",
               "summary": "",
-              "line": 41,
+              "line": 58,
               "deprecated": false
             },
             {
@@ -3957,7 +3957,42 @@
               "kind": "classmethod",
               "signature": "(cls, d: dict) -> 'OutputSpec'",
               "summary": "",
-              "line": 45,
+              "line": 62,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "DeliveryBudget",
+          "summary": "A profile's advisory delivery limits — reported by default, not enforced.",
+          "line": 71,
+          "bases": [],
+          "members": [
+            {
+              "name": "check",
+              "qualname": "DeliveryBudget.check",
+              "kind": "method",
+              "signature": "(self, width: int, height: int) -> List[str]",
+              "summary": "Return one message per budget rule ``width`` x ``height`` violates.",
+              "line": 98,
+              "deprecated": false
+            },
+            {
+              "name": "to_dict",
+              "qualname": "DeliveryBudget.to_dict",
+              "kind": "method",
+              "signature": "(self) -> dict",
+              "summary": "",
+              "line": 122,
+              "deprecated": false
+            },
+            {
+              "name": "from_dict",
+              "qualname": "DeliveryBudget.from_dict",
+              "kind": "classmethod",
+              "signature": "(cls, d: dict) -> 'DeliveryBudget'",
+              "summary": "",
+              "line": 126,
               "deprecated": false
             }
           ]
@@ -3965,7 +4000,7 @@
         {
           "name": "OutputTemplate",
           "summary": "A profile's per-map output formats: a default spec + per-map-type overrides.",
-          "line": 54,
+          "line": 135,
           "bases": [],
           "members": [
             {
@@ -3974,7 +4009,7 @@
               "kind": "method",
               "signature": "(self, map_type: Optional[str]) -> OutputSpec",
               "summary": "Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).",
-              "line": 60,
+              "line": 148,
               "deprecated": false
             },
             {
@@ -3983,7 +4018,7 @@
               "kind": "method",
               "signature": "(self) -> dict",
               "summary": "",
-              "line": 66,
+              "line": 154,
               "deprecated": false
             },
             {
@@ -3992,7 +4027,7 @@
               "kind": "classmethod",
               "signature": "(cls, d: dict) -> 'OutputTemplate'",
               "summary": "",
-              "line": 73,
+              "line": 162,
               "deprecated": false
             }
           ]
@@ -4000,7 +4035,7 @@
         {
           "name": "OutputTemplates",
           "summary": "Registry of the built-in per-profile output templates and their resolution.",
-          "line": 82,
+          "line": 172,
           "bases": [],
           "members": [
             {
@@ -4009,7 +4044,7 @@
               "kind": "classmethod",
               "signature": "(cls, profile: Optional[str]) -> OutputTemplate",
               "summary": "Return the built-in template for *profile* (a ``WF`` key), or the default.",
-              "line": 122,
+              "line": 232,
               "deprecated": false
             },
             {
@@ -4018,7 +4053,16 @@
               "kind": "classmethod",
               "signature": "(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec",
               "summary": "Resolve the :class:`OutputSpec` for *map_type* under *profile*.",
-              "line": 129,
+              "line": 239,
+              "deprecated": false
+            },
+            {
+              "name": "budget",
+              "qualname": "OutputTemplates.budget",
+              "kind": "classmethod",
+              "signature": "(cls, profile: Optional[str]) -> DeliveryBudget",
+              "summary": "Return the advisory :class:`DeliveryBudget` for *profile*.",
+              "line": 246,
               "deprecated": false
             }
           ]
@@ -5873,7 +5917,7 @@
         {
           "name": "PackageManager",
           "summary": "A class that encapsulates package management functionalities using pip.",
-          "line": 423,
+          "line": 497,
           "bases": [
             "_PkgVersionCheck",
             "_PkgVersionUtils",
@@ -5887,7 +5931,7 @@
               "kind": "method",
               "signature": "(self, command, output_as_string=False)",
               "summary": "Execute a pip command and return the output.",
-              "line": 461,
+              "line": 535,
               "deprecated": false
             },
             {
@@ -5896,7 +5940,7 @@
               "kind": "staticmethod",
               "signature": "(paths: List[Union[str, Path]]) -> List[Path]",
               "summary": "Sort a list of local repository paths based on their pyproject.toml dependencies.",
-              "line": 542,
+              "line": 627,
               "deprecated": false
             },
             {
@@ -5905,7 +5949,7 @@
               "kind": "method",
               "signature": "(self, package_name=None, python_path=None) -> None",
               "summary": "Start a version check in a background thread.",
-              "line": 160,
+              "line": 234,
               "deprecated": false
             },
             {
@@ -5914,7 +5958,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "Check if a new version of the package is available.",
-              "line": 184,
+              "line": 258,
               "deprecated": false
             },
             {
@@ -5923,7 +5967,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Get the installed version of the package.",
-              "line": 200,
+              "line": 274,
               "deprecated": false
             },
             {
@@ -5932,7 +5976,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Get the latest version of the package from PyPI.",
-              "line": 209,
+              "line": 283,
               "deprecated": false
             },
             {
@@ -5941,7 +5985,7 @@
               "kind": "method",
               "signature": "(self, package_name=None, python_path=None) -> None",
               "summary": "Check the installed and latest versions of the package.",
-              "line": 217,
+              "line": 291,
               "deprecated": false
             },
             {
@@ -5950,7 +5994,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, change: str = 'increment', version_part: str = 'patch', max_version_parts: tuple = (99, 99), version_regex: str = '__version__\\\\s*=\\\\s*[\\'\\\\\"](\\\\d+)\\\\.(\\\\d+)\\\\.(\\\\d+)[\\'\\\\\"]') -> str",
               "summary": "Update the version number in a text file.",
-              "line": 260,
+              "line": 334,
               "deprecated": false
             },
             {
@@ -5959,7 +6003,7 @@
               "kind": "staticmethod",
               "signature": "(file_path=None, inc=None, exc=None) -> list",
               "summary": "Update the requirements.txt file with current versions of packages.",
-              "line": 361,
+              "line": 435,
               "deprecated": false
             },
             {
@@ -5968,7 +6012,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Install a package.",
-              "line": 33,
+              "line": 35,
               "deprecated": false
             },
             {
@@ -5977,7 +6021,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Uninstall a package.",
-              "line": 41,
+              "line": 43,
               "deprecated": false
             },
             {
@@ -5985,8 +6029,8 @@
               "qualname": "PackageManager.list_packages",
               "kind": "method",
               "signature": "(self)",
-              "summary": "List installed packages.",
-              "line": 49,
+              "summary": "List installed packages as a ``{name: version}`` dict.",
+              "line": 51,
               "deprecated": false
             },
             {
@@ -5995,7 +6039,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Show details of a specific package.",
-              "line": 57,
+              "line": 77,
               "deprecated": false
             },
             {
@@ -6004,7 +6048,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Update a package to the latest version.",
-              "line": 65,
+              "line": 85,
               "deprecated": false
             },
             {
@@ -6013,16 +6057,25 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Get the installed version of a package.",
-              "line": 73,
+              "line": 93,
               "deprecated": false
             },
             {
               "name": "latest_version",
               "qualname": "PackageManager.latest_version",
               "kind": "method",
-              "signature": "(self, package_name)",
+              "signature": "(self, package_name, timeout=None)",
               "summary": "Get the latest version of a package from PyPI using the standard library.",
-              "line": 78,
+              "line": 104,
+              "deprecated": false
+            },
+            {
+              "name": "latest_versions",
+              "qualname": "PackageManager.latest_versions",
+              "kind": "method",
+              "signature": "(self, package_names, timeout=None)",
+              "summary": "Latest index version for several packages at once.",
+              "line": 139,
               "deprecated": false
             },
             {
@@ -6031,7 +6084,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "List all outdated packages.",
-              "line": 104,
+              "line": 178,
               "deprecated": false
             },
             {
@@ -6040,7 +6093,7 @@
               "kind": "method",
               "signature": "(self, package_name: str) -> bool",
               "summary": "Efficiently check if a specific package is outdated.",
-              "line": 122,
+              "line": 196,
               "deprecated": false
             }
           ]
@@ -7440,7 +7493,7 @@
               "kind": "classmethod",
               "signature": "(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]",
               "summary": "Resolve the FBX2glTF executable from PATH or managed installs.",
-              "line": 67,
+              "line": 76,
               "deprecated": false
             },
             {
@@ -7449,7 +7502,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None) -> str",
               "summary": "Convert an FBX file to a binary glTF 2.0 (GLB) file.",
-              "line": 143,
+              "line": 152,
               "deprecated": false
             },
             {
@@ -7458,7 +7511,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb_path: str) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 250,
+              "line": 259,
               "deprecated": false
             },
             {
@@ -7467,7 +7520,25 @@
               "kind": "classmethod",
               "signature": "(cls, glb_path: str) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 395,
+              "line": 387,
+              "deprecated": false
+            },
+            {
+              "name": "set_glb_emissive",
+              "qualname": "MeshConvert.set_glb_emissive",
+              "kind": "classmethod",
+              "signature": "(cls, glb_path: str, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]",
+              "summary": "Write emissive color / texture into a GLB's materials, by name.",
+              "line": 610,
+              "deprecated": false
+            },
+            {
+              "name": "set_glb_base_color",
+              "qualname": "MeshConvert.set_glb_base_color",
+              "kind": "classmethod",
+              "signature": "(cls, glb_path: str, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]",
+              "summary": "Write base colour / texture into a GLB's materials, by name.",
+              "line": 804,
               "deprecated": false
             }
           ]
@@ -9770,6 +9841,197 @@
               "signature": "(target_name: str, username: str, password: str, persist: str = 'local_machine') -> bool",
               "summary": "Save credentials to the OS secure store.",
               "line": 75,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "net_utils/preview_server.py",
+      "summary": "Localhost static-file server for live browser / WebXR previews.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PreviewServer",
+          "summary": "Serve a directory of preview assets on loopback, with a live manifest.",
+          "line": 240,
+          "bases": [
+            "LoggingMixin",
+            "_PreviewServerInternal"
+          ],
+          "members": [
+            {
+              "name": "port",
+              "qualname": "PreviewServer.port",
+              "kind": "property",
+              "signature": "(self) -> Optional[int]",
+              "summary": "The bound port, or ``None`` before :meth:`start`.",
+              "line": 303,
+              "deprecated": false
+            },
+            {
+              "name": "url",
+              "qualname": "PreviewServer.url",
+              "kind": "property",
+              "signature": "(self) -> Optional[str]",
+              "summary": "The viewer URL, or ``None`` before :meth:`start`.",
+              "line": 308,
+              "deprecated": false
+            },
+            {
+              "name": "version",
+              "qualname": "PreviewServer.version",
+              "kind": "property",
+              "signature": "(self) -> int",
+              "summary": "Number of published revisions;",
+              "line": 313,
+              "deprecated": false
+            },
+            {
+              "name": "is_running",
+              "qualname": "PreviewServer.is_running",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 318,
+              "deprecated": false
+            },
+            {
+              "name": "has_viewer",
+              "qualname": "PreviewServer.has_viewer",
+              "kind": "method",
+              "signature": "(self) -> bool",
+              "summary": "Whether a page is currently watching this server.",
+              "line": 321,
+              "deprecated": false
+            },
+            {
+              "name": "manifest",
+              "qualname": "PreviewServer.manifest",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "The payload served at ``/manifest.json``.",
+              "line": 348,
+              "deprecated": false
+            },
+            {
+              "name": "start",
+              "qualname": "PreviewServer.start",
+              "kind": "method",
+              "signature": "(self) -> 'PreviewServer'",
+              "summary": "Bind the port and serve on a daemon thread.",
+              "line": 358,
+              "deprecated": false
+            },
+            {
+              "name": "stop",
+              "qualname": "PreviewServer.stop",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Stop serving and release the port.",
+              "line": 385,
+              "deprecated": false
+            },
+            {
+              "name": "publish",
+              "qualname": "PreviewServer.publish",
+              "kind": "method",
+              "signature": "(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int",
+              "summary": "Place an asset in the serve root and bump the manifest version.",
+              "line": 402,
+              "deprecated": false
+            },
+            {
+              "name": "open_in_browser",
+              "qualname": "PreviewServer.open_in_browser",
+              "kind": "method",
+              "signature": "(self) -> bool",
+              "summary": "Open the viewer in the default browser.",
+              "line": 436,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "PreviewDeliverer",
+          "summary": "Hand-off strategy: convert the produced FBX to GLB and publish it.",
+          "line": 460,
+          "bases": [
+            "Deliverer"
+          ],
+          "members": [
+            {
+              "name": "ensure_server",
+              "qualname": "PreviewDeliverer.ensure_server",
+              "kind": "method",
+              "signature": "(self) -> PreviewServer",
+              "summary": "The bridge's server, started, creating it on first use.",
+              "line": 517,
+              "deprecated": false
+            },
+            {
+              "name": "deliver",
+              "qualname": "PreviewDeliverer.deliver",
+              "kind": "method",
+              "signature": "(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
+              "summary": "",
+              "line": 578,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "PreviewBridge",
+          "summary": "Hand-off bridge whose target is a live preview page rather than an application.",
+          "line": 642,
+          "bases": [
+            "HandoffBridge"
+          ],
+          "members": [
+            {
+              "name": "params_defaults",
+              "qualname": "PreviewBridge.params_defaults",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "glTF-appropriate export defaults, read by both DCC export mixins.",
+              "line": 662,
+              "deprecated": false
+            },
+            {
+              "name": "url",
+              "qualname": "PreviewBridge.url",
+              "kind": "property",
+              "signature": "(self) -> Optional[str]",
+              "summary": "The preview URL, or ``None`` before the first push.",
+              "line": 698,
+              "deprecated": false
+            },
+            {
+              "name": "push",
+              "qualname": "PreviewBridge.push",
+              "kind": "method",
+              "signature": "(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', **params: Any) -> Optional[Dict[str, Any]]",
+              "summary": "Export and publish, returning the deliverer's result (``None`` on failure).",
+              "line": 703,
+              "deprecated": false
+            },
+            {
+              "name": "sidecar_summary",
+              "qualname": "PreviewBridge.sidecar_summary",
+              "kind": "staticmethod",
+              "signature": "(result: Optional[Dict[str, Any]]) -> str",
+              "summary": "One plain-text line describing what the scene sidecar did.",
+              "line": 729,
+              "deprecated": false
+            },
+            {
+              "name": "stop",
+              "qualname": "PreviewBridge.stop",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Stop serving and release the port.",
+              "line": 755,
               "deprecated": false
             }
           ]

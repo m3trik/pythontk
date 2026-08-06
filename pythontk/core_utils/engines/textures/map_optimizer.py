@@ -33,7 +33,11 @@ from pythontk.file_utils._file_utils import FileUtils
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.core_utils.engines.textures.map_factory import MapFactory
 from pythontk.core_utils.engines.textures.map_registry import MapRegistry
-from pythontk.core_utils.engines.textures.output_template import OutputTemplates
+from pythontk.core_utils.engines.textures.output_template import (
+    DeliveryBudget,
+    OutputSpec,
+    OutputTemplates,
+)
 
 
 # Map-type-driven mode coercion rules. Mirrors the tolerated-mode lists in
@@ -91,6 +95,38 @@ class MapOptimizer(HelpMixin):
     outputs. ``set_bit_depth`` remains available for direct callers.
     """
 
+    @staticmethod
+    def _fit_within(width: int, height: int, max_size: int) -> Tuple[int, int]:
+        """Cap the longest edge at *max_size*, deriving the other from aspect."""
+        if width >= height:
+            return max_size, max(1, round(height * max_size / width))
+        return max(1, round(width * max_size / height)), max_size
+
+    @staticmethod
+    def _snap_pot(
+        width: int,
+        height: int,
+        mode: str = "nearest",
+        max_size: Optional[int] = None,
+    ) -> Tuple[int, int]:
+        """Snap both edges to a power of two.
+
+        ``mode="down"`` never grows an edge — what a *budget* needs, since
+        rounding to nearest inflates every dimension in the upper half of a
+        band. ``max_size`` is a separate, harder rule: a stated ceiling must
+        survive the snap, so any edge that crossed it is halved back under.
+        Nearest still wins wherever it stays legal.
+        """
+        snap = math.floor if mode == "down" else round
+
+        def _edge(value: int) -> int:
+            snapped = max(1, 2 ** int(snap(math.log2(value))))
+            while max_size and snapped > max_size and snapped > 1:
+                snapped //= 2
+            return snapped
+
+        return _edge(width), _edge(height)
+
     @classmethod
     def plan(
         cls,
@@ -100,6 +136,7 @@ class MapOptimizer(HelpMixin):
         optimize_bit_depth: bool = True,
         map_type_key: Optional[str] = None,
         allow_palette: bool = False,
+        pot_mode: str = "nearest",
     ) -> List[Op]:
         """Return the ordered list of operations :meth:`apply` would run.
 
@@ -111,13 +148,19 @@ class MapOptimizer(HelpMixin):
         Parameters:
             image: Source image (only its size/mode/info are read).
             max_size: Max edge length for the resize step. None disables.
-            force_pot: Snap to nearest power-of-two if not already POT.
+            force_pot: Snap to a power-of-two if not already POT.
             optimize_bit_depth: Enable the strict-mode + wide-gamut fallback
                 step (formerly delegated to set_bit_depth).
             map_type_key: Canonical map-type key from
                 ``MapFactory.resolve_map_type(..., key=True)``. Drives the
                 map-type mode coercion step.
             allow_palette: Preserve paletted images instead of upcasting.
+            pot_mode: How ``force_pot`` snaps — ``"nearest"`` (a caller asking
+                for POT wants the closest match) or ``"down"``. A *budget*
+                always passes ``"down"``: rounding to nearest makes every
+                dimension in the upper half of a POT band grow (1536 -> 2048,
+                +78% pixels), so a delivery budget could inflate the very asset
+                it exists to shrink, and then report itself as satisfied.
 
         Returns:
             list[Op]: Ordered ops; empty when no changes would be applied.
@@ -127,17 +170,26 @@ class MapOptimizer(HelpMixin):
         mode = image.mode
 
         # --- Pre-compute resize and POT decisions (will_resize gates depalettize)
-        resize_to: Optional[int] = (
-            max_size if max_size and max(width, height) > max_size else None
+        # The resize caps the LONGEST edge and derives the other from the source
+        # aspect: driving both edges from one scalar squashed every non-square
+        # map to a square (harmless while only an explicit max_size reached it,
+        # automatic for every budgeted profile once enforce_budget existed).
+        resize_to: Optional[Tuple[int, int]] = (
+            cls._fit_within(width, height, max_size)
+            if max_size and max(width, height) > max_size
+            else None
         )
+        # max_size is passed into the snap, not pre-applied as a mode: a stated
+        # ceiling must survive POT rounding whether or not the resize above
+        # fired. Keying off "did a resize happen" misses the case where the
+        # source already fits but the snap crosses the limit on its own (200
+        # under a 250 ceiling snaps to 256).
         pot_target: Optional[Tuple[int, int]] = None
         if force_pot and width > 0 and height > 0:
-            pw, ph = (
-                2 ** round(math.log2(width)),
-                2 ** round(math.log2(height)),
-            )
-            if (width, height) != (pw, ph):
-                pot_target = (pw, ph)
+            rw, rh = resize_to if resize_to else (width, height)
+            pot = cls._snap_pot(rw, rh, pot_mode, max_size)
+            if (rw, rh) != pot:
+                pot_target = pot
         will_resize = resize_to is not None or pot_target is not None
 
         # --- 1. Depalettize before resize (preserves high-quality resampling)
@@ -205,24 +257,22 @@ class MapOptimizer(HelpMixin):
 
         # --- 3. Resize
         if resize_to is not None:
+            rw, rh = resize_to
             ops.append(
                 Op(
                     kind="resize",
                     description=(
                         f"Resize: {width}x{height} -> "
-                        f"{resize_to}x{resize_to} (exceeds max_size={resize_to})"
+                        f"{rw}x{rh} (exceeds max_size={max_size})"
                     ),
                     params={"size": resize_to},
                 )
             )
-            width = height = resize_to
+            width, height = rw, rh
 
         # --- 4. Force POT (recompute against current dims, post-resize)
         if force_pot and width > 0 and height > 0:
-            pw, ph = (
-                2 ** round(math.log2(width)),
-                2 ** round(math.log2(height)),
-            )
+            pw, ph = cls._snap_pot(width, height, pot_mode, max_size)
             if (width, height) != (pw, ph):
                 ops.append(
                     Op(
@@ -296,11 +346,7 @@ class MapOptimizer(HelpMixin):
         for op in plan:
             if op.kind in ("depalettize", "mode_coerce"):
                 mode = op.params.get("target_mode", mode)
-            elif op.kind == "resize":
-                size = op.params.get("size")
-                if size is not None:
-                    width = height = size
-            elif op.kind == "force_pot":
+            elif op.kind in ("resize", "force_pot"):
                 size = op.params.get("size")
                 if size is not None:
                     width, height = size
@@ -325,12 +371,72 @@ class MapOptimizer(HelpMixin):
                 target = op.params["target_mode"]
                 if image.mode != target:
                     image = image.convert(target)
-            elif op.kind == "resize":
-                s = op.params["size"]
-                image = ImgUtils.resize_image(image, s, s)
-            elif op.kind == "force_pot":
-                image = ImgUtils.ensure_pot(image)
+            elif op.kind in ("resize", "force_pot"):
+                # Both resize to the size the PLAN chose. force_pot must not
+                # call ImgUtils.ensure_pot: that re-derives its own nearest-POT
+                # target, which is exactly the apply-re-decides-a-size drift
+                # this split exists to prevent (and it would silently ignore
+                # a budget's round-down).
+                w, h = op.params["size"]
+                image = ImgUtils.resize_image(image, w, h)
         return image
+
+    @classmethod
+    def _resolve_profile(
+        cls,
+        output_profile: Optional[str],
+        map_type_key: Optional[str],
+        output_type: Optional[str],
+        max_size: Optional[int],
+        force_pot: Optional[bool],
+        enforce_budget: bool,
+    ) -> Tuple[
+        Optional[OutputSpec],
+        Optional[DeliveryBudget],
+        Optional[str],
+        Optional[int],
+        bool,
+        str,
+    ]:
+        """Apply an output profile's two tiers to a call's arguments.
+
+        Both :meth:`optimize_map` and its dry-run twin :meth:`assess` have to
+        read a profile the same way or the prediction stops describing the run —
+        the same reason the decision branches live in :meth:`plan`. So the
+        precedence rules live here once:
+
+        - **hard tier** — the profile's :class:`OutputSpec` supplies the
+          container, but only where the caller named none.
+        - **advisory tier** — the profile's :class:`DeliveryBudget` supplies
+          ``max_size`` / ``force_pot`` *only* when ``enforce_budget`` is set, and
+          even then an explicit value from the caller still wins. Both use
+          ``is None`` to mean "caller said nothing": ``force_pot or
+          budget.force_pot`` could not tell an explicit ``False`` from unset, so
+          the documented opt-out did not work.
+
+        Returns:
+            tuple: ``(spec, budget, output_type, max_size, force_pot, pot_mode)``.
+            ``spec`` and ``budget`` are None when no profile is active.
+            ``pot_mode`` is ``"down"`` only when the POT snap came from the
+            budget — a budget must never grow an asset.
+        """
+        pot_mode = "nearest"
+        if not output_profile:
+            return None, None, output_type, max_size, bool(force_pot), pot_mode
+
+        spec = OutputTemplates.resolve(map_type_key, output_profile)
+        if not output_type:
+            output_type = spec.ext
+
+        budget = OutputTemplates.budget(output_profile)
+        if enforce_budget:
+            if max_size is None:
+                max_size = budget.max_size
+            if force_pot is None:
+                force_pot = budget.force_pot
+                pot_mode = "down"
+
+        return spec, budget, output_type, max_size, bool(force_pot), pot_mode
 
     @classmethod
     def optimize_map(
@@ -339,7 +445,7 @@ class MapOptimizer(HelpMixin):
         output_dir: str = None,
         output_type: str = None,
         max_size: int = None,
-        force_pot: bool = False,
+        force_pot: Optional[bool] = None,
         suffix_old: str = None,
         suffix_opt: str = None,
         old_files_folder: str = None,
@@ -348,6 +454,7 @@ class MapOptimizer(HelpMixin):
         map_type: str = None,
         allow_palette: bool = False,
         output_profile: str = None,
+        enforce_budget: bool = False,
     ) -> str:
         """Optimizes a texture by resizing, setting bit depth, and adjusting image type.
 
@@ -367,6 +474,13 @@ class MapOptimizer(HelpMixin):
                 when the target mode is RGB/RGBA. Default False (strict) — this
                 prevents PNG palette-transparency from being read as alpha by
                 downstream FBX/DCC pipelines.
+            output_profile (str, optional): Workflow profile (a ``WF`` key) whose
+                output template drives the container / bit depth / compression.
+            enforce_budget (bool): Apply the profile's advisory
+                ``DeliveryBudget`` (max_size / POT) instead of only reporting it.
+                Default False — an over-budget map is correct, just expensive, so
+                it is not silently resampled. An explicit ``max_size`` /
+                ``force_pot`` always outranks the budget.
 
         Returns:
             str: Path to the optimized texture.
@@ -384,15 +498,16 @@ class MapOptimizer(HelpMixin):
             texture_path, key=True
         )
 
-        # When a profile is active, its template drives the output format unless an
-        # explicit output_type override was passed.
-        spec = (
-            OutputTemplates.resolve(map_type_key, output_profile)
-            if output_profile
-            else None
+        # An active profile drives the output format and, on opt-in, the size
+        # budget — resolved by the same helper assess uses, so the two agree.
+        spec, budget, output_type, max_size, force_pot, pot_mode = cls._resolve_profile(
+            output_profile,
+            map_type_key,
+            output_type,
+            max_size,
+            force_pot,
+            enforce_budget,
         )
-        if spec and not output_type:
-            output_type = spec.ext
         target_bit_depth = spec.bit_depth if spec else None
         target_compression = spec.compression if spec else None
 
@@ -429,6 +544,7 @@ class MapOptimizer(HelpMixin):
             optimize_bit_depth=optimize_bit_depth,
             map_type_key=map_type_key,
             allow_palette=allow_palette,
+            pot_mode=pot_mode,
         )
 
         if any(op.kind == "resize" for op in plan):
@@ -476,6 +592,16 @@ class MapOptimizer(HelpMixin):
             f"Saved optimized texture: {final_output_path} "
             f"({cls.format_result(final_output_path, size_before, dims_before, image)})"
         )
+
+        # Reported against what was actually written, so an explicit max_size that
+        # overshot the profile's budget still surfaces. Enforced runs land inside
+        # the budget by construction and so report nothing.
+        if budget:
+            for message in budget.check(*image.size):
+                print(
+                    f"# Warning: {os.path.basename(final_output_path)} "
+                    f"[{output_profile}]: {message}"
+                )
         return final_output_path
 
     @staticmethod
@@ -535,7 +661,7 @@ class MapOptimizer(HelpMixin):
         cls,
         texture_path: str,
         max_size: int = None,
-        force_pot: bool = False,
+        force_pot: Optional[bool] = None,
         optimize_bit_depth: bool = True,
         map_type: str = None,
         allow_palette: bool = False,
@@ -543,6 +669,7 @@ class MapOptimizer(HelpMixin):
         output_type: str = None,
         output_profile: str = None,
         predict_size: bool = False,
+        enforce_budget: bool = False,
     ) -> Dict[str, Any]:
         """Predict whether :meth:`optimize_map` would change ``texture_path``.
 
@@ -559,9 +686,10 @@ class MapOptimizer(HelpMixin):
             output_type: Output format the run would write (e.g. "png"). Only
                 affects the predicted extension / size; None keeps the source's.
             output_profile: Output-template profile the run would use. Resolved
-                exactly as :meth:`optimize_map` resolves it, so a profile that
-                dictates the extension / bit depth / compression is reflected
-                in the prediction rather than silently ignored.
+                through the same :meth:`_resolve_profile` helper the real run
+                uses, so a profile that dictates the extension / bit depth /
+                compression is reflected in the prediction rather than silently
+                ignored.
             predict_size: Also report the resulting *byte* count. Costs a real
                 encode (the plan is applied to a copy and written to a scratch
                 file that is immediately discarded), so it is opt-in — bulk
@@ -569,11 +697,19 @@ class MapOptimizer(HelpMixin):
                 pay for it. Compression ratios can't be derived from
                 dimensions and mode, so this is the only honest way to
                 answer "how much smaller?" before committing.
+            enforce_budget: Same semantics as :meth:`optimize_map` — predict a
+                run that applies the profile's advisory ``DeliveryBudget``
+                rather than one that only reports it.
 
         Returns:
             dict with:
                 recommended (bool): True if the plan is non-empty.
                 reasons (list[str]): Per-op descriptions from the plan.
+                warnings (list[str]): Advisory ``DeliveryBudget`` violations the
+                    predicted output would still carry. Always present, empty
+                    when there is no profile, no budget, or nothing to flag —
+                    distinct from ``reasons``, which describe changes that
+                    *would* be made.
                 current (dict): {path, name, width, height, mode, format,
                     size_bytes, bit_depth, map_type}.
                 predicted (dict): {width, height, mode, bit_depth, ext, path,
@@ -591,6 +727,7 @@ class MapOptimizer(HelpMixin):
             return {
                 "recommended": False,
                 "reasons": [],
+                "warnings": [],
                 "error": f"File not found: {texture_path}",
                 "current": {
                     "path": texture_path,
@@ -615,6 +752,7 @@ class MapOptimizer(HelpMixin):
             return {
                 "recommended": False,
                 "reasons": [],
+                "warnings": [],
                 "error": f"Failed to read image: {e}",
                 "current": {
                     "path": texture_path,
@@ -629,6 +767,17 @@ class MapOptimizer(HelpMixin):
             texture_path, key=True
         )
 
+        # Resolved before planning (the budget can add ops), through the same
+        # helper optimize_map uses — so the dry run plans what the real run would.
+        spec, budget, output_type, max_size, force_pot, pot_mode = cls._resolve_profile(
+            output_profile,
+            map_type_key,
+            output_type,
+            max_size,
+            force_pot,
+            enforce_budget,
+        )
+
         ops = cls.plan(
             image,
             max_size=max_size,
@@ -636,6 +785,7 @@ class MapOptimizer(HelpMixin):
             optimize_bit_depth=optimize_bit_depth,
             map_type_key=map_type_key,
             allow_palette=allow_palette,
+            pot_mode=pot_mode,
         )
 
         # Surface the target mode the planner picked (first mode_coerce op),
@@ -646,17 +796,6 @@ class MapOptimizer(HelpMixin):
             if op.kind == "mode_coerce":
                 target_mode = op.params.get("target_mode")
                 break
-
-        # Resolve the profile the way optimize_map does — an active profile can
-        # dictate the extension, bit depth, and compression, all of which move
-        # the predicted size.
-        spec = (
-            OutputTemplates.resolve(map_type_key, output_profile)
-            if output_profile
-            else None
-        )
-        if spec and not output_type:
-            output_type = spec.ext
 
         # Replay the plan for the projected size/mode (cheap), then optionally
         # encode for the projected byte count (not cheap — hence opt-in).
@@ -697,6 +836,10 @@ class MapOptimizer(HelpMixin):
         return {
             "recommended": bool(ops),
             "reasons": [op.description for op in ops],
+            # Against the *predicted* dimensions — the question a caller is asking
+            # is whether the file this run would write lands within budget, not
+            # whether the source did.
+            "warnings": budget.check(new_width, new_height) if budget else [],
             "current": {
                 "path": texture_path,
                 "name": os.path.basename(texture_path),

@@ -1,0 +1,375 @@
+<!doctype html>
+<!--
+  Live WebXR preview page served by pythontk.PreviewServer.
+
+  Polls /manifest.json and swaps the referenced asset in whenever the version
+  changes, so a tab left open in a headset keeps up with the DCC without any
+  interaction. Served from localhost, which is a secure context, so
+  `navigator.xr` is available and the VR button starts a real immersive-vr
+  session on any PC-tethered headset. With no headset attached the same page is
+  an ordinary orbit-controls preview.
+
+  A caller-supplied serve root is treated as a working copy: an index.html
+  already there is never overwritten, so edits made in place survive a restart.
+  The default (temp) root is re-synced from this file on every start and every
+  publish, so an edit here reaches an already-running session on its next push.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Live Preview</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; overflow: hidden; background: #15171a; font: 13px/1.5 system-ui, sans-serif; color: #e8eaed; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; top: 12px; left: 12px; padding: 10px 14px;
+    background: rgba(20, 22, 26, .82); border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 8px; backdrop-filter: blur(8px); pointer-events: none;
+    max-width: min(46ch, calc(100vw - 24px));
+  }
+  #title { font-weight: 600; margin-bottom: 2px; }
+  #stats, #hint { color: #9aa0a6; font-size: 12px; }
+  #hint { margin-top: 6px; }
+  #status::before {
+    content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: #7a7f85; margin-right: 7px; vertical-align: middle;
+  }
+  #status.live::before { background: #34d058; }
+  #status.error::before { background: #f2504b; }
+  #controls { position: fixed; bottom: 12px; left: 12px; display: flex; gap: 8px; }
+  button.ui {
+    font: inherit; color: #e8eaed; background: rgba(20, 22, 26, .82);
+    border: 1px solid rgba(255, 255, 255, .16); border-radius: 8px;
+    padding: 8px 14px; cursor: pointer;
+  }
+  button.ui:hover { border-color: rgba(255, 255, 255, .34); }
+  /* VRButton positions itself bottom-center with inline styles; leave it be. */
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="hud">
+  <div id="title">Preview</div>
+  <div id="status">connecting…</div>
+  <div id="stats"></div>
+  <div id="hint"></div>
+</div>
+
+<div id="controls">
+  <button class="ui" id="scaleToggle" title="Toggle between a fitted preview size and the model's true scale">Scale: fit</button>
+  <button class="ui" id="frameBtn" title="Re-frame the camera on the model">Frame</button>
+</div>
+
+<script>
+  // Boot watchdog — a CLASSIC script on purpose. Everything below rides three
+  // module imports from unpkg.com, and when that fetch is blocked (offline
+  // box, default-deny outbound firewall — a real deployment here) the module
+  // simply never executes: no error event, no status change, just a dark page
+  // stuck on "connecting…" with the actual failure invisible. The module's
+  // first statement flips the flag; if it hasn't within 8s, say what is
+  // actually wrong. A slow CDN that boots later overwrites this on next poll.
+  setTimeout(() => {
+    if (window.__viewerBooted) return;
+    const status = document.getElementById('status');
+    status.textContent = 'three.js failed to load — this page needs https://unpkg.com (check network / outbound firewall)';
+    status.className = 'error';
+  }, 8000);
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+window.__viewerBooted = true; // imports resolved — stand the boot watchdog down
+
+const POLL_MS = 1000;
+const LOAD_RETRIES = 3;
+// Fitted mode normalizes the model to a human-readable size in the headset.
+// It exists because exported units are rarely meters: a Maya scene authored in
+// centimeters arrives 100x too large, and "my model is invisible because I am
+// standing inside it" is the single most common first-run failure.
+const FIT_HEIGHT_M = 1.5;
+const FIT_DISTANCE_M = 1.6;
+
+const el = {
+  title: document.getElementById('title'),
+  status: document.getElementById('status'),
+  stats: document.getElementById('stats'),
+  hint: document.getElementById('hint'),
+  scaleToggle: document.getElementById('scaleToggle'),
+  frameBtn: document.getElementById('frameBtn'),
+};
+
+/* ---------------------------------------------------------------- scene --- */
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x15171a);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// The RoomEnvironment IBL above is the main light. Piling a bright hemisphere
+// and key light on top of it (as this once did, at 1.6 and 2.2) drives every
+// surface to clipping, and a blown-out surface cannot show emissive at all:
+// the emissive term is *added* to the lit result, so once the diffuse is
+// already past white it contributes nothing visible. Measured before the fix:
+// a material with emissiveFactor [1,0,0] rendered (247,242,243) — a red bias
+// of five 8-bit levels, indistinguishable from white. One modest key light for
+// form definition is enough alongside the environment.
+const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+keyLight.position.set(3, 6, 4);
+scene.add(keyLight);
+
+const grid = new THREE.GridHelper(20, 40, 0x3a3f45, 0x25292e);
+grid.material.transparent = true;
+grid.material.opacity = 0.55;
+scene.add(grid);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 500);
+camera.position.set(2.2, 1.8, 2.8);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0.8, 0);
+
+// Everything loaded hangs off this pivot, so swapping models and re-scaling
+// never touches the lights, grid or camera rig.
+const pivot = new THREE.Group();
+scene.add(pivot);
+
+/* ------------------------------------------------------------------- xr --- */
+
+if (navigator.xr) {
+  navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+    if (supported) {
+      document.body.appendChild(VRButton.createButton(renderer));
+      el.hint.textContent = 'Headset detected — press Enter VR.';
+    } else {
+      el.hint.textContent = 'No immersive-vr device. Connect a headset, then reload.';
+    }
+  });
+} else {
+  // Reachable when the page is opened over a plain-HTTP LAN address rather
+  // than localhost: WebXR is gated on a secure context, and the failure is
+  // otherwise silent (the button simply never appears).
+  el.hint.textContent = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? 'WebXR unavailable in this browser. Try Chrome or Edge.'
+    : 'WebXR needs localhost or HTTPS — this page was opened over plain HTTP.';
+}
+
+/* ---------------------------------------------------------------- model --- */
+
+const loader = new GLTFLoader();
+let current = null;
+let realScale = false;
+let modelBounds = null;
+
+function disposeModel(root) {
+  // GLTFLoader allocates GPU resources that garbage collection cannot reclaim;
+  // without this an edit-and-republish loop leaks a full copy of the model's
+  // buffers and textures every single push.
+  root.traverse((node) => {
+    if (node.geometry) node.geometry.dispose();
+    const materials = Array.isArray(node.material) ? node.material : (node.material ? [node.material] : []);
+    for (const material of materials) {
+      for (const value of Object.values(material)) {
+        if (value && value.isTexture) value.dispose();
+      }
+      material.dispose();
+    }
+  });
+}
+
+function layout() {
+  if (!current || !modelBounds) return;
+  const { size, center } = modelBounds;
+  const height = Math.max(size.y, 1e-6);
+  const scale = realScale ? 1 : FIT_HEIGHT_M / height;
+
+  current.scale.setScalar(scale);
+  // Center on the floor plane, pushed out in front of the default standing
+  // position so an immersive session opens with the model in view.
+  current.position.set(
+    -center.x * scale,
+    -(center.y - size.y / 2) * scale,
+    -center.z * scale - (realScale ? 0 : FIT_DISTANCE_M),
+  );
+
+  el.scaleToggle.textContent = `Scale: ${realScale ? 'real' : 'fit'}`;
+  frameCamera();
+}
+
+function frameCamera() {
+  if (!current) return;
+  const box = new THREE.Box3().setFromObject(current);
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.length() / 2, 0.05);
+  const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2));
+
+  controls.target.copy(center);
+  camera.position.copy(center).add(new THREE.Vector3(0.7, 0.5, 1).normalize().multiplyScalar(distance * 1.3));
+  camera.near = Math.max(distance / 1000, 0.01);
+  camera.far = distance * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function describe(root) {
+  let triangles = 0;
+  let meshes = 0;
+  root.traverse((node) => {
+    if (!node.isMesh || !node.geometry) return;
+    meshes += 1;
+    const geometry = node.geometry;
+    triangles += (geometry.index ? geometry.index.count : geometry.attributes.position.count) / 3;
+  });
+  const { size } = modelBounds;
+  const dims = [size.x, size.y, size.z].map((n) => n.toFixed(2)).join(' × ');
+  return `${meshes} mesh${meshes === 1 ? '' : 'es'} · ${Math.round(triangles).toLocaleString()} tris · ${dims} source units`;
+}
+
+// Loads can outlive the poll interval — a multi-megabyte GLB takes seconds to
+// fetch and parse — and setInterval keeps polling meanwhile, so two loads can
+// be in flight at once after a quick pair of pushes. Completion order is not
+// publish order: without this token the OLDER load can finish last, replace
+// the newer model, and label itself live. Each load claims the token at entry;
+// a completion that no longer holds it discards its result and stays silent.
+let loadGeneration = 0;
+
+async function load(url, version) {
+  const generation = ++loadGeneration;
+  let gltf;
+  try {
+    gltf = await loader.loadAsync(url);
+  } catch (error) {
+    if (generation !== loadGeneration) return null; // superseded — newer load owns the status line
+    setStatus(`load failed: ${error.message || error}`, 'error');
+    return false;
+  }
+  if (generation !== loadGeneration) {
+    disposeModel(gltf.scene); // parsed but never shown; free it rather than leak it
+    return null;
+  }
+  if (current) {
+    pivot.remove(current);
+    disposeModel(current);
+  }
+  current = gltf.scene;
+  pivot.add(current);
+
+  const box = new THREE.Box3().setFromObject(current);
+  modelBounds = {
+    size: box.getSize(new THREE.Vector3()),
+    center: box.getCenter(new THREE.Vector3()),
+  };
+
+  el.stats.textContent = describe(current);
+  setStatus(`v${version} · updated ${new Date().toLocaleTimeString()}`, 'live');
+  layout();
+  return true;
+}
+
+function setStatus(text, cls = '') {
+  el.status.textContent = text;
+  el.status.className = cls;
+}
+
+/* ----------------------------------------------------------------- poll --- */
+
+let seenVersion = -1;
+let failedVersion = -1;
+let failCount = 0;
+
+async function poll() {
+  try {
+    const manifest = await (await fetch('manifest.json', { cache: 'no-store' })).json();
+    if (manifest.title) el.title.textContent = manifest.title;
+    if (manifest.version === seenVersion) return;
+    // A version that has failed its budget is abandoned until a new publish
+    // supersedes it — otherwise a genuinely corrupt GLB re-parses every second.
+    if (manifest.version === failedVersion && failCount >= LOAD_RETRIES) return;
+
+    if (!manifest.asset) {
+      seenVersion = manifest.version;
+      setStatus('waiting for the first publish…');
+      return;
+    }
+
+    seenVersion = manifest.version;
+    // The query string is what actually defeats a warm HTTP cache when the
+    // asset keeps a stable name across pushes.
+    const ok = await load(`${manifest.asset}?v=${manifest.version}`, manifest.version);
+    if (ok === null) return; // superseded mid-load — the newer call owns the bookkeeping
+    if (ok) {
+      failedVersion = -1;
+      failCount = 0;
+      return;
+    }
+    // Leaving the version marked as seen is what would strand the page: a
+    // transient failure must not stop the next poll from trying it again.
+    failCount = manifest.version === failedVersion ? failCount + 1 : 1;
+    failedVersion = manifest.version;
+    seenVersion = -1;
+  } catch (error) {
+    setStatus('server unreachable', 'error');
+  }
+}
+
+poll();
+setInterval(poll, POLL_MS);
+
+// Tell the server the moment this page goes away, so the next push reopens a
+// tab instead of publishing to nothing. Without it the server can only infer a
+// closed viewer from polls stopping, and that inference has to wait out a
+// window long enough to tolerate hidden-tab timer throttling (~1/min) — so a
+// close-then-push would otherwise show nothing at all for a minute and a half.
+// `pagehide` rather than `unload`: it is the event that still fires on mobile
+// and bfcache paths, and sendBeacon is the only send that survives teardown.
+// A page restored from bfcache simply polls again and re-arms the server.
+addEventListener('pagehide', () => { navigator.sendBeacon('viewer-closed', ''); });
+
+/* ------------------------------------------------------------------ ui  --- */
+
+el.scaleToggle.addEventListener('click', () => { realScale = !realScale; layout(); });
+el.frameBtn.addEventListener('click', frameCamera);
+addEventListener('keydown', (event) => {
+  if (event.key === 'r') { realScale = !realScale; layout(); }
+  if (event.key === 'f') frameCamera();
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

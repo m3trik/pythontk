@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.5"
+__version__ = "0.9.7"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -103,6 +103,7 @@ DEFAULT_INCLUDE = {
     "core_utils.engines.textures.map_factory": ["MapFactory"],
     "core_utils.engines.textures.map_registry": ["MapRegistry", "MapType"],
     "core_utils.engines.textures.output_template": [
+        "DeliveryBudget",
         "OutputSpec",
         "OutputTemplate",
         "OutputTemplates",
@@ -185,6 +186,13 @@ DEFAULT_INCLUDE = {
     "net_utils.credentials": "Credentials",
     "net_utils._net_utils": "NetUtils",
     "net_utils.rpc.client": "RpcClient",
+    # Loopback static server + live manifest behind the WebXR/browser preview
+    # loop. Localhost is a secure context, so this is all `navigator.xr` needs.
+    "net_utils.preview_server": [
+        "PreviewServer",
+        "PreviewDeliverer",
+        "PreviewBridge",
+    ],
     "net_utils.rpc.installer": [
         "PluginInstaller",
     ],
