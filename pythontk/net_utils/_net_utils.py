@@ -86,9 +86,14 @@ class NetUtils:
         config_lines = [f"{k}:{v}" for k, v in defaults.items()]
 
         # 3. Create temp file and launch
-        fd, rdp_path = tempfile.mkstemp(suffix=".rdp", prefix="pythontk_rdp_")
+        # Detached: mstsc reads the file AFTER we return, so it cannot be deleted
+        # here on the success path -- and previously nothing ever did, so every
+        # connection leaked a .rdp. Allocation now sweeps stale ones by age.
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        rdp_path = TempArtifacts("pythontk_rdp").path(extension=".rdp")
         try:
-            with os.fdopen(fd, "w") as f:
+            with open(rdp_path, "w") as f:
                 f.write("\n".join(config_lines))
 
             subprocess.Popen(["mstsc.exe", rdp_path])

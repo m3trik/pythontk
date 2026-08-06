@@ -27,6 +27,7 @@ from __future__ import annotations
 import atexit
 import hashlib
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -36,13 +37,26 @@ from pythontk.core_utils.logging_mixin import LoggingMixin
 
 
 class TempArtifacts(LoggingMixin):
-    """Allocate and lifecycle-manage ``<prefix>_*`` temp files in one directory.
+    """Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
+
+    Use this instead of ``tempfile.mkstemp`` / ``mkdtemp`` / ``NamedTemporaryFile``
+    for anything written under the system temp dir. A raw allocation has no owner:
+    if the ``finally`` is forgotten, an exception escapes, or the process dies (a
+    DCC crash is routine here), the artifact leaks with nothing left to reclaim it.
+    Every allocation through this class joins a prefix namespace that a later run
+    sweeps by age, so the worst case is delayed collection rather than a permanent
+    leak. ``m3trik/scripts/check_temp_artifacts.py`` enforces this.
 
     Example (scoped — a synchronous convert-then-import round-trip):
         >>> with TempArtifacts("maya_to_btk", policy="scoped") as tmp:
         ...     fbx = tmp.path(extension=".fbx")
         ...     convert(src, fbx)   # on exception the fbx is kept + logged
         ...     import_fbx(fbx)     # clean exit removes it
+
+    Example (scratch directory — the ``mkdtemp`` replacement):
+        >>> with TempArtifacts("glb_export", policy="scoped") as tmp:
+        ...     work = tmp.dir_path()      # created, tracked, swept if abandoned
+        ...     build_into(work)
 
     Parameters:
         prefix: Filename stem prefix; also the sweep scope. Required, non-empty.
@@ -112,6 +126,25 @@ class TempArtifacts(LoggingMixin):
         tag = name if name is not None else f"{self._next_tag_ns():x}"
         return self.register(os.path.join(self.dir, f"{self.prefix}_{tag}{extension}"))
 
+    def dir_path(self, name: Optional[str] = None, create: bool = True) -> str:
+        """Return a tracked ``<prefix>_<tag>/`` DIRECTORY path in :attr:`dir`.
+
+        The directory twin of :meth:`path`, and the reason it exists: without it
+        every caller needing scratch space hand-rolled ``tempfile.mkdtemp`` plus a
+        ``finally: shutil.rmtree``, so the lifecycle guarantees this class exists
+        to provide (age-gated sweep of leftovers, keep-on-failure, one prefix
+        namespace) had to be re-implemented per site -- and were simply missing
+        wherever the ``finally`` was forgotten or the process died first.
+
+        Tracked exactly like a file: :meth:`cleanup` removes it recursively and
+        :meth:`sweep_stale` reclaims stale ones, so an abandoned directory is
+        collected on a later run instead of leaking forever.
+        """
+        target = self.path(extension="", name=name)
+        if create:
+            os.makedirs(target, exist_ok=True)
+        return target
+
     @classmethod
     def _next_tag_ns(cls) -> int:
         """A strictly-increasing ns-scale tag, unique process-wide.
@@ -148,7 +181,7 @@ class TempArtifacts(LoggingMixin):
         """
         if self.policy == "detached" and not force:
             return []
-        existing = [p for p in self._tracked if os.path.isfile(p)]
+        existing = [p for p in self._tracked if os.path.exists(p)]
         if existing and self.on_cleanup is not None:
             try:
                 self.on_cleanup(list(existing))
@@ -157,7 +190,12 @@ class TempArtifacts(LoggingMixin):
         removed = []
         for p in existing:
             try:
-                os.remove(p)
+                # Directories are first-class here (see dir_path): a scratch dir
+                # left behind leaks just as hard as a file, and harder to notice.
+                if os.path.isdir(p):
+                    shutil.rmtree(p)
+                else:
+                    os.remove(p)
                 removed.append(p)
             except OSError as e:
                 self.logger.warning(f"Could not remove temp artifact {p}: {e}")
@@ -183,9 +221,13 @@ class TempArtifacts(LoggingMixin):
                 if not entry.name.startswith(f"{self.prefix}_"):
                     continue
                 try:
-                    if entry.is_file() and entry.stat().st_mtime < cutoff:
+                    if entry.stat().st_mtime >= cutoff:
+                        continue
+                    if entry.is_dir():
+                        shutil.rmtree(entry.path)
+                    else:
                         os.remove(entry.path)
-                        removed.append(entry.path)
+                    removed.append(entry.path)
                 except OSError:
                     continue
         return removed
@@ -198,7 +240,7 @@ class TempArtifacts(LoggingMixin):
         if exc_type is None:
             self.cleanup(force=True)
         else:  # keep everything for debugging; say where it is
-            kept = [p for p in self._tracked if os.path.isfile(p)]
+            kept = [p for p in self._tracked if os.path.exists(p)]
             if kept:  # warning: visible at the default log level — files were left behind
                 self.logger.warning(f"Keeping temp artifacts after failure: {kept}")
 

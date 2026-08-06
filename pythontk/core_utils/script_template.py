@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from pythontk.str_utils._str_utils import StrUtils
 
@@ -27,6 +27,12 @@ from pythontk.str_utils._str_utils import StrUtils
 # machinery already parses a tuple so a future round-trip mode slots in without a
 # restructure.
 SEND_TO = "send_to"
+
+# "Run the target app headlessly and keep what it wrote" mode -- the blocking
+# counterpart of :data:`SEND_TO`. A ``save_as`` template ends by writing ONE artifact
+# (a native scene file) and the caller waits for it, so the deliverer judges the run by
+# that file rather than by having launched something.
+SAVE_AS = "save_as"
 
 # Cache of compiled ``<FIELD> = (...)`` matchers, keyed by the declaration field name.
 _MODE_FIELD_RE: Dict[str, "re.Pattern[str]"] = {}
@@ -62,6 +68,29 @@ class ScriptTemplate(_ScriptTemplateInternal):
         )
 
     @staticmethod
+    def declared_modes(
+        template_path, field: str = "BRIDGE_MODES"
+    ) -> Optional[Tuple[str, ...]]:
+        """Return exactly what a template declares via ``<field> = (...)``.
+
+        ``None`` means the file declares nothing (or is unreadable) -- distinct from an
+        empty tuple, and the distinction is the point: :meth:`template_modes` may assume
+        a mode for an UNANNOTATED template, but must never override an explicit one.
+        Callers whose template contract is non-negotiable (a script that has to write a
+        specific artifact) read this instead.
+        """
+        try:
+            text = Path(template_path).read_text(encoding="utf-8")
+        except OSError:
+            return None
+        m = _ScriptTemplateInternal._mode_field_re(field).search(text)
+        if not m:
+            return None
+        return tuple(
+            item.strip().strip("'\"") for item in m.group(1).split(",") if item.strip()
+        )
+
+    @staticmethod
     def template_modes(
         template_path,
         allowed: Sequence[str] = (SEND_TO,),
@@ -70,20 +99,14 @@ class ScriptTemplate(_ScriptTemplateInternal):
         """Return the modes a template declares via its ``<field> = (...)`` tuple.
 
         Falls back to ``(allowed[0],)`` when the file is unreadable, declares no such
-        field, or declares only values outside *allowed*.
+        field, or declares only values outside *allowed* -- so a custom template a user
+        drops in unannotated still works with the bridge it was dropped into.
         """
         fallback = (allowed[0],) if allowed else (SEND_TO,)
-        try:
-            text = Path(template_path).read_text(encoding="utf-8")
-        except OSError:
+        declared = ScriptTemplate.declared_modes(template_path, field)
+        if declared is None:
             return fallback
-        m = _ScriptTemplateInternal._mode_field_re(field).search(text)
-        if not m:
-            return fallback
-        modes = tuple(
-            item.strip().strip("'\"") for item in m.group(1).split(",") if item.strip()
-        )
-        valid = tuple(mode for mode in modes if mode in allowed)
+        valid = tuple(mode for mode in declared if mode in allowed)
         return valid or fallback
 
     @staticmethod

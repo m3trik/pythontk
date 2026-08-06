@@ -738,9 +738,9 @@ class MapOptimizer(HelpMixin):
             tuple: ``(size_bytes, error)`` — exactly one is non-None.
         """
         import shutil
-        import tempfile
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
 
-        scratch = tempfile.mkdtemp(prefix="map_optimizer_dryrun_")
+        scratch = TempArtifacts("map_optimizer_dryrun").dir_path()
         try:
             probe = os.path.join(scratch, f"probe.{ext}")
             ImgUtils.save_image(

@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.3"
+__version__ = "0.9.5"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -143,6 +143,7 @@ DEFAULT_INCLUDE = {
         "HandoffBridge",
         "ScriptLaunchBridge",
         "ScriptLaunchDeliverer",
+        "ScriptRunDeliverer",
         "ScriptLaunchSpec",
         "AppSpec",
         "Deliverer",

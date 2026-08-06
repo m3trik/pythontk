@@ -1215,5 +1215,90 @@ class TestRegisterHandlerIdempotent(unittest.TestCase):
         self.assertNotIn(first, MapFactory._workflow_handlers)
 
 
+class TestArchiveSupersededOriginals(unittest.TestCase):
+    """``old_files_folder`` retires the inputs the output set replaced.
+
+    Canonicalizing an aliased filename (``_BaseMap`` -> ``_Base_Color``) writes
+    a COPY and leaves the original behind, so a folder grows a duplicate on
+    every run. The archive folder is the opt-in cleanup for that; before this
+    it was a config key nothing in the ``prepare_maps`` path ever read.
+    """
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="map_factory_archive_")
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def _texture(self, name, size=(16, 16), color=(128, 128, 128)):
+        from PIL import Image
+
+        path = os.path.join(self.test_dir, name)
+        Image.new("RGB", size, color).save(path)
+        return path
+
+    def _names(self):
+        return sorted(
+            f for f in os.listdir(self.test_dir) if os.path.isfile(os.path.join(self.test_dir, f))
+        )
+
+    def test_aliased_original_is_archived_not_duplicated(self):
+        """``_BaseMap`` canonicalizes to ``_Base_Color``; the alias must not linger."""
+        source = self._texture("mat_BaseMap.png")
+        self._texture("mat_Roughness.png")
+
+        MapFactory.prepare_maps(
+            [source, os.path.join(self.test_dir, "mat_Roughness.png")],
+            group_by_set=False,
+            rename=True,
+            old_files_folder="_originals",
+        )
+
+        remaining = self._names()
+        self.assertIn("mat_Base_Color.png", remaining)
+        self.assertNotIn(
+            "mat_BaseMap.png",
+            remaining,
+            "the superseded alias was left beside its canonical copy",
+        )
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.test_dir, "_originals", "mat_BaseMap.png")),
+            "the superseded original never reached the archive folder",
+        )
+
+    def test_no_archive_folder_leaves_everything_in_place(self):
+        """Absent the opt-in, nothing moves — the pre-existing default."""
+        source = self._texture("mat_BaseMap.png")
+
+        MapFactory.prepare_maps([source], group_by_set=False, rename=True)
+
+        self.assertIn("mat_BaseMap.png", self._names())
+        self.assertFalse(os.path.isdir(os.path.join(self.test_dir, "_originals")))
+
+    def test_dry_run_never_moves_files(self):
+        source = self._texture("mat_BaseMap.png")
+
+        MapFactory.prepare_maps(
+            [source],
+            group_by_set=False,
+            rename=True,
+            old_files_folder="_originals",
+            dry_run=True,
+        )
+
+        self.assertIn("mat_BaseMap.png", self._names())
+
+    def test_outputs_are_never_archived(self):
+        """A file that survives into the result set must stay put."""
+        source = self._texture("mat_Base_Color.png")
+
+        result = MapFactory.prepare_maps(
+            [source], group_by_set=False, old_files_folder="_originals"
+        )
+
+        self.assertIn("mat_Base_Color.png", self._names())
+        self.assertTrue(all(os.path.isfile(p) for p in result))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -781,7 +781,9 @@ class NormalMapHandler(WorkflowHandler):
         # normal map is actually generated from them (marked in process()).
         # Height drives its own engine slot (parallax/displacement), so
         # processing an existing normal map must not swallow it.
-        return ["Normal", "Normal_OpenGL", "Normal_DirectX"]
+        # Read from the registry so a normal type added there is consumed here
+        # too, instead of leaking through as an unhandled passthrough map.
+        return list(MapRegistry.NORMAL_TYPES)
 
 
 class OutputFallbackHandler(WorkflowHandler):

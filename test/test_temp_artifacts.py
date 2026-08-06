@@ -360,5 +360,111 @@ class TestRootExport(unittest.TestCase):
         self.assertTrue(hasattr(ptk, "CachedArtifact"))
 
 
+
+class TempArtifactsDirectoryTest(unittest.TestCase):
+    """Scratch DIRECTORIES are first-class, not a caller's problem.
+
+    Before ``dir_path`` every site needing scratch space hand-rolled
+    ``tempfile.mkdtemp`` + ``finally: shutil.rmtree``, so the lifecycle guarantees
+    of this class had to be re-implemented per site -- and were simply absent
+    wherever the ``finally`` was forgotten or the process died first.
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ta_dirtest_")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _store(self, **kw):
+        from pythontk import TempArtifacts
+
+        return TempArtifacts("dtest", dir=self.root, **kw)
+
+    def test_dir_path_creates_a_tracked_directory(self):
+        store = self._store(policy="scoped")
+        d = store.dir_path()
+        self.assertTrue(os.path.isdir(d))
+        self.assertTrue(os.path.basename(d).startswith("dtest_"))
+
+    def test_create_false_reserves_without_making_it(self):
+        d = self._store(policy="scoped").dir_path(create=False)
+        self.assertFalse(os.path.exists(d))
+
+    def test_cleanup_removes_a_NON_EMPTY_directory(self):
+        """os.remove cannot delete a directory -- cleanup must recurse."""
+        store = self._store(policy="scoped")
+        d = store.dir_path()
+        os.makedirs(os.path.join(d, "nested"))
+        with open(os.path.join(d, "nested", "f.txt"), "w") as fh:
+            fh.write("x")
+        removed = store.cleanup(force=True)
+        self.assertIn(d, removed)
+        self.assertFalse(os.path.exists(d))
+
+    def test_context_manager_removes_the_directory_on_clean_exit(self):
+        from pythontk import TempArtifacts
+
+        with TempArtifacts("dtest", dir=self.root, policy="scoped") as store:
+            d = store.dir_path()
+            with open(os.path.join(d, "f.txt"), "w") as fh:
+                fh.write("x")
+        self.assertFalse(os.path.exists(d))
+
+    def test_failure_keeps_the_directory_and_reports_it(self):
+        """A kept DIRECTORY must be reported -- __exit__ once checked isfile only,
+        so a failed run said 'nothing kept' while a whole tree sat on disk."""
+        from pythontk import TempArtifacts
+
+        store = TempArtifacts("dtest", dir=self.root, policy="scoped")
+        d = None
+        with self.assertRaises(RuntimeError):
+            with store as s:
+                d = s.dir_path()
+                raise RuntimeError("boom")
+        self.assertTrue(os.path.isdir(d))
+
+    def test_sweep_stale_reclaims_an_abandoned_directory(self):
+        """The safety net: a process that dies leaves no finally to run, so a
+        LATER run must be able to collect the leftover."""
+        store = self._store(policy="detached")
+        d = store.dir_path()
+        with open(os.path.join(d, "f.txt"), "w") as fh:
+            fh.write("x")
+        old = time.time() - 30 * 86400
+        os.utime(d, (old, old))
+
+        swept = self._store(policy="detached", max_age_days=7).sweep_stale()
+        self.assertIn(d, swept)
+        self.assertFalse(os.path.exists(d))
+
+    def test_sweep_stale_spares_a_FRESH_directory(self):
+        store = self._store(policy="detached")
+        d = store.dir_path()
+        self.assertEqual(self._store(policy="detached").sweep_stale(), [])
+        self.assertTrue(os.path.isdir(d))
+
+    def test_sweep_stale_ignores_another_prefix(self):
+        from pythontk import TempArtifacts
+
+        other = TempArtifacts("otherprefix", dir=self.root, policy="detached")
+        d = other.dir_path()
+        old = time.time() - 30 * 86400
+        os.utime(d, (old, old))
+        self.assertEqual(self._store(policy="detached", max_age_days=7).sweep_stale(), [])
+        self.assertTrue(os.path.isdir(d))
+
+    def test_files_and_dirs_coexist_in_one_store(self):
+        store = self._store(policy="scoped")
+        f = store.path(extension=".txt")
+        with open(f, "w") as fh:
+            fh.write("x")
+        d = store.dir_path()
+        removed = store.cleanup(force=True)
+        self.assertEqual(sorted(removed), sorted([f, d]))
+        self.assertFalse(os.path.exists(f))
+        self.assertFalse(os.path.exists(d))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

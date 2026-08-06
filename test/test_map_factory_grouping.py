@@ -8,6 +8,7 @@ Tests for MapFactory grouping/filtering helpers used by mayatk.MatUpdater:
 These drive multi-set detection and PBR map dedup. They have no on-disk
 side effects — pure dict transforms.
 """
+import os
 import unittest
 
 from pythontk import MapFactory
@@ -411,6 +412,198 @@ class CoverageAwareRedundancyTest(BaseTestCase):
         MapFactory.filter_redundant_maps(d, config={"mask_map": False})
         self.assertNotIn("MSAO", d)
         self.assertIn("Ambient_Occlusion", d)
+
+
+class ResolveNormalMapsTest(BaseTestCase):
+    """One normal map per inventory, optionally in a requested convention.
+
+    `Normal`, `Normal_OpenGL` and `Normal_DirectX` have no `replaces` relation,
+    so `filter_redundant_maps` never collapses them — yet all three drive the
+    same shader input, and a set carrying two wired it twice.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import pythontk as ptk
+
+        self._artifacts = ptk.TempArtifacts("resolve_normals")
+        self.tmp = self._artifacts.dir_path()
+
+    def tearDown(self):
+        self._artifacts.cleanup()
+        super().tearDown()
+
+    def _normal(self, name, color=(120, 60, 240)):
+        from PIL import Image
+
+        path = os.path.join(self.tmp, name)
+        Image.new("RGB", (8, 8), color).save(path)
+        return path
+
+    def test_explicit_tag_supersedes_the_ambiguous_map(self):
+        inv = {"Normal": "/x/a.png", "Normal_OpenGL": "/x/b.png"}
+        report = MapFactory.resolve_normal_maps(inv)
+        self.assertEqual(list(inv), ["Normal_OpenGL"])
+        self.assertIn("Normal", report["dropped"])
+
+    def test_all_losing_types_are_dropped(self):
+        inv = {
+            "Normal": "/x/a.png",
+            "Normal_OpenGL": "/x/b.png",
+            "Normal_DirectX": "/x/c.png",
+            "Roughness": "/x/r.png",
+        }
+        MapFactory.resolve_normal_maps(inv)
+        self.assertEqual(sorted(inv), ["Normal_OpenGL", "Roughness"])
+
+    def test_no_target_format_leaves_the_survivor_untouched(self):
+        """Blender's path: the graph flips green, nothing is written."""
+        inv = {"Normal_DirectX": "/x/c.png"}
+        report = MapFactory.resolve_normal_maps(inv)
+        self.assertEqual(inv, {"Normal_DirectX": "/x/c.png"})
+        self.assertEqual(report["converted"], {})
+
+    def test_target_format_converts_the_opposite_tag(self):
+        """Maya's path: the file has to be right, so it is rewritten."""
+        from PIL import Image
+
+        src = self._normal("conv_Normal_DirectX.png")
+        inv = {"Normal_DirectX": src}
+        report = MapFactory.resolve_normal_maps(inv, target_format="OpenGL")
+
+        self.assertEqual(list(inv), ["Normal_OpenGL"])
+        out = inv["Normal_OpenGL"]
+        self.assertTrue(os.path.isfile(out), out)
+        self.assertEqual(report["converted"]["Normal_OpenGL"], out)
+        # The source type must ALSO be reported dropped, or a caller mapping the
+        # report onto real paths keeps the original file and double-wires.
+        self.assertIn("Normal_DirectX", report["dropped"])
+        self.assertEqual(
+            Image.open(out).convert("RGB").getpixel((4, 4))[1],
+            255 - Image.open(src).convert("RGB").getpixel((4, 4))[1],
+        )
+
+    def test_matching_target_format_is_a_no_op(self):
+        inv = {"Normal_OpenGL": "/x/b.png"}
+        report = MapFactory.resolve_normal_maps(inv, target_format="OpenGL")
+        self.assertEqual(inv, {"Normal_OpenGL": "/x/b.png"})
+        self.assertEqual(report["converted"], {})
+
+    def test_ambiguous_map_is_never_converted(self):
+        """Its convention is unknown — flipping could invert a correct map."""
+        inv = {"Normal": "/x/a.png"}
+        report = MapFactory.resolve_normal_maps(inv, target_format="DirectX")
+        self.assertEqual(inv, {"Normal": "/x/a.png"})
+        self.assertEqual(report["converted"], {})
+
+    def test_convert_false_keeps_the_mismatched_map(self):
+        inv = {"Normal_DirectX": "/x/c.png"}
+        MapFactory.resolve_normal_maps(inv, target_format="OpenGL", convert=False)
+        self.assertEqual(inv, {"Normal_DirectX": "/x/c.png"})
+
+    def test_target_format_is_matched_case_insensitively(self):
+        """`convert_normal_map_format` takes "opengl"; so must this.
+
+        Building the type by interpolation instead would yield the unregistered
+        `Normal_opengl` and put a type nothing in the taxonomy recognises into
+        the caller's inventory.
+        """
+        src = self._normal("case_Normal_DirectX.png")
+        inv = {"Normal_DirectX": src}
+        MapFactory.resolve_normal_maps(inv, target_format="opengl")
+        self.assertEqual(list(inv), ["Normal_OpenGL"])
+
+    def test_unknown_convention_leaves_the_map_untouched(self):
+        inv = {"Normal_DirectX": "/x/c.png"}
+        report = MapFactory.resolve_normal_maps(inv, target_format="Vulkan")
+        self.assertEqual(inv, {"Normal_DirectX": "/x/c.png"})
+        self.assertEqual(report["converted"], {})
+
+    def test_empty_inventory_entry_does_not_raise(self):
+        inv = {"Normal_DirectX": []}
+        report = MapFactory.resolve_normal_maps(inv, target_format="OpenGL")
+        self.assertEqual(report["converted"], {})
+
+    def test_no_normals_is_a_no_op(self):
+        inv = {"Base_Color": "/x/bc.png"}
+        report = MapFactory.resolve_normal_maps(inv, target_format="OpenGL")
+        self.assertEqual(inv, {"Base_Color": "/x/bc.png"})
+        self.assertEqual(report, {"dropped": {}, "converted": {}})
+
+    def test_list_valued_inventories_keep_their_shape(self):
+        src = self._normal("shape_Normal_DirectX.png")
+        inv = {"Normal_DirectX": [src]}
+        MapFactory.resolve_normal_maps(inv, target_format="OpenGL")
+        self.assertIsInstance(inv["Normal_OpenGL"], list)
+
+
+class UdimGroupingTest(BaseTestCase):
+    """A UDIM set is one complete texture set PER TILE.
+
+    Each tile is an independent image, so it is its own processable set — but
+    the tiles of one material must not fragment by map type the way they did
+    when the tile token hid the suffix (``rock_Normal.1001`` grouped alone,
+    keyed by its own full stem).
+    """
+
+    FILES = [
+        "/x/rock_BaseColor.1001.png",
+        "/x/rock_Normal.1001.png",
+        "/x/rock_Roughness.1001.png",
+        "/x/rock_BaseColor.1002.png",
+        "/x/rock_Normal.1002.png",
+        "/x/rock_Roughness.1002.png",
+    ]
+
+    def test_tiles_group_into_one_set_each(self):
+        sets = MapFactory.group_textures_by_set(self.FILES)
+        self.assertEqual(sorted(sets), ["rock.1001", "rock.1002"], f"got {list(sets)}")
+        for key, files in sets.items():
+            self.assertEqual(len(files), 3, f"{key}: {files}")
+
+    def test_base_name_drops_the_tile_token(self):
+        """The material name is the material's, not the tile's."""
+        for name in ("/x/rock_Normal.1001.png", "/x/rock_Normal.1002.png"):
+            self.assertEqual(MapFactory.get_base_texture_name(name), "rock")
+
+    def test_get_tile_token_reads_the_token_back(self):
+        self.assertEqual(MapFactory.get_tile_token("/x/rock_Normal.1001.png"), ".1001")
+        self.assertEqual(MapFactory.get_tile_token("/x/rock_Normal.png"), "")
+
+    def test_sort_by_type_sees_every_tile(self):
+        by_type = MapFactory.sort_images_by_type(self.FILES)
+        self.assertEqual(
+            sorted(by_type), ["Base_Color", "Normal", "Roughness"], f"got {by_type}"
+        )
+        for map_type, paths in by_type.items():
+            self.assertEqual(len(paths), 2, f"{map_type}: expected both tiles")
+
+    def test_output_name_keeps_the_tile_token_last(self):
+        """``rock_Normal_OpenGL.1001.png`` — a name Maya/Substance still reads
+        as a tile sequence, and that two tiles cannot collide on."""
+        from pythontk.core_utils.engines.textures.map_factory.processor import (
+            TextureProcessor,
+        )
+
+        ctx = TextureProcessor(
+            inventory={},
+            config={},
+            output_dir="/out",
+            base_name="rock",
+            tile_token=".1001",
+            ext="png",
+            conversion_registry=None,
+        )
+        self.assertEqual(
+            os.path.normpath(ctx.output_path_for("Normal_OpenGL")),
+            os.path.normpath("/out/rock_Normal_OpenGL.1001.png"),
+        )
+
+    def test_two_tiles_do_not_collide_on_output(self):
+        a = MapFactory.resolve_texture_filename("/x/rock_Normal.1001.png", "Normal_OpenGL")
+        b = MapFactory.resolve_texture_filename("/x/rock_Normal.1002.png", "Normal_OpenGL")
+        self.assertNotEqual(a, b)
+        self.assertTrue(a.endswith("rock_Normal_OpenGL.1001.png"), a)
 
 
 if __name__ == "__main__":
