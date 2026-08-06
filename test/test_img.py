@@ -930,6 +930,31 @@ class TestImgUtilsMemory(unittest.TestCase):
         self.assertEqual(rough.getpixel((0, 0)), 100)
         self.assertEqual(metal.getpixel((0, 0)), 150)
 
+    def test_pack_orm_texture_round_trips_through_unpack(self):
+        """pack_orm_texture is the channel-layout SSoT the ORM workflow handler
+        delegates to — pin that its output unpacks back to the same channels."""
+        ao = Image.new("L", self.size, 50)
+        rough = Image.new("L", self.size, 100)
+        metal = Image.new("L", self.size, 150)
+
+        orm = TextureMapFactory.pack_orm_texture(ao, rough, metal, save=False)
+        self.assertIsInstance(orm, Image.Image)
+        self.assertEqual(orm.mode, "RGB")
+        self.assertEqual(orm.getpixel((0, 0)), (50, 100, 150))
+
+        ao2, rough2, metal2 = TextureMapFactory.unpack_orm_texture(orm, save=False)
+        self.assertEqual(ao2.getpixel((0, 0)), 50)
+        self.assertEqual(rough2.getpixel((0, 0)), 100)
+        self.assertEqual(metal2.getpixel((0, 0)), 150)
+
+    def test_pack_orm_texture_neutral_fills(self):
+        """Absent inputs fill to neutral: white AO (full ambient), black
+        roughness/metallic — the same fills the workflow handler warns about."""
+        rough = Image.new("L", self.size, 100)
+
+        orm = TextureMapFactory.pack_orm_texture(None, rough, None, save=False)
+        self.assertEqual(orm.getpixel((0, 0)), (255, 100, 0))
+
     def test_unpack_albedo_transparency_memory(self):
         """Test unpack_albedo_transparency returns tuple of Images when save=False."""
         albedo = Image.new("RGBA", self.size, (200, 100, 50, 128))

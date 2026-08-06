@@ -89,6 +89,7 @@ _Generated: 2026-08-06_
 - [`math_utils/weights.py`](#math_utils--weights) — Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 - [`net_utils/_net_utils.py`](#net_utils--_net_utils)
 - [`net_utils/credentials.py`](#net_utils--credentials)
+- [`net_utils/preview_server.py`](#net_utils--preview_server) — Localhost static-file server for live browser / WebXR previews.
 - [`net_utils/rpc/client.py`](#net_utils--rpc--client) — Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 - [`net_utils/rpc/installer.py`](#net_utils--rpc--installer) — Generic DCC plugin installer (symlink-first, copytree fallback).
 - [`net_utils/rpc/job.py`](#net_utils--rpc--job) — One-shot batch pipeline over :class:`RpcClient`.
@@ -539,31 +540,31 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `ORMMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L159)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
+- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L150)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
   - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L253)** — Handles Unity HDRP Mask Map (MSAO).
+- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L244)** — Handles Unity HDRP Mask Map (MSAO).
   - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L349)** — Handles packed Metallic+Smoothness.
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L340)** — Handles packed Metallic+Smoothness.
   - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L422)** — Handles separate metallic and roughness maps.
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L413)** — Handles separate metallic and roughness maps.
   - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
   - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L459)** — Handles base color / albedo with optional packing.
+- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L450)** — Handles base color / albedo with optional packing.
   - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L611)** — Handles normal map format conversion.
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L602)** — Handles normal map format conversion.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L789)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L780)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -622,23 +623,23 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 Plan, assess, and apply map (texture) optimizations.
 
-- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L67)** — One operation in an optimization plan.
-- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L80)** — Plan, assess, and apply map (texture) optimizations.
-  - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
+- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L71)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L84)** — Plan, assess, and apply map (texture) optimizations.
+  - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest') -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
   - `MapOptimizer.project(plan: List[Op], width: int, height: int, mode: str) -> Tuple[int, int, str]` *(static)* — Replay ``plan``'s op params to get the post-apply size and mode.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
-  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: bool = False, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
   - `MapOptimizer.format_result(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str` *(static)* — Render the one-line result summary for an optimized map.
   - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
-  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
+  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
 
 <a id="core_utils--engines--textures--map_registry"></a>
 ### `core_utils/engines/textures/map_registry.py`
 
 - **[`class WF`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L8)** — Workflow identifiers.
-- **[`class MapType`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L45)** — Defines the properties of a texture map type.
+- **[`class MapType`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L55)** — Defines the properties of a texture map type.
   - `MapType.carried_types(self, include_optional: bool = False) -> List[str]` — The map types this packed map's channels carry.
-- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L144)** — Central registry for map type definitions.
+- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L154)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.register(self, map_type: MapType, overwrite: bool = False) -> MapType` — Register a new map type (or replace an existing one) at runtime.
   - `MapRegistry.select_normal_type(cls, available) -> Optional[str]` *(class)* — The single normal map type a shader should wire, out of those present.
@@ -665,7 +666,7 @@ Plan, assess, and apply map (texture) optimizations.
 
 DCC-agnostic formatters for material / texture info reports.
 
-- **[`class MatReport`](pythontk/pythontk/core_utils/engines/textures/mat_report.py#L27)** — Pure record→text/HTML formatters for material & texture info reports.
+- **[`class MatReport`](pythontk/pythontk/core_utils/engines/textures/mat_report.py#L28)** — Pure record→text/HTML formatters for material & texture info reports.
   - `MatReport.format_texture_info_text(cls, info_list: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_texture_info`` output as a plain-text report.
   - `MatReport.format_texture_info_html(cls, info_list: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_texture_info`` output as styled HTML.
   - `MatReport.format_mat_info_text(cls, records: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_mat_info`` output as a plain-text report.
@@ -676,16 +677,21 @@ DCC-agnostic formatters for material / texture info reports.
 
 Per-map output-format templates — the "export preset" layer.
 
-- **[`class OutputSpec`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L26)** — How a single map is written to disk.
+- **[`class OutputSpec`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L43)** — How a single map is written to disk.
   - `OutputSpec.to_dict(self) -> dict`
   - `OutputSpec.from_dict(cls, d: dict) -> 'OutputSpec'` *(class)*
-- **[`class OutputTemplate`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L54)** — A profile's per-map output formats: a default spec + per-map-type overrides.
+- **[`class DeliveryBudget`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L71)** — A profile's advisory delivery limits — reported by default, not enforced.
+  - `DeliveryBudget.check(self, width: int, height: int) -> List[str]` — Return one message per budget rule ``width`` x ``height`` violates.
+  - `DeliveryBudget.to_dict(self) -> dict`
+  - `DeliveryBudget.from_dict(cls, d: dict) -> 'DeliveryBudget'` *(class)*
+- **[`class OutputTemplate`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L135)** — A profile's per-map output formats: a default spec + per-map-type overrides.
   - `OutputTemplate.resolve(self, map_type: Optional[str]) -> OutputSpec` — Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).
   - `OutputTemplate.to_dict(self) -> dict`
   - `OutputTemplate.from_dict(cls, d: dict) -> 'OutputTemplate'` *(class)*
-- **[`class OutputTemplates`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L82)** — Registry of the built-in per-profile output templates and their resolution.
+- **[`class OutputTemplates`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L172)** — Registry of the built-in per-profile output templates and their resolution.
   - `OutputTemplates.get(cls, profile: Optional[str]) -> OutputTemplate` *(class)* — Return the built-in template for *profile* (a ``WF`` key), or the default.
   - `OutputTemplates.resolve(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec` *(class)* — Resolve the :class:`OutputSpec` for *map_type* under *profile*.
+  - `OutputTemplates.budget(cls, profile: Optional[str]) -> DeliveryBudget` *(class)* — Return the advisory :class:`DeliveryBudget` for *profile*.
 
 <a id="core_utils--engines--textures--region_masks"></a>
 ### `core_utils/engines/textures/region_masks.py`
@@ -966,7 +972,7 @@ Reusable module attribute resolver for package-style imports.
 <a id="core_utils--package_manager"></a>
 ### `core_utils/package_manager.py`
 
-- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L423)** — A class that encapsulates package management functionalities using pip.
+- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L497)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
   - `PackageManager.start_version_check(self, package_name=None, python_path=None) -> None` — Start a version check in a background thread.
@@ -978,11 +984,12 @@ Reusable module attribute resolver for package-style imports.
   - `PackageManager.update_requirements(file_path=None, inc=None, exc=None) -> list` *(static)* — Update the requirements.txt file with current versions of packages.
   - `PackageManager.install(self, package_name)` — Install a package.
   - `PackageManager.uninstall(self, package_name)` — Uninstall a package.
-  - `PackageManager.list_packages(self)` — List installed packages.
+  - `PackageManager.list_packages(self)` — List installed packages as a ``{name: version}`` dict.
   - `PackageManager.package_details(self, package_name)` — Show details of a specific package.
   - `PackageManager.update(self, package_name)` — Update a package to the latest version.
   - `PackageManager.installed_version(self, package_name)` — Get the installed version of a package.
-  - `PackageManager.latest_version(self, package_name)` — Get the latest version of a package from PyPI using the standard library.
+  - `PackageManager.latest_version(self, package_name, timeout=None)` — Get the latest version of a package from PyPI using the standard library.
+  - `PackageManager.latest_versions(self, package_names, timeout=None)` — Latest index version for several packages at once.
   - `PackageManager.list_outdated_packages(self)` — List all outdated packages.
   - `PackageManager.is_outdated(self, package_name: str) -> bool` — Efficiently check if a specific package is outdated.
 
@@ -1222,6 +1229,8 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.check_glb_materials(cls, glb_path: str) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb_path: str) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
+  - `MeshConvert.set_glb_emissive(cls, glb_path: str, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
+  - `MeshConvert.set_glb_base_color(cls, glb_path: str, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
 
 <a id="file_utils--metadata"></a>
 ### `file_utils/metadata.py`
@@ -1565,6 +1574,32 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
   - `Credentials.get_password(target_name: str) -> str` *(static)* — Retrieve a password from the OS secure store or environment.
   - `Credentials.get_credential(target_name: str) -> dict | None` *(static)* — Retrieve full credentials (username and password).
   - `Credentials.set_credential(target_name: str, username: str, password: str, persist: str = 'local_machine') -> bool` *(static)* — Save credentials to the OS secure store.
+
+<a id="net_utils--preview_server"></a>
+### `net_utils/preview_server.py`
+
+Localhost static-file server for live browser / WebXR previews.
+
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview_server.py#L240)** — Serve a directory of preview assets on loopback, with a live manifest.
+  - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
+  - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
+  - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
+  - `PreviewServer.is_running(self) -> bool` *(property)*
+  - `PreviewServer.has_viewer(self) -> bool` — Whether a page is currently watching this server.
+  - `PreviewServer.manifest(self) -> Dict[str, Any]` — The payload served at ``/manifest.json``.
+  - `PreviewServer.start(self) -> 'PreviewServer'` — Bind the port and serve on a daemon thread.
+  - `PreviewServer.stop(self) -> None` — Stop serving and release the port.
+  - `PreviewServer.publish(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int` — Place an asset in the serve root and bump the manifest version.
+  - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer in the default browser.
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L460)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
+  - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
+  - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L642)** — Hand-off bridge whose target is a live preview page rather than an application.
+  - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
+  - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
+  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
+  - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
+  - `PreviewBridge.stop(self) -> None` — Stop serving and release the port.
 
 <a id="net_utils--rpc--client"></a>
 ### `net_utils/rpc/client.py`

@@ -10,7 +10,7 @@ import shutil
 import struct
 import subprocess
 import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -53,6 +53,15 @@ class MeshConvert(HelpMixin):
 
     TOOL_NAME = "fbx2gltf"
     DEFAULT_TIMEOUT = 300  # 5 minutes — enough for very large FBX files
+    # Image types glTF 2.0 accepts natively. Anything else (TIFF, EXR, TGA —
+    # all common in a DCC source tree) is re-encoded to PNG via Pillow when
+    # available (see `_reencode_as_png`), and otherwise rejected by name
+    # rather than written as an unloadable data URI.
+    IMAGE_MIME_TYPES = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }
 
     @classmethod
     def _platform_exe_name(cls) -> str:
@@ -281,24 +290,7 @@ class MeshConvert(HelpMixin):
                 "`pip install pillow`."
             ) from exc
 
-        if not os.path.isfile(glb_path):
-            raise FileNotFoundError(glb_path)
-
-        with open(glb_path, "rb") as f:
-            header = f.read(12)
-            if len(header) < 12 or header[:4] != b"glTF":
-                raise ValueError(f"Not a GLB file: {glb_path}")
-            _version, _total = struct.unpack("<II", header[4:])
-            chunk0_len, chunk0_type = struct.unpack("<I4s", f.read(8))
-            if chunk0_type != b"JSON":
-                raise ValueError(f"Malformed GLB: first chunk is not JSON ({glb_path})")
-            gltf = json.loads(f.read(chunk0_len).decode("utf-8"))
-            bin_data: Optional[bytes] = None
-            header = f.read(8)
-            if len(header) == 8:
-                bin_len, bin_type = struct.unpack("<I4s", header)
-                if bin_type == b"BIN\x00":
-                    bin_data = f.read(bin_len)
+        _version, gltf, _rest, bin_data = cls._read_glb(glb_path)
 
         materials = gltf.get("materials", []) or []
         textures = gltf.get("textures", []) or []
@@ -432,28 +424,7 @@ class MeshConvert(HelpMixin):
                 "Install it with `pip install pillow`."
             ) from exc
 
-        if not os.path.isfile(glb_path):
-            raise FileNotFoundError(glb_path)
-
-        with open(glb_path, "rb") as f:
-            magic = f.read(4)
-            if magic != b"glTF":
-                raise ValueError(f"Not a GLB file: {glb_path}")
-            version_bytes = f.read(4)
-            f.read(4)  # total length — recomputed on write
-            chunk0_len = struct.unpack("<I", f.read(4))[0]
-            chunk0_type = f.read(4)
-            if chunk0_type != b"JSON":
-                raise ValueError(f"Malformed GLB: first chunk not JSON ({glb_path})")
-            json_bytes = f.read(chunk0_len)
-            gltf = json.loads(json_bytes.decode("utf-8"))
-            rest = f.read()
-
-        bin_data: Optional[bytes] = None
-        if len(rest) >= 8:
-            bin_len = struct.unpack("<I", rest[:4])[0]
-            if rest[4:8] == b"BIN\x00":
-                bin_data = rest[8 : 8 + bin_len]
+        version_bytes, gltf, rest, bin_data = cls._read_glb(glb_path)
 
         materials = gltf.get("materials", []) or []
         textures = gltf.get("textures", []) or []
@@ -535,22 +506,385 @@ class MeshConvert(HelpMixin):
         if not fixes:
             return []
 
-        # Re-serialize JSON (compact) and pad to 4-byte align with 0x20.
+        cls._write_glb(glb_path, version_bytes, gltf, rest)
+        return fixes
+
+    @staticmethod
+    def _read_glb(glb_path: str) -> Tuple[bytes, dict, bytes, Optional[bytes]]:
+        """Split a GLB into ``(version_bytes, gltf, rest, bin_data)``.
+
+        The single owner of GLB container parsing for this class — the JSON
+        chunk is what every repair here edits, and re-deriving the offsets per
+        function is how one of them ends up with a subtly different idea of
+        where the BIN chunk starts.
+
+        *rest* is every byte after the JSON chunk, kept verbatim so a writer can
+        put it back untouched; *bin_data* is the BIN chunk's payload alone, for
+        callers resolving ``bufferView``-backed images.
+        """
+        if not os.path.isfile(glb_path):
+            raise FileNotFoundError(glb_path)
+
+        with open(glb_path, "rb") as f:
+            # Read the fixed 12-byte header and the 8-byte chunk header in one
+            # go each and length-check them: a file truncated mid-write reaches
+            # struct.unpack with a short buffer, and struct.error derives from
+            # Exception — it slips past callers' (RuntimeError, ValueError,
+            # OSError) per-file handlers and aborts a whole batch.
+            header = f.read(12)
+            if len(header) < 12 or header[:4] != b"glTF":
+                raise ValueError(f"Not a GLB file: {glb_path}")
+            version_bytes = header[4:8]  # total length is recomputed on write
+            chunk0_header = f.read(8)
+            if len(chunk0_header) < 8:
+                raise ValueError(f"Malformed GLB: truncated chunk header ({glb_path})")
+            chunk0_len = struct.unpack("<I", chunk0_header[:4])[0]
+            chunk0_type = chunk0_header[4:]
+            if chunk0_type != b"JSON":
+                raise ValueError(f"Malformed GLB: first chunk not JSON ({glb_path})")
+            gltf = json.loads(f.read(chunk0_len).decode("utf-8"))
+            rest = f.read()
+
+        bin_data: Optional[bytes] = None
+        if len(rest) >= 8:
+            bin_len = struct.unpack("<I", rest[:4])[0]
+            if rest[4:8] == b"BIN\x00":
+                bin_data = rest[8 : 8 + bin_len]
+
+        return version_bytes, gltf, rest, bin_data
+
+    @staticmethod
+    def _write_glb(glb_path: str, version_bytes: bytes, gltf: dict, rest: bytes) -> None:
+        """Rewrite *glb_path* with an edited JSON chunk and *rest* verbatim.
+
+        The JSON chunk is padded to a 4-byte boundary with spaces and the total
+        length recomputed — both required by the GLB spec, and both easy to get
+        wrong in a way that only some loaders reject.
+        """
         new_json = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
-        pad = (4 - (len(new_json) % 4)) % 4
-        new_json = new_json + (b" " * pad)
-        new_total = 12 + 8 + len(new_json) + len(rest)
+        new_json += b" " * ((4 - (len(new_json) % 4)) % 4)
 
         with open(glb_path, "wb") as f:
             f.write(b"glTF")
             f.write(version_bytes)
-            f.write(struct.pack("<I", new_total))
+            f.write(struct.pack("<I", 12 + 8 + len(new_json) + len(rest)))
             f.write(struct.pack("<I", len(new_json)))
             f.write(b"JSON")
             f.write(new_json)
             f.write(rest)
 
-        return fixes
+    @staticmethod
+    def _match_glb_materials(
+        gltf: dict, entries: Dict[str, Dict[str, Any]], caller: str
+    ) -> List[Tuple[str, Dict[str, Any], dict]]:
+        """Pair sidecar *entries* with the GLB materials they name.
+
+        The shared front half of every by-name channel writer here: resolve
+        each entry against the GLB's material list and report the misses in
+        one loud line. Loud, with both name sets, because a name the converter
+        renamed makes the write a total no-op and "my emissive is missing" is
+        indistinguishable from "the channel was never read" unless the
+        mismatch says so.
+        """
+        by_name = {
+            m.get("name"): m for m in gltf.get("materials", []) or [] if m.get("name")
+        }
+        matched = [
+            (name, spec, by_name[name])
+            for name, spec in entries.items()
+            if name in by_name
+        ]
+        unmatched = sorted(set(entries) - set(by_name))
+        if unmatched:
+            logger.warning(
+                "%s: %s material(s) had no match in the GLB and were skipped: %s. "
+                "GLB materials are: %s.",
+                caller,
+                len(unmatched),
+                unmatched,
+                sorted(by_name) or "<none>",
+            )
+        return matched
+
+    @classmethod
+    def set_glb_emissive(
+        cls, glb_path: str, emissive: Dict[str, Dict[str, Any]]
+    ) -> List[Dict]:
+        """Write emissive color / texture into a GLB's materials, by name.
+
+        Repairs the channel Maya's FBX exporter simply drops. It maps emissive
+        only for its own legacy shading models (lambert / blinn / phong via
+        ``incandescence``); ``aiStandardSurface``, ``StingrayPBS`` and openPBR
+        emission never reach the FBX at all, so the GLB has no ``emissiveFactor``
+        to correct and the surface previews as unlit. Measured against Maya
+        2025 + MtoA: lambert and blinn arrive with ``emissiveFactor``, the other
+        two arrive with the key absent entirely.
+
+        Emissive intensity above 1.0 is preserved rather than clipped, by
+        normalizing the color and carrying the magnitude in
+        ``KHR_materials_emissive_strength`` — glTF's base ``emissiveFactor`` is
+        LDR, so a Maya emission of 5.0 would otherwise flatten to 1.0 and lose
+        exactly the over-bright look that motivates using it. The extension is
+        declared in ``extensionsUsed`` only when actually applied; loaders that
+        don't implement it still get a sensible clamped color.
+
+        Textures are embedded as ``data:`` URIs rather than appended to the BIN
+        chunk. That keeps the edit inside the JSON chunk — no buffer offsets to
+        recompute, which is the part of GLB surgery that silently corrupts a
+        file — at the cost of base64's ~33% overhead, which a local preview can
+        afford. Repeated paths are embedded once and shared.
+
+        Parameters:
+            glb_path: Path to a binary glTF (.glb), modified in place.
+            emissive: ``{material_name: {"color": (r, g, b), "texture": path}}``.
+                Both keys optional; a texture with no color implies white.
+                Names not present in the GLB are reported, not raised.
+
+        Returns:
+            List of records: ``material``, ``factor``, ``strength``, ``texture``.
+        """
+        if not emissive:
+            return []
+
+        version_bytes, gltf, rest, _bin = cls._read_glb(glb_path)
+        embedded: Dict[str, int] = {}
+
+        def _embed(path: str) -> Optional[int]:
+            return cls._embed_image(gltf, path, embedded)
+
+        records: List[Dict] = []
+        used_strength = False
+        for name, spec, mat in cls._match_glb_materials(
+            gltf, emissive, "set_glb_emissive"
+        ):
+            color = list(spec.get("color") or (1.0, 1.0, 1.0))[:3]
+            if len(color) < 3:
+                color += [0.0] * (3 - len(color))
+
+            # A zero colour is zero emission -- and paired with a texture it is
+            # actively harmful rather than merely redundant: glTF emission is
+            # ``emissiveFactor * emissiveTexture``, so writing both multiplies
+            # the map to black while still reporting a successful transfer.
+            # Tested before embedding, so a skipped material leaves no orphaned
+            # image in the file.
+            if all(c <= 0.0 for c in color):
+                continue
+
+            peak = max(color)
+            strength = None
+            if peak > 1.0:
+                color = [c / peak for c in color]
+                strength = peak
+                mat.setdefault("extensions", {})["KHR_materials_emissive_strength"] = {
+                    "emissiveStrength": strength
+                }
+                used_strength = True
+
+            tex_path = spec.get("texture")
+            tex_index = _embed(tex_path) if tex_path else None
+            if tex_index is not None:
+                mat["emissiveTexture"] = {"index": tex_index}
+
+            mat["emissiveFactor"] = color
+
+            records.append(
+                {
+                    "material": name,
+                    "factor": color,
+                    "strength": strength,
+                    "texture": tex_path if tex_index is not None else None,
+                }
+            )
+
+        if not records:
+            return []
+
+        if used_strength:
+            used = gltf.setdefault("extensionsUsed", [])
+            if "KHR_materials_emissive_strength" not in used:
+                used.append("KHR_materials_emissive_strength")
+
+        # Drop containers left empty, rather than emitting `"samplers": []` —
+        # an empty array is invalid per the glTF schema (minItems 1).
+        for key in ("images", "textures", "samplers"):
+            if not gltf.get(key):
+                gltf.pop(key, None)
+
+        cls._write_glb(glb_path, version_bytes, gltf, rest)
+        return records
+
+    @classmethod
+    def _embed_image(
+        cls, gltf: dict, path: str, cache: Dict[str, int]
+    ) -> Optional[int]:
+        """Embed *path* as a ``data:`` URI image and return its texture index.
+
+        Shared by every channel writer here. Data URIs keep the whole edit
+        inside the JSON chunk -- no buffer offsets to recompute, which is the
+        part of GLB surgery that silently corrupts a file -- at the cost of
+        base64's ~33% overhead, which a local preview can afford. Repeated
+        paths resolve to one image via *cache*.
+        """
+        if path in cache:
+            return cache[path]
+        if not os.path.isfile(path):
+            logger.warning("GLB texture embed: file not found: %s", path)
+            return None
+        mime = cls.IMAGE_MIME_TYPES.get(os.path.splitext(path)[1].lower())
+        if mime is not None:
+            with open(path, "rb") as f:
+                raw = f.read()
+        else:
+            # glTF accepts only PNG/JPEG, but TGA/TIFF/BMP are routine in a
+            # DCC source tree -- TGA especially, all over game art -- and
+            # written as-is they would be an unloadable data URI rather than a
+            # reported failure. Re-encode to PNG when Pillow can read them;
+            # only what it cannot (EXR, or no Pillow at all) is rejected.
+            raw = cls._reencode_as_png(path)
+            if raw is None:
+                logger.warning("GLB texture embed: unsupported image type: %s", path)
+                return None
+            mime = "image/png"
+
+        images = gltf.setdefault("images", [])
+        textures = gltf.setdefault("textures", [])
+        samplers = gltf.setdefault("samplers", [])
+        data = base64.b64encode(raw).decode("ascii")
+        images.append(
+            {
+                "name": os.path.basename(path),
+                "uri": f"data:{mime};base64,{data}",
+                "mimeType": mime,
+            }
+        )
+        if not samplers:  # one repeat sampler is enough for a preview
+            samplers.append({"wrapS": 10497, "wrapT": 10497})
+        textures.append({"source": len(images) - 1, "sampler": 0})
+        cache[path] = len(textures) - 1
+        return cache[path]
+
+    @staticmethod
+    def _reencode_as_png(path: str) -> Optional[bytes]:
+        """PNG bytes for an image glTF can't hold natively, or ``None``.
+
+        Pillow is deliberately optional (this package's zero-dep rule): without
+        it, or for a format it can't read (EXR), the caller falls back to the
+        same rejected-by-name warning as before. The bare ``save`` is tried
+        first so PNG-representable modes (16-bit gray, palette) pass through
+        losslessly; only modes PNG itself refuses (CMYK, float) are converted.
+        """
+        try:
+            from PIL import Image
+        except ImportError:
+            # Distinguishable in the log from a truly unsupported format: the
+            # caller's warning says "unsupported image type", which would send
+            # someone hunting a format problem when the fix is `pip install
+            # pillow`.
+            logger.debug(
+                "GLB texture embed: Pillow unavailable; cannot re-encode %s", path
+            )
+            return None
+        import io
+
+        try:
+            with Image.open(path) as img:
+                buf = io.BytesIO()
+                try:
+                    img.save(buf, format="PNG")
+                except (OSError, ValueError):
+                    buf = io.BytesIO()
+                    mode = "RGBA" if "A" in img.getbands() else "RGB"
+                    img.convert(mode).save(buf, format="PNG")
+                return buf.getvalue()
+        except (OSError, ValueError) as error:
+            logger.warning("GLB texture embed: could not re-encode %s: %s", path, error)
+            return None
+
+    @classmethod
+    def set_glb_base_color(
+        cls, glb_path: str, base_color: Dict[str, Dict[str, Any]]
+    ) -> List[Dict]:
+        """Write base colour / texture into a GLB's materials, by name.
+
+        The sibling of :meth:`set_glb_emissive`, for the same underlying gap.
+        Measured against Maya 2025 + MtoA: ``lambert`` / ``blinn`` / ``phong``
+        carry their colour through FBX (scaled by Maya's ``diffuse`` weight),
+        while ``aiStandardSurface`` and ``standardSurface`` arrive with
+        ``baseColorFactor`` at a flat **[1,1,1,1]** -- Maya's exporter does not
+        map them at all, so every modern shader previews as white plastic. That
+        also swamps emissive: a surface already at white leaves no headroom for
+        an additive term to read against.
+
+        Unlike emissive there is no strength extension and no zero-skip: black
+        is a legitimate base colour, so values are clamped into [0,1] rather
+        than normalized, and an all-zero colour is written as authored.
+
+        Parameters:
+            glb_path: Path to a binary glTF (.glb), modified in place.
+            base_color: ``{material_name: {"color": (r, g, b), "texture": path}}``.
+                Both keys optional. Names absent from the GLB are reported.
+
+        Returns:
+            List of records: ``material``, ``factor``, ``texture``.
+        """
+        if not base_color:
+            return []
+
+        version_bytes, gltf, rest, _bin = cls._read_glb(glb_path)
+        embedded: Dict[str, int] = {}
+        records: List[Dict] = []
+
+        for name, spec, mat in cls._match_glb_materials(
+            gltf, base_color, "set_glb_base_color"
+        ):
+            pbr = mat.setdefault("pbrMetallicRoughness", {})
+            entry_written = False
+
+            tex_path = spec.get("texture")
+            tex_index = None
+            if tex_path:
+                tex_index = cls._embed_image(gltf, tex_path, embedded)
+                if tex_index is not None:
+                    pbr["baseColorTexture"] = {"index": tex_index}
+                    entry_written = True
+
+            color = spec.get("color")
+            factor = None
+            if color is not None:
+                factor = [min(1.0, max(0.0, float(c))) for c in list(color)[:3]]
+                while len(factor) < 3:
+                    factor.append(0.0)
+                # Preserve any alpha the converter already established; this
+                # writer is about colour and must not silently turn a
+                # transparent material opaque.
+                existing = pbr.get("baseColorFactor") or [1.0, 1.0, 1.0, 1.0]
+                factor.append(existing[3] if len(existing) > 3 else 1.0)
+                pbr["baseColorFactor"] = factor
+                entry_written = True
+
+            if entry_written:
+                records.append(
+                    {
+                        "material": name,
+                        "factor": factor,
+                        # Gate on the embed RESULT, not the request: an image
+                        # that could not be embedded (missing, EXR, no Pillow)
+                        # writes no baseColorTexture, so reporting its path
+                        # claims a channel the GLB does not carry. Mirrors the
+                        # emissive writer.
+                        "texture": tex_path if tex_index is not None else None,
+                    }
+                )
+
+        if not records:
+            return []
+
+        for key in ("images", "textures", "samplers"):
+            if not gltf.get(key):
+                gltf.pop(key, None)
+
+        cls._write_glb(glb_path, version_bytes, gltf, rest)
+        return records
 
     @staticmethod
     def _extract_image_bytes(

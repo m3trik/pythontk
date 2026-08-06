@@ -713,6 +713,73 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
         self.assertEqual(open(path, "rb").read(), before)
 
 
+class TestGlbReadGuards(unittest.TestCase):
+    """A truncated GLB must fail as a ValueError, not a struct.error.
+
+    Batch callers catch ``(RuntimeError, ValueError, OSError)`` per file.
+    ``struct.error`` derives straight from ``Exception``, so a GLB truncated
+    mid-write (converter killed, disk full) escaped the per-file handler and
+    aborted the whole batch.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_glb_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _truncated(self, payload):
+        path = os.path.join(self.tmp, "truncated.glb")
+        with open(path, "wb") as f:
+            f.write(payload)
+        return path
+
+    def test_header_shorter_than_12_bytes_raises_value_error(self):
+        path = self._truncated(b"glTF\x02\x00\x00\x00")  # valid magic, no length
+        with self.assertRaises(ValueError):
+            MeshConvert.check_glb_materials(path)
+
+    def test_missing_chunk_header_raises_value_error(self):
+        path = self._truncated(b"glTF" + struct.pack("<II", 2, 12))  # header only
+        with self.assertRaises(ValueError):
+            MeshConvert.check_glb_materials(path)
+
+
+class TestBaseColorRecordHonesty(unittest.TestCase):
+    """``set_glb_base_color`` must not report a texture it did not embed."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_basecolor_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_unembeddable_texture_is_not_reported_as_written(self):
+        gltf = {
+            "asset": {"version": "2.0"},
+            "materials": [{"name": "Body", "pbrMetallicRoughness": {}}],
+        }
+        json_bytes = json.dumps(gltf).encode("utf-8")
+        json_bytes += b" " * ((4 - (len(json_bytes) % 4)) % 4)
+        path = os.path.join(self.tmp, "m.glb")
+        with open(path, "wb") as f:
+            f.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(json_bytes)))
+            f.write(struct.pack("<I4s", len(json_bytes), b"JSON") + json_bytes)
+
+        # A texture path that cannot be embedded (file does not exist), plus a
+        # colour so the entry is still written.
+        records = MeshConvert.set_glb_base_color(
+            path,
+            {"Body": {"texture": os.path.join(self.tmp, "missing.png"),
+                      "color": [1.0, 0.0, 0.0]}},
+        )
+        self.assertEqual(len(records), 1)
+        self.assertIsNone(
+            records[0]["texture"],
+            "no baseColorTexture was written — the record must not claim one",
+        )
+
+
 @unittest.skipUnless(
     os.environ.get("PYTHONTK_INTEGRATION_TESTS") == "1",
     "Set PYTHONTK_INTEGRATION_TESTS=1 to run network/install integration tests.",

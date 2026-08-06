@@ -126,5 +126,59 @@ class TestORMHandlerExistingPassthrough(unittest.TestCase):
         )
 
 
+class TestORMHandlerFreshPack(unittest.TestCase):
+    """The fresh-pack path delegates to ``MapFactory.pack_orm_texture`` — pin
+    the channel order (AO->R, Roughness->G, Metallic->B) *through the handler*,
+    so the delegation wiring and the packer cannot drift apart. The round-trip
+    test in test_img.py covers the packer alone; this covers the strategy that
+    ships it."""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="handlers_orm_freshpack_")
+        self.output_dir = os.path.join(self.test_dir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+        # Distinctive per-channel values so a swapped channel is unmistakable.
+        self.channel_values = {
+            "Ambient_Occlusion": 100,
+            "Roughness": 180,
+            "Metallic": 30,
+        }
+        self.inventory = {}
+        for map_type, value in self.channel_values.items():
+            path = os.path.join(self.test_dir, f"mat_{map_type}.png")
+            ImgUtils.save_image(ImgUtils.create_image("L", (16, 16), value), path)
+            self.inventory[map_type] = path
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_loose_maps_pack_in_orm_channel_order(self):
+        ctx = TextureProcessor(
+            inventory=dict(self.inventory),
+            config={"orm_map": True, "rename": True},
+            output_dir=self.output_dir,
+            base_name="mat",
+            ext="png",
+            conversion_registry=MapFactory._conversion_registry,
+            logger=MagicMock(),
+        )
+        handler = ORMMapHandler()
+        self.assertTrue(handler.can_handle(ctx))
+
+        result = handler.process(ctx)
+        self.assertIsNotNone(result, "handler produced no ORM output")
+
+        out = ImgUtils.ensure_image(result).convert("RGB")
+        self.assertEqual(
+            out.getpixel((8, 8)),
+            (
+                self.channel_values["Ambient_Occlusion"],
+                self.channel_values["Roughness"],
+                self.channel_values["Metallic"],
+            ),
+            "fresh pack lost the AO/Rough/Metal channel order",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

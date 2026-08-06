@@ -19,10 +19,12 @@ class _PackageManagerHelperMixin:
     Methods:
         install: Install a specified Python package.
         uninstall: Uninstall a specified Python package.
-        list_packages: List all installed Python packages.
+        list_packages: Installed packages as a ``{name: version}`` dict.
         package_details: Retrieve detailed information about a specified package.
         update: Update a specified Python package to the latest version.
         package_version: Get the installed version of a specified package.
+        latest_version: Index version for one package.
+        latest_versions: Index versions for several, concurrently (failures -> None).
         list_outdated_packages: List all outdated Python packages in the environment.
         is_outdated: Check if a specified package is outdated.
 
@@ -47,12 +49,30 @@ class _PackageManagerHelperMixin:
         self.pip(f"uninstall {package_name} -y")
 
     def list_packages(self):
-        """List installed packages.
+        """List installed packages as a ``{name: version}`` dict.
 
         Example:
             installed_packages = pkg_mgr.list_packages()
         """
-        return self.pip("list")
+        raw = self.pip("list --format=json", output_as_string=True)
+        # pip prints the JSON array as a single stdout line; a successful run can
+        # still emit stderr noise (self-check notices, proxy chatter) that lands
+        # around it. Parse per line so surrounding noise — even bracketed noise a
+        # filter pattern didn't anticipate — is structurally ignored.
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                try:
+                    packages = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                return {pkg["name"]: pkg["version"] for pkg in packages}
+        # An empty environment prints "[]", which the loop above parses to {}.
+        # Reaching here means pip produced NO JSON array at all — a failure.
+        # Returning {} would report "nothing is installed", which reads as a
+        # valid answer and would have the ecosystem updater offer to reinstall
+        # every package.
+        raise RuntimeError(f"Could not parse 'pip list' output: {raw[:200]!r}")
 
     def package_details(self, package_name):
         """Show details of a specific package.
@@ -75,17 +95,32 @@ class _PackageManagerHelperMixin:
         package_info = self.package_details(package_name)
         return package_info.get("version", "Not installed")
 
-    def latest_version(self, package_name):
-        """Get the latest version of a package from PyPI using the standard library."""
+    # Seconds to wait on the package index. Without it urlopen blocks on the OS
+    # default (effectively forever): this is called from a DCC's UI thread, once
+    # per ecosystem package, so an unreachable or throttled index would hang
+    # Maya/Blender instead of reporting a failed check.
+    INDEX_TIMEOUT = 10
+
+    def latest_version(self, package_name, timeout=None):
+        """Get the latest version of a package from PyPI using the standard library.
+
+        Parameters:
+            package_name (str): Distribution name to query.
+            timeout (float, optional): Seconds to wait. Defaults to
+                :attr:`INDEX_TIMEOUT`.
+        """
         import json
-        from urllib.request import Request, urlopen
+        import urllib.request
+        from urllib.request import Request
         from urllib.error import URLError, HTTPError
 
         url = f"https://pypi.org/pypi/{package_name}/json"
         request = Request(url)
 
         try:
-            with urlopen(request) as response:
+            with urllib.request.urlopen(
+                request, timeout=self.INDEX_TIMEOUT if timeout is None else timeout
+            ) as response:
                 data = json.loads(response.read().decode())
                 return data["info"]["version"]  # Return the latest version
         except HTTPError as e:
@@ -100,6 +135,45 @@ class _PackageManagerHelperMixin:
             raise RuntimeError(
                 f"Failed to parse JSON response for {package_name}: {e.msg}"
             )
+
+    def latest_versions(self, package_names, timeout=None):
+        """Latest index version for several packages at once.
+
+        Each lookup is an independent HTTPS round trip, so they are issued
+        concurrently: run in sequence they multiply :attr:`INDEX_TIMEOUT` by the
+        package count, and this is called from a DCC's UI thread.
+
+        A lookup that fails maps to ``None`` rather than propagating — one
+        unreachable package must not discard the answers that did arrive.
+        Callers must treat ``None`` as *unknown*, never as "outdated" (a
+        ``installed != latest`` comparison would otherwise read a failed lookup
+        as an available update).
+
+        Parameters:
+            package_names (iterable): Distribution names to query.
+            timeout (float, optional): Per-request seconds; see
+                :meth:`latest_version`.
+
+        Returns:
+            dict: ``{name: version_or_None}``.
+
+        Example:
+            pkg_mgr.latest_versions(["pythontk", "uitk"])
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        names = list(package_names)
+        if not names:
+            return {}
+
+        def _one(name):
+            try:
+                return self.latest_version(name, timeout=timeout)
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=min(8, len(names))) as pool:
+            return dict(zip(names, pool.map(_one, names)))
 
     def list_outdated_packages(self):
         """List all outdated packages.
@@ -492,8 +566,19 @@ class PackageManager(
         return output.strip() if output_as_string else self._convert_output(output)
 
     def _is_informational_message(self, stderr):
-        """Check if the stderr message is informational."""
-        informational_patterns = ["A new release of pip available"]
+        """Check if the stderr message is informational.
+
+        pip's wording has shifted across versions ("A new release of pip
+        available" vs ">= 22's "... pip is available", the "[notice]" prefix,
+        and the self-check's WARNING when offline) — all are noise from
+        successful runs, not errors.
+        """
+        informational_patterns = [
+            "A new release of pip",
+            "To update, run",
+            "error checking the latest version of pip",
+            "[notice]",
+        ]
         return any(pattern in stderr for pattern in informational_patterns)
 
     def _convert_output(self, output):

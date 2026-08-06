@@ -6,7 +6,17 @@ from pythontk.core_utils.singleton_mixin import SingletonMixin
 
 
 class WF:
-    """Workflow identifiers."""
+    """Workflow identifiers.
+
+    One entry per *material model* — which maps get packed, and by what normal
+    convention. Delivery concerns (container, bit depth, size budget) are a
+    separate axis, owned by ``output_template.OutputTemplates``.
+
+    WebXR has no entry of its own: the WebXR runtime material model *is* glTF 2.0
+    (ORM packing, +Y normals), so :attr:`GLTF` is the profile for it, and the
+    web/headset delivery ceiling rides on that profile's ``DeliveryBudget``. A
+    second key would resolve to a byte-identical config under a different name.
+    """
 
     STD = "PBR Metallic/Roughness"
     URP = "Unity URP Lit"
@@ -146,29 +156,63 @@ class MapRegistry(SingletonMixin):
 
     _precedence_rules = None
     _workflow_settings = {
+        # Each description ends with the platforms the profile actually ships to —
+        # it is the string every tool renders as its preset tooltip (game_shader,
+        # converter, compositor all read it from here), and "which one is right for
+        # me" is answered by the target, not by the packing scheme.
+        # Plain text only: Qt auto-detects rich text in tooltips, so angle brackets
+        # would be parsed as markup and silently swallow the word inside them.
         WF.STD: {
-            "description": "Standard PBR workflow (Metallic/Roughness) with separate Opacity. Best for general use."
+            "description": (
+                "Standard PBR workflow (Metallic/Roughness) with separate Opacity. "
+                "Best for general use. Targets: DCC and offline rendering, Marmoset "
+                "Toolbag, Substance, and any engine that takes loose maps."
+            )
         },
         WF.URP: {
-            "description": "Unity Universal Render Pipeline. Packs Metallic (R) and Smoothness (A)."
+            "description": (
+                "Unity Universal Render Pipeline. Packs Metallic (R) and Smoothness "
+                "(A). Targets: Unity mobile, standalone VR (Quest), Switch, and "
+                "mid-tier PC."
+            )
         },
         WF.HDRP: {
-            "description": "Unity High Definition Render Pipeline. Uses Mask Map (Metallic, AO, Detail, Smoothness)."
+            "description": (
+                "Unity High Definition Render Pipeline. Uses Mask Map (Metallic, AO, "
+                "Detail, Smoothness). Targets: Unity high-end PC, PS5 / Xbox Series, "
+                "tethered VR, and virtual production."
+            )
         },
         WF.UE: {
             "normal_type": "DirectX",
-            "description": "Unreal Engine. Uses ORM (Occlusion, Roughness, Metallic) and DirectX Normals.",
+            "description": (
+                "Unreal Engine. Uses ORM (Occlusion, Roughness, Metallic) and DirectX "
+                "Normals. Targets: UE4 / UE5 on PC, console, mobile, and virtual "
+                "production."
+            ),
         },
         WF.GLTF: {
-            "description": "glTF 2.0 standard. Uses ORM (Occlusion, Roughness, Metallic)."
+            "description": (
+                "glTF 2.0 / GLB, the open runtime format. Uses ORM (Occlusion, "
+                "Roughness, Metallic) and OpenGL (+Y) Normals. Targets: WebXR "
+                "(Quest browser, headset and mobile XR), three.js, Babylon.js, "
+                "Google model-viewer, and Blender / Godot import."
+            )
         },
         WF.GODOT: {
             "normal_type": "OpenGL",
-            "description": "Godot Engine. Uses ORM and OpenGL Normals.",
+            "description": (
+                "Godot Engine. Uses ORM and OpenGL Normals. Targets: Godot 4 on PC, "
+                "mobile, and HTML5 / web export."
+            ),
         },
         WF.SPEC: {
             "convert_specgloss_to_pbr": True,
-            "description": "Converts Specular/Glossiness maps to PBR Metallic/Roughness.",
+            "description": (
+                "Converts Specular/Glossiness maps to PBR Metallic/Roughness. "
+                "Targets: legacy source sets — Unity Built-in Standard (Specular) "
+                "and older Substance / Quixel libraries."
+            ),
         },
     }
     _maps: Dict[str, MapType] = {

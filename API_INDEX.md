@@ -184,10 +184,12 @@ _Generated: 2026-08-06_
 ### `core_utils/engines/textures/output_template.py` — Per-map output-format templates — the "export preset" layer.
 - `class OutputSpec`
   - methods: to_dict, from_dict
+- `class DeliveryBudget`
+  - methods: check, to_dict, from_dict
 - `class OutputTemplate`
   - methods: resolve, to_dict, from_dict
 - `class OutputTemplates`
-  - methods: get, resolve
+  - methods: get, resolve, budget
 
 ### `core_utils/engines/textures/region_masks.py` — Region-mask engine — named face-group masks that gate texture regions at runtime.
 - `class RegionGroup`
@@ -285,7 +287,7 @@ _Generated: 2026-08-06_
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: pip, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, list_outdated_packages, is_outdated
+  - methods: pip, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
 
 ### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - `class Codec`
@@ -362,7 +364,7 @@ _Generated: 2026-08-06_
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, check_glb_materials, fix_glb_phantom_opaque_alpha
+  - methods: resolve_binary, fbx_to_glb, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_emissive, set_glb_base_color
 
 ### `file_utils/metadata.py`
 - `class MetadataInternal`
@@ -454,6 +456,14 @@ _Generated: 2026-08-06_
 ### `net_utils/credentials.py`
 - `class Credentials`
   - methods: get_password, get_credential, set_credential
+
+### `net_utils/preview_server.py` — Localhost static-file server for live browser / WebXR previews.
+- `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
+  - methods: port, url, version, is_running, has_viewer, manifest, start, stop, publish, open_in_browser
+- `class PreviewDeliverer(Deliverer)`
+  - methods: ensure_server, deliver
+- `class PreviewBridge(HandoffBridge)`
+  - methods: params_defaults, url, push, sidecar_summary, stop
 
 ### `net_utils/rpc/client.py` — Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 - `class RpcClient`

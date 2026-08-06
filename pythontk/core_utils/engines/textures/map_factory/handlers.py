@@ -118,20 +118,11 @@ class ORMMapHandler(WorkflowHandler):
                 )
 
         try:
-            fill_values = {}
-            if not ao:
-                fill_values["R"] = 255
-            if not roughness:
-                fill_values["G"] = 0  # Default to smooth? Or rough? Using 0 (Black)
-            if not metallic:
-                fill_values["B"] = 0  # Default to non-metal
-
-            orm_map = ImgUtils.pack_channels(
-                channel_files={"R": ao, "G": roughness, "B": metallic},
-                output_path=None,
-                fill_values=fill_values if fill_values else None,
-                optimize=False,
-            )
+            # The packer owns the channel order and the neutral fills for
+            # absent inputs (R=255 white AO, G/B=0) — shared with the
+            # standalone pack/unpack pair the DCC bridges call. save=False
+            # returns the PIL image so save_map keeps routing the write.
+            orm_map = MapFactory.pack_orm_texture(ao, roughness, metallic, save=False)
             if context.logger:
                 context.logger.info(
                     "Created Unreal/glTF ORM map", extra={"preset": "highlight"}
