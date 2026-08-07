@@ -780,6 +780,259 @@ class TestBaseColorRecordHonesty(unittest.TestCase):
         )
 
 
+class TestGlbEditSession(unittest.TestCase):
+    """One open GLB shared by several repairs: read once, write once.
+
+    Every repair edits the JSON chunk and nothing else, but each used to open,
+    parse and rewrite the whole file for itself — so a preview push, which runs
+    three of them back to back, read a file the size of its geometry three
+    times to change a handful of fields. These pin the four properties that
+    made collapsing it safe.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_session_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _write_glb(self, gltf, bin_chunk=b"", pretty=False, name="s.glb"):
+        """Pack a GLB. *pretty* pads the JSON chunk the way a producer that
+        indents its output does — which is what leaves room for the in-place
+        rewrite, since this module always re-serializes compactly."""
+        payload = json.dumps(gltf, indent=4 if pretty else None).encode("utf-8")
+        payload += b" " * ((4 - (len(payload) % 4)) % 4)
+        rest = b""
+        if bin_chunk:
+            bin_chunk += b"\x00" * ((4 - (len(bin_chunk) % 4)) % 4)
+            rest = struct.pack("<I4s", len(bin_chunk), b"BIN\x00") + bin_chunk
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as f:
+            f.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(payload) + len(rest)))
+            f.write(struct.pack("<I4s", len(payload), b"JSON") + payload)
+            f.write(rest)
+        return path
+
+    def _png(self, name="map.png"):
+        from PIL import Image
+
+        path = os.path.join(self.tmp, name)
+        Image.new("RGBA", (2, 2), (255, 0, 0, 255)).save(path)
+        return path
+
+    @staticmethod
+    def _counting_write():
+        """``(patcher, writes)`` — wraps ``_write_glb`` and records each call."""
+        real = MeshConvert._write_glb
+        writes = []
+
+        def counting(edit):
+            writes.append(edit.path)
+            return real(edit)
+
+        return patch.object(MeshConvert, "_write_glb", counting), writes
+
+    def test_one_session_writes_once_for_every_applier(self):
+        """Two channel writers sharing a session must produce one write."""
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]},
+            bin_chunk=b"GEOMETRY",
+        )
+        patcher, writes = self._counting_write()
+        with patcher:
+            with MeshConvert.open_glb(path) as session:
+                MeshConvert.set_glb_base_color(
+                    session, {"Body": {"color": (0.2, 0.4, 0.8)}}
+                )
+                MeshConvert.set_glb_emissive(
+                    session, {"Body": {"color": (1.0, 0.0, 0.0)}}
+                )
+
+        self.assertEqual(len(writes), 1, "the session must write once, not per applier")
+        mat = MeshConvert._read_glb(path).gltf["materials"][0]
+        self.assertEqual(
+            mat["pbrMetallicRoughness"]["baseColorFactor"][:3], [0.2, 0.4, 0.8]
+        )
+        self.assertEqual(mat["emissiveFactor"], [1.0, 0.0, 0.0])
+
+    def test_a_path_target_still_writes_for_itself(self):
+        """The path form stays self-contained — sharing is opt-in, not required."""
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        patcher, writes = self._counting_write()
+        with patcher:
+            MeshConvert.set_glb_base_color(path, {"Body": {"color": (0.2, 0.4, 0.8)}})
+            MeshConvert.set_glb_emissive(path, {"Body": {"color": (1.0, 0.0, 0.0)}})
+        self.assertEqual(len(writes), 2)
+
+    def test_an_applier_that_matches_nothing_writes_nothing(self):
+        """No match, no edit, no I/O — the usual case for the alpha repair."""
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        before = open(path, "rb").read()
+        patcher, writes = self._counting_write()
+        with patcher:
+            self.assertEqual(
+                MeshConvert.set_glb_emissive(path, {"Absent": {"color": (1, 1, 1)}}), []
+            )
+        self.assertEqual(writes, [])
+        self.assertEqual(open(path, "rb").read(), before)
+
+    def test_a_json_only_edit_leaves_the_file_size_and_bin_chunk_alone(self):
+        """A shrinking edit is written in place, not by copying the geometry.
+
+        This module re-serializes compactly while most producers do not, so the
+        new JSON usually fits the chunk it came from; it is then padded back to
+        exactly that length, leaving the total size and every byte after the
+        JSON chunk untouched.
+        """
+        geometry = b"GEOMETRY" * 8
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]},
+            bin_chunk=geometry,
+            pretty=True,
+        )
+        size_before = os.path.getsize(path)
+
+        MeshConvert.set_glb_emissive(path, {"Body": {"color": (1.0, 0.5, 0.0)}})
+
+        self.assertEqual(os.path.getsize(path), size_before)
+        edit = MeshConvert._read_glb(path)
+        self.assertEqual(edit.gltf["materials"][0]["emissiveFactor"], [1.0, 0.5, 0.0])
+        self.assertEqual(bytes(edit.bin_data), geometry)
+
+    def test_a_growing_edit_falls_back_to_a_full_rewrite(self):
+        """When the JSON no longer fits, the geometry must still come back whole."""
+        geometry = b"GEOMETRYDATA1234"
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]},
+            bin_chunk=geometry,
+        )
+        size_before = os.path.getsize(path)
+
+        MeshConvert.set_glb_emissive(path, {"Body": {"texture": self._png()}})
+
+        # Growth is what distinguishes this from the in-place path, which holds
+        # the size fixed — asserting only that the file parses would pass on
+        # either, and the fallback is the branch that has to move the geometry.
+        self.assertGreater(os.path.getsize(path), size_before)
+        edit = MeshConvert._read_glb(path)
+        self.assertEqual(bytes(edit.bin_data), geometry)
+        self.assertTrue(edit.gltf["images"][0]["uri"].startswith("data:image/png"))
+
+    def test_an_unreadable_texture_is_skipped_not_raised(self):
+        """A texture that exists but cannot be read must not abort the writer.
+
+        The re-encode branch already warned and skipped; the direct PNG/JPEG
+        read did not, so the same failure aborted the channel writer depending
+        only on the file's extension — and it was the one file operation left
+        inside an applier, able to take a whole sidecar section with it.
+        """
+        png = self._png()
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+
+        real_open = open
+
+        def refusing_open(file, *args, **kwargs):
+            if os.path.abspath(str(file)) == os.path.abspath(png):
+                raise PermissionError(13, "Permission denied", str(file))
+            return real_open(file, *args, **kwargs)
+
+        with patch("builtins.open", refusing_open):
+            records = MeshConvert.set_glb_base_color(
+                path, {"Body": {"texture": png, "color": [1.0, 0.0, 0.0]}}
+            )
+
+        self.assertEqual(len(records), 1, "the colour must still be written")
+        self.assertIsNone(
+            records[0]["texture"], "no texture was embedded — don't claim one"
+        )
+        self.assertNotIn("images", MeshConvert._read_glb(path).gltf)
+
+    def test_a_clean_glb_is_never_read_past_its_json_chunk(self):
+        """The repair that runs after *every* conversion must stay cheap.
+
+        Nothing in the alpha check needs the BIN chunk until a material already
+        looks wrong, so a GLB with nothing to fix should touch only the first
+        few kilobytes of what is routinely a hundreds-of-megabytes file.
+        """
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [{"name": "Plain", "alphaMode": "OPAQUE"}],
+            },
+            bin_chunk=b"GEOMETRY" * 16,
+        )
+        with MeshConvert.open_glb(path) as session:
+            self.assertEqual(MeshConvert.fix_glb_phantom_opaque_alpha(session), [])
+            self.assertIsNone(
+                session._rest,
+                "a repair with nothing to fix must not pull the geometry in",
+            )
+
+    def test_bin_data_is_a_view_rather_than_a_copy(self):
+        """Slicing the BIN chunk out put peak memory at twice the file size."""
+        path = self._write_glb({"asset": {"version": "2.0"}}, bin_chunk=b"GEOMETRY")
+        edit = MeshConvert._read_glb(path)
+        self.assertIsInstance(edit.bin_data, memoryview)
+        self.assertEqual(bytes(edit.bin_data), b"GEOMETRY")
+
+    def test_a_shared_texture_is_embedded_once_across_channels(self):
+        """One file on disk, one base64 copy — the embed cache spans the session."""
+        png = self._png()
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_base_color(session, {"Body": {"texture": png}})
+            MeshConvert.set_glb_emissive(session, {"Body": {"texture": png}})
+
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual(len(gltf["images"]), 1)
+        mat = gltf["materials"][0]
+        self.assertEqual(
+            mat["pbrMetallicRoughness"]["baseColorTexture"]["index"],
+            mat["emissiveTexture"]["index"],
+        )
+
+    def test_an_out_of_range_index_is_skipped_not_wrapped(self):
+        """A negative glTF index must be rejected, not resolved from the end.
+
+        Indices are non-negative by spec, so a negative one means a malformed
+        file — but Python indexing would quietly hand back the *last* texture
+        and report a finding against a material that has nothing wrong with it.
+        """
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [
+                    {
+                        "name": "Bad",
+                        "alphaMode": "BLEND",
+                        "pbrMetallicRoughness": {"baseColorTexture": {"index": -1}},
+                    }
+                ],
+                "textures": [{"source": 0}],
+                "images": [{"name": "real.png"}],
+            }
+        )
+        self.assertEqual(MeshConvert.check_glb_materials(path), [])
+
+    def test_a_raising_body_writes_nothing(self):
+        """A half-applied edit must not reach disk."""
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        before = open(path, "rb").read()
+        with self.assertRaises(RuntimeError):
+            with MeshConvert.open_glb(path) as session:
+                MeshConvert.set_glb_emissive(session, {"Body": {"color": (1, 1, 1)}})
+                raise RuntimeError("interrupted mid-edit")
+        self.assertEqual(open(path, "rb").read(), before)
+
+
 @unittest.skipUnless(
     os.environ.get("PYTHONTK_INTEGRATION_TESTS") == "1",
     "Set PYTHONTK_INTEGRATION_TESTS=1 to run network/install integration tests.",

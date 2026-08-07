@@ -148,6 +148,172 @@ class ShortAliasBoundaryTest(BaseTestCase):
 
 
 
+class SeparatorParityTest(BaseTestCase):
+    """All four separators must mean the same thing to strip and to classify.
+
+    Regression (backlog 2026-08-05): ``_short_alias_boundary`` accepted
+    ``_ - . `` and space, but ``get_suffix_strip_pattern``'s delimited branch was
+    ``_``-only, so ``rock-ao.png`` classified as Ambient_Occlusion yet based to
+    ``rock-ao``; ``rock.ao.png`` to ``rock.ao``. The long-alias attached branch
+    had no boundary requirement at all, so ``rock-basecolor.png`` based to
+    ``rock-``. Three spellings of one texture set became three sets.
+    """
+
+    SEPARATORS = ("_", "-", ".", " ")
+
+    def setUp(self):
+        self.reg = MapRegistry()
+
+    def test_every_separator_bases_to_the_same_stem(self):
+        import pythontk as ptk
+
+        for sep in self.SEPARATORS:
+            for alias, expected in (("ao", "Ambient_Occlusion"), ("basecolor", "Base_Color")):
+                name = f"rock{sep}{alias}.png"
+                self.assertEqual(
+                    ptk.MapFactory.get_base_texture_name(name),
+                    "rock",
+                    f"{name}: separator {sep!r} left junk in the base name",
+                )
+                self.assertEqual(self.reg.resolve_type_from_path(name), expected, name)
+
+    def test_a_set_spelled_with_mixed_separators_groups_as_one(self):
+        import pythontk as ptk
+
+        bases = {
+            ptk.MapFactory.get_base_texture_name(n)
+            for n in ("rock_BaseColor.png", "rock-ao.png", "rock.Normal.png", "rock Roughness.png")
+        }
+        self.assertEqual(bases, {"rock"})
+
+    def test_separators_do_not_loosen_the_model_number_guard(self):
+        """Widening the delimiter set must not re-open the ``Agilent`` hole."""
+        import pythontk as ptk
+
+        for name in ("Agilent_E4419B.png", "Agilent-E4419B.png", "keysight_5315A.png"):
+            self.assertIsNone(self.reg.resolve_type_from_path(name), name)
+            stem = name.rsplit(".", 1)[0]
+            self.assertEqual(ptk.MapFactory.get_base_texture_name(name), stem, name)
+
+
+class CompoundSuffixTest(BaseTestCase):
+    """A ``<type>_<convention>`` suffix must come off whole.
+
+    Measured: ``rock_NRML_DX.png`` classified as Normal_DirectX but based to
+    ``rock_NRML`` — only the registered ``_DX`` token was stripped, and the
+    unregistered ``NRML`` stayed glued on. Its sibling ``rock_DIFF.png`` based to
+    ``rock``, so the two halves of one texture set landed in different sets.
+
+    The fix is enumerated compound aliases, NOT a repeating stripper: stripping
+    suffixes in a loop eats material names, turning ``Gold_Metal_Diffuse`` into
+    ``Gold`` (``Metal`` is a registered alias of Metallic).
+    """
+
+    def setUp(self):
+        self.reg = MapRegistry()
+
+    def test_compound_normal_suffixes_strip_whole(self):
+        import pythontk as ptk
+
+        for name in (
+            "rock_NRML_OGL.png",
+            "rock_NRML_DX.png",
+            "rock_Normal_OGL.png",
+            "rock_Normal_DX.png",
+            "rock_NormalOGL.png",
+            "rock_NRM_OGL.png",
+            "rock_N_GL.png",
+        ):
+            self.assertEqual(
+                ptk.MapFactory.get_base_texture_name(name),
+                "rock",
+                f"{name}: compound suffix left a type token in the base name",
+            )
+
+    def test_a_normal_pair_groups_with_the_rest_of_its_set(self):
+        import pythontk as ptk
+
+        bases = {
+            ptk.MapFactory.get_base_texture_name(n)
+            for n in ("rock_DIFF.png", "rock_MTL.png", "rock_RUFF.png", "rock_NRML_OGL.png")
+        }
+        self.assertEqual(bases, {"rock"})
+
+    def test_compound_suffixes_strip_whole_under_every_delimiter(self):
+        """The joiner INSIDE a compound is delimited like any other suffix.
+
+        Caught during review of the fix above: the composed aliases covered ``_``
+        and glued only, so ``rock-nrml-ogl.png`` classified as Normal_OpenGL
+        (the trailing tag resolves after any delimiter) yet based to
+        ``rock-nrml`` — the same split, surviving under a different delimiter.
+        """
+        import pythontk as ptk
+
+        for sep in ("_", "-", ".", " ", ""):
+            for stem, tag in (("NRML", "OGL"), ("Normal", "DX"), ("N", "GL")):
+                name = f"rock_{stem}{sep}{tag}.png"
+                self.assertEqual(
+                    ptk.MapFactory.get_base_texture_name(name),
+                    "rock",
+                    f"{name}: joiner {sep!r} left a type token in the base name",
+                )
+
+    def test_a_trailing_delimiter_collapses_whatever_it_is(self):
+        """``rock_`` collapsed to ``rock`` while ``rock-`` stayed ``rock-``."""
+        import pythontk as ptk
+
+        for name in ("rock_.png", "rock-.png", "rock .png", "rock..png"):
+            self.assertEqual(ptk.MapFactory.get_base_texture_name(name), "rock", name)
+
+    def test_material_names_ending_in_a_map_alias_survive(self):
+        """The guard against fixing this by looping the stripper."""
+        import pythontk as ptk
+
+        self.assertEqual(
+            ptk.MapFactory.get_base_texture_name("Gold_Metal_Diffuse.png"), "Gold_Metal"
+        )
+        self.assertEqual(
+            ptk.MapFactory.get_base_texture_name("Brick_Normal_Color.png"), "Brick_Normal"
+        )
+
+
+class BaseNameTwinTest(BaseTestCase):
+    """``ImgUtils`` and ``MapFactory`` base names are documented as one answer.
+
+    Both docstrings claim the registry pattern keeps them from drifting, but only
+    the MapFactory side stripped the UDIM/UV-tile token first — so a tiled
+    filename produced two different base names depending on which entry point the
+    caller reached (``_map_factory.py`` uses the ImgUtils one when naming packed
+    outputs). They are now one implementation; this pins the contract.
+    """
+
+    def test_twins_agree_including_on_tiled_names(self):
+        import pythontk as ptk
+
+        for name in (
+            "rock_Normal.1001.png",
+            "rock_BaseColor.<UDIM>.png",
+            "rock_Normal.u1_v1.png",
+            "rock_ao.png",
+            "Agilent_E4419B.png",
+            "Mat_brick_.png",
+        ):
+            self.assertEqual(
+                ptk.ImgUtils.get_base_texture_name(name),
+                ptk.MapFactory.get_base_texture_name(name),
+                f"{name}: base-name twins disagree",
+            )
+
+    def test_tiles_of_one_set_share_a_base_name(self):
+        import pythontk as ptk
+
+        bases = {
+            ptk.ImgUtils.get_base_texture_name(n)
+            for n in ("rock_Normal.1001.png", "rock_Normal.1002.png", "rock_BaseColor.1001.png")
+        }
+        self.assertEqual(bases, {"rock"})
+
+
 class LogicalChannelTypeTest(BaseTestCase):
     """Logical shader channel -> canonical map type (the manifest slot fallback)."""
 

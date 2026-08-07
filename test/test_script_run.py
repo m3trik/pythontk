@@ -19,7 +19,12 @@ import sys
 import tempfile
 import unittest
 
-from pythontk.core_utils.script_run import ScriptRunner, ScriptRunResult
+from pythontk.core_utils.script_run import (
+    CREATED,
+    REWRITTEN,
+    ScriptRunner,
+    ScriptRunResult,
+)
 
 
 class ScriptRunBase(unittest.TestCase):
@@ -141,6 +146,69 @@ class TestFailure(ScriptRunBase):
         kept = getattr(ctx.exception, "script_path", None)
         self.assertIsNotNone(kept, "TimeoutExpired must carry the kept script path")
         self.assertTrue(os.path.exists(kept))
+
+
+class TestRewrittenExpectation(ScriptRunBase):
+    """``expect=REWRITTEN``: the artifact is also the app's INPUT.
+
+    Round-trip hand-offs export a payload, hand it to the app to edit in place, and
+    re-import it. Clearing the path first (the CREATED contract) would delete the
+    input; and an app that exits cleanly without saving must not read as success, or
+    the caller silently re-ingests its own untouched export.
+    """
+
+    def test_the_input_is_not_cleared_before_the_run(self):
+        with open(self.artifact, "wb") as fh:
+            fh.write(b"exported")
+        script = (
+            f"data = open({self.artifact!r}, 'rb').read()\n"
+            "assert data == b'exported', 'the runner destroyed the input'\n"
+            f"open({self.artifact!r}, 'wb').write(b'edited-by-the-app')\n"
+        )
+        result = self.run_script(script, expect=REWRITTEN)
+        self.assertEqual(result.returncode, 0)
+        with open(self.artifact, "rb") as fh:
+            self.assertEqual(fh.read(), b"edited-by-the-app")
+
+    def test_an_untouched_artifact_is_a_failure(self):
+        with open(self.artifact, "wb") as fh:
+            fh.write(b"exported")
+        # Exits 0, never saves — the silent no-op this contract exists to catch.
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_script("print('did nothing')\n", expect=REWRITTEN)
+        self.assertIn("unchanged on disk", str(ctx.exception))
+        os.remove(getattr(ctx.exception, "script_path"))
+        # The user's file is left exactly as it was.
+        with open(self.artifact, "rb") as fh:
+            self.assertEqual(fh.read(), b"exported")
+
+    def test_a_size_change_alone_counts_as_written(self):
+        """Same-second writes can share an mtime, so size is the second signal."""
+        with open(self.artifact, "wb") as fh:
+            fh.write(b"x")
+        script = f"open({self.artifact!r}, 'wb').write(b'xxxxxxxxxxxx')\n"
+        self.assertIsNotNone(self.run_script(script, expect=REWRITTEN))
+
+    def test_an_emptied_artifact_is_still_a_failure(self):
+        with open(self.artifact, "wb") as fh:
+            fh.write(b"exported")
+        script = f"open({self.artifact!r}, 'wb').close()\n"
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_script(script, expect=REWRITTEN)
+        os.remove(getattr(ctx.exception, "script_path"))
+
+    def test_created_remains_the_default(self):
+        with open(self.artifact, "wb") as fh:
+            fh.write(b"stale")
+        script = (
+            f"import os; assert not os.path.exists({self.artifact!r}), 'stale kept'\n"
+            f"open({self.artifact!r}, 'wb').write(b'fresh')\n"
+        )
+        self.assertIsNotNone(self.run_script(script))
+
+    def test_an_unknown_expectation_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.run_script("pass\n", expect="whatever")
 
 
 class TestRootExport(unittest.TestCase):

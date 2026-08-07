@@ -23,9 +23,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from pythontk.str_utils._str_utils import StrUtils
 
 
-# Canonical one-way "send to the target app" mode. Callers are send-only today; the
-# machinery already parses a tuple so a future round-trip mode slots in without a
-# restructure.
+# The three hand-off shapes, distinguished by *where the result lands*.
+#
+# Canonical one-way "send to the target app" mode: the payload goes out, the target
+# opens it interactively, and nothing comes back.
 SEND_TO = "send_to"
 
 # "Run the target app headlessly and keep what it wrote" mode -- the blocking
@@ -33,6 +34,14 @@ SEND_TO = "send_to"
 # (a native scene file) and the caller waits for it, so the deliverer judges the run by
 # that file rather than by having launched something.
 SAVE_AS = "save_as"
+
+# "Run the target app headlessly and bring the result back into the HOST" mode. Like
+# :data:`SAVE_AS` it blocks, but the artifact is not the deliverable -- it is an
+# intermediate the bridge re-ingests (re-import the edited payload, transfer the result
+# onto the original scene objects, discard the scaffolding). The target edits the
+# exported payload *in place*, so success is judged by that file having CHANGED rather
+# than by a new one appearing (see :data:`pythontk.core_utils.script_run.REWRITTEN`).
+ROUND_TRIP = "round_trip"
 
 # Cache of compiled ``<FIELD> = (...)`` matchers, keyed by the declaration field name.
 _MODE_FIELD_RE: Dict[str, "re.Pattern[str]"] = {}

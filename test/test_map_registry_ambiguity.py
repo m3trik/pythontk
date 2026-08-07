@@ -99,6 +99,234 @@ class TestMapRegistryAmbiguity(unittest.TestCase):
         self.assert_map_type("MyMat_Displacement.png", "Displacement")
 
 
+class NormalConventionSymmetryTest(unittest.TestCase):
+    """Both tangent-space conventions must classify from the same spellings.
+
+    Regression: ``DX`` was a registered alias and ``OGL`` was not, so
+    ``rock_NRML_DX.png`` resolved to Normal_DirectX while its twin
+    ``rock_NRML_OGL.png`` resolved to None — one half of a bake pair silently
+    dropped as an unknown map. ``GL`` could not cover it either: the short-alias
+    boundary rule rejects an uppercase predecessor (the ``Agilent_E4419B``
+    guard), and the ``O`` in ``OGL`` is exactly that.
+    """
+
+    def setUp(self):
+        self.registry = MapRegistry()
+
+    def assert_map_type(self, filename, expected_type):
+        resolved = self.registry.resolve_type_from_path(filename)
+        self.assertEqual(
+            resolved,
+            expected_type,
+            f"Failed for '{filename}': Expected '{expected_type}', got '{resolved}'",
+        )
+
+    #: Every ``<normal token><sep><convention tag>`` spelling seen in the wild.
+    NORMAL_STEMS = ("Normal", "NormalMap", "Norm", "NRML", "NRM", "NML", "N")
+    OPENGL_TAGS = ("GL", "OGL", "OpenGL")
+    DIRECTX_TAGS = ("DX", "DirectX")
+
+    def test_every_convention_spelling_resolves_on_both_sides(self):
+        for stem in self.NORMAL_STEMS:
+            for sep in ("_", ""):
+                for tag in self.OPENGL_TAGS:
+                    self.assert_map_type(f"rock_{stem}{sep}{tag}.png", "Normal_OpenGL")
+                for tag in self.DIRECTX_TAGS:
+                    self.assert_map_type(f"rock_{stem}{sep}{tag}.png", "Normal_DirectX")
+
+    def test_convention_spellings_are_case_insensitive(self):
+        for name in ("rock_nrml_ogl.png", "rock_NRML_OGL.png", "rock_Nrml_Ogl.png"):
+            self.assert_map_type(name, "Normal_OpenGL")
+
+    def test_unqualified_normal_tokens_resolve_to_the_generic_type(self):
+        for stem in self.NORMAL_STEMS:
+            self.assert_map_type(f"rock_{stem}.png", "Normal")
+
+
+class UtilityBakeMapTest(unittest.TestCase):
+    """Bakes that are not tangent-space normals must not classify as ``Normal``.
+
+    Measured: ``mat_WorldNormal.png`` and ``mat_BentNormal.png`` both resolved to
+    ``Normal`` (longest-first matching found the trailing ``Normal`` token), so an
+    object-space or bent-normal bake was wired into the tangent-normal slot and
+    rendered wrong with no warning. ``mat_VectorDisplacement.png`` resolved to
+    ``Displacement``, whose declared mode is ``L`` — flattening an RGB vector
+    displacement to grayscale destroys two of its three offset axes.
+    """
+
+    def setUp(self):
+        self.registry = MapRegistry()
+
+    def assert_map_type(self, filename, expected_type):
+        resolved = self.registry.resolve_type_from_path(filename)
+        self.assertEqual(
+            resolved,
+            expected_type,
+            f"Failed for '{filename}': Expected '{expected_type}', got '{resolved}'",
+        )
+
+    def test_object_and_world_space_normals_are_their_own_types(self):
+        for name in ("mat_ObjectNormal.png", "mat_Normal_Object.png", "mat_OSN.png"):
+            self.assert_map_type(name, "Normal_Object")
+        for name in ("mat_WorldNormal.png", "mat_Normal_World.png", "mat_WSN.png"):
+            self.assert_map_type(name, "Normal_World")
+
+    def test_bent_normal_is_its_own_type(self):
+        for name in ("mat_BentNormal.png", "mat_Bent_Normal.png"):
+            self.assert_map_type(name, "Bent_Normal")
+
+    def test_vector_displacement_is_its_own_type(self):
+        for name in ("mat_VectorDisplacement.png", "mat_VDM.png"):
+            self.assert_map_type(name, "Vector_Displacement")
+
+    def test_vector_displacement_keeps_its_three_channels(self):
+        """The point of the separate type: ``L`` would discard Y and Z."""
+        self.assertEqual(
+            MapRegistry().get_map_modes()["Vector_Displacement"], "RGB"
+        )
+
+    def test_utility_normals_are_not_offered_as_the_shader_normal(self):
+        """``select_normal_type`` wires tangent-space maps only."""
+        for name in ("Normal_Object", "Normal_World", "Bent_Normal"):
+            self.assertNotIn(name, MapRegistry.NORMAL_TYPES)
+            self.assertIsNone(MapRegistry.select_normal_type({name}))
+
+    def test_tangent_normals_still_win_when_both_are_present(self):
+        self.assertEqual(
+            MapRegistry.select_normal_type(
+                {"Normal_Object", "Bent_Normal", "Normal_OpenGL"}
+            ),
+            "Normal_OpenGL",
+        )
+
+    def test_new_aliases_do_not_claim_ordinary_words(self):
+        """Aliases over 3 chars match with no boundary check, so they must be
+        spellings no material name would end in.
+
+        Caught during review: a bare ``Bent`` alias on Bent_Normal claimed
+        ``mat_absorbent.png`` and ``mat_unbent.png``.
+        """
+        for name in ("mat_absorbent.png", "mat_unbent.png", "mat_normalcy.png"):
+            self.assert_map_type(name, None)
+
+    def test_unregistered_utility_bakes_stay_unclassified(self):
+        """Unknown is the correct answer — it routes to passthrough, not a slot.
+
+        ``Curvature`` in particular is the registry's documented custom-type
+        example (`examples/texture_factory_extensibility_example.py`, and the
+        registration tests assert it is unresolvable until registered), so the
+        built-in table must leave that name free.
+        """
+        for name in ("mat_Curvature.png", "mat_Cavity.png", "mat_Position.png"):
+            self.assert_map_type(name, None)
+
+
+class CounterpartSpellingTest(unittest.TestCase):
+    """Converting a normal map's handedness must keep the file's naming style.
+
+    Two callers (``MapFactory.convert_normal_map_format`` and
+    ``MapCompositor._try_invert_normal``) used to pair the DirectX and OpenGL
+    alias tuples **by index** — a contract requiring both lists to stay the same
+    length and in lockstep order. They never were: ``DXN`` sat past the end of
+    the OpenGL tuple, raising IndexError in one caller and falling back in the
+    other. Generating the convention spellings broke it outright — ``NDX``
+    paired to ``NRMGL`` and ``Norm_DX`` to ``NormalMap_OGL``.
+    """
+
+    def test_spelling_style_survives_the_conversion(self):
+        for spelling, expected in (
+            ("Normal_DirectX", "Normal_OpenGL"),
+            ("NormalDX", "NormalGL"),
+            ("Normal_DX", "Normal_GL"),
+            ("Norm_DX", "Norm_GL"),
+            ("NDX", "NGL"),
+            ("DX", "GL"),
+            ("Normal_Tangent_DX", "Normal_Tangent_GL"),
+        ):
+            self.assertEqual(
+                MapRegistry.counterpart_normal_spelling(spelling, "Normal_OpenGL"),
+                expected,
+                spelling,
+            )
+
+    def test_the_swap_is_symmetric(self):
+        for spelling, expected in (
+            ("Normal_OpenGL", "Normal_DirectX"),
+            ("NormalGL", "NormalDX"),
+            ("Normal_OGL", "Normal_DX"),
+            ("NGL", "NDX"),
+            ("GL", "DX"),
+        ):
+            self.assertEqual(
+                MapRegistry.counterpart_normal_spelling(spelling, "Normal_DirectX"),
+                expected,
+                spelling,
+            )
+
+    def test_a_spelling_with_no_tag_falls_back_to_the_canonical_name(self):
+        """``DXN`` carries no trailing tag — and used to run off the tuple's end."""
+        self.assertEqual(
+            MapRegistry.counterpart_normal_spelling("DXN", "Normal_OpenGL"),
+            "Normal_OpenGL",
+        )
+        for bad in ("", "Roughness", None):
+            self.assertEqual(
+                MapRegistry.counterpart_normal_spelling(bad, "Normal_DirectX"),
+                "Normal_DirectX",
+            )
+
+    def test_a_non_normal_destination_is_refused(self):
+        self.assertEqual(
+            MapRegistry.counterpart_normal_spelling("NormalDX", "Roughness"), "Roughness"
+        )
+
+    def test_every_counterpart_resolves_to_the_destination_type(self):
+        """The swapped spelling must be a name the classifier actually accepts."""
+        registry = MapRegistry()
+        pairs = (("Normal_DirectX", "Normal_OpenGL"), ("Normal_OpenGL", "Normal_DirectX"))
+        for src, dst in pairs:
+            for spelling in registry.get_map_types()[src]:
+                counterpart = MapRegistry.counterpart_normal_spelling(spelling, dst)
+                self.assertEqual(
+                    registry.resolve_type_from_path(f"mat_{counterpart}.png"),
+                    dst,
+                    f"{spelling!r} -> {counterpart!r} does not classify as {dst}",
+                )
+
+
+class AliasOwnershipTest(unittest.TestCase):
+    """No spelling may be claimed by two map types.
+
+    The table is hand-curated and grew a generated cross-product for the normal
+    conventions; a duplicate alias would make classification depend on dict order
+    and length-sort stability rather than on the taxonomy. Held at zero today —
+    this pins it there.
+    """
+
+    def test_no_alias_is_claimed_by_two_map_types(self):
+        from collections import defaultdict
+
+        owners = defaultdict(set)
+        for name, m in MapRegistry()._maps.items():
+            owners[name.lower()].add(name)
+            for alias in m.aliases:
+                owners[alias.lower()].add(name)
+
+        collisions = {k: sorted(v) for k, v in owners.items() if len(v) > 1}
+        self.assertEqual(collisions, {}, f"aliases claimed twice: {collisions}")
+
+    def test_every_alias_resolves_to_its_own_map_type(self):
+        """A separator-delimited alias must classify as the type that declares it."""
+        registry = MapRegistry()
+        for name, m in registry._maps.items():
+            for alias in [name] + list(m.aliases):
+                self.assertEqual(
+                    registry.resolve_type_from_path(f"mat_{alias}.png"),
+                    name,
+                    f"alias {alias!r} of {name!r} resolved elsewhere",
+                )
+
+
 class NormalTypeSelectionTest(unittest.TestCase):
     """The shared precedence both DCC packages wire their normal map from."""
 

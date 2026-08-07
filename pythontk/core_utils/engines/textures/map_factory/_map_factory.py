@@ -494,9 +494,10 @@ class MapFactory(LoggingMixin):
                 (e.g. "Ambient_Occlusion").
                 If False, return the matched alias **verbatim from the filename**
                 so a round-trip through `resolve_texture_filename` does not
-                rename the file. Requires an underscore boundary (or full
-                filename equality) to avoid mid-word matches like
-                "diffuse_cube" matching the single-letter alias "E".
+                rename the file. Requires a separator boundary
+                (``MapRegistry.SEPARATORS``) or full filename equality, to avoid
+                mid-word matches like "diffuse_cube" matching the single-letter
+                alias "E".
             validate (str, optional): If provided, validate the resolved map
                 type against this expected key. Comparison is case-insensitive
                 so non-canonical filename casing does not falsely fail.
@@ -514,16 +515,25 @@ class MapFactory(LoggingMixin):
             result = cls._map_registry.resolve_type_from_path(file)
         else:
             filename_lower = filename.lower()
+            separators = cls._map_registry.SEPARATORS
             result = None
             for alias in cls._get_aliases_by_len_desc():
                 alias_lower = alias.lower()
                 if filename_lower == alias_lower:
                     result = filename
                     break
-                needle = "_" + alias_lower
-                if filename_lower.endswith(needle):
+                # Any registry separator counts, not `_` alone: this path fed
+                # `resolve_texture_filename`, so a `-`/`.`/space-delimited suffix
+                # was invisible here while the other two suffix implementations
+                # accepted it, and the round-trip renamed the file.
+                start = len(filename) - len(alias)
+                if (
+                    start > 0
+                    and filename_lower.endswith(alias_lower)
+                    and filename[start - 1] in separators
+                ):
                     # Slice the alias out of the original filename to preserve case
-                    result = filename[len(filename) - len(alias):]
+                    result = filename[start:]
                     break
 
         if validate:
@@ -650,11 +660,11 @@ class MapFactory(LoggingMixin):
         """Extracts the base texture name from a filename or path,
         removing known suffixes (e.g., _normal, _roughness).
 
-        Logic (see ``MapRegistry.get_suffix_strip_pattern`` — the SSoT):
-        - Underscore-delimited suffixes: case-insensitive at any length (``_ao``).
-        - Attached long suffixes (>3 chars): case-insensitive.
-        - Attached short suffixes (<=3 chars): must start with a capital letter
-          (rest case-insensitive) to avoid false positives.
+        Delegates to ``ImgUtils.get_base_texture_name``, which owns the single
+        implementation — see it for the matching rules. The two were parallel
+        implementations documented as unable to drift, and drifted anyway (the
+        UDIM/UV-tile token came off on this side only), so one now calls the other
+        rather than mirroring it.
 
         Parameters:
             filepath_or_filename (str): A texture path or name.
@@ -666,31 +676,9 @@ class MapFactory(LoggingMixin):
         Returns:
             str: The base name without map-type suffix, with any configured user prefix/suffix removed.
         """
-        ImgUtils.assert_pathlike(filepath_or_filename, "filepath_or_filename")
-
-        filename = os.path.basename(str(filepath_or_filename))
-        base_name, _ = os.path.splitext(filename)
-
-        # A UDIM/UV-tile token sits AFTER the map-type suffix, so it has to come
-        # off before the suffix is reachable. It is dropped rather than restored:
-        # this is the MATERIAL's name (and the texture-set key's stem), which every
-        # tile of a set shares. `get_tile_token` reads the token back for output
-        # naming; `group_textures_by_set` re-appends it to keep tiles separable.
-        base_name, _tile = cls._map_registry.split_tile_token(base_name)
-
-        # Canonical suffix pattern lives on the registry (the alias owner) so
-        # this and ImgUtils.get_base_texture_name can never drift apart.
-        pattern = cls._map_registry.get_suffix_strip_pattern()
-        if pattern:
-            base_name = StrUtils.format_suffix(base_name, strip=pattern)
-
-        # Strip any configured user prefix/suffix so callers can re-apply them
-        # idempotently, then collapse a trailing underscore (preserves the
-        # original behavior for filenames like 'foo_.png' even when no affix
-        # was supplied).
-        return StrUtils.strip_known_affix(
-            base_name, prefix=prefix, suffix=suffix
-        ).rstrip("_")
+        return ImgUtils.get_base_texture_name(
+            filepath_or_filename, prefix=prefix, suffix=suffix
+        )
 
     @classmethod
     def get_tile_token(cls, filepath_or_filename: str) -> str:
@@ -2015,17 +2003,16 @@ class MapFactory(LoggingMixin):
             name = FileUtils.format_path(file, "name")
             ext = FileUtils.format_path(file, "ext")
 
-            # Try to find corresponding suffix
-            new_suffix = cls.map_types[target_type_key][0]  # Default
+            # Keep the source file's naming style by swapping only the
+            # convention tag. This used to pair the two alias tuples by INDEX,
+            # which silently depended on them being the same length and in
+            # lockstep order.
+            new_suffix = target_type_key
             if typ:
-                try:
-                    # If we found a specific source suffix, try to map it to target suffix by index
-                    if typ in cls.map_types[source_type_key]:
-                        index = cls.map_types[source_type_key].index(typ)
-                        if index < len(cls.map_types[target_type_key]):
-                            new_suffix = cls.map_types[target_type_key][index]
-                except (ValueError, IndexError, KeyError):
-                    pass
+                if typ in cls.map_types[source_type_key]:
+                    new_suffix = cls._map_registry.counterpart_normal_spelling(
+                        typ, target_type_key
+                    )
 
                 name = name.removesuffix(typ)
 

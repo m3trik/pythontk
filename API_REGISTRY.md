@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-06_
+_Generated: 2026-08-07_
 
 ## Index
 
@@ -93,6 +93,7 @@ _Generated: 2026-08-06_
 - [`net_utils/rpc/client.py`](#net_utils--rpc--client) — Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 - [`net_utils/rpc/installer.py`](#net_utils--rpc--installer) — Generic DCC plugin installer (symlink-first, copytree fallback).
 - [`net_utils/rpc/job.py`](#net_utils--rpc--job) — One-shot batch pipeline over :class:`RpcClient`.
+- [`net_utils/rpc/plugin_core.py`](#net_utils--rpc--plugin_core) — The in-application half of the RPC pair: registry + marshaller + server.
 - [`net_utils/ssh_client.py`](#net_utils--ssh_client)
 - [`str_utils/_str_utils.py`](#str_utils--_str_utils)
 - [`str_utils/fuzzy_matcher.py`](#str_utils--fuzzy_matcher)
@@ -139,33 +140,36 @@ _Generated: 2026-08-06_
 
 Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
-- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L49)** — Declarative target-application executable-discovery config (data, not code).
+- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L56)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
   - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
-- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L80)** — The unit of work threaded through the skeleton.
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L87)** — The unit of work threaded through the skeleton.
   - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
-- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L100)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
-- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L115)** — Strategy: hand a produced :class:`Payload` to the target app.
+- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L107)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L122)** — Strategy: hand a produced :class:`Payload` to the target app.
   - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
-- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L136)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L143)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
   - `HandoffBridge.headless_app_path(self) -> Optional[str]` *(property)* — Executable for a BLOCKING/headless run;
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
   - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L363)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L388)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L402)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L427)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L529)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
-  - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None)` *(static)*
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L568)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+  - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L670)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L714)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+  - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L794)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
+  - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app edit them, and re-ingest the result.
   - `ScriptLaunchBridge.resolve_save_path(cls, out_path: str) -> str` *(class)* — Absolute *out_path*, with :attr:`save_extensions`' default appended if bare.
   - `ScriptLaunchBridge.render_template(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]` — Render *template*'s body with *payload_path* + *params* (no launch).
   - `ScriptLaunchBridge.list_template_modes(self) -> List[Tuple[str, str]]` — ``[(stem, mode), ...]`` for the bridge's template directory.
@@ -638,10 +642,12 @@ Plan, assess, and apply map (texture) optimizations.
 
 - **[`class WF`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L8)** — Workflow identifiers.
 - **[`class MapType`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L55)** — Defines the properties of a texture map type.
+  - `MapType.compose_aliases(stems: Tuple[str, ...], tags: Tuple[str, ...], separators: Tuple[str, ...] = ('_', '')) -> List[str]` *(static)* — Every ``<stem><separator><tag>`` spelling, order-preserving and de-duped.
   - `MapType.carried_types(self, include_optional: bool = False) -> List[str]` — The map types this packed map's channels carry.
-- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L154)** — Central registry for map type definitions.
+- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L196)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.register(self, map_type: MapType, overwrite: bool = False) -> MapType` — Register a new map type (or replace an existing one) at runtime.
+  - `MapRegistry.counterpart_normal_spelling(cls, spelling: str, dst_type: str) -> str` *(class)* — The same normal-map spelling, written for the other handedness convention.
   - `MapRegistry.select_normal_type(cls, available) -> Optional[str]` *(class)* — The single normal map type a shader should wire, out of those present.
   - `MapRegistry.resolve_type_from_channel(cls, channel: str) -> Optional[str]` *(class)* — Canonical map type for a logical shader channel, or None if unmapped.
   - `MapRegistry.split_tile_token(cls, name_only: str) -> Tuple[str, str]` *(class)* — Split a trailing UDIM / UV-tile token off an extension-less filename.
@@ -1073,16 +1079,16 @@ Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 
 Run a script in an external app, block until it exits, and collect an artifact.
 
-- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L40)** — ScriptRunner — module namespace.
-  - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
-- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L137)** — What a successful :func:`run_script_to_artifact` returns.
+- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L59)** — ScriptRunner — module namespace.
+  - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L186)** — What a successful :func:`run_script_to_artifact` returns.
 
 <a id="core_utils--script_template"></a>
 ### `core_utils/script_template.py`
 
 Generic on-disk script-template discovery + ``__KEY__`` rendering.
 
-- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L58)** — ScriptTemplate — module namespace.
+- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L67)** — ScriptTemplate — module namespace.
   - `ScriptTemplate.list_templates(template_dir, extension: str = '.py') -> List[Path]` *(static)* — Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).
   - `ScriptTemplate.declared_modes(template_path, field: str = 'BRIDGE_MODES') -> Optional[Tuple[str, ...]]` *(static)* — Return exactly what a template declares via ``<field> = (...)``.
   - `ScriptTemplate.template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]` *(static)* — Return the modes a template declares via its ``<field> = (...)`` tuple.
@@ -1224,13 +1230,14 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
-- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L41)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L48)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
-  - `MeshConvert.check_glb_materials(cls, glb_path: str) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
-  - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb_path: str) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
-  - `MeshConvert.set_glb_emissive(cls, glb_path: str, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
-  - `MeshConvert.set_glb_base_color(cls, glb_path: str, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
+  - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
+  - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
+  - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
+  - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
+  - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
 
 <a id="file_utils--metadata"></a>
 ### `file_utils/metadata.py`
@@ -1594,7 +1601,7 @@ Localhost static-file server for live browser / WebXR previews.
 - **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L460)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L642)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L674)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
   - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
@@ -1635,6 +1642,29 @@ One-shot batch pipeline over :class:`RpcClient`.
   - `RpcJob.run_batch(calls: List[Call], client: RpcClient, stop_on_error: bool = False) -> List[Result]` *(static)* — Connect, fire every call in *calls*, return a Result per call.
 - **[`class Call`](pythontk/pythontk/net_utils/rpc/job.py#L73)** — One queued op invocation.
 - **[`class Result`](pythontk/pythontk/net_utils/rpc/job.py#L86)** — Outcome of a single :class:`Call`.
+
+<a id="net_utils--rpc--plugin_core"></a>
+### `net_utils/rpc/plugin_core.py`
+
+The in-application half of the RPC pair: registry + marshaller + server.
+
+- **[`class OpRegistry(_OpRegistryInternal)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L84)** — The callable surface a host plugin exposes over RPC.
+  - `OpRegistry.register(self, name)` — Decorator registering the wrapped function under *name*.
+  - `OpRegistry.get(self, name)` — Return the op callable registered under *name*, or ``None``.
+  - `OpRegistry.all_ops(self)` — Every registered op name, sorted.
+  - `OpRegistry.describe(self, name=None)` — Describe one op (``None`` for all) as ``{name, doc, params}``.
+- **[`class MainThreadMarshaller(_MainThreadMarshallerInternal)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L162)** — Run a callable on the host's Qt main thread and block for its result.
+  - `MainThreadMarshaller.is_active(self)` — True when :meth:`run` will marshal rather than call direct.
+  - `MainThreadMarshaller.run(self, fn, *args, timeout=None, **kwargs)` — Call *fn*, on the main thread when one is reachable.
+- **[`class RpcPlugin(object)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L326)** — One host plugin: a registry, a marshaller, and the server that joins them.
+  - `RpcPlugin.port(self)` *(property)* — Configured port: ``<PREFIX>_PORT`` if set and numeric, else the default.
+  - `RpcPlugin.is_hosted(self)` — True only inside the real host application.
+  - `RpcPlugin.is_running(self)` — True while the HTTP server is bound.
+  - `RpcPlugin.address(self)` *(property)* — The bound ``(host, port)``, or ``None`` when not running.
+  - `RpcPlugin.start(self, port=None, host=None)` — Bind and serve on a daemon thread.
+  - `RpcPlugin.stop(self)` — Shut the server down (host teardown hook, tests, hot-reload).
+  - `RpcPlugin.autostart(self)` — Start on plugin load, but only when actually hosted.
+  - `RpcPlugin.autostart_safely(self)` — :meth:`autostart`, but a failure is logged instead of raised.
 
 <a id="net_utils--ssh_client"></a>
 ### `net_utils/ssh_client.py`

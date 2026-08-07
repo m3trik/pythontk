@@ -721,12 +721,16 @@ class MapCompositor(ptk.LoggingMixin):
         name: str,
         info: _MapInfo,
     ) -> bool:
-        map_types = ptk.MapRegistry().get_map_types()
-        try:
-            index = map_types[src_set].index(typ)
-        except ValueError:
+        registry = ptk.MapRegistry()
+        if typ not in registry.get_map_types()[src_set]:
             return False
-        new_type = map_types[dst_set][index]
+        # Swap the convention tag rather than pairing the two alias tuples by
+        # index — that read required both lists to stay the same length and in
+        # lockstep order, and raised IndexError for the one alias (`DXN`) that
+        # had no counterpart. `sort_images_by_type` keys by canonical type today,
+        # so this normally returns `dst_set` unchanged; it stays spelling-aware
+        # because the membership test above accepts any alias.
+        new_type = registry.counterpart_normal_spelling(typ, dst_set)
         inverted = ptk.invert_channels(result, "g")
         inverted_path = os.path.join(output_dir, f"{name}_{new_type}.{info.ext}")
         inverted.save(inverted_path)
