@@ -414,9 +414,24 @@ class PreviewDelivererTestCase(unittest.TestCase):
         return str(path)
 
     def _fake_convert(self, src, dst=None, **kwargs):
-        """Stand in for FBX2glTF: record the call and write a GLB-shaped file."""
+        """Stand in for FBX2glTF: record the call and write a GLB-shaped file.
+
+        A *parseable* GLB, not just the magic bytes: the sidecar step opens the
+        converted file once for all its sections, so a stub that only looked
+        like a GLB from four bytes away would now fail at the container rather
+        than exercise the appliers under test.
+        """
         self.converted.append({"src": src, "dst": dst, **kwargs})
-        Path(dst).write_bytes(b"glTF" + b"\x00" * 16)
+        payload = json.dumps({"asset": {"version": "2.0"}}).encode("utf-8")
+        payload += b" " * ((4 - (len(payload) % 4)) % 4)
+        Path(dst).write_bytes(
+            b"glTF"
+            + struct.pack("<I", 2)
+            + struct.pack("<I", 12 + 8 + len(payload))
+            + struct.pack("<I", len(payload))
+            + b"JSON"
+            + payload
+        )
         return dst
 
     def _deliver(self, **kwargs):
@@ -685,8 +700,8 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
         return self.glb
 
     def _read_back(self):
-        _version, gltf, rest, bin_data = MeshConvert._read_glb(str(self.glb))
-        return gltf, rest, bin_data
+        edit = MeshConvert._read_glb(str(self.glb))
+        return edit.gltf, edit.rest, edit.bin_data
 
     def _png(self, name="emis.png"):
         """A minimal valid 1x1 PNG on disk."""

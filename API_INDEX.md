@@ -27,8 +27,10 @@ _Generated: 2026-08-07_
   - methods: preflight, deliver, render
 - `class ScriptRunDeliverer(ScriptLaunchDeliverer)`
   - methods: run, deliver
+- `class ScriptRoundTripDeliverer(ScriptRunDeliverer)`
+  - methods: deliver
 - `class ScriptLaunchBridge(HandoffBridge)`
-  - methods: render_context, save_as, resolve_save_path, render_template, list_template_modes, list_templates
+  - methods: render_context, save_as, round_trip, resolve_save_path, render_template, list_template_modes, list_templates
 
 ### `core_utils/app_installer.py`
 - `class AppInstaller`
@@ -173,9 +175,9 @@ _Generated: 2026-08-07_
 ### `core_utils/engines/textures/map_registry.py`
 - `class WF`
 - `class MapType`
-  - methods: carried_types
+  - methods: compose_aliases, carried_types
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, register, select_normal_type, resolve_type_from_channel, split_tile_token, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
+  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`
@@ -364,7 +366,7 @@ _Generated: 2026-08-07_
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_emissive, set_glb_base_color
+  - methods: resolve_binary, fbx_to_glb, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, set_glb_emissive, set_glb_base_color
 
 ### `file_utils/metadata.py`
 - `class MetadataInternal`
@@ -478,6 +480,14 @@ _Generated: 2026-08-07_
   - methods: run_batch
 - `class Call`
 - `class Result`
+
+### `net_utils/rpc/plugin_core.py` — The in-application half of the RPC pair: registry + marshaller + server.
+- `class OpRegistry(_OpRegistryInternal)`
+  - methods: register, get, all_ops, describe
+- `class MainThreadMarshaller(_MainThreadMarshallerInternal)`
+  - methods: is_active, run
+- `class RpcPlugin(object)`
+  - methods: port, is_hosted, is_running, address, start, stop, autostart, autostart_safely
 
 ### `net_utils/ssh_client.py`
 - `class SSHClient`

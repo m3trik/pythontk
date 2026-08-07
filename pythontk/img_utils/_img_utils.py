@@ -2410,8 +2410,15 @@ class ImgUtils(HelpMixin):
         """Extracts the base texture name from a filename or path,
         removing known suffixes (e.g., _normal, _roughness).
 
+        The single implementation — ``MapFactory.get_base_texture_name`` delegates
+        here. They were twins for a while, and drifted: only the factory dropped
+        the UDIM/UV-tile token first, so a tiled filename produced two different
+        base names depending on which entry point the caller reached (the
+        factory's own packed-output naming uses this one).
+
         Logic (see ``MapRegistry.get_suffix_strip_pattern`` — the SSoT):
-        - Underscore-delimited suffixes: case-insensitive at any length (``_ao``).
+        - Delimited suffixes (``MapRegistry.SEPARATORS``): case-insensitive at
+          any length (``_ao``, ``-ao``, ``.ao``).
         - Attached long suffixes (>3 chars): case-insensitive.
         - Attached short suffixes (<=3 chars): must start with a capital letter
           (rest case-insensitive) to avoid false positives.
@@ -2433,19 +2440,29 @@ class ImgUtils(HelpMixin):
 
         from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
-        # Canonical suffix pattern lives on the registry (the alias owner) so
-        # this and MapFactory.get_base_texture_name can never drift apart.
-        pattern = MapRegistry().get_suffix_strip_pattern()
+        registry = MapRegistry()
+
+        # A UDIM/UV-tile token sits AFTER the map-type suffix, so it has to come
+        # off before the suffix is reachable. It is dropped rather than restored:
+        # this is the MATERIAL's name (and the texture-set key's stem), which every
+        # tile of a set shares. `MapFactory.get_tile_token` reads the token back for
+        # output naming; `group_textures_by_set` re-appends it to keep tiles separable.
+        base_name, _tile = registry.split_tile_token(base_name)
+
+        # Canonical suffix pattern lives on the registry (the alias owner).
+        pattern = registry.get_suffix_strip_pattern()
         if pattern:
             base_name = StrUtils.format_suffix(base_name, strip=pattern)
 
         # Strip any configured user prefix/suffix so callers can re-apply them
-        # idempotently, then collapse a trailing underscore (preserves the
+        # idempotently, then collapse a trailing delimiter (preserves the
         # original behavior for filenames like 'foo_.png' even when no affix
-        # was supplied).
+        # was supplied). Every delimiter, not just `_`: the suffix rules accept
+        # all of `SEPARATORS`, so collapsing one of them and leaving the rest
+        # put 'rock-' and 'rock' in different texture sets.
         return StrUtils.strip_known_affix(
             base_name, prefix=prefix, suffix=suffix
-        ).rstrip("_")
+        ).rstrip(registry.SEPARATORS)
 
     @classmethod
     def extract_channels(

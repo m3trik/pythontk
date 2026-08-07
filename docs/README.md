@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-2629%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-2721%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -211,7 +211,8 @@ Beyond the data-type utilities, `core_utils` supplies the machinery the layers a
 
 - **`bootstrap_package`** (`module_resolver`) — the lazy-loading package root. Every ecosystem package (`uitk`, `mayatk`, `blendertk`, …) exposes its public surface through it.
 - **`PresetStore` / `TemplateSet` / `SchemaSpec` / `UserConfig`** — Qt-free named-preset and schema-validated-template stores with built-in + user tiers; uitk's `PresetManager` is a GUI over them.
-- **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges and of mayatk's `MayaConnection`.
+- **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges and of mayatk's `MayaConnection`. `HandoffBridge` owns one invariant flow — `resolve → preflight → produce → deliver → ingest` — with the delivery step a per-mode `Deliverer` strategy, so **three hand-off shapes come off one export pipeline**: `send()` (`SEND_TO`, detached launch), `save_as()` (`SAVE_AS`, blocking run that keeps a native file of the target's format), and `round_trip()` (`ROUND_TRIP`, blocking run where the target edits the payload *in place* and `_ingest` brings the result back onto the host's own objects).
+- **`RpcClient` + `RpcPlugin`** — both ends of the plugin-hosted JSON-RPC protocol, shipped together so the wire format cannot drift. `net_utils.rpc.plugin_core` is the server that runs *inside* Toolbag / Painter; it is standard-library only so an installed plugin payload can carry a verbatim copy where `pythontk` is not importable (staged by `m3trik/scripts/sync_rpc_core.py`).
 - **`QcLog` / `QcGate`** — structured run logs and threshold-based acceptance gates for batch pipelines.
 - **`HierarchyPath` / `HierarchyIndexer` / `HierarchyMatching` / `HierarchyAnalyzer` / `HierarchyDiff`** — delimited-path hierarchy toolkit: `HierarchyPath` is the single home for path-string primitives (namespace cleaning, split/join, leaf/parent/tail); indexing and exact / tail-path / fuzzy matching build on it; the analyzer detects *moved* items (deterministic best-pair assignment), and `HierarchyDiff.from_differences` turns analyzer records into a JSON-serializable diff.
 - **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in. Reachable from a shell (or an agent) without a REPL snippet via `python -m pythontk <dotted.path> [member] [--json|--source|--where|--signature|--brief]`; it reads the *live* object, so it answers what the static [`API_REGISTRY.md`](../API_REGISTRY.md) cannot.

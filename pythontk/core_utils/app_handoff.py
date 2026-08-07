@@ -8,8 +8,14 @@ shape -- script-launch (Maya / Blender / RizomUV), copy-to-project (Unity), and
 launch-or-attach + RPC round-trip (Substance Painter / Marmoset Toolbag):
 
 * **Template-Method** -- :meth:`HandoffBridge.send` owns the invariant flow:
-  ``resolve objects -> preflight -> produce a payload -> deliver``. It knows nothing
-  about FBX, scripts, RPC, or any specific app.
+  ``resolve objects -> preflight -> produce a payload -> deliver -> ingest``. It knows
+  nothing about FBX, scripts, RPC, or any specific app. The trailing *ingest* step is
+  what makes a **round trip** a mode of the one skeleton rather than a second pipeline:
+  every hand-off produces and delivers, and the ones that bring a result back add a
+  step instead of forking. It is a plain hook, not a Strategy -- every inbound leg in
+  the ecosystem is irreducibly host-specific (re-import and transfer UVs onto the
+  originals; rebuild materials from a manifest), so there is no shared algorithm for a
+  strategy object to hold.
 * **Strategy** -- the *deliver* step is a pluggable :class:`Deliverer`. pythontk ships
   two: :class:`ScriptLaunchDeliverer` (render a template, launch a **fresh** app on it,
   return immediately) and its blocking sibling :class:`ScriptRunDeliverer` (run the
@@ -42,6 +48,7 @@ from pythontk.core_utils import script_template
 # Re-export so callers get the canonical mode constants from one place.
 SEND_TO = script_template.SEND_TO
 SAVE_AS = script_template.SAVE_AS
+ROUND_TRIP = script_template.ROUND_TRIP
 
 
 # --------------------------------------------------------------------------- specs
@@ -156,7 +163,11 @@ class HandoffBridge(LoggingMixin):
     # seam a second delivery *shape* plugs into (e.g. the blocking
     # :class:`ScriptRunDeliverer` under ``SAVE_AS`` beside the detached launch under
     # ``SEND_TO``) without touching the skeleton or the existing strategy.
-    deliverers: Dict[str, Deliverer] = {}
+    #
+    # ``None``, not ``{}``: a mutable class-level default is shared by every subclass
+    # that never rebinds it, so one bridge doing ``self.deliverers[mode] = x`` would
+    # silently register that strategy on every other bridge in the process.
+    deliverers: Optional[Dict[str, Deliverer]] = None
     # When False, an empty selection is allowed (e.g. a template that targets an
     # already-loaded project and exports nothing).
     requires_objects: bool = True
@@ -252,11 +263,17 @@ class HandoffBridge(LoggingMixin):
         if payload is None:  # producer signalled a handled failure
             return None
 
-        return self._deliver(payload, request)
+        result = self._deliver(payload, request)
+        if result is None:  # deliverer signalled a handled failure
+            return None
+
+        # The return leg. A one-way hand-off's default ingest is the identity, so
+        # send-only bridges pay nothing for the step existing.
+        return self._ingest(result, resolved, payload, request)
 
     def _deliverer_for(self, request: HandoffRequest) -> Optional[Deliverer]:
         """The strategy for *request*'s mode: :attr:`deliverers`, else :attr:`deliverer`."""
-        return self.deliverers.get(request.mode) or self.deliverer
+        return (self.deliverers or {}).get(request.mode) or self.deliverer
 
     def _preflight(self, objects: List[Any], request: HandoffRequest) -> bool:
         """Validate the request before producing. Delegates to the deliverer."""
@@ -356,6 +373,28 @@ class HandoffBridge(LoggingMixin):
     ) -> Optional[Payload]:  # pragma: no cover
         """Build and return the :class:`Payload` (``None`` aborts the hand-off)."""
         raise NotImplementedError
+
+    def _ingest(
+        self,
+        result: Dict[str, Any],
+        objects: List[Any],
+        payload: Payload,
+        request: HandoffRequest,
+    ) -> Optional[Dict[str, Any]]:
+        """Bring the delivered result back into the host. Default: pass it through.
+
+        The return leg of a round trip, and the ONLY step that touches host state
+        *after* the target app has run. Overriders re-import the edited
+        :attr:`Payload.primary`, transfer what came back onto *objects* (the same list
+        ``_produce`` exported, so pairing needs no extra bookkeeping), clean up their
+        scaffolding, and return an enriched result dict -- or ``None`` to report a
+        handled, already-logged failure.
+
+        Deliberately a hook rather than a Strategy: every real inbound leg is
+        irreducibly host-specific, so there is no shared algorithm to inject and a
+        strategy object would be indirection with a single implementation each.
+        """
+        return result
 
 
 # ------------------------------------------------- script-launch deliverer + spec
@@ -579,10 +618,10 @@ class ScriptRunDeliverer(ScriptLaunchDeliverer):
 
     # Seam for tests: stub the headless run without patching pythontk internals.
     @staticmethod
-    def run(app_exe, script_text, *, artifact, launch_args, timeout, env=None):
-        from pythontk.core_utils.script_run import ScriptRunner
+    def run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None):
+        from pythontk.core_utils import script_run
 
-        return ScriptRunner.run_script_to_artifact(
+        return script_run.ScriptRunner.run_script_to_artifact(
             app_exe,
             script_text,
             artifact=artifact,
@@ -590,7 +629,13 @@ class ScriptRunDeliverer(ScriptLaunchDeliverer):
             timeout=timeout,
             env=env,
             script_prefix="handoff_run",
+            expect=script_run.CREATED if expect is None else expect,
         )
+
+    def _timeout(self, request: HandoffRequest) -> Optional[float]:
+        """Per-request timeout override, else the spec's."""
+        timeout = request.get("timeout")
+        return self.spec.timeout if timeout is None else timeout
 
     def deliver(
         self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest
@@ -607,8 +652,7 @@ class ScriptRunDeliverer(ScriptLaunchDeliverer):
             return None
 
         os.makedirs(os.path.dirname(os.path.abspath(artifact)) or ".", exist_ok=True)
-        timeout = request.get("timeout")
-        timeout = self.spec.timeout if timeout is None else timeout
+        timeout = self._timeout(request)
         bridge.logger.info(
             f"Running {self.spec.app.name} headlessly ({request.template}) -> {artifact}"
         )
@@ -667,6 +711,86 @@ class ScriptRunDeliverer(ScriptLaunchDeliverer):
         }
 
 
+class ScriptRoundTripDeliverer(ScriptRunDeliverer):
+    """Run a **fresh** app headlessly on the payload and let it edit that file in place.
+
+    The delivery half of a round trip. Same blocking run as
+    :class:`ScriptRunDeliverer`, but the artifact *is* :attr:`Payload.primary` -- the
+    target loads the exported file, edits it, and saves back over it (RizomUV's
+    ``ZomLoad``/``ZomSave`` is the canonical shape). Two consequences the save-as route
+    does not have:
+
+    * **No staging, no promotion.** The input and the output are one path, so there is
+      nothing to promote and a hidden sibling would just be a copy nobody reads. The
+      file is a temp payload the bridge owns, so a partial write costs nothing -- unlike
+      a save-over of the user's own scene, which is exactly what staging protects.
+    * **Judged by CHANGE, not creation.** Clearing the path first would delete the app's
+      own input. An app that exits 0 without reaching its save call leaves the file
+      untouched, and calling that a success would hand the caller back its own
+      unmodified export to re-ingest as though it had been processed -- a silent no-op
+      that looks like a working round trip. So the runner is asked for
+      :data:`~pythontk.core_utils.script_run.REWRITTEN`.
+
+    The result dict is what :meth:`HandoffBridge._ingest` receives; ``artifact`` is the
+    edited file to re-import.
+    """
+
+    def _context(
+        self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest
+    ) -> Dict[str, str]:
+        # Skip ScriptRunDeliverer's staging-sibling OUT_FILE: here the target reads and
+        # writes the one payload path, which the base already exposes as __FBX_PATH__.
+        context = ScriptLaunchDeliverer._context(self, bridge, payload, request)
+        context["OUT_FILE"] = str(payload.primary or "").replace("\\", "/")
+        return context
+
+    def deliver(
+        self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest
+    ) -> Optional[Dict[str, Any]]:
+        from pythontk.core_utils.script_run import REWRITTEN
+
+        artifact = payload.primary
+        if not artifact:
+            bridge.logger.error(
+                f"Mode '{request.mode}' needs a payload for the target to edit in place."
+            )
+            return None
+
+        script = self.render(bridge, payload, request)
+        if script is None:
+            return None
+
+        bridge.logger.info(
+            f"Running {self.spec.app.name} headlessly ({request.template}) on {artifact}"
+        )
+        try:
+            result = self.run(
+                self._exe(bridge),
+                script,
+                artifact=artifact,
+                launch_args=self.spec.launch_args,
+                timeout=self._timeout(request),
+                env=self._env(bridge),
+                expect=REWRITTEN,
+            )
+        except Exception as error:  # noqa: BLE001 - reported, never raised at the caller
+            # The payload is deliberately KEPT on failure: the rendered script and the
+            # file it choked on are the only evidence of what went wrong, and the temp
+            # namespace's age-gated sweep reclaims them either way.
+            bridge.logger.error(f"{self.spec.app.name} did not process {artifact}: {error}")
+            return None
+
+        bridge.logger.info(f"{self.spec.app.name} finished in {result.duration:.1f}s.")
+        return {
+            "artifact": artifact,
+            "template": request.template,
+            "mode": request.mode,
+            "payload": payload.primary,
+            "duration": result.duration,
+            "returncode": result.returncode,
+        }
+
+
 class ScriptLaunchBridge(HandoffBridge):
     """A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
 
@@ -681,6 +805,10 @@ class ScriptLaunchBridge(HandoffBridge):
     # executable where the target has one). Set it and the bridge gains
     # :meth:`save_as`; leave it None and the bridge stays send-only.
     run_spec: Optional[ScriptLaunchSpec] = None
+    # Optional third spec for the ROUND-TRIP route: the target edits the exported
+    # payload in place and the bridge re-ingests it. Set it (plus an :meth:`_ingest`
+    # override) and the bridge gains :meth:`round_trip`.
+    round_trip_spec: Optional[ScriptLaunchSpec] = None
     # Template + accepted extensions for :meth:`save_as` (the first is the default
     # appended when the caller's path has none).
     save_template: str = "_save_scene"
@@ -698,9 +826,28 @@ class ScriptLaunchBridge(HandoffBridge):
         # Per-mode registry (instance-owned: a class-level dict would leak one
         # bridge's strategies into every other).
         self.deliverers = {mode: self.deliverer for mode in self.spec.modes}
-        if self.run_spec is not None:
-            runner = ScriptRunDeliverer(self.run_spec)
-            self.deliverers.update({mode: runner for mode in self.run_spec.modes})
+        for attr, strategy in (
+            ("run_spec", ScriptRunDeliverer),
+            ("round_trip_spec", ScriptRoundTripDeliverer),
+        ):
+            spec = getattr(self, attr)
+            if spec is None:
+                continue
+            # A secondary spec that forgets `modes=` inherits ScriptLaunchSpec's
+            # default `(SEND_TO,)` and would REPLACE the interactive send deliverer
+            # here -- send() would then run the target headlessly and report a
+            # missing artifact, with nothing pointing at the one-word omission that
+            # caused it. Registering a mode twice is always a declaration bug, so
+            # refuse at construction rather than mis-dispatch at send time.
+            clash = sorted(set(spec.modes) & set(self.deliverers))
+            if clash:
+                raise ValueError(
+                    f"{type(self).__name__}.{attr} claims mode(s) {clash}, already "
+                    f"served by another spec. Set `modes=` on it (e.g. "
+                    f"`modes=({SAVE_AS!r},)`)."
+                )
+            deliverer = strategy(spec)
+            self.deliverers.update({mode: deliverer for mode in spec.modes})
 
     def render_context(self, params: Dict[str, Any]) -> Dict[str, str]:
         """Format *params* into a ``__KEY__`` substitution context.
@@ -760,6 +907,55 @@ class ScriptLaunchBridge(HandoffBridge):
         )
         return self._run(objects, request)
 
+    # ------------------ round_trip (send it out, bring the result back) -----
+    def round_trip(
+        self,
+        objects: Optional[List[Any]] = None,
+        *,
+        template: str = "import",
+        params: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = None,
+        **extras: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Export *objects*, let the target app edit them, and re-ingest the result.
+
+        The third hand-off shape. ``send()`` is one-way and ``save_as()`` writes a file
+        for the user; this one closes the loop: the same export pipeline feeds a
+        **headless** target that edits the payload in place, and :meth:`_ingest` brings
+        the result back onto the host's own objects (re-import, transfer, clean up).
+        That is what makes "unwrap these in RizomUV" a mode of the shared skeleton
+        rather than a parallel pipeline with its own discovery, preflight and logging.
+
+        Requires :attr:`round_trip_spec` and an :meth:`_ingest` override -- without the
+        latter the edited payload is delivered and then simply reported, which is a
+        silent no-op rather than a round trip.
+
+        Returns whatever :meth:`_ingest` returns, or ``None`` on a handled,
+        already-logged failure.
+        """
+        if self.round_trip_spec is None:
+            self.logger.error(
+                f"{type(self).__name__} has no `round_trip_spec`; round_trip is "
+                "unavailable."
+            )
+            return None
+        if type(self)._ingest is HandoffBridge._ingest:
+            # The target WILL run and edit the payload; the default identity ingest
+            # then throws that away and reports success. Warn rather than refuse --
+            # the work is already worth reporting by the time this could be detected
+            # on the far side, and the run itself is not wrong, only pointless.
+            self.logger.warning(
+                f"{type(self).__name__} does not override `_ingest`; the round trip "
+                "will run and discard its result."
+            )
+        request = HandoffRequest(
+            template=template,
+            mode=ROUND_TRIP,
+            params=self.merge_params(params),
+            extras={"timeout": timeout, **extras},
+        )
+        return self._run(objects, request)
+
     @classmethod
     def resolve_save_path(cls, out_path: str) -> str:
         """Absolute *out_path*, with :attr:`save_extensions`' default appended if bare."""
@@ -799,6 +995,7 @@ class ScriptLaunchBridge(HandoffBridge):
 __all__ = [
     "SEND_TO",
     "SAVE_AS",
+    "ROUND_TRIP",
     "AppSpec",
     "HandoffRequest",
     "Payload",
@@ -807,5 +1004,6 @@ __all__ = [
     "ScriptLaunchSpec",
     "ScriptLaunchDeliverer",
     "ScriptRunDeliverer",
+    "ScriptRoundTripDeliverer",
     "ScriptLaunchBridge",
 ]

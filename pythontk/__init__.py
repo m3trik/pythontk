@@ -145,6 +145,7 @@ DEFAULT_INCLUDE = {
         "ScriptLaunchBridge",
         "ScriptLaunchDeliverer",
         "ScriptRunDeliverer",
+        "ScriptRoundTripDeliverer",
         "ScriptLaunchSpec",
         "AppSpec",
         "Deliverer",
@@ -197,6 +198,10 @@ DEFAULT_INCLUDE = {
         "PluginInstaller",
     ],
     "net_utils.rpc.job": ["Call", "Result", "RpcJob"],
+    # The in-application half of the RPC pair (`client` drives it from outside).
+    # Exposed here for the plugin that loads in place and can import pythontk;
+    # installed plugins stage `plugin_core.py` into their payload instead.
+    "net_utils.rpc.plugin_core": ["OpRegistry", "MainThreadMarshaller", "RpcPlugin"],
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
     "str_utils.hotkey_utils": "HotkeyUtils",
 }

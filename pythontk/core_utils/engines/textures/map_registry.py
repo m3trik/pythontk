@@ -80,6 +80,48 @@ class MapType:
     )  # Packed maps only: what each channel carries in the CANONICAL layout, e.g. ORM {"R": "Ambient_Occlusion", "G": "Roughness", "B": "Metallic"}. A trailing "?" marks an optional/filler channel (MSAO's Detail) that redundancy coverage must not demand. SSoT for coverage-aware filtering and channel extraction.
     workflows: List[str] = field(default_factory=list)  # Workflows that use this map
 
+    @staticmethod
+    def compose_aliases(
+        stems: Tuple[str, ...],
+        tags: Tuple[str, ...],
+        separators: Tuple[str, ...] = ("_", ""),
+    ) -> List[str]:
+        """Every ``<stem><separator><tag>`` spelling, order-preserving and de-duped.
+
+        For map types whose name is a base token plus a *qualifier* — the normal
+        conventions (``NRML_OGL``, ``NormalDX``, ``N_GL``) are the only ones in
+        PBR — the spellings multiply out faster than a hand-written list stays
+        complete, and each gap costs twice:
+
+        - classification misses the file entirely (``rock_NRML_OGL`` resolved to
+          nothing while its ``_DX`` twin resolved fine), and
+        - :meth:`MapRegistry.get_suffix_strip_pattern` strips ONE trailing alias,
+          so an unregistered compound leaves its first token welded to the base
+          name (``rock_NRML_DX`` -> ``rock_NRML``) and the map lands in a
+          different texture set than the rest of its bake.
+
+        Enumerating the product is deliberate: the alternative — stripping
+        suffixes in a loop until none match — eats material names, because most
+        map-type tokens are also ordinary words (``Gold_Metal_Diffuse`` ->
+        ``Gold``).
+
+        Parameters:
+            stems: Base tokens, e.g. ``("Normal", "NRM", "N")``.
+            tags: Qualifiers appended to each stem, e.g. ``("GL", "OpenGL")``.
+            separators: Joiners between the two, in preference order. The
+                default is the conventional pair; the built-in table passes
+                :attr:`MapRegistry._TOKEN_JOINERS` (every delimiter in
+                ``MapRegistry.SEPARATORS``, plus glued) so a compound suffix is
+                stripped whole no matter which delimiter the file uses.
+
+        Returns:
+            list[str]: The composed aliases, first occurrence order preserved.
+        """
+        composed = [
+            f"{stem}{sep}{tag}" for stem in stems for tag in tags for sep in separators
+        ]
+        return list(dict.fromkeys(composed))
+
     def carried_types(self, include_optional: bool = False) -> List[str]:
         """The map types this packed map's channels carry.
 
@@ -215,6 +257,27 @@ class MapRegistry(SingletonMixin):
             ),
         },
     }
+    #: Characters that count as an explicit suffix delimiter. Shared by
+    #: :meth:`_short_alias_boundary`, :meth:`get_suffix_strip_pattern`,
+    #: :attr:`_TOKEN_JOINERS` and ``MapFactory.resolve_map_type(key=False)`` —
+    #: four readings of "does this filename end in a map-type suffix" that must
+    #: agree, and did not while each carried its own idea of what a separator is.
+    SEPARATORS = "_-. "
+
+    # Tokens that mean "tangent-space normal map", and the tags that qualify one
+    # with its handedness convention. Crossed into aliases by
+    # `MapType.compose_aliases` below — see that docstring for why the product is
+    # enumerated rather than matched with a repeating stripper.
+    _NORMAL_TOKENS = ("Normal", "NormalMap", "Norm", "NRML", "NRM", "NML", "N")
+    _OPENGL_TAGS = ("GL", "OGL", "OpenGL")
+    _DIRECTX_TAGS = ("DX", "DirectX")
+    # Joiners INSIDE a compound suffix, derived from `SEPARATORS` rather than
+    # picked: a filename delimits the suffix and the two tokens within it the
+    # same way, so covering only `_` and glued left `rock-nrml-ogl` classifying
+    # as Normal_OpenGL while it based to `rock-nrml` — the very split this
+    # enumeration exists to prevent, surviving under a different delimiter.
+    _TOKEN_JOINERS = tuple(SEPARATORS) + ("",)
+
     _maps: Dict[str, MapType] = {
         "Base_Color": MapType(
             name="Base_Color",
@@ -231,6 +294,8 @@ class MapRegistry(SingletonMixin):
                 "BaseMapTexture",
                 "ColorMap",
                 "Color",
+                "Col",
+                "Alb",
                 "BC",
             ],
             color_space="sRGB",
@@ -285,7 +350,6 @@ class MapRegistry(SingletonMixin):
                 "RoughMap",
                 "Ruff",
                 "Rgh",
-                "RGH",
                 "R",
             ],
             color_space="Linear",
@@ -314,8 +378,11 @@ class MapRegistry(SingletonMixin):
             aliases=[
                 "NormalMap",
                 "Normal_Map",
+                "Normals",
                 "Norm",
+                "NRML",
                 "NRM",
+                "NML",
                 "N",
                 "TangentSpaceNormal",
                 "TSN",
@@ -328,14 +395,10 @@ class MapRegistry(SingletonMixin):
         ),
         "Normal_OpenGL": MapType(
             name="Normal_OpenGL",
-            aliases=[
-                "NormalGL",
-                "Normal_GL",
-                "Normal_Tangent_GL",
-                "NormalMap_GL",
-                "NGL",
-                "GL",
-            ],
+            # The bare tags come first so a file named for the convention alone
+            # ("rock_OGL") still classifies; the composed spellings follow.
+            aliases=["GL", "OGL", "OpenGL", "Normal_Tangent_GL"]
+            + MapType.compose_aliases(_NORMAL_TOKENS, _OPENGL_TAGS, _TOKEN_JOINERS),
             color_space="Linear",
             mode="RGB",
             default_background=(127, 127, 255, 255),
@@ -344,19 +407,72 @@ class MapRegistry(SingletonMixin):
         ),
         "Normal_DirectX": MapType(
             name="Normal_DirectX",
-            aliases=[
-                "NormalDX",
-                "Normal_DX",
-                "Normal_Tangent_DX",
-                "NormalMap_DX",
-                "NDX",
-                "DX",
-                "DXN",
-            ],
+            aliases=["DX", "DXN", "DirectX", "Normal_Tangent_DX"]
+            + MapType.compose_aliases(_NORMAL_TOKENS, _DIRECTX_TAGS, _TOKEN_JOINERS),
             color_space="Linear",
             mode="RGB",
             default_background=(127, 127, 255, 255),
             input_fallbacks=["Normal", "Normal_OpenGL", "Bump", "Height"],
+            resolution_critical=True,
+        ),
+        # --- Non-tangent-space normal bakes -------------------------------
+        # Registered so they do NOT classify as `Normal`. Every one of these ends
+        # in the token "Normal", and longest-first matching had no longer
+        # candidate to prefer, so an object-space or bent-normal bake was wired
+        # into the tangent-normal slot and rendered wrong with no warning.
+        # Deliberately absent from `NORMAL_TYPES`: `select_normal_type` must
+        # never offer one of these as the shader's normal map — they need a
+        # different shading setup, not a different handedness.
+        "Normal_Object": MapType(
+            name="Normal_Object",
+            aliases=[
+                "NormalObject",
+                "ObjectNormal",
+                "Object_Normal",
+                "ObjectSpaceNormal",
+                "Object_Space_Normal",
+                "NormalOS",
+                "Normal_OS",
+                "OSNormal",
+                "OSN",
+            ],
+            color_space="Linear",
+            mode="RGB",
+            default_background=(127, 127, 255, 255),
+            resolution_critical=True,
+        ),
+        "Normal_World": MapType(
+            name="Normal_World",
+            aliases=[
+                "NormalWorld",
+                "WorldNormal",
+                "World_Normal",
+                "WorldSpaceNormal",
+                "World_Space_Normal",
+                "NormalWS",
+                "Normal_WS",
+                "WSNormal",
+                "WSN",
+            ],
+            color_space="Linear",
+            mode="RGB",
+            default_background=(127, 127, 255, 255),
+            resolution_critical=True,
+        ),
+        "Bent_Normal": MapType(
+            name="Bent_Normal",
+            # No bare "Bent": aliases longer than 3 chars match without a
+            # boundary check, so it claimed every word ending in those letters
+            # ("mat_absorbent", "mat_unbent"). The convention spells it out.
+            aliases=[
+                "BentNormal",
+                "Normal_Bent",
+                "NormalBent",
+                "BentNormalMap",
+            ],
+            color_space="Linear",
+            mode="RGB",
+            default_background=(127, 127, 255, 255),
             resolution_critical=True,
         ),
         "ORM": MapType(
@@ -603,7 +719,7 @@ class MapRegistry(SingletonMixin):
         ),
         "Specular": MapType(
             name="Specular",
-            aliases=["SpecularMap", "Spec", "SPC", "S"],
+            aliases=["SpecularMap", "Specularity", "Spec", "SPC", "S"],
             color_space="sRGB",
             mode="RGB",
             default_background=(0, 0, 0, 255),
@@ -646,6 +762,25 @@ class MapRegistry(SingletonMixin):
             mode="L",
             default_background=(128, 128, 128, 255),
             input_fallbacks=["Height"],
+        ),
+        "Vector_Displacement": MapType(
+            name="Vector_Displacement",
+            # Its own type because the mode differs, not just the name: a VDM
+            # carries an XYZ offset per texel, and classifying it as
+            # `Displacement` (mode "L") flattened it to grayscale — silently
+            # discarding two of the three axes.
+            aliases=[
+                "VectorDisplacement",
+                "Vector_Disp",
+                "VectorDisp",
+                "VDisplacement",
+                "VDisp",
+                "VDM",
+            ],
+            color_space="Linear",
+            mode="RGB",
+            default_background=(128, 128, 128, 255),
+            resolution_critical=True,
         ),
         "Refraction": MapType(
             name="Refraction",
@@ -824,6 +959,51 @@ class MapRegistry(SingletonMixin):
     # one). Also the membership set for "is this a normal map type".
     NORMAL_TYPES = ("Normal_OpenGL", "Normal_DirectX", "Normal")
 
+    # Handedness spellings that pair 1:1 across the two tangent-space
+    # conventions, longest tag first. This is the ONLY positional relationship in
+    # the taxonomy; the alias LISTS must never be read positionally against each
+    # other, which is exactly what both callers of
+    # :meth:`counterpart_normal_spelling` used to do — walking `index(typ)` in one
+    # tuple and subscripting the other. That contract silently required the two
+    # lists to stay the same length and in lockstep order, which they never were
+    # (`DXN` had no counterpart and ran off the end), and which the generated
+    # convention spellings broke outright (`NDX` -> `NRMGL`).
+    _CONVENTION_TAG_PAIRS = (("OpenGL", "DirectX"), ("GL", "DX"), ("OGL", "DX"))
+
+    @classmethod
+    def counterpart_normal_spelling(cls, spelling: str, dst_type: str) -> str:
+        """The same normal-map spelling, written for the other handedness convention.
+
+        Swaps the trailing convention tag and keeps everything before it verbatim,
+        so a converted map keeps the naming style of the file it came from
+        (``rock_NormalDX`` -> ``rock_NormalGL``, ``rock_NDX`` -> ``rock_NGL``)
+        instead of being renamed to the canonical spelling.
+
+        Parameters:
+            spelling: A registered name or alias of the SOURCE convention, as it
+                appears in the filename. Anything that carries no recognizable
+                tag (``DXN``) falls back to ``dst_type`` — always a valid,
+                resolvable spelling.
+            dst_type: ``"Normal_OpenGL"`` or ``"Normal_DirectX"``.
+
+        Returns:
+            str: The counterpart spelling, or ``dst_type`` when none applies.
+        """
+        if dst_type == "Normal_OpenGL":
+            src_index, dst_index = 1, 0
+        elif dst_type == "Normal_DirectX":
+            src_index, dst_index = 0, 1
+        else:
+            return dst_type
+
+        for pair in sorted(
+            cls._CONVENTION_TAG_PAIRS, key=lambda p: len(p[src_index]), reverse=True
+        ):
+            src_tag = pair[src_index]
+            if spelling and spelling.lower().endswith(src_tag.lower()):
+                return spelling[: len(spelling) - len(src_tag)] + pair[dst_index]
+        return dst_type
+
     @classmethod
     def select_normal_type(cls, available) -> Optional[str]:
         """The single normal map type a shader should wire, out of those present.
@@ -921,7 +1101,7 @@ class MapRegistry(SingletonMixin):
         if index <= 0:
             return "separator"
         prev = name_only[index - 1]
-        if prev in "_-. ":
+        if prev in MapRegistry.SEPARATORS:
             return "separator"
         return "camel" if prev.islower() else None
 
@@ -996,9 +1176,14 @@ class MapRegistry(SingletonMixin):
         consume this pattern (they once carried drifted copies of it).
 
         Matching rules:
-        - Underscore-delimited suffixes match case-insensitively at any length
-          (``brick_ao`` → ``brick``) — the explicit ``_`` boundary makes false
-          positives unlikely.
+        - Delimited suffixes match case-insensitively at any length
+          (``brick_ao`` → ``brick``) — an explicit boundary makes false positives
+          unlikely. The delimiter set is :attr:`SEPARATORS`, the same one
+          :meth:`_short_alias_boundary` accepts; when this branch was ``_``-only,
+          ``rock-ao`` classified as Ambient_Occlusion but based to ``rock-ao``,
+          and ``rock-basecolor`` based to ``rock-`` (the attached branch matched
+          instead, leaving the delimiter behind), so three spellings of one
+          texture set became three sets.
         - Attached suffixes are case-insensitive only when longer than 3 chars;
           short ones require a capital first letter AND a lowercase character
           immediately before them (``brickAO``, not ``brickao`` and not
@@ -1020,8 +1205,10 @@ class MapRegistry(SingletonMixin):
             if not all_aliases:
                 return None
 
-            p_underscore = "|".join(re.escape(s) for s in all_aliases)
-            pattern_underscore = f"_(?i:{p_underscore})$"
+            p_delimited = "|".join(re.escape(s) for s in all_aliases)
+            pattern_delimited = (
+                f"[{re.escape(''.join(self.SEPARATORS))}](?i:{p_delimited})$"
+            )
 
             short_suffixes = [s for s in all_aliases if len(s) <= 3]
             long_suffixes = [s for s in all_aliases if len(s) > 3]
@@ -1049,8 +1236,12 @@ class MapRegistry(SingletonMixin):
 
             pattern_attached = f"(?:{'|'.join(attached_parts)})$"
 
+            # Delimited first: `re.sub` scans left to right, so at the delimiter
+            # position this branch consumes the separator along with the suffix
+            # before the attached branch can match one character later and leave
+            # it stranded (`rock-basecolor` -> `rock-`).
             self.__class__._suffix_strip_pattern = (
-                f"(?:{pattern_underscore}|{pattern_attached})"
+                f"(?:{pattern_delimited}|{pattern_attached})"
             )
         return self._suffix_strip_pattern
 

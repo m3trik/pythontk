@@ -26,6 +26,7 @@ from pythontk.core_utils.app_handoff import (
     Payload,
     ScriptLaunchBridge,
     ScriptLaunchSpec,
+    ROUND_TRIP,
     SAVE_AS,
     SEND_TO,
 )
@@ -619,13 +620,237 @@ class HandoffSaveAsTest(unittest.TestCase):
         """A class-level dict would leak one bridge's strategies into every other."""
         first, second = self._bridge(), self._bridge()
         self.assertIsNot(first.deliverers, second.deliverers)
-        self.assertEqual(HandoffBridge.deliverers, {})
+        # The class default is None, not a shared {}: a mutable default would be the
+        # one object every non-rebinding subclass mutates in place.
+        self.assertIsNone(HandoffBridge.deliverers)
+
+    def test_unregistered_mode_map_is_not_a_shared_mutable(self):
+        """A bridge that never rebinds `deliverers` must not write to a shared dict."""
+
+        class _Bare(HandoffBridge):
+            deliverer = None
+
+            def _resolve_objects(self, objects):
+                return list(objects or [])
+
+            def _produce(self, objects, request):
+                return Payload(primary="x")
+
+        # Reading through the None default must not materialise a class-level dict.
+        self.assertIsNone(_Bare()._deliverer_for(HandoffRequest(mode=SEND_TO)))
+        self.assertIsNone(HandoffBridge.deliverers)
+        self.assertIsNone(_Bare.deliverers)
 
     def test_save_as_rejects_a_template_that_does_not_declare_the_mode(self):
         br = self._bridge()
         self.assertIsNone(br.save_as(str(self.tmp / "a.stub"), template="import"))
         self.assertEqual(self.runs, [])
         self.assertEqual(br.exported, [])  # aborted in preflight, before exporting
+
+
+class _StubRoundTripBridge(_StubScriptBridge):
+    """A stub bridge with the ROUND-TRIP route wired: run headless, then ingest."""
+
+    def __init__(self, template_dir, launched, **kw):
+        # Before super().__init__ — that is where the mode->deliverer registry is built.
+        self.round_trip_spec = ScriptLaunchSpec(
+            app=AppSpec(name="StubApp"),
+            template_dir=Path(template_dir),
+            launch_args=lambda script: ["-cfi", script],
+            modes=(ROUND_TRIP,),
+            timeout=11,
+        )
+        super().__init__(template_dir, launched, **kw)
+        self.ingested = []
+
+    def _ingest(self, result, objects, payload, request):
+        # What a real bridge does here: re-import result["artifact"], transfer onto
+        # `objects`, clean up. The stub just records that it was handed both.
+        self.ingested.append((dict(result), list(objects), payload.primary))
+        return {**result, "transferred": len(objects)}
+
+
+class HandoffRoundTripTest(unittest.TestCase):
+    """The inbound axis: deliver blocking, then bring the result back.
+
+    The whole point of ROUND_TRIP being a *mode* is that it reuses the one produce
+    step; these pin that, and that the in-place contract differs from save_as in the
+    two ways that matter (no staging, judged by change).
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "import.py").write_text(
+            "BRIDGE_MODES = ('send_to',)\nFBX = r\"__FBX_PATH__\"\nSCALE = __SCALE__\n",
+            encoding="utf-8",
+        )
+        (self.tmp / "unwrap.py").write_text(
+            "BRIDGE_MODES = ('round_trip',)\n"
+            'FBX = r"__FBX_PATH__"\n'
+            'OUT = r"__OUT_FILE__"\n'
+            "SCALE = __SCALE__\n",
+            encoding="utf-8",
+        )
+        self.launched, self.runs = [], []
+        self._orig_run = app_handoff.ScriptRunDeliverer.run
+
+        def _fake_run(app_exe, script_text, *, artifact, launch_args, timeout,
+                     env=None, expect=None):
+            self.runs.append(
+                {"artifact": artifact, "timeout": timeout, "expect": expect,
+                 "args": list(launch_args("S.py")), "script": script_text}
+            )
+            # The target app edits the payload in place.
+            Path(artifact).write_text("unwrapped", encoding="utf-8")
+            return ScriptRunResult(
+                artifact=artifact, returncode=0, output="", duration=0.5,
+                script_path="S.py",
+            )
+
+        app_handoff.ScriptRunDeliverer.run = staticmethod(_fake_run)
+
+    def tearDown(self):
+        app_handoff.ScriptRunDeliverer.run = staticmethod(self._orig_run)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _bridge(self):
+        return _StubRoundTripBridge(self.tmp, self.launched)
+
+    def test_round_trip_runs_headless_then_ingests(self):
+        br = self._bridge()
+        result = br.round_trip(objects=["a", "b"], template="unwrap")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["mode"], ROUND_TRIP)
+        self.assertEqual(result["transferred"], 2)  # _ingest ran and enriched
+        self.assertEqual(self.launched, [])  # blocking route: nothing detached
+        self.assertEqual(len(self.runs), 1)
+        self.assertEqual(self.runs[0]["args"], ["-cfi", "S.py"])
+        self.assertEqual(self.runs[0]["timeout"], 11)
+
+    def test_the_artifact_is_the_payload_itself(self):
+        """In place: the app reads and writes ONE path — no staging sibling."""
+        br = self._bridge()
+        result = br.round_trip(objects=["a"], template="unwrap")
+        self.assertEqual(self.runs[0]["artifact"], result["payload"])
+        self.assertEqual(result["artifact"], result["payload"])
+
+    def test_the_runner_is_asked_to_judge_by_change_not_creation(self):
+        """Clearing the path first would delete the app's own input."""
+        from pythontk.core_utils.script_run import REWRITTEN
+
+        br = self._bridge()
+        br.round_trip(objects=["a"], template="unwrap")
+        self.assertEqual(self.runs[0]["expect"], REWRITTEN)
+
+    def test_ingest_receives_the_same_objects_produce_exported(self):
+        """Pairing the result back onto the originals needs no extra bookkeeping."""
+        br = self._bridge()
+        br.round_trip(objects=["a", "b", "c"], template="unwrap")
+        _result, objects, primary = br.ingested[0]
+        self.assertEqual(objects, ["a", "b", "c"])
+        self.assertEqual(tuple(br.exported[0][0]), ("a", "b", "c"))
+        self.assertEqual(br.exported[0][1], primary)
+
+    def test_out_file_points_at_the_payload(self):
+        br = self._bridge()
+        br.round_trip(objects=["a"], template="unwrap")
+        script = self.runs[0]["script"]
+        payload = self.runs[0]["artifact"].replace("\\", "/")
+        self.assertIn(f'OUT = r"{payload}"', script)
+
+    def test_a_failed_run_is_handled_and_never_ingests(self):
+        br = self._bridge()
+
+        def _boom(*a, **kw):
+            raise RuntimeError("target app died")
+
+        app_handoff.ScriptRunDeliverer.run = staticmethod(_boom)
+        self.assertIsNone(br.round_trip(objects=["a"], template="unwrap"))
+        self.assertEqual(br.ingested, [])
+
+    def test_round_trip_rejects_a_template_that_does_not_declare_the_mode(self):
+        br = self._bridge()
+        self.assertIsNone(br.round_trip(objects=["a"], template="import"))
+        self.assertEqual(self.runs, [])
+        self.assertEqual(br.exported, [])  # aborted in preflight, before exporting
+
+    def test_a_bridge_without_the_spec_reports_instead_of_raising(self):
+        br = _StubScriptBridge(self.tmp, self.launched)  # no round_trip_spec
+        self.assertIsNone(br.round_trip(template="unwrap"))
+        self.assertEqual(self.runs, [])
+
+    def test_a_bridge_that_forgets_ingest_is_warned_not_silently_pointless(self):
+        """The default identity ingest runs the target and throws the result away.
+
+        Warned rather than refused: by the time it could be detected the target has
+        already run, and discarding that to raise would be worse than reporting it.
+        """
+
+        class _NoIngest(_StubRoundTripBridge):
+            pass
+
+        _NoIngest._ingest = HandoffBridge._ingest  # undo the stub's override
+        br = _NoIngest(self.tmp, self.launched)
+        with self.assertLogs(br.logger, level="WARNING") as caught:
+            result = br.round_trip(objects=["a"], template="unwrap")
+        self.assertIsNotNone(result)  # the run still happened and is reported
+        self.assertIn("_ingest", "\n".join(caught.output))
+
+    def test_an_overriding_bridge_is_not_warned(self):
+        br = self._bridge()  # _StubRoundTripBridge DOES override _ingest
+        with self.assertNoLogs(br.logger, level="WARNING"):
+            br.round_trip(objects=["a"], template="unwrap")
+
+    def test_a_secondary_spec_that_forgets_modes_is_refused_at_construction(self):
+        """ScriptLaunchSpec.modes defaults to (SEND_TO,) -- a secondary spec that
+        omits it would REPLACE the interactive send deliverer, so send() would run
+        the target headlessly and fail on a missing artifact with nothing pointing
+        at the one-word omission. Registering a mode twice is a declaration bug."""
+
+        class _Clashing(_StubScriptBridge):
+            def __init__(self, template_dir, launched, **kw):
+                self.round_trip_spec = ScriptLaunchSpec(
+                    app=AppSpec(name="StubApp"),
+                    template_dir=Path(template_dir),
+                    launch_args=lambda s: [s],
+                    # modes= omitted on purpose -> defaults to (SEND_TO,)
+                )
+                super().__init__(template_dir, launched, **kw)
+
+        with self.assertRaises(ValueError) as ctx:
+            _Clashing(self.tmp, self.launched)
+        self.assertIn("round_trip_spec", str(ctx.exception))
+        self.assertIn(SEND_TO, str(ctx.exception))
+
+    def test_the_two_secondary_specs_cannot_claim_the_same_mode(self):
+        """run_spec and round_trip_spec are checked against each other too."""
+
+        def _spec(modes):
+            return ScriptLaunchSpec(
+                app=AppSpec(name="StubApp"),
+                template_dir=Path(self.tmp),
+                launch_args=lambda s: [s],
+                modes=modes,
+            )
+
+        class _Both(_StubScriptBridge):
+            def __init__(inner, template_dir, launched, **kw):
+                inner.run_spec = _spec((SAVE_AS,))
+                inner.round_trip_spec = _spec((SAVE_AS,))  # collides with run_spec
+                super().__init__(template_dir, launched, **kw)
+
+        with self.assertRaises(ValueError):
+            _Both(self.tmp, self.launched)
+
+    def test_default_ingest_is_the_identity_for_one_way_bridges(self):
+        """A send-only bridge must pay nothing for the step existing."""
+        br = _StubScriptBridge(self.tmp, self.launched)
+        delivered = {"script": "s", "template": "import"}
+        self.assertIs(
+            br._ingest(delivered, ["a"], Payload(primary="p"), HandoffRequest()),
+            delivered,
+        )
 
 
 if __name__ == "__main__":

@@ -536,6 +536,12 @@ class PreviewDeliverer(Deliverer):
         logged rather than raised: a preview missing one section still beats no
         preview at all.
 
+        Every section shares **one** open GLB. Each applier can open a path for
+        itself, and did -- which meant a two-section sidecar parsed and rewrote
+        the whole file twice, on top of the pass the conversion itself makes.
+        They now all edit one in-memory glTF that is written once when the block
+        closes, so the cost stops scaling with the number of sections.
+
         Returns a ``{section: outcome}`` summary that rides back on the
         deliverer's result so the calling panel can *say* what happened.
         Silence was the original sin here: a section that read nothing, matched
@@ -550,29 +556,55 @@ class PreviewDeliverer(Deliverer):
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
         summary: Dict[str, str] = {}
-        for section, method in self.SIDECAR_APPLIERS.items():
-            apply = getattr(MeshConvert, method)
-            data = sidecar.get(section)
-            if not data:
-                continue
-            try:
-                applied = apply(glb, data)
-            except (OSError, ValueError) as error:
-                bridge.logger.warning("Sidecar %r not applied: %s", section, error)
-                summary[section] = f"failed ({error})"
-                continue
-            if not applied:
-                # The section was read but nothing landed -- almost always a
-                # name mismatch, which set_glb_emissive has just logged in full.
-                bridge.logger.warning(
-                    "Sidecar %r matched none of its %s entr(ies) in the GLB.",
-                    section,
-                    len(data),
-                )
-                summary[section] = f"0 of {len(data)} matched"
-                continue
-            bridge.logger.info("Sidecar %r applied to %s.", section, len(applied))
-            summary[section] = f"{len(applied)} of {len(data)}"
+        try:
+            with MeshConvert.open_glb(glb) as target:
+                for section, method in self.SIDECAR_APPLIERS.items():
+                    apply = getattr(MeshConvert, method)
+                    data = sidecar.get(section)
+                    if not data:
+                        continue
+                    try:
+                        applied = apply(target, data)
+                    except (OSError, ValueError) as error:
+                        # Still per-section: one broken section must not cost
+                        # the whole preview. The sections do share one glTF now,
+                        # so an applier that raised *after* mutating would leave
+                        # that much behind -- which is why every failure an
+                        # applier can actually reach (an unreadable texture, an
+                        # image no decoder wants) is handled inside it and
+                        # reported as a skipped image instead. This stays as the
+                        # backstop for anything that is not.
+                        bridge.logger.warning(
+                            "Sidecar %r not applied: %s", section, error
+                        )
+                        summary[section] = f"failed ({error})"
+                        continue
+                    if not applied:
+                        # The section was read but nothing landed -- almost
+                        # always a name mismatch, which the applier has just
+                        # logged in full.
+                        bridge.logger.warning(
+                            "Sidecar %r matched none of its %s entr(ies) in the GLB.",
+                            section,
+                            len(data),
+                        )
+                        summary[section] = f"0 of {len(data)} matched"
+                        continue
+                    bridge.logger.info(
+                        "Sidecar %r applied to %s.", section, len(applied)
+                    )
+                    summary[section] = f"{len(applied)} of {len(data)}"
+        except (OSError, ValueError) as error:
+            # Opening or writing the container, which the sections no longer do
+            # for themselves. That failure takes all of them with it, so report
+            # every one as failed rather than leaving the sections that
+            # "applied" claiming a success that never reached disk.
+            bridge.logger.warning("Sidecar not applied to %s: %s", glb, error)
+            return {
+                section: f"failed ({error})"
+                for section in self.SIDECAR_APPLIERS
+                if sidecar.get(section)
+            }
         return summary
 
     def deliver(

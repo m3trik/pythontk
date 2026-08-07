@@ -23,7 +23,7 @@ import tempfile
 import numpy as np
 from PIL import Image
 
-from pythontk import FileUtils, ImgUtils, MapFactory as TextureMapFactory
+from pythontk import FileUtils, ImgUtils, MapFactory as TextureMapFactory, TempArtifacts
 from pythontk.img_utils._img_utils import ImageFormat
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer
 
@@ -592,6 +592,43 @@ class ImgTest(BaseTestCase):
         )
         expected = os.path.join(self.test_dir, "im_Normal_OpenGL.png")
         self.assertEqual(os.path.normpath(gl_path), os.path.normpath(expected))
+
+    def test_convert_normal_map_format_keeps_the_source_spelling(self):
+        """A non-canonical suffix must convert to its paired spelling.
+
+        The two tests above use canonical names only, which sit at index 0 of
+        both alias tuples — so they passed while the suffix was being paired by
+        INDEX across two lists of different lengths. Any other spelling mapped to
+        an unrelated alias (``im_NDX`` -> ``im_NRMGL``).
+        """
+        # Its own scratch dir, not the class fixture dir: the conversion writes a
+        # sibling file per case, and `test_get_images_pattern` globs `*Normal*`
+        # over the shared dir expecting exactly the two fixtures.
+        artifacts = TempArtifacts(prefix="test_normal_spelling")
+        scratch = artifacts.dir_path()
+        try:
+            for src_suffix, target, expected_suffix in (
+                ("NormalDX", "opengl", "NormalGL"),
+                ("NDX", "opengl", "NGL"),
+                ("Normal_DX", "opengl", "Normal_GL"),
+                ("NormalGL", "directx", "NormalDX"),
+                ("NGL", "directx", "NDX"),
+            ):
+                input_path = os.path.join(scratch, f"im_{src_suffix}.png")
+                ImgUtils.save_image(
+                    ImgUtils.create_image("RGB", (8, 8), (127, 127, 255)), input_path
+                )
+                out = TextureMapFactory.convert_normal_map_format(
+                    input_path, target_format=target
+                )
+                expected = os.path.join(scratch, f"im_{expected_suffix}.png")
+                self.assertEqual(
+                    os.path.normpath(out),
+                    os.path.normpath(expected),
+                    f"{src_suffix} -> {target}",
+                )
+        finally:
+            artifacts.cleanup()
 
     # -------------------------------------------------------------------------
     # Mask Tests
