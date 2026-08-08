@@ -396,6 +396,47 @@ class _StubBridge(HandoffBridge):
         return Payload(primary=path)
 
 
+def _sidecar(sections):
+    """A sidecar envelope as `PreviewBridge._attach_sidecar` shapes it.
+
+    Deliverer tests build their fixtures through this rather than as bare
+    section maps, so a drift between what the producer wraps and what the
+    deliverer unwraps fails here instead of only in a live DCC.
+    """
+    return {
+        "version": MeshConvert.SIDECAR_VERSION,
+        "source": {"application": "test", "version": "0"},
+        "asset": "scene.fbx",
+        "color_space": "linear",
+        "sections": sections,
+    }
+
+
+class _StubPreviewBridge(PreviewBridge):
+    """A minimal `PreviewBridge` exercising the real producer-side envelope.
+
+    Unlike `_StubBridge` this attaches its sidecar through `_attach_sidecar`
+    -- the same call the Maya and Blender producers make -- so the
+    producer -> deliverer pair is tested end to end against the one schema
+    owner rather than against a hand-built dict.
+    """
+
+    payload_prefix = "test_preview_envelope"
+    sections = {"emissive": {"m": {"color": [1, 0, 0]}}}
+
+    def _resolve_objects(self, objects):
+        return objects or ["stub_object"]
+
+    def _produce(self, objects, request):
+        path = self._make_payload_path(extension=".fbx")
+        Path(path).write_bytes(b"fake-fbx-payload")
+        return self._attach_sidecar(
+            Payload(primary=path),
+            self.sections,
+            source={"application": "stub", "version": "0"},
+        )
+
+
 class PreviewDelivererTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = TempArtifacts("test_preview_deliverer", policy="scoped")
@@ -549,7 +590,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
     def test_scene_sidecar_section_is_applied_to_the_glb(self):
         """The sidecar carries what FBX can't; sections dispatch by name."""
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        sidecar = {"emissive": {"m": {"color": (1, 0, 0)}}}
+        sections = {"emissive": {"m": {"color": (1, 0, 0)}}}
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
         emissive_target = (
             "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
@@ -558,11 +599,14 @@ class PreviewDelivererTestCase(unittest.TestCase):
             with unittest.mock.patch(emissive_target, return_value=[{}]) as applied:
                 self.bridge.deliverer.deliver(
                     self.bridge,
-                    Payload(primary=self._fbx(), extras={"scene_sidecar": sidecar}),
+                    Payload(
+                        primary=self._fbx(),
+                        extras={"scene_sidecar": _sidecar(sections)},
+                    ),
                     HandoffRequest(),
                 )
         applied.assert_called_once()
-        self.assertEqual(applied.call_args[0][1], sidecar["emissive"])
+        self.assertEqual(applied.call_args[0][1], sections["emissive"])
 
     def test_absent_sidecar_leaves_the_glb_untouched(self):
         """Sidecar off must be a true passthrough — that is what makes it a probe."""
@@ -591,7 +635,11 @@ class PreviewDelivererTestCase(unittest.TestCase):
                     self.bridge,
                     Payload(
                         primary=self._fbx(),
-                        extras={"scene_sidecar": {"emissive": {"m": {"color": (1, 0, 0)}}}},
+                        extras={
+                            "scene_sidecar": _sidecar(
+                                {"emissive": {"m": {"color": (1, 0, 0)}}}
+                            )
+                        },
                     ),
                     HandoffRequest(),
                 )
@@ -604,12 +652,15 @@ class PreviewDelivererTestCase(unittest.TestCase):
         emissive_target = (
             "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
         )
-        sidecar = {"emissive": {"a": {"color": (1, 0, 0)}, "b": {"color": (0, 1, 0)}}}
+        sections = {"emissive": {"a": {"color": (1, 0, 0)}, "b": {"color": (0, 1, 0)}}}
         with unittest.mock.patch(target, side_effect=self._fake_convert):
             with unittest.mock.patch(emissive_target, return_value=[{}, {}]):
                 result = self.bridge.deliverer.deliver(
                     self.bridge,
-                    Payload(primary=self._fbx(), extras={"scene_sidecar": sidecar}),
+                    Payload(
+                        primary=self._fbx(),
+                        extras={"scene_sidecar": _sidecar(sections)},
+                    ),
                     HandoffRequest(),
                 )
         self.assertEqual(result["sidecar"], {"emissive": "2 of 2"})
@@ -627,7 +678,11 @@ class PreviewDelivererTestCase(unittest.TestCase):
                     self.bridge,
                     Payload(
                         primary=self._fbx(),
-                        extras={"scene_sidecar": {"emissive": {"gone": {"color": (1, 0, 0)}}}},
+                        extras={
+                            "scene_sidecar": _sidecar(
+                                {"emissive": {"gone": {"color": (1, 0, 0)}}}
+                            )
+                        },
                     ),
                     HandoffRequest(),
                 )
@@ -662,6 +717,121 @@ class PreviewDelivererTestCase(unittest.TestCase):
             )
         self.assertFalse(off["sidecar_requested"])
         self.assertTrue(on["sidecar_requested"])
+
+    def test_attach_sidecar_builds_the_versioned_envelope(self):
+        """The `.scene.json` top level is a frozen contract for standalone readers.
+
+        A dev tool holding only the FBX and this file parses against exactly
+        these keys — which is why they are pinned by name rather than by "some
+        dict came through": adding one later is free, but reshaping any of
+        these means a schema-version bump.
+        """
+        bridge = _StubPreviewBridge()
+        sections = {"emissive": {"m": {"color": [1, 0, 0]}}}
+        fbx = self._fbx()
+        payload = bridge._attach_sidecar(
+            Payload(primary=fbx),
+            sections,
+            source={"application": "stub", "version": "0"},
+        )
+
+        envelope = payload.extras["scene_sidecar"]
+        self.assertEqual(
+            set(envelope),
+            {"version", "source", "asset", "color_space", "sections"},
+        )
+        self.assertEqual(envelope["version"], MeshConvert.SIDECAR_VERSION)
+        self.assertEqual(envelope["source"], {"application": "stub", "version": "0"})
+        self.assertEqual(envelope["asset"], Path(fbx).name)
+        self.assertEqual(envelope["color_space"], "linear")
+        self.assertEqual(envelope["sections"], sections)
+
+        # The written file IS the handoff artifact: it must round-trip to the
+        # same envelope the in-process path carries, not a variant of it.
+        path = Path(payload.extras["scene_sidecar_path"])
+        self.assertEqual(path.suffixes[-2:], [".scene", ".json"])
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), envelope)
+
+    def test_attach_sidecar_with_no_sections_still_attaches_the_envelope(self):
+        """Requested-but-empty must stay distinguishable from switched off.
+
+        The producer calls `_attach_sidecar` only when SCENE_SIDECAR is on, so
+        key presence in extras is the "was it requested" signal the panel
+        summary reads. Skipping the attach on an empty scene collapsed the two
+        cases: a user with the checkbox ON was told "Scene sidecar off".
+        """
+        payload = _StubPreviewBridge()._attach_sidecar(
+            Payload(primary=self._fbx()), {}, source={"application": "stub"}
+        )
+        self.assertEqual(payload.extras["scene_sidecar"]["sections"], {})
+        path = Path(payload.extras["scene_sidecar_path"])
+        self.assertEqual(
+            json.loads(path.read_text(encoding="utf-8"))["sections"], {}
+        )
+
+    def test_requested_but_empty_scene_reports_nothing_to_carry_not_off(self):
+        """The panel must not claim "off" while the user's checkbox is on.
+
+        An unlit, untextured scene produces no sections. Before the fix the
+        producer then attached nothing at all, `sidecar_requested` read False,
+        and the summary line was "Scene sidecar off - showing what the FBX
+        carried" — the exact misreport `sidecar_summary` exists to prevent.
+        """
+        bridge = _StubPreviewBridge()
+        bridge.sections = {}
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            result = bridge.send()
+        self.assertTrue(result["sidecar_requested"])
+        self.assertEqual(result["sidecar"], {})
+        self.assertIn("nothing to carry", PreviewBridge.sidecar_summary(result))
+
+    def test_producer_envelope_reaches_the_appliers_unwrapped(self):
+        """Producer wraps, deliverer unwraps — the pair contract, end to end.
+
+        Everything between `_attach_sidecar` and the applier call is real
+        here; only the converter and the GLB writer are stubbed. A schema
+        drift between the two halves fails this test rather than surfacing as
+        a silently unlit preview in a live DCC.
+        """
+        bridge = _StubPreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        emissive_target = (
+            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
+        )
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            with unittest.mock.patch(emissive_target, return_value=[{}]) as applied:
+                result = bridge.send()
+        applied.assert_called_once()
+        self.assertEqual(applied.call_args[0][1], _StubPreviewBridge.sections["emissive"])
+        self.assertEqual(result["sidecar"], {"emissive": "1 of 1"})
+        self.assertTrue(result["sidecar_requested"])
+
+    def test_envelope_is_embedded_in_the_published_glb(self):
+        """The published artifact is self-describing — envelope + outcome inside.
+
+        No applier is patched here: the fake GLB has no materials, so the
+        emissive section reports "0 of 1 matched" — and both the envelope and
+        that summary must still be readable back out of the served file with
+        no side files, which is the whole embed contract.
+        """
+        bridge = _StubPreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            result = bridge.send()
+        served = Path(self.server.root) / result["asset"]
+        embedded = MeshConvert.read_scene_sidecar(str(served))
+        self.assertEqual(embedded["sections"], _StubPreviewBridge.sections)
+        self.assertEqual(embedded["version"], MeshConvert.SIDECAR_VERSION)
+        with MeshConvert.open_glb(str(served)) as edit:
+            self.assertEqual(
+                edit.gltf["extras"]["scene_sidecar_applied"],
+                {"emissive": "0 of 1 matched"},
+            )
+        self.assertEqual(result["sidecar"], {"emissive": "0 of 1 matched"})
 
     def test_ensure_server_creates_one_lazily_and_reuses_it(self):
         deliverer = PreviewDeliverer(title="Lazy")

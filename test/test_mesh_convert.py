@@ -194,6 +194,9 @@ class TestFbxToGlb(unittest.TestCase):
         self.assertIn("-i", cmd)
         self.assertIn("-o", cmd)
         self.assertIn("--binary", cmd)
+        # Default-on (measured v0.13.1 + Maya 2025): without it the DataNodes
+        # channels deliberately embedded in the FBX are silently dropped.
+        self.assertIn("--user-properties", cmd)
         # -o argument must be the output base WITHOUT .glb suffix
         output_base = cmd[cmd.index("-o") + 1]
         self.assertFalse(output_base.lower().endswith(".glb"))
@@ -1048,6 +1051,130 @@ class TestRealInstall(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("FBX2glTF", result.stdout)
+
+
+class TestSceneSidecar(unittest.TestCase):
+    """The scene-sidecar grid's converter column: build, apply+embed, read."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_sidecar_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _write_glb(self, name="scene.glb", materials=None):
+        """A JSON-chunk-only GLB with named materials (no BIN needed)."""
+        gltf = {"asset": {"version": "2.0"}}
+        if materials is not None:
+            gltf["materials"] = materials
+        payload = json.dumps(gltf).encode("utf-8")
+        payload += b" " * ((4 - (len(payload) % 4)) % 4)
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as f:
+            f.write(
+                b"glTF"
+                + struct.pack("<I", 2)
+                + struct.pack("<I", 12 + 8 + len(payload))
+                + struct.pack("<I", len(payload))
+                + b"JSON"
+                + payload
+            )
+        return path
+
+    def _envelope(self, sections):
+        return MeshConvert.build_scene_sidecar(
+            sections, source={"application": "test", "version": "0"}, asset="scene.fbx"
+        )
+
+    def test_build_scene_sidecar_owns_the_frozen_top_level(self):
+        """Standalone readers parse against exactly these keys."""
+        envelope = self._envelope({"emissive": {"m": {"color": [1, 0, 0]}}})
+        self.assertEqual(
+            set(envelope),
+            {"version", "source", "asset", "color_space", "sections"},
+        )
+        self.assertEqual(envelope["version"], MeshConvert.SIDECAR_VERSION)
+        self.assertEqual(envelope["color_space"], "linear")
+        self.assertEqual(envelope["asset"], "scene.fbx")
+
+    def test_apply_dispatches_sections_and_embeds_the_envelope(self):
+        """Apply + embed happen in one session; the artifact self-describes."""
+        glb = self._write_glb(materials=[{"name": "m"}])
+        envelope = self._envelope({"emissive": {"m": {"color": [1, 0, 0]}}})
+        summary = MeshConvert.apply_scene_sidecar(glb, envelope)
+        self.assertEqual(summary, {"emissive": "1 of 1"})
+
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(
+                edit.gltf["materials"][0]["emissiveFactor"], [1.0, 0.0, 0.0]
+            )
+            self.assertEqual(edit.gltf["extras"]["scene_sidecar"], envelope)
+            self.assertEqual(
+                edit.gltf["extras"]["scene_sidecar_applied"], summary
+            )
+        self.assertEqual(MeshConvert.read_scene_sidecar(glb), envelope)
+
+    def test_apply_composes_with_an_open_session(self):
+        """Session form: the owner writes once; apply must not write for itself."""
+        glb = self._write_glb(materials=[{"name": "m"}])
+        with MeshConvert.open_glb(glb) as edit:
+            summary = MeshConvert.apply_scene_sidecar(
+                edit, self._envelope({"base_color": {"m": {"color": [0, 0.5, 0]}}})
+            )
+        self.assertEqual(summary, {"base_color": "1 of 1"})
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(
+                edit.gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
+                [0.0, 0.5, 0.0, 1.0],
+            )
+
+    def test_apply_none_is_a_true_noop(self):
+        glb = self._write_glb(materials=[{"name": "m"}])
+        before = open(glb, "rb").read()
+        self.assertEqual(MeshConvert.apply_scene_sidecar(glb, None), {})
+        self.assertEqual(open(glb, "rb").read(), before)
+        self.assertIsNone(MeshConvert.read_scene_sidecar(glb))
+
+    def test_apply_empty_sections_still_embeds(self):
+        """"Sidecar on, nothing to carry" must be visible in the artifact."""
+        glb = self._write_glb(materials=[{"name": "m"}])
+        envelope = self._envelope({})
+        self.assertEqual(MeshConvert.apply_scene_sidecar(glb, envelope), {})
+        self.assertEqual(MeshConvert.read_scene_sidecar(glb), envelope)
+
+    def test_unknown_sections_are_skipped_never_fatal(self):
+        """Forward compatibility: a reader skips sections it does not know."""
+        glb = self._write_glb(materials=[{"name": "m"}])
+        envelope = self._envelope({"lights": {"key": {"intensity": 5}}})
+        self.assertEqual(MeshConvert.apply_scene_sidecar(glb, envelope), {})
+        self.assertEqual(MeshConvert.read_scene_sidecar(glb), envelope)
+
+    def test_fbx_to_glb_sidecar_param_applies_in_the_conversion_pass(self):
+        """The one-parameter path every production caller uses."""
+        src = os.path.join(self.tmp, "model.fbx")
+        with open(src, "wb") as fh:
+            fh.write(b"fake-fbx")
+        dst = os.path.join(self.tmp, "model.glb")
+        envelope = self._envelope({"emissive": {"m": {"color": [0, 1, 0]}}})
+
+        def fake_run(cmd, **kwargs):
+            self._write_glb("model.glb", materials=[{"name": "m"}])
+
+            class R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return R()
+
+        with patch("shutil.which", return_value=os.path.join(self.tmp, "bin")), patch(
+            "subprocess.run", side_effect=fake_run
+        ):
+            out = MeshConvert.fbx_to_glb(src, dst, overwrite=True, sidecar=envelope)
+
+        self.assertEqual(MeshConvert.read_scene_sidecar(out), envelope)
+        with MeshConvert.open_glb(out) as edit:
+            self.assertEqual(
+                edit.gltf["materials"][0]["emissiveFactor"], [0.0, 1.0, 0.0]
+            )
 
 
 if __name__ == "__main__":

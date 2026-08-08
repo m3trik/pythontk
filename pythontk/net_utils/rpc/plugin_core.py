@@ -158,6 +158,44 @@ class _MainThreadMarshallerInternal(object):
             pass
         return None
 
+    #: The relay class, built once per process against whichever binding won.
+    #: A ``QObject`` subclass can only be declared with Qt in hand, and this
+    #: module must import without it, so the declaration is deferred to here.
+    _relay_type = None
+
+    @classmethod
+    def _relay_class(cls, qtcore):
+        """The ``QObject`` whose queued signal delivers a call to its own thread.
+
+        A queued signal is the one hop that is portable across PySide2/PySide6
+        *and* honours thread affinity. The obvious-looking alternatives do not:
+        ``QTimer.singleShot(0, functor)`` builds its helper object in the
+        **calling** thread (so the functor is queued to the server's daemon
+        thread, which runs no event loop, and never fires at all), and the
+        3-argument context overload takes a slot name, not a Python callable.
+        """
+        if cls._relay_type is not None:
+            return cls._relay_type
+
+        class _MainThreadRelay(qtcore.QObject):
+            """Emits on any thread; runs on the thread the object belongs to."""
+
+            _dispatch = qtcore.Signal(object)
+
+            def __init__(self):
+                super().__init__()
+                self._dispatch.connect(self._invoke, qtcore.Qt.QueuedConnection)
+
+            def _invoke(self, fn):
+                fn()
+
+            def post(self, fn):
+                """Queue *fn* for this object's thread. Returns immediately."""
+                self._dispatch.emit(fn)
+
+        cls._relay_type = _MainThreadRelay
+        return _MainThreadRelay
+
 
 class MainThreadMarshaller(_MainThreadMarshallerInternal):
     """Run a callable on the host's Qt main thread and block for its result.
@@ -180,6 +218,29 @@ class MainThreadMarshaller(_MainThreadMarshallerInternal):
         #: bypass explicit and small. Production hosts never set it.
         self.disable_env = disable_env
         self.timeout = timeout
+        #: Lazily built relay + the ``QCoreApplication`` it was bound to, so a
+        #: host that tears its application down and stands a new one up gets a
+        #: fresh relay instead of one with dead thread affinity.
+        self._relay = None
+        self._relay_app = None
+        self._relay_lock = threading.Lock()
+
+    def _main_thread_relay(self, qtcore, app):
+        """Return the relay object living on *app*'s thread, building it once.
+
+        Built under a lock because the HTTP server answers concurrent requests
+        on separate threads, and two relays would be two objects with the same
+        job -- harmless but wasteful, and only one would be reused.
+        """
+        with self._relay_lock:
+            if self._relay is None or self._relay_app is not app:
+                relay = self._relay_class(qtcore)()
+                # Constructed on whichever thread got here first; affinity has
+                # to be the main thread for the queued connection to land there.
+                relay.moveToThread(app.thread())
+                self._relay = relay
+                self._relay_app = app
+            return self._relay
 
     def is_active(self):
         """True when :meth:`run` will marshal rather than call direct.
@@ -215,6 +276,12 @@ class MainThreadMarshaller(_MainThreadMarshallerInternal):
             return fn(*args, **kwargs)
 
         qtcore = self._qtcore()
+        app = qtcore.QCoreApplication.instance()
+        if app is None:
+            # Torn down between the gate above and here (host shutting down).
+            # Same answer as every other "cannot marshal" case.
+            return fn(*args, **kwargs)
+
         deadline = self.timeout if timeout is None else timeout
         result_q = queue.Queue(maxsize=1)
 
@@ -224,9 +291,10 @@ class MainThreadMarshaller(_MainThreadMarshallerInternal):
             except BaseException as exc:  # noqa: BLE001 - relayed to the caller
                 result_q.put(("err", exc))
 
-        # The 0-delay ``singleShot`` overload schedules onto the application's
-        # own thread, which is exactly the target -- no receiver object needed.
-        qtcore.QTimer.singleShot(0, _runner)
+        # Hand the call to an object that *lives* on the main thread; its queued
+        # signal is what crosses the boundary (see :meth:`_relay_class` for why
+        # the shorter-looking QTimer spellings do not).
+        self._main_thread_relay(qtcore, app).post(_runner)
 
         try:
             kind, payload = result_q.get(timeout=deadline)
@@ -380,6 +448,40 @@ class RpcPlugin(object):
         self._server = None
         self._thread = None
         self._register_builtins()
+
+    @staticmethod
+    def import_ops(package):
+        """Import *package* (dotted name), forcing its ``@register`` side effects.
+
+        The op modules register themselves at **import time**, onto whichever
+        registry the plugin package had bound when they last ran. That makes a
+        plain ``from . import ops`` correct exactly once per interpreter: when a
+        host reloads its plugins (Painter's *Python ▸ Reload Plugins Folder*, a
+        disable/re-enable, ``importlib.reload``) the package body re-runs and
+        builds a **new** :class:`RpcPlugin` with an empty registry, but the ops
+        submodules are still in ``sys.modules`` -- so the import is a cache hit,
+        no decorator fires, and the server comes back up serving only the
+        built-in ``system.*`` trio while answering ``Unknown op`` for every
+        feature it exists to provide. Silent, and indistinguishable from the
+        host simply ignoring the call.
+
+        Dropping the subtree first makes the import unconditional, so the
+        registration is tied to the registry that is live *now*.
+
+        Parameters:
+            package: Dotted name of the ops package (e.g. ``"substance_rpc.ops"``).
+
+        Returns:
+            The freshly imported module.
+        """
+        import importlib  # noqa: PLC0415 -- only needed on this path
+
+        prefix = package + "."
+        for name in [
+            m for m in list(sys.modules) if m == package or m.startswith(prefix)
+        ]:
+            del sys.modules[name]
+        return importlib.import_module(package)
 
     def _register_builtins(self):
         """Register the ``system.*`` ops the client contract assumes exist.
