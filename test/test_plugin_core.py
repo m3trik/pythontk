@@ -16,6 +16,10 @@ Run with:
 """
 
 import os
+import shutil
+import sys
+import tempfile
+import threading
 import unittest
 
 from pythontk.net_utils.rpc.client import RpcClient
@@ -24,6 +28,14 @@ from pythontk.net_utils.rpc.plugin_core import (
     OpRegistry,
     RpcPlugin,
 )
+
+try:  # Qt is optional here exactly as it is in the core itself.
+    from PySide6 import QtCore as _QTCORE
+except ImportError:  # pragma: no cover - binding-dependent
+    try:
+        from PySide2 import QtCore as _QTCORE  # type: ignore
+    except ImportError:
+        _QTCORE = None
 
 
 def _make_plugin(**kw):
@@ -135,6 +147,172 @@ class TestMainThreadMarshaller(_EnvGuard):
         )
 
 
+@unittest.skipIf(_QTCORE is None, "no Qt binding available")
+class TestMainThreadMarshallerWithQt(_EnvGuard):
+    """The path production actually takes: a worker thread inside a live host.
+
+    Every regression here is invisible to the no-Qt tests above -- those take
+    the direct-call branch, which is the one case that never needed
+    marshalling. A host (Painter, Toolbag) has a ``QCoreApplication``, so
+    ``is_active()`` is True and the hop is real.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.app = _QTCORE.QCoreApplication.instance() or _QTCORE.QCoreApplication([])
+        self.main_thread = _QTCORE.QThread.currentThread()
+
+    def _run_off_thread(self, marshaller, fn, pump_ms=5000):
+        """Call ``marshaller.run(fn)`` from a worker thread, pumping the main loop.
+
+        Returns ``("ok", value)`` or ``("err", exception)`` -- mirroring what the
+        RPC server's daemon thread sees.
+        """
+        outcome = []
+
+        def worker():
+            try:
+                outcome.append(("ok", marshaller.run(fn)))
+            except BaseException as exc:  # noqa: BLE001 -- relayed to the assert
+                outcome.append(("err", exc))
+
+        thread = threading.Thread(target=worker, name="test-rpc-server")
+        thread.start()
+        elapsed = _QTCORE.QElapsedTimer()
+        elapsed.start()
+        while thread.is_alive() and elapsed.elapsed() < pump_ms:
+            self.app.processEvents(_QTCORE.QEventLoop.AllEvents, 20)
+        thread.join(timeout=2)
+        self.assertTrue(outcome, "worker never finished")
+        return outcome[0]
+
+    def test_is_active_off_the_main_thread(self):
+        marshaller = MainThreadMarshaller("TEST_RPC_DISABLE_MAIN_THREAD", timeout=5.0)
+        seen = []
+        thread = threading.Thread(target=lambda: seen.append(marshaller.is_active()))
+        thread.start()
+        thread.join(timeout=5)
+        self.assertEqual(seen, [True])
+
+    def test_a_marshalled_call_actually_reaches_the_main_thread(self):
+        """The whole point of the class -- and what silently stopped happening.
+
+        A 0-delay ``QTimer.singleShot`` with no context object builds its helper
+        object in the *calling* thread; queued from the server's daemon thread
+        (no event loop) it never fires, so every op timed out at 60s and the
+        host-side feature just didn't happen.
+        """
+        marshaller = MainThreadMarshaller("TEST_RPC_DISABLE_MAIN_THREAD", timeout=5.0)
+        kind, value = self._run_off_thread(
+            marshaller, lambda: _QTCORE.QThread.currentThread()
+        )
+        self.assertEqual(kind, "ok", f"marshalled call failed: {value!r}")
+        self.assertIs(value, self.main_thread)
+
+    def test_a_marshalled_exception_propagates_verbatim(self):
+        marshaller = MainThreadMarshaller("TEST_RPC_DISABLE_MAIN_THREAD", timeout=5.0)
+
+        def _boom():
+            raise KeyError("original")
+
+        kind, value = self._run_off_thread(marshaller, _boom)
+        self.assertEqual(kind, "err")
+        self.assertIsInstance(value, KeyError)
+
+    def test_repeated_calls_reuse_the_relay(self):
+        """Two hops in a row must both land; a one-shot relay would strand the second."""
+        marshaller = MainThreadMarshaller("TEST_RPC_DISABLE_MAIN_THREAD", timeout=5.0)
+        for expected in ("first", "second"):
+            kind, value = self._run_off_thread(marshaller, lambda v=expected: v)
+            self.assertEqual((kind, value), ("ok", expected))
+
+    def test_a_blocked_main_thread_still_times_out(self):
+        """The timeout must survive the fix -- a wedged host may never answer."""
+        marshaller = MainThreadMarshaller("TEST_RPC_DISABLE_MAIN_THREAD", timeout=0.5)
+        outcome = []
+
+        def worker():
+            try:
+                outcome.append(("ok", marshaller.run(lambda: "never")))
+            except BaseException as exc:  # noqa: BLE001
+                outcome.append(("err", exc))
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=10)  # main thread deliberately does NOT pump
+        self.assertEqual(outcome[0][0], "err")
+        self.assertIsInstance(outcome[0][1], TimeoutError)
+
+
+class TestImportOps(unittest.TestCase):
+    """A host that reloads its plugins must not end up with an empty op table.
+
+    Painter's *Python ▸ Reload Plugins Folder* (and the disable/re-enable the
+    bridge tells users to do after an install refresh) re-executes the plugin
+    package: a fresh ``RpcPlugin`` with a fresh registry. A plain
+    ``from . import ops`` then hits the still-cached submodule, the
+    ``@register`` decorators never re-run, and the server comes back up
+    answering ``Unknown op`` for everything it is supposed to serve.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="rpc_ops_")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        pkg = os.path.join(self.tmp, "fake_rpc_plugin")
+        os.makedirs(os.path.join(pkg, "ops"))
+        with open(os.path.join(pkg, "__init__.py"), "w", encoding="utf-8") as fh:
+            fh.write("REGISTERED = []\n")
+        with open(os.path.join(pkg, "ops", "__init__.py"), "w", encoding="utf-8") as fh:
+            fh.write("from . import demo_ops  # noqa: F401\n")
+        with open(
+            os.path.join(pkg, "ops", "demo_ops.py"), "w", encoding="utf-8"
+        ) as fh:
+            fh.write("from .. import REGISTERED\nREGISTERED.append('demo.op')\n")
+        sys.path.insert(0, self.tmp)
+        self.addCleanup(sys.path.remove, self.tmp)
+        self.addCleanup(self._purge)
+
+    def _purge(self):
+        for name in [
+            m
+            for m in sys.modules
+            if m == "fake_rpc_plugin" or m.startswith("fake_rpc_plugin.")
+        ]:
+            del sys.modules[name]
+
+    def test_import_ops_re_runs_registration_after_a_reload(self):
+        import fake_rpc_plugin
+
+        RpcPlugin.import_ops("fake_rpc_plugin.ops")
+        self.assertEqual(fake_rpc_plugin.REGISTERED, ["demo.op"])
+
+        # What a host reload does: forget the package, import it again. The
+        # fresh module object starts with an empty table.
+        del sys.modules["fake_rpc_plugin"]
+        import fake_rpc_plugin as reloaded
+
+        self.assertEqual(reloaded.REGISTERED, [])
+        RpcPlugin.import_ops("fake_rpc_plugin.ops")
+        self.assertEqual(reloaded.REGISTERED, ["demo.op"])
+
+    def test_plain_import_is_the_broken_baseline(self):
+        """Documents *why* import_ops exists, so nobody 'simplifies' it away."""
+        import fake_rpc_plugin  # noqa: F401
+        import fake_rpc_plugin.ops  # noqa: F401
+
+        del sys.modules["fake_rpc_plugin"]
+        import fake_rpc_plugin as reloaded
+        import fake_rpc_plugin.ops  # noqa: F401 -- cached; side effect skipped
+
+        self.assertEqual(reloaded.REGISTERED, [])
+
+    def test_returns_the_imported_module(self):
+        import fake_rpc_plugin  # noqa: F401
+
+        module = RpcPlugin.import_ops("fake_rpc_plugin.ops")
+        self.assertEqual(module.__name__, "fake_rpc_plugin.ops")
+
+
 class TestHostGate(_EnvGuard):
     """Importing a plugin package outside its host must bind no port."""
 
@@ -175,10 +353,20 @@ class TestPortResolution(_EnvGuard):
         self.assertEqual(_make_plugin(default_port=8765).port, 8765)
 
 
-class TestWireContract(unittest.TestCase):
-    """A live server driven by the real client — one protocol, both ends."""
+class TestWireContract(_EnvGuard):
+    """A live server driven by the real client — one protocol, both ends.
+
+    Takes the marshaller's documented opt-out: the client call blocks *this*
+    thread, so if anything earlier in the session stood up a ``QCoreApplication``
+    (``TestMainThreadMarshallerWithQt`` does) the server's hop back onto the main
+    thread would wait on a loop that is waiting on the server. Production hosts
+    pump their loop and never hit it.
+    """
 
     def setUp(self):
+        super().setUp()
+        os.environ["TEST_RPC_DISABLE_MAIN_THREAD"] = "1"
+        os.environ["TEST_RPC_OTHER_DISABLE_MAIN_THREAD"] = "1"  # second plugin below
         self.plugin = _make_plugin()
 
         @self.plugin.registry.register("math.add")
@@ -194,6 +382,7 @@ class TestWireContract(unittest.TestCase):
 
     def tearDown(self):
         self.plugin.stop()
+        super().tearDown()
 
     def test_start_is_idempotent_and_reports_its_address(self):
         self.assertTrue(self.plugin.is_running())

@@ -60,6 +60,26 @@ class MeshConvert(HelpMixin):
 
     TOOL_NAME = "fbx2gltf"
     DEFAULT_TIMEOUT = 300  # 5 minutes — enough for very large FBX files
+
+    #: Schema version of the scene-sidecar envelope
+    #: (:meth:`build_scene_sidecar`). Bump on any change to the envelope's
+    #: top-level shape; adding a *section* is not a bump — sections are the
+    #: extension point and a reader skips ones it does not know.
+    SIDECAR_VERSION = 1
+
+    #: Sidecar section -> the writer that applies it to a GLB, in application
+    #: order. This is the applier column of the scene-data grid: a new kind of
+    #: extended scene setup is one more section in the DCC-side reader
+    #: (mayatk/blendertk ``SceneState``) plus one more row here — no method
+    #: edits anywhere else. Both current rows exist because FBX loses the
+    #: channel for every shader that is not the host's own legacy model
+    #: (measured on Maya 2025: an aiStandardSurface arrives with no emissive
+    #: at all and a flat white base colour). Base colour runs first only for
+    #: tidiness; the two touch disjoint fields.
+    SIDECAR_APPLIERS: Dict[str, str] = {
+        "base_color": "set_glb_base_color",
+        "emissive": "set_glb_emissive",
+    }
     # Image types glTF 2.0 accepts natively. Anything else (TIFF, EXR, TGA —
     # all common in a DCC source tree) is re-encoded to PNG via Pillow when
     # available (see `_reencode_as_png`), and otherwise rejected by name
@@ -379,6 +399,7 @@ class MeshConvert(HelpMixin):
         prompt: bool = True,
         timeout: Optional[float] = DEFAULT_TIMEOUT,
         extra_args: Optional[List[str]] = None,
+        sidecar: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Convert an FBX file to a binary glTF 2.0 (GLB) file.
 
@@ -392,6 +413,14 @@ class MeshConvert(HelpMixin):
             timeout:       Subprocess timeout in seconds. None disables.
             extra_args:    Extra CLI flags forwarded to FBX2glTF
                            (e.g. ``["--draco"]``, ``["-v"]``).
+            sidecar:       A scene-sidecar envelope (:meth:`build_scene_sidecar`)
+                           to apply to and embed in the converted GLB — the one
+                           parameter that turns a bare conversion into a
+                           scene-faithful deliverable. Applied inside the same
+                           post-conversion edit session as the alpha repair, so
+                           it costs no extra file pass. Callers that need the
+                           per-section outcome summary call
+                           :meth:`apply_scene_sidecar` separately instead.
 
         Returns:
             Absolute path to the written GLB file.
@@ -422,9 +451,14 @@ class MeshConvert(HelpMixin):
             required=True, auto_install=auto_install, prompt=prompt
         )
 
-        # FBX2glTF wants the output base WITHOUT extension; --binary forces .glb
+        # FBX2glTF wants the output base WITHOUT extension; --binary forces .glb.
+        # --user-properties copies FBX user properties into per-node glTF
+        # ``extras`` (measured against v0.13.1 + Maya 2025: the DataNodes
+        # ``data_export`` channels arrive with it and are silently dropped
+        # without). A carrier must not drop data another carrier deliberately
+        # embedded, and the flag is a no-op on an FBX with no user properties.
         output_base = os.path.splitext(dst_abs)[0]
-        cmd = [binary, "-i", src_abs, "-o", output_base, "--binary"]
+        cmd = [binary, "-i", src_abs, "-o", output_base, "--binary", "--user-properties"]
         if extra_args:
             cmd.extend(extra_args)
 
@@ -456,20 +490,175 @@ class MeshConvert(HelpMixin):
                 f"  stdout: {result.stdout}"
             )
 
+        # One post-conversion edit session for everything that touches the
+        # JSON chunk: the alpha repair and (when given) the scene sidecar.
+        # The alpha repair keeps its own guard so its failure never costs the
+        # sidecar, and neither ever costs the successful conversion.
         try:
-            fixes = cls.fix_glb_phantom_opaque_alpha(dst_abs)
-            for fx in fixes:
-                logger.info(
-                    "fix_glb_phantom_opaque_alpha: %s baseColorFactor[3] %.3f -> %.3f (image: %s)",
-                    fx["material"],
-                    fx["old_alpha"],
-                    fx["new_alpha"],
-                    fx["image"],
-                )
+            with cls.open_glb(dst_abs) as edit:
+                try:
+                    fixes = cls.fix_glb_phantom_opaque_alpha(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("fix_glb_phantom_opaque_alpha skipped: %s", exc)
+                    fixes = []
+                for fx in fixes:
+                    logger.info(
+                        "fix_glb_phantom_opaque_alpha: %s baseColorFactor[3] %.3f -> %.3f (image: %s)",
+                        fx["material"],
+                        fx["old_alpha"],
+                        fx["new_alpha"],
+                        fx["image"],
+                    )
+                if sidecar:
+                    cls.apply_scene_sidecar(edit, sidecar)
         except Exception as exc:  # noqa: BLE001 — never let post-process kill a successful conversion
-            logger.warning("fix_glb_phantom_opaque_alpha skipped: %s", exc)
+            logger.warning("GLB post-process skipped: %s", exc)
 
         return dst_abs
+
+    # ------------------------------------------------------------------ #
+    # Scene sidecar — the envelope carrying what FBX translation drops
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def build_scene_sidecar(
+        cls,
+        sections: Optional[Dict[str, Any]],
+        source: Dict[str, str],
+        asset: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Wrap *sections* in the versioned scene-sidecar envelope.
+
+        The one place the envelope schema exists — every producer (the WebXR
+        preview bridges, the scene exporters' GLB tasks) builds through this
+        rather than shaping the dict itself, so the schema cannot fork between
+        packages. The top level is the frozen contract a standalone reader (a
+        dev tool holding only the deliverable and this data) parses against::
+
+            {
+              "version": 1,              # SIDECAR_VERSION
+              "source": {"application": "maya", "version": "2025"},
+              "asset": "<payload basename>",
+              "color_space": "linear",   # every color below, as the appliers
+                                         #   also expect (glTF factors)
+              "sections": {...}          # the extension point
+            }
+
+        Scope note — this is *not* a second channel registry beside the DCC
+        packages' ``DataNodes``. Tool-authored semantic metadata (shots, audio
+        events, lightmap manifests, ...) rides **inside** the FBX as user
+        properties on the ``data_export`` carrier; the sidecar carries only
+        repairs for what the FBX *format* mistranslates about the scene's
+        literal content, derived scene-read-only at push/export time. A
+        section must never duplicate a ``DataNodes`` channel — one home per
+        section per deliverable.
+
+        Parameters:
+            sections: ``{section: data}`` from a DCC-side ``SceneState``
+                reader. ``None`` or empty still builds an envelope — an empty
+                ``sections`` is itself information (nothing needed repair).
+            source: Producer identity, e.g.
+                ``{"application": "maya", "version": "2025"}``.
+            asset: Basename of the deliverable this envelope belongs to.
+        """
+        return {
+            "version": cls.SIDECAR_VERSION,
+            "source": source,
+            "asset": asset,
+            "color_space": "linear",
+            "sections": dict(sections or {}),
+        }
+
+    @classmethod
+    def apply_scene_sidecar(
+        cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]
+    ) -> Dict[str, str]:
+        """Apply a scene-sidecar envelope to a GLB and embed it in its extras.
+
+        Every section is dispatched through :attr:`SIDECAR_APPLIERS` against
+        **one** open edit session, then the envelope itself (plus the
+        per-section outcome summary) is written into the glTF root ``extras``
+        — so the artifact leaves self-describing: what the scene authored
+        (``extras["scene_sidecar"]``) and what this pass did about it
+        (``extras["scene_sidecar_applied"]``), readable by any glTF tool with
+        no side files. :meth:`read_scene_sidecar` is the counterpart.
+
+        A section absent from the envelope is simply skipped, and a section
+        failure is logged rather than raised: a deliverable missing one
+        section still beats no deliverable. Every failure an applier can
+        actually reach (an unreadable texture, an image no decoder wants) is
+        handled inside it and reported as a skipped image; the per-section
+        catch here is the backstop for anything that is not, and the
+        container-level catch reports *every* offered section as failed
+        rather than letting sections that "applied" claim a success that
+        never reached disk.
+
+        Parameters:
+            glb: Path to a binary glTF (.glb), modified in place, or an open
+                :class:`GlbEdit` session whose owner will write it.
+            sidecar: The envelope (:meth:`build_scene_sidecar`). ``None`` (or
+                anything falsy) is a true no-op; an envelope with empty
+                *sections* still embeds (sidecar was on, the scene had nothing
+                to carry) — the distinction is a real envelope vs no envelope.
+
+        Returns:
+            ``{section: outcome}`` — ``"N of M"``, ``"0 of M matched"`` or
+            ``"failed (...)"`` per offered section; empty when none offered.
+        """
+        if not sidecar:
+            return {}
+        sections = sidecar.get("sections") or {}
+        summary: Dict[str, str] = {}
+        try:
+            with cls.open_glb(glb) as edit:
+                for section, method in cls.SIDECAR_APPLIERS.items():
+                    data = sections.get(section)
+                    if not data:
+                        continue
+                    apply = getattr(cls, method)
+                    try:
+                        applied = apply(edit, data)
+                    except (OSError, ValueError) as error:
+                        logger.warning("Sidecar %r not applied: %s", section, error)
+                        summary[section] = f"failed ({error})"
+                        continue
+                    if not applied:
+                        # The section was read but nothing landed — almost
+                        # always a name mismatch, which the applier has just
+                        # logged in full.
+                        logger.warning(
+                            "Sidecar %r matched none of its %s entr(ies) in the GLB.",
+                            section,
+                            len(data),
+                        )
+                        summary[section] = f"0 of {len(data)} matched"
+                        continue
+                    logger.info("Sidecar %r applied to %s.", section, len(applied))
+                    summary[section] = f"{len(applied)} of {len(data)}"
+                extras = edit.gltf.setdefault("extras", {})
+                extras["scene_sidecar"] = sidecar
+                extras["scene_sidecar_applied"] = dict(summary)
+                edit.dirty = True
+        except (OSError, ValueError) as error:
+            logger.warning("Sidecar not applied to %s: %s", glb, error)
+            return {
+                section: f"failed ({error})"
+                for section in cls.SIDECAR_APPLIERS
+                if sections.get(section)
+            }
+        return summary
+
+    @classmethod
+    def read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        """The scene-sidecar envelope embedded in a GLB, or ``None``.
+
+        The consumer half of :meth:`apply_scene_sidecar` — what a downstream
+        tool (or a test) calls to get the scene description back out of a
+        deliverable with no side files. Reads only the JSON chunk; the
+        geometry is never touched.
+        """
+        with cls.open_glb(glb) as edit:
+            return (edit.gltf.get("extras") or {}).get("scene_sidecar")
 
     # ------------------------------------------------------------------ #
     # Post-conversion material sanity check

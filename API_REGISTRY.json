@@ -7539,16 +7539,43 @@
               "kind": "classmethod",
               "signature": "(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]",
               "summary": "Resolve the FBX2glTF executable from PATH or managed installs.",
-              "line": 296,
+              "line": 316,
               "deprecated": false
             },
             {
               "name": "fbx_to_glb",
               "qualname": "MeshConvert.fbx_to_glb",
               "kind": "classmethod",
-              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None) -> str",
+              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None) -> str",
               "summary": "Convert an FBX file to a binary glTF 2.0 (GLB) file.",
-              "line": 372,
+              "line": 392,
+              "deprecated": false
+            },
+            {
+              "name": "build_scene_sidecar",
+              "qualname": "MeshConvert.build_scene_sidecar",
+              "kind": "classmethod",
+              "signature": "(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]",
+              "summary": "Wrap *sections* in the versioned scene-sidecar envelope.",
+              "line": 524,
+              "deprecated": false
+            },
+            {
+              "name": "apply_scene_sidecar",
+              "qualname": "MeshConvert.apply_scene_sidecar",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]",
+              "summary": "Apply a scene-sidecar envelope to a GLB and embed it in its extras.",
+              "line": 573,
+              "deprecated": false
+            },
+            {
+              "name": "read_scene_sidecar",
+              "qualname": "MeshConvert.read_scene_sidecar",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
+              "summary": "The scene-sidecar envelope embedded in a GLB, or ``None``.",
+              "line": 652,
               "deprecated": false
             },
             {
@@ -7557,7 +7584,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 479,
+              "line": 668,
               "deprecated": false
             },
             {
@@ -7566,7 +7593,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 564,
+              "line": 753,
               "deprecated": false
             },
             {
@@ -7575,7 +7602,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget)",
               "summary": "Yield an open :class:`GlbEdit` for *glb*, writing once on close.",
-              "line": 651,
+              "line": 840,
               "deprecated": false
             },
             {
@@ -7584,7 +7611,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write emissive color / texture into a GLB's materials, by name.",
-              "line": 797,
+              "line": 986,
               "deprecated": false
             },
             {
@@ -7593,7 +7620,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write base colour / texture into a GLB's materials, by name.",
-              "line": 1015,
+              "line": 1204,
               "deprecated": false
             }
           ]
@@ -10022,7 +10049,7 @@
               "kind": "method",
               "signature": "(self) -> PreviewServer",
               "summary": "The bridge's server, started, creating it on first use.",
-              "line": 517,
+              "line": 502,
               "deprecated": false
             },
             {
@@ -10031,7 +10058,7 @@
               "kind": "method",
               "signature": "(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
               "summary": "",
-              "line": 610,
+              "line": 508,
               "deprecated": false
             }
           ]
@@ -10039,7 +10066,7 @@
         {
           "name": "PreviewBridge",
           "summary": "Hand-off bridge whose target is a live preview page rather than an application.",
-          "line": 674,
+          "line": 583,
           "bases": [
             "HandoffBridge"
           ],
@@ -10050,7 +10077,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "glTF-appropriate export defaults, read by both DCC export mixins.",
-              "line": 694,
+              "line": 603,
               "deprecated": false
             },
             {
@@ -10059,7 +10086,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The preview URL, or ``None`` before the first push.",
-              "line": 730,
+              "line": 682,
               "deprecated": false
             },
             {
@@ -10068,7 +10095,7 @@
               "kind": "method",
               "signature": "(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', **params: Any) -> Optional[Dict[str, Any]]",
               "summary": "Export and publish, returning the deliverer's result (``None`` on failure).",
-              "line": 735,
+              "line": 687,
               "deprecated": false
             },
             {
@@ -10077,7 +10104,7 @@
               "kind": "staticmethod",
               "signature": "(result: Optional[Dict[str, Any]]) -> str",
               "summary": "One plain-text line describing what the scene sidecar did.",
-              "line": 761,
+              "line": 713,
               "deprecated": false
             },
             {
@@ -10086,7 +10113,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Stop serving and release the port.",
-              "line": 787,
+              "line": 739,
               "deprecated": false
             }
           ]
@@ -10316,7 +10343,7 @@
         {
           "name": "MainThreadMarshaller",
           "summary": "Run a callable on the host's Qt main thread and block for its result.",
-          "line": 162,
+          "line": 200,
           "bases": [
             "_MainThreadMarshallerInternal"
           ],
@@ -10327,7 +10354,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "True when :meth:`run` will marshal rather than call direct.",
-              "line": 184,
+              "line": 245,
               "deprecated": false
             },
             {
@@ -10336,7 +10363,7 @@
               "kind": "method",
               "signature": "(self, fn, *args, timeout=None, **kwargs)",
               "summary": "Call *fn*, on the main thread when one is reachable.",
-              "line": 202,
+              "line": 263,
               "deprecated": false
             }
           ]
@@ -10344,18 +10371,27 @@
         {
           "name": "RpcPlugin",
           "summary": "One host plugin: a registry, a marshaller, and the server that joins them.",
-          "line": 326,
+          "line": 394,
           "bases": [
             "object"
           ],
           "members": [
+            {
+              "name": "import_ops",
+              "qualname": "RpcPlugin.import_ops",
+              "kind": "staticmethod",
+              "signature": "(package)",
+              "summary": "Import *package* (dotted name), forcing its ``@register`` side effects.",
+              "line": 453,
+              "deprecated": false
+            },
             {
               "name": "port",
               "qualname": "RpcPlugin.port",
               "kind": "property",
               "signature": "(self)",
               "summary": "Configured port: ``<PREFIX>_PORT`` if set and numeric, else the default.",
-              "line": 418,
+              "line": 520,
               "deprecated": false
             },
             {
@@ -10364,7 +10400,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "True only inside the real host application.",
-              "line": 425,
+              "line": 527,
               "deprecated": false
             },
             {
@@ -10373,7 +10409,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "True while the HTTP server is bound.",
-              "line": 447,
+              "line": 549,
               "deprecated": false
             },
             {
@@ -10382,7 +10418,7 @@
               "kind": "property",
               "signature": "(self)",
               "summary": "The bound ``(host, port)``, or ``None`` when not running.",
-              "line": 452,
+              "line": 554,
               "deprecated": false
             },
             {
@@ -10391,7 +10427,7 @@
               "kind": "method",
               "signature": "(self, port=None, host=None)",
               "summary": "Bind and serve on a daemon thread.",
-              "line": 456,
+              "line": 558,
               "deprecated": false
             },
             {
@@ -10400,7 +10436,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Shut the server down (host teardown hook, tests, hot-reload).",
-              "line": 478,
+              "line": 580,
               "deprecated": false
             },
             {
@@ -10409,7 +10445,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Start on plugin load, but only when actually hosted.",
-              "line": 489,
+              "line": 591,
               "deprecated": false
             },
             {
@@ -10418,7 +10454,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": ":meth:`autostart`, but a failure is logged instead of raised.",
-              "line": 503,
+              "line": 605,
               "deprecated": false
             }
           ]

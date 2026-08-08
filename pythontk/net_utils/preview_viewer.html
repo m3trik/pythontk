@@ -127,7 +127,10 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15171a);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+// Kept as a handle, not just assigned: a lightmapped model switches the viewer's own
+// lighting off (see load()), and a later un-lightmapped one has to switch it back on.
+const defaultEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environment = defaultEnvironment;
 
 // The RoomEnvironment IBL above is the main light. Piling a bright hemisphere
 // and key light on top of it (as this once did, at 1.6 and 2.2) drives every
@@ -137,7 +140,8 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 // a material with emissiveFactor [1,0,0] rendered (247,242,243) — a red bias
 // of five 8-bit levels, indistinguishable from white. One modest key light for
 // form definition is enough alongside the environment.
-const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+const DEFAULT_KEY_INTENSITY = 0.9;
+const keyLight = new THREE.DirectionalLight(0xffffff, DEFAULT_KEY_INTENSITY);
 keyLight.position.set(3, 6, 4);
 scene.add(keyLight);
 
@@ -237,6 +241,62 @@ function frameCamera() {
   controls.update();
 }
 
+/* ------------------------------------------------------------- lightmaps --- */
+
+// glTF 2.0 has no lightmap slot, so a baked lightmap reaches us disguised as a real
+// texture slot on TEXCOORD_1 (see blendertk's LightmapWebExport). The scene extras carry
+// a `lightmap_web` manifest naming which materials are wearing the disguise; this puts
+// them back. Three details decide whether it looks right or subtly wrong:
+//
+//   * colorSpace — GLTFLoader treats occlusion as DATA and loads it linear, but the map
+//     was written sRGB-encoded to survive 8-bit. Left linear it renders far too dark.
+//   * channel — the map is packed against UV2, not UV0.
+//   * intensity — the encoder divided by a percentile to fit a huge HDR range into a PNG;
+//     multiplying it back is what restores the original exposure.
+//
+// Also clears the slot it arrived in, so the same texture is not applied twice under two
+// different interpretations.
+function applyLightmaps(gltf) {
+  let manifest = null;
+  for (const holder of [gltf.parser?.json?.scenes?.[0]?.extras, gltf.parser?.json?.extras, gltf.scene?.userData]) {
+    const raw = holder && holder.lightmap_web;
+    if (!raw) continue;
+    try { manifest = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { /* keep looking */ }
+    if (manifest) break;
+  }
+  if (!manifest || !manifest.materials) return 0;
+
+  const carrier = manifest.carrier || 'occlusion';
+  if (carrier === 'fused') return 0; // already the material's own appearance — nothing to rebind
+
+  const slot = carrier === 'emissive' ? 'emissiveMap' : 'aoMap';
+  const uv = manifest.uv ?? 1;
+  let bound = 0;
+
+  gltf.scene.traverse((node) => {
+    const materials = Array.isArray(node.material) ? node.material : (node.material ? [node.material] : []);
+    for (const material of materials) {
+      const entry = manifest.materials[material.name];
+      if (!entry || material.userData.lightmapBound) continue;
+      const texture = material[slot];
+      if (!texture) continue;
+
+      texture.colorSpace = manifest.encoding === 'srgb' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      texture.channel = uv;
+      texture.needsUpdate = true;
+
+      material.lightMap = texture;
+      material.lightMapIntensity = entry.intensity ?? 1;
+      material[slot] = null;
+      if (carrier === 'emissive') material.emissive = new THREE.Color(0x000000);
+      material.userData.lightmapBound = true;
+      material.needsUpdate = true;
+      bound += 1;
+    }
+  });
+  return bound;
+}
+
 function describe(root) {
   let triangles = 0;
   let meshes = 0;
@@ -280,13 +340,22 @@ async function load(url, version) {
   current = gltf.scene;
   pivot.add(current);
 
+  // A lightmapped model already contains its lighting. Leaving the viewer's own IBL and
+  // key light on would add a second, contradictory light rig on top of the bake — the
+  // baked shadows stay put while everything around them lifts, which reads as a washed
+  // out model rather than as double lighting, so it is easy to misdiagnose as a bad bake.
+  const lightmapped = applyLightmaps(gltf);
+  scene.environment = lightmapped ? null : defaultEnvironment;
+  keyLight.intensity = lightmapped ? 0 : DEFAULT_KEY_INTENSITY;
+
   const box = new THREE.Box3().setFromObject(current);
   modelBounds = {
     size: box.getSize(new THREE.Vector3()),
     center: box.getCenter(new THREE.Vector3()),
   };
 
-  el.stats.textContent = describe(current);
+  el.stats.textContent = describe(current)
+    + (lightmapped ? ` · ${lightmapped} lightmapped material${lightmapped === 1 ? '' : 's'}` : '');
   setStatus(`v${version} · updated ${new Date().toLocaleTimeString()}`, 'live');
   layout();
   return true;

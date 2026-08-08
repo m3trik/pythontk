@@ -366,7 +366,7 @@ _Generated: 2026-08-07_
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, set_glb_emissive, set_glb_base_color
+  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, read_scene_sidecar, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, set_glb_emissive, set_glb_base_color
 
 ### `file_utils/metadata.py`
 - `class MetadataInternal`
@@ -487,7 +487,7 @@ _Generated: 2026-08-07_
 - `class MainThreadMarshaller(_MainThreadMarshallerInternal)`
   - methods: is_active, run
 - `class RpcPlugin(object)`
-  - methods: port, is_hosted, is_running, address, start, stop, autostart, autostart_safely
+  - methods: import_ops, port, is_hosted, is_running, address, start, stop, autostart, autostart_safely
 
 ### `net_utils/ssh_client.py`
 - `class SSHClient`
