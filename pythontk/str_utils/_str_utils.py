@@ -634,6 +634,11 @@ class StrUtils(CoreUtils):
                 - 'start'/'left': Trim from start (keep end) - default
                 - 'end'/'right': Trim from end (keep start)
                 - 'middle': Trim from middle (keep start and end)
+                - 'path': Like 'middle', but cuts only at separators so whole
+                  path components survive at both ends (drive/root and leading
+                  dirs at the front, filename and its parents at the back).
+                  Falls back to 'middle' when there is nothing to drop between
+                  a head and a tail.
             insert (str): Characters to add at the trimmed area. (default: ellipsis)
 
         Returns:
@@ -643,6 +648,8 @@ class StrUtils(CoreUtils):
             truncate('12345678', 4) #returns: '..5678' (start mode)
             truncate('12345678', 4, 'end') #returns: '1234..' (end mode)
             truncate('12345678', 6, 'middle') #returns: '12..78' (middle mode)
+            truncate('O:/Cloud/jets/c130j/sourceimages/tex/x_DIFF.png', 36, 'path')
+                #returns: 'O:/Cloud/jets/../tex/x_DIFF.png' (path mode)
         """
         if not string or not isinstance(string, str):
             return string
@@ -666,16 +673,75 @@ class StrUtils(CoreUtils):
             # Keep the first 'length' chars
             return string[:length] + insert
         elif mode == "middle":
-            # Split around the middle; visible chars exclude the insert
-            avail = max(1, length - len(insert))
-            if avail <= 1:
-                return string[0] + insert
-            left = avail // 2
-            right = avail - left
-            return string[:left] + insert + string[-right:]
+            return StrUtils._truncate_middle(string, length, insert)
+        elif mode == "path":
+            return StrUtils._truncate_path(string, length, insert)
         else:
             # Fallback to start trimming (default behavior)
             return insert + string[-length:]
+
+    @staticmethod
+    def _truncate_middle(string, length, insert):
+        """Character-count middle cut — the 'middle' mode of :meth:`truncate`.
+
+        Split around the middle; visible chars exclude the insert. Also the
+        degenerate-case fallback for 'path' mode.
+        """
+        avail = max(1, length - len(insert))
+        if avail <= 1:
+            return string[0] + insert
+        left = avail // 2
+        right = avail - left
+        return string[:left] + insert + string[-right:]
+
+    @staticmethod
+    def _truncate_path(string, length, insert):
+        """Component-aware middle truncation — the 'path' mode of :meth:`truncate`.
+
+        A character-count middle cut lands wherever it lands, so a path comes
+        back with half-words at the seam (``O:/Cloud/Projects/jets/..ures/x.png``).
+        This drops whole components instead, and grows what it keeps in the
+        order that carries meaning: the head opens on the drive/root *and* its
+        first directory (a bare ``O:/..`` locates nothing), the tail then takes
+        the filename and as many of its parents as fit, and any space left over
+        goes back to the head. Degenerate shapes — nothing between a head and a
+        tail, or a filename that alone overruns the budget — degrade to
+        :meth:`_truncate_middle` rather than inventing a boundary.
+        """
+        # Preserve any leading separator run (UNC "//server/share", posix root).
+        stripped = string.lstrip("/\\")
+        prefix = string[: len(string) - len(stripped)]
+        sep = "\\" if stripped.count("\\") > stripped.count("/") else "/"
+        parts = stripped.split(sep)
+        if len(parts) < 3:  # nothing to drop between a head and a tail
+            return StrUtils._truncate_middle(string, length, insert)
+
+        def build(head_count, tail_count):
+            head = parts[:head_count]
+            tail = parts[len(parts) - tail_count :]
+            return prefix + sep.join(head + [insert] + tail)
+
+        # Keeping head + tail must still leave a component to drop, or the
+        # insert would mark an elision that never happened ("a/../b/c").
+        keepable = len(parts) - 1
+
+        head_count, tail_count = 1, 1
+        if len(build(1, 1)) > length:
+            return StrUtils._truncate_middle(string, length, insert)
+        if 3 <= keepable and len(build(2, 1)) <= length:  # drive/root + 1st dir
+            head_count = 2
+
+        # Tail first — the filename end is what identifies the file.
+        while head_count + tail_count < keepable:
+            if len(build(head_count, tail_count + 1)) > length:
+                break
+            tail_count += 1
+        # Then spend whatever is left widening the head.
+        while head_count + tail_count < keepable:
+            if len(build(head_count + 1, tail_count)) > length:
+                break
+            head_count += 1
+        return build(head_count, tail_count)
 
     @staticmethod
     def get_trailing_integers(string, inc=0, as_string=False):

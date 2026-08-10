@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-07_
+_Generated: 2026-08-10_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -30,7 +30,7 @@ _Generated: 2026-08-07_
 - `class ScriptRoundTripDeliverer(ScriptRunDeliverer)`
   - methods: deliver
 - `class ScriptLaunchBridge(HandoffBridge)`
-  - methods: render_context, save_as, round_trip, resolve_save_path, render_template, list_template_modes, list_templates
+  - methods: render_context, save_as, round_trip, resolve_save_path, render_template, modes, list_template_modes, list_templates
 
 ### `core_utils/app_installer.py`
 - `class AppInstaller`
@@ -326,7 +326,7 @@ _Generated: 2026-08-07_
 
 ### `core_utils/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - `class ScriptTemplate(_ScriptTemplateInternal)`
-  - methods: list_templates, declared_modes, template_modes, list_template_modes, render_template
+  - methods: list_templates, normalize_modes, declared_values, declared_modes, template_modes, list_template_modes, render_template
 
 ### `core_utils/singleton_mixin.py`
 - `class SingletonMixin`
@@ -366,7 +366,7 @@ _Generated: 2026-08-07_
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, read_scene_sidecar, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, set_glb_emissive, set_glb_base_color
+  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, read_scene_sidecar, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, set_glb_emissive, set_glb_base_color
 
 ### `file_utils/metadata.py`
 - `class MetadataInternal`
@@ -398,6 +398,10 @@ _Generated: 2026-08-07_
 - `class WorkspaceTemplates(object)`
   - methods: store, list, rules, save, delete
 
+### `geo_utils/plate_emitter.py` — Emitter geometry for a flat light-fixture plate — pure math, no DCC.
+- `class PlateEmitter(NamedTuple)`
+  - methods: from_bounds, from_points
+
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`
   - methods: pca_transform, nn_query, match_clouds, pca_basis, pca_eigenvalue_signature, cluster_by_distance, hash_points
@@ -417,7 +421,7 @@ _Generated: 2026-08-07_
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, compute_atlas_layout, atlas_pixel_rects, inset_atlas_rects, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`

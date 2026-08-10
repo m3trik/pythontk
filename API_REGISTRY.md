@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-07_
+_Generated: 2026-08-10_
 
 ## Index
 
@@ -74,6 +74,7 @@ _Generated: 2026-08-07_
 - [`file_utils/usd.py`](#file_utils--usd) — Zero-dependency USD (OpenUSD) file utilities.
 - [`file_utils/uv_unwrap/_uv_unwrap.py`](#file_utils--uv_unwrap--_uv_unwrap)
 - [`file_utils/workspace.py`](#file_utils--workspace) — Shared project-workspace model + ``workspace.mel`` codec.
+- [`geo_utils/plate_emitter.py`](#geo_utils--plate_emitter) — Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
@@ -164,14 +165,15 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 - **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L568)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L714)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L718)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L794)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L798)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
-  - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app edit them, and re-ingest the result.
+  - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
   - `ScriptLaunchBridge.resolve_save_path(cls, out_path: str) -> str` *(class)* — Absolute *out_path*, with :attr:`save_extensions`' default appended if bare.
   - `ScriptLaunchBridge.render_template(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]` — Render *template*'s body with *payload_path* + *params* (no launch).
+  - `ScriptLaunchBridge.modes(self) -> Tuple[str, ...]` *(property)* — Every mode this bridge can deliver -- the registry, not one spec's slice.
   - `ScriptLaunchBridge.list_template_modes(self) -> List[Tuple[str, str]]` — ``[(stem, mode), ...]`` for the bridge's template directory.
   - `ScriptLaunchBridge.list_templates(self) -> List[Path]` — User-visible template paths for the bridge.
 
@@ -1088,9 +1090,11 @@ Run a script in an external app, block until it exits, and collect an artifact.
 
 Generic on-disk script-template discovery + ``__KEY__`` rendering.
 
-- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L67)** — ScriptTemplate — module namespace.
+- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L91)** — ScriptTemplate — module namespace.
   - `ScriptTemplate.list_templates(template_dir, extension: str = '.py') -> List[Path]` *(static)* — Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).
-  - `ScriptTemplate.declared_modes(template_path, field: str = 'BRIDGE_MODES') -> Optional[Tuple[str, ...]]` *(static)* — Return exactly what a template declares via ``<field> = (...)``.
+  - `ScriptTemplate.normalize_modes(modes: Optional[Sequence[str]]) -> Tuple[str, ...]` *(static)* — Fold legacy on-disk spellings in *modes* to the canonical values.
+  - `ScriptTemplate.declared_values(template_path, field: str) -> Optional[Tuple[str, ...]]` *(static)* — Return the strings a template declares via ``<field> = (...)``, VERBATIM.
+  - `ScriptTemplate.declared_modes(template_path, field: str = 'BRIDGE_MODES') -> Optional[Tuple[str, ...]]` *(static)* — Return the MODES a template declares, legacy spellings folded to the canon.
   - `ScriptTemplate.template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]` *(static)* — Return the modes a template declares via its ``<field> = (...)`` tuple.
   - `ScriptTemplate.list_template_modes(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]` *(static)* — Return ``[(stem, mode), ...]`` for every (template, mode) pairing.
   - `ScriptTemplate.render_template(template_path, context: Dict[str, str]) -> str` *(static)* — Substitute ``__KEY__`` placeholders in *template_path* using *context*.
@@ -1230,15 +1234,19 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
-- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L48)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L50)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
-  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* — Apply a scene-sidecar envelope to a GLB and embed it in its extras.
   - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The scene-sidecar envelope embedded in a GLB, or ``None``.
+  - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.
+  - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
+  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
+  - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
   - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
 
@@ -1324,6 +1332,15 @@ Shared project-workspace model + ``workspace.mel`` codec.
   - `WorkspaceTemplates.rules(cls, name: Optional[str] = None) -> Dict[str, str]` *(class)* — File rules of the *name*d template — default: the active (last-saved)
   - `WorkspaceTemplates.save(cls, name: str, rules: Dict[str, str]) -> str` *(class)* — Save *rules* as template *name* and make it the active default.
   - `WorkspaceTemplates.delete(cls, name: str) -> bool` *(class)* — Delete template *name* (the store keeps its active pointer
+
+<a id="geo_utils--plate_emitter"></a>
+### `geo_utils/plate_emitter.py`
+
+Emitter geometry for a flat light-fixture plate — pure math, no DCC.
+
+- **[`class PlateEmitter(NamedTuple)`](pythontk/pythontk/geo_utils/plate_emitter.py#L28)** — The area light a flat plate implies.
+  - `PlateEmitter.from_bounds(cls, minimum: Sequence[float], maximum: Sequence[float], toward: Optional[Sequence[float]] = None, offset: float = 0.01, up_axis: int = 2) -> 'PlateEmitter'` *(class)* — Solve the emitter for the plate bounded by *minimum* / *maximum*.
+  - `PlateEmitter.from_points(cls, points: Sequence[Sequence[float]], normal: Optional[Sequence[float]] = None, toward: Optional[Sequence[float]] = None, offset: float = 0.0, up_axis: int = 2) -> 'PlateEmitter'` *(class)* — Solve an ORIENTED emitter for an arbitrary flat patch of geometry.
 
 <a id="geo_utils--pointcloud"></a>
 ### `geo_utils/pointcloud.py`
@@ -1411,18 +1428,21 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
   - `ImgUtils.dilate_image(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8) -> 'np.ndarray'` *(static)* — Extend valid pixels outward into empty (background) regions.
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
   - `ImgUtils.atlas_pixel_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]` *(static)* — Convert normalized ``scaleOffset`` rects to integer pixel rects.
+  - `ImgUtils.flip_rect_v(rect: Sequence[float]) -> List[float]` *(static)* — A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.
   - `ImgUtils.inset_atlas_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]` *(static)* — Shrink each atlas rect by a pixel gutter on every side.
   - `ImgUtils.assemble_atlas(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'` *(class)* — Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
   - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
   - `ImgUtils.rasterize_uv_triangles(cls, triangles, size: int = 512, supersample: int = 4) -> 'np.ndarray'` *(class)* — Rasterize filled UV-space triangles into a single-channel coverage image.
   - `ImgUtils.rasterize_silhouette(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)` *(class)* — Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.
   - `ImgUtils.convert_rgb_to_gray(cls, data)` *(class)* — Convert an RGB Image data array to grayscale (luma weights).
+  - `ImgUtils.kelvin_to_linear_rgb(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]` *(static)* — Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.
   - `ImgUtils.convert_rgb_to_hsv(cls, image)` *(class)* — Convert an RGB image to HSV mode.
   - `ImgUtils.convert_i_to_l(cls, image)` *(class)* — Convert a high-bit-depth grayscale image to 8-bit 'L'.
   - `ImgUtils.pack_channels(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image` *(class)* — Packs up to 4 grayscale images into R, G, B, A channels of a single image.
   - `ImgUtils.pack_channel_into_alpha(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image` *(class)* — Packs a channel from the alpha source image into the alpha channel of the base image.
   - `ImgUtils.srgb_to_linear(cls, data)` *(class)* — Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
   - `ImgUtils.linear_to_srgb(cls, data)` *(class)* — Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
+  - `ImgUtils.encode_hdr_for_web(cls, path, percentile=None)` *(class)* — Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.
   - `ImgUtils.generate_mipmaps(cls, image: Union[str, Image.Image]) -> List[Image.Image]` *(class)* — Generate a mipmap chain for an image.
   - `ImgUtils.depalettize_image(cls, image: Image.Image) -> Image.Image` *(class)* — Converts a paletted image (Mode P) to RGB or RGBA.
   - `ImgUtils.is_image_constant(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]` *(class)* — Check if an image is constant color.
@@ -1604,7 +1624,7 @@ Localhost static-file server for live browser / WebXR previews.
 - **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L460)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L583)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L617)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
   - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).

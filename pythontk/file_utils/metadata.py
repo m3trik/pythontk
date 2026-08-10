@@ -205,7 +205,7 @@ class MetadataInternal:
                 else:
                     raise RuntimeError(
                         f"Error accessing file metadata: {e}.\n"
-                        "This is common with cloud storage (Dropbox/OneDrive). "
+                        "This is common with cloud-synced storage. "
                         "Enable sidecar support (Metadata.enable_sidecar = True) to fix this."
                     )
 
@@ -255,7 +255,7 @@ class MetadataInternal:
                 else:
                     raise RuntimeError(
                         f"Error committing metadata: {e}.\n"
-                        "This is common with cloud storage (Dropbox/OneDrive). "
+                        "This is common with cloud-synced storage. "
                         "Enable sidecar support (Metadata.enable_sidecar = True) to fix this."
                     )
 

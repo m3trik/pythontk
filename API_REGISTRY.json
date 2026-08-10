@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-08-07",
+  "generated_at": "2026-08-10",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -438,7 +438,7 @@
               "kind": "staticmethod",
               "signature": "(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)",
               "summary": "",
-              "line": 621,
+              "line": 625,
               "deprecated": false
             },
             {
@@ -447,7 +447,7 @@
               "kind": "method",
               "signature": "(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
               "summary": "",
-              "line": 640,
+              "line": 644,
               "deprecated": false
             }
           ]
@@ -455,7 +455,7 @@
         {
           "name": "ScriptRoundTripDeliverer",
           "summary": "Run a **fresh** app headlessly on the payload and let it edit that file in place.",
-          "line": 714,
+          "line": 718,
           "bases": [
             "ScriptRunDeliverer"
           ],
@@ -466,7 +466,7 @@
               "kind": "method",
               "signature": "(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
               "summary": "",
-              "line": 747,
+              "line": 751,
               "deprecated": false
             }
           ]
@@ -474,7 +474,7 @@
         {
           "name": "ScriptLaunchBridge",
           "summary": "A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.",
-          "line": 794,
+          "line": 798,
           "bases": [
             "HandoffBridge"
           ],
@@ -485,7 +485,7 @@
               "kind": "method",
               "signature": "(self, params: Dict[str, Any]) -> Dict[str, str]",
               "summary": "Format *params* into a ``__KEY__`` substitution context.",
-              "line": 852,
+              "line": 862,
               "deprecated": false
             },
             {
@@ -494,16 +494,16 @@
               "kind": "method",
               "signature": "(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]",
               "summary": "Write *out_path* in the TARGET app's native scene format (blocking).",
-              "line": 865,
+              "line": 875,
               "deprecated": false
             },
             {
               "name": "round_trip",
               "qualname": "ScriptLaunchBridge.round_trip",
               "kind": "method",
-              "signature": "(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]",
-              "summary": "Export *objects*, let the target app edit them, and re-ingest the result.",
-              "line": 911,
+              "signature": "(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]",
+              "summary": "Export *objects*, let the target app work on them, and re-ingest the result.",
+              "line": 921,
               "deprecated": false
             },
             {
@@ -512,7 +512,7 @@
               "kind": "classmethod",
               "signature": "(cls, out_path: str) -> str",
               "summary": "Absolute *out_path*, with :attr:`save_extensions`' default appended if bare.",
-              "line": 960,
+              "line": 995,
               "deprecated": false
             },
             {
@@ -521,7 +521,16 @@
               "kind": "method",
               "signature": "(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]",
               "summary": "Render *template*'s body with *payload_path* + *params* (no launch).",
-              "line": 967,
+              "line": 1002,
+              "deprecated": false
+            },
+            {
+              "name": "modes",
+              "qualname": "ScriptLaunchBridge.modes",
+              "kind": "property",
+              "signature": "(self) -> Tuple[str, ...]",
+              "summary": "Every mode this bridge can deliver -- the registry, not one spec's slice.",
+              "line": 1018,
               "deprecated": false
             },
             {
@@ -530,7 +539,7 @@
               "kind": "method",
               "signature": "(self) -> List[Tuple[str, str]]",
               "summary": "``[(stem, mode), ...]`` for the bridge's template directory.",
-              "line": 982,
+              "line": 1031,
               "deprecated": false
             },
             {
@@ -539,7 +548,7 @@
               "kind": "method",
               "signature": "(self) -> List[Path]",
               "summary": "User-visible template paths for the bridge.",
-              "line": 988,
+              "line": 1037,
               "deprecated": false
             }
           ]
@@ -6670,7 +6679,7 @@
         {
           "name": "ScriptTemplate",
           "summary": "ScriptTemplate — module namespace.",
-          "line": 67,
+          "line": 91,
           "bases": [
             "_ScriptTemplateInternal"
           ],
@@ -6681,7 +6690,25 @@
               "kind": "staticmethod",
               "signature": "(template_dir, extension: str = '.py') -> List[Path]",
               "summary": "Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).",
-              "line": 71,
+              "line": 95,
+              "deprecated": false
+            },
+            {
+              "name": "normalize_modes",
+              "qualname": "ScriptTemplate.normalize_modes",
+              "kind": "staticmethod",
+              "signature": "(modes: Optional[Sequence[str]]) -> Tuple[str, ...]",
+              "summary": "Fold legacy on-disk spellings in *modes* to the canonical values.",
+              "line": 104,
+              "deprecated": false
+            },
+            {
+              "name": "declared_values",
+              "qualname": "ScriptTemplate.declared_values",
+              "kind": "staticmethod",
+              "signature": "(template_path, field: str) -> Optional[Tuple[str, ...]]",
+              "summary": "Return the strings a template declares via ``<field> = (...)``, VERBATIM.",
+              "line": 121,
               "deprecated": false
             },
             {
@@ -6689,8 +6716,8 @@
               "qualname": "ScriptTemplate.declared_modes",
               "kind": "staticmethod",
               "signature": "(template_path, field: str = 'BRIDGE_MODES') -> Optional[Tuple[str, ...]]",
-              "summary": "Return exactly what a template declares via ``<field> = (...)``.",
-              "line": 80,
+              "summary": "Return the MODES a template declares, legacy spellings folded to the canon.",
+              "line": 147,
               "deprecated": false
             },
             {
@@ -6699,7 +6726,7 @@
               "kind": "staticmethod",
               "signature": "(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]",
               "summary": "Return the modes a template declares via its ``<field> = (...)`` tuple.",
-              "line": 103,
+              "line": 162,
               "deprecated": false
             },
             {
@@ -6708,7 +6735,7 @@
               "kind": "staticmethod",
               "signature": "(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]",
               "summary": "Return ``[(stem, mode), ...]`` for every (template, mode) pairing.",
-              "line": 122,
+              "line": 181,
               "deprecated": false
             },
             {
@@ -6717,7 +6744,7 @@
               "kind": "staticmethod",
               "signature": "(template_path, context: Dict[str, str]) -> str",
               "summary": "Substitute ``__KEY__`` placeholders in *template_path* using *context*.",
-              "line": 136,
+              "line": 195,
               "deprecated": false
             }
           ]
@@ -7528,7 +7555,7 @@
         {
           "name": "MeshConvert",
           "summary": "3D mesh format conversion via the godotengine/FBX2glTF CLI.",
-          "line": 48,
+          "line": 50,
           "bases": [
             "HelpMixin"
           ],
@@ -7539,16 +7566,16 @@
               "kind": "classmethod",
               "signature": "(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]",
               "summary": "Resolve the FBX2glTF executable from PATH or managed installs.",
-              "line": 316,
+              "line": 416,
               "deprecated": false
             },
             {
               "name": "fbx_to_glb",
               "qualname": "MeshConvert.fbx_to_glb",
               "kind": "classmethod",
-              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None) -> str",
+              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True) -> str",
               "summary": "Convert an FBX file to a binary glTF 2.0 (GLB) file.",
-              "line": 392,
+              "line": 492,
               "deprecated": false
             },
             {
@@ -7557,7 +7584,7 @@
               "kind": "classmethod",
               "signature": "(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Wrap *sections* in the versioned scene-sidecar envelope.",
-              "line": 524,
+              "line": 643,
               "deprecated": false
             },
             {
@@ -7566,7 +7593,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]",
               "summary": "Apply a scene-sidecar envelope to a GLB and embed it in its extras.",
-              "line": 573,
+              "line": 692,
               "deprecated": false
             },
             {
@@ -7575,7 +7602,25 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The scene-sidecar envelope embedded in a GLB, or ``None``.",
-              "line": 652,
+              "line": 771,
+              "deprecated": false
+            },
+            {
+              "name": "read_glb_lightmap_manifest",
+              "qualname": "MeshConvert.read_glb_lightmap_manifest",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
+              "summary": "The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.",
+              "line": 828,
+              "deprecated": false
+            },
+            {
+              "name": "apply_glb_lightmaps",
+              "qualname": "MeshConvert.apply_glb_lightmaps",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None) -> List[Dict[str, Any]]",
+              "summary": "Wire a host DCC's committed lightmaps into a GLB for the web viewer.",
+              "line": 842,
               "deprecated": false
             },
             {
@@ -7584,7 +7629,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 668,
+              "line": 1161,
               "deprecated": false
             },
             {
@@ -7593,7 +7638,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 753,
+              "line": 1246,
               "deprecated": false
             },
             {
@@ -7602,7 +7647,25 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget)",
               "summary": "Yield an open :class:`GlbEdit` for *glb*, writing once on close.",
-              "line": 840,
+              "line": 1333,
+              "deprecated": false
+            },
+            {
+              "name": "optimize_glb_textures",
+              "qualname": "MeshConvert.optimize_glb_textures",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85) -> Dict[str, Any]",
+              "summary": "Downsize and re-encode a GLB's embedded images for web delivery.",
+              "line": 1446,
+              "deprecated": false
+            },
+            {
+              "name": "set_glb_metallic_roughness",
+              "qualname": "MeshConvert.set_glb_metallic_roughness",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]",
+              "summary": "Pack and write the ORM (metallic/roughness) texture into a GLB, by name.",
+              "line": 1659,
               "deprecated": false
             },
             {
@@ -7611,7 +7674,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write emissive color / texture into a GLB's materials, by name.",
-              "line": 986,
+              "line": 1790,
               "deprecated": false
             },
             {
@@ -7620,7 +7683,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write base colour / texture into a GLB's materials, by name.",
-              "line": 1204,
+              "line": 2041,
               "deprecated": false
             }
           ]
@@ -8171,6 +8234,41 @@
               "signature": "(cls, name: str) -> bool",
               "summary": "Delete template *name* (the store keeps its active pointer",
               "line": 610,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "geo_utils/plate_emitter.py",
+      "summary": "Emitter geometry for a flat light-fixture plate — pure math, no DCC.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PlateEmitter",
+          "summary": "The area light a flat plate implies.",
+          "line": 28,
+          "bases": [
+            "NamedTuple"
+          ],
+          "members": [
+            {
+              "name": "from_bounds",
+              "qualname": "PlateEmitter.from_bounds",
+              "kind": "classmethod",
+              "signature": "(cls, minimum: Sequence[float], maximum: Sequence[float], toward: Optional[Sequence[float]] = None, offset: float = 0.01, up_axis: int = 2) -> 'PlateEmitter'",
+              "summary": "Solve the emitter for the plate bounded by *minimum* / *maximum*.",
+              "line": 45,
+              "deprecated": false
+            },
+            {
+              "name": "from_points",
+              "qualname": "PlateEmitter.from_points",
+              "kind": "classmethod",
+              "signature": "(cls, points: Sequence[Sequence[float]], normal: Optional[Sequence[float]] = None, toward: Optional[Sequence[float]] = None, offset: float = 0.0, up_axis: int = 2) -> 'PlateEmitter'",
+              "summary": "Solve an ORIENTED emitter for an arbitrary flat patch of geometry.",
+              "line": 120,
               "deprecated": false
             }
           ]
@@ -8737,12 +8835,21 @@
               "deprecated": false
             },
             {
+              "name": "flip_rect_v",
+              "qualname": "ImgUtils.flip_rect_v",
+              "kind": "staticmethod",
+              "signature": "(rect: Sequence[float]) -> List[float]",
+              "summary": "A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.",
+              "line": 1635,
+              "deprecated": false
+            },
+            {
               "name": "inset_atlas_rects",
               "qualname": "ImgUtils.inset_atlas_rects",
               "kind": "staticmethod",
               "signature": "(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]",
               "summary": "Shrink each atlas rect by a pixel gutter on every side.",
-              "line": 1635,
+              "line": 1651,
               "deprecated": false
             },
             {
@@ -8751,7 +8858,7 @@
               "kind": "classmethod",
               "signature": "(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'",
               "summary": "Composite per-item images into one atlas at normalized ``scaleOffset`` rects.",
-              "line": 1677,
+              "line": 1693,
               "deprecated": false
             },
             {
@@ -8760,7 +8867,7 @@
               "kind": "staticmethod",
               "signature": "(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'",
               "summary": "Generate a normalized radial gradient as a 2D numpy array.",
-              "line": 1756,
+              "line": 1772,
               "deprecated": false
             },
             {
@@ -8769,7 +8876,7 @@
               "kind": "classmethod",
               "signature": "(cls, triangles, size: int = 512, supersample: int = 4) -> 'np.ndarray'",
               "summary": "Rasterize filled UV-space triangles into a single-channel coverage image.",
-              "line": 1814,
+              "line": 1830,
               "deprecated": false
             },
             {
@@ -8778,7 +8885,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)",
               "summary": "Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.",
-              "line": 1907,
+              "line": 1923,
               "deprecated": false
             },
             {
@@ -8787,7 +8894,16 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Convert an RGB Image data array to grayscale (luma weights).",
-              "line": 1990,
+              "line": 2006,
+              "deprecated": false
+            },
+            {
+              "name": "kelvin_to_linear_rgb",
+              "qualname": "ImgUtils.kelvin_to_linear_rgb",
+              "kind": "staticmethod",
+              "signature": "(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]",
+              "summary": "Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.",
+              "line": 2022,
               "deprecated": false
             },
             {
@@ -8796,7 +8912,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert an RGB image to HSV mode.",
-              "line": 2006,
+              "line": 2082,
               "deprecated": false
             },
             {
@@ -8805,7 +8921,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a high-bit-depth grayscale image to 8-bit 'L'.",
-              "line": 2021,
+              "line": 2097,
               "deprecated": false
             },
             {
@@ -8814,7 +8930,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 2044,
+              "line": 2120,
               "deprecated": false
             },
             {
@@ -8823,7 +8939,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 2140,
+              "line": 2216,
               "deprecated": false
             },
             {
@@ -8832,7 +8948,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 2293,
+              "line": 2369,
               "deprecated": false
             },
             {
@@ -8841,7 +8957,16 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 2305,
+              "line": 2381,
+              "deprecated": false
+            },
+            {
+              "name": "encode_hdr_for_web",
+              "qualname": "ImgUtils.encode_hdr_for_web",
+              "kind": "classmethod",
+              "signature": "(cls, path, percentile=None)",
+              "summary": "Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.",
+              "line": 2399,
               "deprecated": false
             },
             {
@@ -8850,7 +8975,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> List[Image.Image]",
               "summary": "Generate a mipmap chain for an image.",
-              "line": 2316,
+              "line": 2452,
               "deprecated": false
             },
             {
@@ -8859,7 +8984,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 2343,
+              "line": 2479,
               "deprecated": false
             },
             {
@@ -8868,7 +8993,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 2363,
+              "line": 2499,
               "deprecated": false
             },
             {
@@ -8877,7 +9002,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 2404,
+              "line": 2540,
               "deprecated": false
             },
             {
@@ -8886,7 +9011,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 2468,
+              "line": 2604,
               "deprecated": false
             }
           ]
@@ -10066,7 +10191,7 @@
         {
           "name": "PreviewBridge",
           "summary": "Hand-off bridge whose target is a live preview page rather than an application.",
-          "line": 583,
+          "line": 617,
           "bases": [
             "HandoffBridge"
           ],
@@ -10077,7 +10202,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "glTF-appropriate export defaults, read by both DCC export mixins.",
-              "line": 603,
+              "line": 637,
               "deprecated": false
             },
             {
@@ -10086,7 +10211,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The preview URL, or ``None`` before the first push.",
-              "line": 682,
+              "line": 716,
               "deprecated": false
             },
             {
@@ -10095,7 +10220,7 @@
               "kind": "method",
               "signature": "(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', **params: Any) -> Optional[Dict[str, Any]]",
               "summary": "Export and publish, returning the deliverer's result (``None`` on failure).",
-              "line": 687,
+              "line": 721,
               "deprecated": false
             },
             {
@@ -10104,7 +10229,7 @@
               "kind": "staticmethod",
               "signature": "(result: Optional[Dict[str, Any]]) -> str",
               "summary": "One plain-text line describing what the scene sidecar did.",
-              "line": 713,
+              "line": 747,
               "deprecated": false
             },
             {
@@ -10113,7 +10238,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Stop serving and release the port.",
-              "line": 739,
+              "line": 773,
               "deprecated": false
             }
           ]
@@ -10666,7 +10791,7 @@
               "kind": "staticmethod",
               "signature": "(string, inc=0, as_string=False)",
               "summary": "Returns any integers from the end of the given string.",
-              "line": 681,
+              "line": 747,
               "deprecated": false
             },
             {
@@ -10675,7 +10800,7 @@
               "kind": "classmethod",
               "signature": "(cls, find, strings, regex=False, ignore_case=False)",
               "summary": "Filter for elements that containing the given string in a list of strings.",
-              "line": 762,
+              "line": 828,
               "deprecated": false
             },
             {
@@ -10684,7 +10809,7 @@
               "kind": "classmethod",
               "signature": "(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)",
               "summary": "Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…",
-              "line": 833,
+              "line": 899,
               "deprecated": false
             },
             {
@@ -10693,7 +10818,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str",
               "summary": "Re-format the suffix for the given string.",
-              "line": 1118,
+              "line": 1184,
               "deprecated": false
             },
             {
@@ -10702,7 +10827,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Strip a configured prefix and/or suffix from a string, case-insensitively.",
-              "line": 1177,
+              "line": 1243,
               "deprecated": false
             },
             {
@@ -10711,7 +10836,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str",
               "summary": "Infer ``\"prefix\"`` or ``\"suffix\"`` from *delimiter* placement in *text*.",
-              "line": 1230,
+              "line": 1296,
               "deprecated": false
             },
             {
@@ -10720,7 +10845,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, mode: str = 'auto', *, default: str = 'prefix', delimiter: str = '_') -> Tuple[str, str]",
               "summary": "Split an affix string into a ``(prefix, suffix)`` pair per *mode*.",
-              "line": 1278,
+              "line": 1344,
               "deprecated": false
             },
             {
@@ -10729,7 +10854,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Idempotently apply a prefix and/or suffix to a string.",
-              "line": 1327,
+              "line": 1393,
               "deprecated": false
             },
             {
@@ -10738,7 +10863,7 @@
               "kind": "staticmethod",
               "signature": "(index: int) -> str",
               "summary": "Excel-column-style alphabetic label for a 0-based index.",
-              "line": 1361,
+              "line": 1427,
               "deprecated": false
             },
             {
@@ -10747,7 +10872,7 @@
               "kind": "staticmethod",
               "signature": "(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]",
               "summary": "Generate ``count`` sequential labels for naming sibling items.",
-              "line": 1389,
+              "line": 1455,
               "deprecated": false
             },
             {
@@ -10756,7 +10881,7 @@
               "kind": "staticmethod",
               "signature": "(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]",
               "summary": "Reduce a batch of names to a shared base form, then disambiguate",
-              "line": 1430,
+              "line": 1496,
               "deprecated": false
             },
             {
@@ -10765,7 +10890,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, stamp='%m-%d-%Y  %H:%M')",
               "summary": "Attach or detach a modified timestamp and date to/from a given file path.",
-              "line": 1538,
+              "line": 1604,
               "deprecated": false
             }
           ]

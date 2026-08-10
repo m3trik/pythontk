@@ -536,8 +536,8 @@ class FileUtils(HelpMixin):
         target. The rename is atomic on POSIX and Windows (Python 3.3+ via
         os.replace), so readers either see the old file or the complete new
         file — never a partial write. This matters for cloud-synced
-        directories (Dropbox, OneDrive) and for any file other processes may
-        read while we're writing.
+        directories and for any file other processes may read while we're
+        writing.
 
         Leaves no temp file behind on success. On failure (write error), the
         temp file is removed and the original is untouched.

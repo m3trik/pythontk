@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.10"
+__version__ = "0.9.12"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -51,6 +51,7 @@ DEFAULT_INCLUDE = {
     "geo_utils.polyline": "Polyline",
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",
+    "geo_utils.plate_emitter": "PlateEmitter",
     "geo_utils.uv_pack": ["UvPack", "PackIslandsResult"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
