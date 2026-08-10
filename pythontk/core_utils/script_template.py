@@ -23,7 +23,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from pythontk.str_utils._str_utils import StrUtils
 
 
-# The three hand-off shapes, distinguished by *where the result lands*.
+# The three hand-off shapes, distinguished by *where the result lands*. THE mode
+# vocabulary for the whole ecosystem -- every bridge (Blender / Maya / RizomUV /
+# Marmoset / Substance) imports these rather than spelling the strings itself. They
+# are an ON-DISK contract as much as a Python one: a template's ``BRIDGE_MODES`` tuple
+# names them, so a second definition anywhere is a second dialect of a file format.
 #
 # Canonical one-way "send to the target app" mode: the payload goes out, the target
 # opens it interactively, and nothing comes back.
@@ -37,11 +41,31 @@ SAVE_AS = "save_as"
 
 # "Run the target app headlessly and bring the result back into the HOST" mode. Like
 # :data:`SAVE_AS` it blocks, but the artifact is not the deliverable -- it is an
-# intermediate the bridge re-ingests (re-import the edited payload, transfer the result
-# onto the original scene objects, discard the scaffolding). The target edits the
-# exported payload *in place*, so success is judged by that file having CHANGED rather
-# than by a new one appearing (see :data:`pythontk.core_utils.script_run.REWRITTEN`).
+# intermediate the bridge re-ingests (transfer the result onto the original scene
+# objects, discard the scaffolding). What the artist gets is CHANGED HOST STATE, which
+# is why this is a mode of its own rather than a ``save_as`` whose file happens to be
+# read afterwards: naming the mechanism (``save_as``) in a panel tells the artist to go
+# looking for a deliverable that does not exist.
+#
+# The mode says where the result lands, NOT how the target writes it -- two artifact
+# shapes ride it, and the deliverer registered for the mode decides which:
+#
+# * **The payload, edited in place** (RizomUV's ``ZomLoad``/``ZomSave``) -- one path in
+#   and out, so success is judged by that file having CHANGED rather than by a new one
+#   appearing (:data:`pythontk.core_utils.script_run.REWRITTEN`); see
+#   :class:`~pythontk.core_utils.app_handoff.ScriptRoundTripDeliverer`.
+# * **A new artifact** (mayatk's Blender lightmap bake returns a manifest of maps + UV
+#   layouts) -- mechanically a ``save_as`` run, judged by the file being CREATED; see
+#   :class:`~pythontk.core_utils.app_handoff.ScriptRunDeliverer`.
 ROUND_TRIP = "round_trip"
+
+# Legacy on-disk spellings, folded to the canon when a template is PARSED. The mode
+# tuple lives in template files -- including ones a user wrote against an older
+# contract -- and an unrecognized mode does not raise: :meth:`template_modes` filters
+# it out and silently falls back to the primary mode, so a stale spelling would turn a
+# headless round trip into an interactive send with nothing pointing at the cause.
+# Normalizing here keeps ONE value in code while still reading the old files.
+_MODE_ALIASES: Dict[str, str] = {"roundtrip": ROUND_TRIP}
 
 # Cache of compiled ``<FIELD> = (...)`` matchers, keyed by the declaration field name.
 _MODE_FIELD_RE: Dict[str, "re.Pattern[str]"] = {}
@@ -77,16 +101,36 @@ class ScriptTemplate(_ScriptTemplateInternal):
         )
 
     @staticmethod
-    def declared_modes(
-        template_path, field: str = "BRIDGE_MODES"
-    ) -> Optional[Tuple[str, ...]]:
-        """Return exactly what a template declares via ``<field> = (...)``.
+    def normalize_modes(modes: Optional[Sequence[str]]) -> Tuple[str, ...]:
+        """Fold legacy on-disk spellings in *modes* to the canonical values.
+
+        The one place :data:`_MODE_ALIASES` is applied, so a bridge that parses
+        ``BRIDGE_MODES`` its own way (the Substance engine reads the file with
+        :mod:`ast` rather than through :meth:`declared_modes`) folds the same
+        spellings as everyone else instead of silently dropping a stale one to its
+        primary mode. Non-strings are discarded; unknown strings pass through, since
+        judging them belongs to the caller's ``allowed`` tuple.
+        """
+        return tuple(
+            _MODE_ALIASES.get(mode, mode)
+            for mode in (modes or ())
+            if isinstance(mode, str)
+        )
+
+    @staticmethod
+    def declared_values(template_path, field: str) -> Optional[Tuple[str, ...]]:
+        """Return the strings a template declares via ``<field> = (...)``, VERBATIM.
+
+        The generic reader: templates declare more than modes through this same
+        ``<FIELD> = (...)`` convention (mayatk's bake template also carries
+        ``BRIDGE_OUTPUT_EXT`` / ``BRIDGE_OUTPUT`` / ``BRIDGE_TIMEOUT``), so a template
+        stays the one place its own contract is written down. Nothing is interpreted
+        here -- in particular NOT the mode aliasing, which would corrupt any other
+        field whose value happened to collide with a legacy mode spelling.
 
         ``None`` means the file declares nothing (or is unreadable) -- distinct from an
         empty tuple, and the distinction is the point: :meth:`template_modes` may assume
         a mode for an UNANNOTATED template, but must never override an explicit one.
-        Callers whose template contract is non-negotiable (a script that has to write a
-        specific artifact) read this instead.
         """
         try:
             text = Path(template_path).read_text(encoding="utf-8")
@@ -98,6 +142,21 @@ class ScriptTemplate(_ScriptTemplateInternal):
         return tuple(
             item.strip().strip("'\"") for item in m.group(1).split(",") if item.strip()
         )
+
+    @staticmethod
+    def declared_modes(
+        template_path, field: str = "BRIDGE_MODES"
+    ) -> Optional[Tuple[str, ...]]:
+        """Return the MODES a template declares, legacy spellings folded to the canon.
+
+        :meth:`declared_values` plus :meth:`normalize_modes` -- the strict read, used
+        where a template's contract is non-negotiable (a script that has to write a
+        specific artifact). ``None`` still means "declares nothing"; anything the alias
+        table does not name passes through untouched, since deciding what is acceptable
+        belongs to the bridge's ``allowed`` tuple, not to the reader.
+        """
+        declared = ScriptTemplate.declared_values(template_path, field)
+        return None if declared is None else ScriptTemplate.normalize_modes(declared)
 
     @staticmethod
     def template_modes(

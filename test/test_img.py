@@ -1407,6 +1407,27 @@ class InsetAtlasRectsTest(unittest.TestCase):
             self.assertLessEqual(ioy + isy, oy + sy + 1e-9)
 
 
+class FlipRectVTest(unittest.TestCase):
+    """ImgUtils.flip_rect_v — bottom-left UV rect <-> top-down glTF texture space."""
+
+    def test_known_value(self):
+        # Bottom-left quarter (UV) is the TOP-left quarter in glTF texture space.
+        self.assertEqual(
+            ImgUtils.flip_rect_v([0.5, 0.5, 0.0, 0.0]), [0.5, 0.5, 0.0, 0.5]
+        )
+
+    def test_identity_is_a_fixed_point(self):
+        self.assertEqual(
+            ImgUtils.flip_rect_v([1.0, 1.0, 0.0, 0.0]), [1.0, 1.0, 0.0, 0.0]
+        )
+
+    def test_involution(self):
+        rect = [0.4375, 0.9375, 0.03125, 0.53125]
+        double = ImgUtils.flip_rect_v(ImgUtils.flip_rect_v(rect))
+        for got, want in zip(double, rect):
+            self.assertAlmostEqual(got, want, places=9)
+
+
 @unittest.skipUnless(HAS_CV2, "cv2 required for assemble_atlas resize")
 class AtlasAssembleTest(unittest.TestCase):
     """ImgUtils.assemble_atlas — pack per-item images into one atlas at rects."""
@@ -1713,6 +1734,47 @@ class BitDepthAndBlurChannelRegressionTest(unittest.TestCase):
         out = ImgUtils._gaussian_blur_array_numpy(arr, 2.0, "A")
         self.assertTrue(np.allclose(out[..., 0], arr[..., 0]))    # L untouched
         self.assertFalse(np.allclose(out[..., 1], arr[..., 1]))   # A blurred
+
+
+class TestKelvinToLinearRgb(unittest.TestCase):
+    """Blackbody colour temperature -> linear RGB, for authoring light colour."""
+
+    def _fn(self):
+        from pythontk import ImgUtils
+
+        return ImgUtils.kelvin_to_linear_rgb
+
+    def test_warm_is_red_dominant_and_cool_is_balanced(self):
+        warm = self._fn()(2700)
+        cool = self._fn()(6500)
+        self.assertGreater(warm[0], warm[1])
+        self.assertGreater(warm[1], warm[2])
+        # 6500K is near the white point: all three channels close together.
+        self.assertLess(max(cool) - min(cool), 0.1, f"6500K not neutral: {cool}")
+
+    def test_blue_rises_monotonically_with_temperature(self):
+        blues = [self._fn()(k)[2] for k in (2000, 3000, 4000, 5000, 6500)]
+        self.assertEqual(blues, sorted(blues), f"not monotonic: {blues}")
+
+    def test_normalised_to_peak_one(self):
+        for kelvin in (1500, 4000, 10000):
+            self.assertAlmostEqual(max(self._fn()(kelvin)), 1.0, places=6)
+
+    def test_unnormalised_keeps_the_fit_magnitudes(self):
+        raw = self._fn()(2700, normalize=False)
+        self.assertLessEqual(max(raw), 1.0)
+
+    def test_out_of_range_is_clamped_not_raised(self):
+        self.assertEqual(self._fn()(0), self._fn()(1000))
+        self.assertEqual(self._fn()(100000), self._fn()(40000))
+
+    def test_returns_linear_not_srgb(self):
+        """The whole point: a light wants linear, and the fit outputs sRGB.
+
+        At 2700K the sRGB green is ~0.66; linearised it must be markedly
+        lower. Handing a light the display-referred value makes it too pale.
+        """
+        self.assertLess(self._fn()(2700)[1], 0.5)
 
 
 if __name__ == "__main__":

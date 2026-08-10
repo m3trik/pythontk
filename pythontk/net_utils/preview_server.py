@@ -526,8 +526,17 @@ class PreviewDeliverer(Deliverer):
             # prompt=False is required, not a convenience: the confirm-download
             # path reads stdin, and a DCC has no tty -- left prompting, the very
             # first push inside Maya raises instead of installing.
+            # lightmaps=False: they are wired below, AFTER the sidecar. The
+            # conversion's own pass would run first, and its per-instance
+            # material clones copy each material AS IT STANDS -- so every
+            # repair the sidecar makes afterwards lands only on the base
+            # material no primitive references anymore. Measured on a
+            # production room: the 46 clones the walls actually wear missed
+            # the emissive and metallic-roughness repairs, and the room
+            # rendered black in its own preview.
             MeshConvert.fbx_to_glb(
-                payload.primary, dst=glb, overwrite=True, prompt=False
+                payload.primary, dst=glb, overwrite=True, prompt=False,
+                lightmaps=False,
             )
         except (OSError, RuntimeError, ValueError) as error:
             bridge.logger.error("Preview conversion to GLB failed: %s", error)
@@ -540,8 +549,33 @@ class PreviewDeliverer(Deliverer):
         # only threads the envelope through and reports what happened. Called
         # separately from `fbx_to_glb` because the panel wants the per-section
         # summary back -- the exporters, which don't, pass `sidecar=` into the
-        # conversion instead.
-        applied = MeshConvert.apply_scene_sidecar(glb, sidecar) if sidecar else {}
+        # conversion instead. One session for both passes: repairs first, then
+        # the lightmap wiring that clones the repaired materials.
+        applied = {}
+        try:
+            with MeshConvert.open_glb(glb) as edit:
+                if sidecar:
+                    applied = MeshConvert.apply_scene_sidecar(edit, sidecar)
+                try:
+                    bound = MeshConvert.apply_glb_lightmaps(edit)
+                except Exception as error:  # noqa: BLE001 — mirror fbx_to_glb's guard
+                    bridge.logger.warning("GLB lightmaps skipped: %s", error)
+                else:
+                    if bound:
+                        bridge.logger.info(
+                            "Lightmaps wired into %d material binding(s).", len(bound)
+                        )
+        except Exception as error:  # noqa: BLE001 — post-process must not cost the push
+            bridge.logger.warning("GLB post-process skipped: %s", error)
+
+        # Web delivery pass, after every channel is wired so nothing re-embeds
+        # a full-size copy behind it. Guarded for the same reason as above --
+        # measured on a production room this is 94.7 MB -> ~15 MB, but an
+        # optimizer failure must cost quality, never the push.
+        try:
+            MeshConvert.optimize_glb_textures(glb)
+        except Exception as error:  # noqa: BLE001
+            bridge.logger.warning("GLB texture optimize skipped: %s", error)
         if not (sidecar or {}).get("sections"):
             # Distinguish "switched off" from "on, but the scene had nothing":
             # both produce a bare-FBX preview, and only one is a surprise.

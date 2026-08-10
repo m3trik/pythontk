@@ -474,6 +474,89 @@ class StrTest(BaseTestCase):
         """Test truncate from middle."""
         self.assertEqual(StrUtils.truncate("12345678", 6, "middle"), "12..78")
 
+    def test_truncate_path_keeps_root_dir_and_filename(self):
+        """'path' mode opens on drive + first dir and closes on the filename."""
+        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        result = StrUtils.truncate(p, 48, "path", "…")
+        self.assertEqual(result, "O:/Cloud/Projects/…/textures/c130j_body_DIFF.png")
+        self.assertLessEqual(len(result), 48)
+
+    def test_truncate_path_matches_the_documented_example(self):
+        """Pin the docstring example — a wrong example is a wrong contract."""
+        self.assertEqual(
+            StrUtils.truncate(
+                "O:/Cloud/jets/c130j/sourceimages/tex/x_DIFF.png", 36, "path"
+            ),
+            "O:/Cloud/jets/../tex/x_DIFF.png",
+        )
+
+    def test_truncate_path_relative_keeps_leading_dirs(self):
+        """The common DCC case: paths stored relative to a project root."""
+        p = "sourceimages/textures/props/crate/deep/crate_DIFF.png"
+        self.assertEqual(
+            StrUtils.truncate(p, 40, "path", "…"),
+            "sourceimages/textures/…/crate_DIFF.png",
+        )
+
+    def test_truncate_path_cuts_only_at_separators(self):
+        """The point of 'path' over 'middle': no half-component at the seam."""
+        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        path_mode = StrUtils.truncate(p, 48, "path", "…")
+        middle_mode = StrUtils.truncate(p, 48, "middle", "…")
+        for segment in path_mode.split("/"):
+            self.assertIn(segment, p.split("/") + ["…"])
+        self.assertNotEqual(path_mode, middle_mode)
+
+    def test_truncate_path_preserves_separator_style(self):
+        p = "D:\\Art\\Projects\\jets\\c130j\\sourceimages\\tex\\body_DIFF.png"
+        result = StrUtils.truncate(p, 48, "path")
+        self.assertNotIn("/", result)
+        self.assertTrue(result.startswith("D:\\Art\\"))
+        self.assertTrue(result.endswith("body_DIFF.png"))
+
+    def test_truncate_path_preserves_leading_separators(self):
+        """A UNC share / posix root must not lose its leading separators."""
+        unc = "//server/share/proj/sourceimages/textures/tile_1001.png"
+        self.assertTrue(StrUtils.truncate(unc, 44, "path").startswith("//server/"))
+        posix = "/usr/local/share/textures/deep/deeper/deepest/tex_DIFF.png"
+        self.assertTrue(StrUtils.truncate(posix, 40, "path").startswith("/usr/"))
+
+    def test_truncate_path_falls_back_when_nothing_to_drop(self):
+        """Two components, or a filename that alone overruns, degrade to 'middle'."""
+        two = "textures/an_extremely_long_texture_filename_here.png"
+        self.assertEqual(
+            StrUtils.truncate(two, 30, "path"), StrUtils.truncate(two, 30, "middle")
+        )
+        tiny = "O:/Cloud/Projects/jets/sourceimages/tex/body_DIFF.png"
+        self.assertEqual(
+            StrUtils.truncate(tiny, 12, "path"), StrUtils.truncate(tiny, 12, "middle")
+        )
+
+    def test_truncate_path_no_separator_falls_back(self):
+        no_sep = "nofileseparatoratallbutlongenoughtotriggertruncation.png"
+        self.assertEqual(
+            StrUtils.truncate(no_sep, 30, "path"),
+            StrUtils.truncate(no_sep, 30, "middle"),
+        )
+
+    def test_truncate_path_marker_always_marks_a_real_elision(self):
+        """Never emit an insert between components that were adjacent."""
+        p = "aaa/" + "b" * 20 + "/ccc.png"
+        result = StrUtils.truncate(p, 20, "path", "…")
+        self.assertEqual(result, "aaa/…/ccc.png")
+        # Round-tripping the kept components must skip at least one original.
+        kept = [c for c in result.split("/") if c != "…"]
+        self.assertLess(len(kept), len(p.split("/")))
+
+    def test_truncate_path_short_enough_is_untouched(self):
+        p = "sourceimages/textures/props/crate/crate_DIFF.png"
+        self.assertEqual(StrUtils.truncate(p, 48, "path"), p)
+
+    def test_truncate_path_never_exceeds_length(self):
+        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        for n in range(8, 80):
+            self.assertLessEqual(len(StrUtils.truncate(p, n, "path", "…")), n)
+
     def test_truncate_none_input(self):
         """Test truncate with None input."""
         self.assertIsNone(StrUtils.truncate(None, 4))

@@ -577,10 +577,14 @@ class ScriptRunDeliverer(ScriptLaunchDeliverer):
 
     The artifact path rides on :attr:`HandoffRequest.extras` under ``"output"``; the
     rendered template receives it as ``__OUT_FILE__``. That is what turns a one-way
-    "send" into "write me a native file of the target app's format" -- the
-    ``save_as`` mode.
+    "send" into "write me a file" -- and the file's *destination* is what distinguishes
+    the two modes this serves. ``save_as`` hands it to the user (the target app's native
+    scene format); ``round_trip`` hands it to :meth:`HandoffBridge._ingest`, which folds
+    it back into the host and leaves the artist with changed scene state rather than a
+    deliverable. Identical mechanics, so one deliverer covers both: a bridge registers
+    whichever modes apply via its spec's ``modes=``.
 
-    Mode declarations are read STRICTLY here: the template must say ``save_as`` itself.
+    Mode declarations are read STRICTLY here: the template must name the mode itself.
     The lenient reading the launch route uses would green-light any template -- including
     the interactive ``import`` recipe, which has no ``__OUT_FILE__`` and never saves, so
     the run would fail on the missing artifact minutes later instead of in preflight.
@@ -806,8 +810,14 @@ class ScriptLaunchBridge(HandoffBridge):
     # :meth:`save_as`; leave it None and the bridge stays send-only.
     run_spec: Optional[ScriptLaunchSpec] = None
     # Optional third spec for the ROUND-TRIP route: the target edits the exported
-    # payload in place and the bridge re-ingests it. Set it (plus an :meth:`_ingest`
+    # payload IN PLACE and the bridge re-ingests it. Set it (plus an :meth:`_ingest`
     # override) and the bridge gains :meth:`round_trip`.
+    #
+    # Not the only way to get that method: a round trip whose target writes a NEW
+    # intermediate instead (mayatk's lightmap bake returns a manifest) is mechanically
+    # a ``save_as`` run, so it declares ``modes=(SAVE_AS, ROUND_TRIP)`` on `run_spec`
+    # and leaves this None. `round_trip` gates on the deliverer registry, not on this
+    # attribute -- the mode says where the result lands, the spec says how it is written.
     round_trip_spec: Optional[ScriptLaunchSpec] = None
     # Template + accepted extensions for :meth:`save_as` (the first is the default
     # appended when the caller's path has none).
@@ -915,28 +925,46 @@ class ScriptLaunchBridge(HandoffBridge):
         template: str = "import",
         params: Optional[Dict[str, Any]] = None,
         timeout: Optional[float] = None,
+        out: Optional[str] = None,
         **extras: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Export *objects*, let the target app edit them, and re-ingest the result.
+        """Export *objects*, let the target app work on them, and re-ingest the result.
 
         The third hand-off shape. ``send()`` is one-way and ``save_as()`` writes a file
         for the user; this one closes the loop: the same export pipeline feeds a
-        **headless** target that edits the payload in place, and :meth:`_ingest` brings
-        the result back onto the host's own objects (re-import, transfer, clean up).
-        That is what makes "unwrap these in RizomUV" a mode of the shared skeleton
-        rather than a parallel pipeline with its own discovery, preflight and logging.
+        **headless** target, and :meth:`_ingest` brings the result back onto the host's
+        own objects (transfer, clean up). That is what makes "unwrap these in RizomUV"
+        or "bake these lightmaps in Blender" a mode of the shared skeleton rather than
+        a parallel pipeline with its own discovery, preflight and logging.
 
-        Requires :attr:`round_trip_spec` and an :meth:`_ingest` override -- without the
-        latter the edited payload is delivered and then simply reported, which is a
+        What the caller gets back is CHANGED HOST STATE, never a file to go looking for
+        -- which is the whole reason this is not spelled ``save_as``. Two artifact
+        shapes ride the one mode, chosen by which deliverer is registered for
+        :data:`ROUND_TRIP`:
+
+        * :class:`ScriptRoundTripDeliverer` -- the target edits the exported payload in
+          place. Leave *out* unset; the payload path is the artifact.
+        * :class:`ScriptRunDeliverer` -- the target writes a NEW intermediate (a
+          manifest, a map set) that :meth:`_ingest` reads. Pass *out*, exactly as
+          ``save_as`` does; the difference is purely what happens to the file after.
+
+        Requires a deliverer registered for the mode (a ``modes=`` entry on
+        :attr:`round_trip_spec` or :attr:`run_spec`) and an :meth:`_ingest` override --
+        without the latter the result is delivered and then simply reported, which is a
         silent no-op rather than a round trip.
 
         Returns whatever :meth:`_ingest` returns, or ``None`` on a handled,
         already-logged failure.
         """
-        if self.round_trip_spec is None:
+        if ROUND_TRIP not in (self.deliverers or {}):
+            # Gated on the DELIVERER, not on `round_trip_spec`: a bridge whose round
+            # trip returns a new artifact registers the mode on `run_spec` (same
+            # blocking machinery as save_as), and has no round_trip_spec at all.
             self.logger.error(
-                f"{type(self).__name__} has no `round_trip_spec`; round_trip is "
-                "unavailable."
+                f"{type(self).__name__} has no deliverer for '{ROUND_TRIP}'; "
+                "round_trip is unavailable. Declare it on `round_trip_spec` (the "
+                "target edits the payload in place) or on `run_spec` (the target "
+                "writes a new artifact), via that spec's `modes=`."
             )
             return None
         if type(self)._ingest is HandoffBridge._ingest:
@@ -952,7 +980,14 @@ class ScriptLaunchBridge(HandoffBridge):
             template=template,
             mode=ROUND_TRIP,
             params=self.merge_params(params),
-            extras={"timeout": timeout, **extras},
+            extras={
+                "timeout": timeout,
+                # Normalized the same way ``save_as`` normalizes its destination, so the
+                # artifact-writing shape reaches the deliverer with an identical
+                # contract. ``None`` for the in-place shape, which reads the payload.
+                "output": self.resolve_save_path(out) if out else None,
+                **extras,
+            },
         )
         return self._run(objects, request)
 
@@ -979,10 +1014,24 @@ class ScriptLaunchBridge(HandoffBridge):
         )
 
     # ------------------ Template helpers (for the slot/UI layer) ------------
+    @property
+    def modes(self) -> Tuple[str, ...]:
+        """Every mode this bridge can deliver -- the registry, not one spec's slice.
+
+        Derived rather than restated, because the discovery helpers filter a template's
+        declaration against this and silently fall back to ``[0]`` for anything outside
+        it. A list that omits a mode some spec DOES serve therefore relabels that
+        template as the primary one, and the panel then routes a blocking recipe through
+        the detached launch: no ``__OUT_FILE__``, an app that opens and fails minutes
+        later, and nothing pointing at the omission. Insertion order puts
+        :attr:`spec`'s modes first, so ``[0]`` stays the lenient fallback.
+        """
+        return tuple(self.deliverers or ()) or tuple(self.spec.modes)
+
     def list_template_modes(self) -> List[Tuple[str, str]]:
         """``[(stem, mode), ...]`` for the bridge's template directory."""
         return script_template.ScriptTemplate.list_template_modes(
-            self.spec.template_dir, self.spec.template_extension, self.spec.modes
+            self.spec.template_dir, self.spec.template_extension, self.modes
         )
 
     def list_templates(self) -> List[Path]:

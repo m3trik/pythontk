@@ -89,6 +89,65 @@ class TemplatesTest(unittest.TestCase):
             script_template.ScriptTemplate.declared_modes(path), ("send_to", "bogus")
         )
 
+    def test_declared_modes_folds_legacy_spellings_to_the_canon(self):
+        """A template written against the old ``roundtrip`` still loads.
+
+        The mode tuple is an ON-DISK contract, so unifying the vocabulary in code would
+        otherwise strand every template (including user-authored ones) that spells it the
+        old way -- and strand them SILENTLY: an unrecognized mode does not raise,
+        ``template_modes`` filters it out and falls back to the primary mode, turning a
+        headless round trip into an interactive send with nothing naming the cause.
+        """
+        path = self._write("legacy.py", "BRIDGE_MODES = ('send_to', 'roundtrip')\n")
+        self.assertEqual(
+            script_template.ScriptTemplate.declared_modes(path),
+            (SEND_TO, ROUND_TRIP),
+        )
+        # ...and it survives the filtered read too, rather than being dropped.
+        self.assertEqual(
+            script_template.ScriptTemplate.template_modes(
+                path, (SEND_TO, ROUND_TRIP)
+            ),
+            (SEND_TO, ROUND_TRIP),
+        )
+
+    def test_declared_values_never_applies_the_mode_aliases(self):
+        """The generic reader must not interpret -- other fields ride it too.
+
+        Templates declare more than modes through the same ``<FIELD> = (...)``
+        convention (``BRIDGE_OUTPUT_EXT`` / ``BRIDGE_TIMEOUT`` / ...), so folding mode
+        spellings in the shared reader would silently rewrite any other field whose
+        value collided with a legacy spelling.
+        """
+        path = self._write(
+            "a.py", "BRIDGE_MODES = ('roundtrip',)\nBRIDGE_TAG = ('roundtrip',)\n"
+        )
+        self.assertEqual(
+            script_template.ScriptTemplate.declared_values(path, "BRIDGE_TAG"),
+            ("roundtrip",),
+        )
+        self.assertEqual(
+            script_template.ScriptTemplate.declared_values(path, "BRIDGE_MODES"),
+            ("roundtrip",),
+        )
+        # Only the mode-flavoured reader folds it.
+        self.assertEqual(
+            script_template.ScriptTemplate.declared_modes(path), (ROUND_TRIP,)
+        )
+
+    def test_declared_values_is_none_when_unannotated(self):
+        """``None`` (not ``()``) has to survive the split from ``declared_modes``."""
+        self.assertIsNone(
+            script_template.ScriptTemplate.declared_values(
+                self._write("a.py", "x = 1\n"), "BRIDGE_MODES"
+            )
+        )
+        self.assertIsNone(
+            script_template.ScriptTemplate.declared_values(
+                self.tmp / "nope.py", "BRIDGE_MODES"
+            )
+        )
+
     def test_declared_modes_is_none_when_unannotated(self):
         """``None`` (not ``()``) marks "declares nothing" -- what makes the lenient
         fallback safe to apply only where it belongs."""
@@ -851,6 +910,116 @@ class HandoffRoundTripTest(unittest.TestCase):
             br._ingest(delivered, ["a"], Payload(primary="p"), HandoffRequest()),
             delivered,
         )
+
+
+class RoundTripArtifactShapeTest(unittest.TestCase):
+    """The second round-trip shape: the target writes a NEW artifact to re-ingest.
+
+    RizomUV's round trip rewrites the payload in place; mayatk's lightmap bake returns a
+    manifest instead. Both land the result back in the HOST, which is what the mode
+    means -- so the mode must not be welded to one artifact shape, or the bake is forced
+    to advertise itself as ``save_as`` and tell the artist to go find a file that is
+    deliberately never kept.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "bake.py").write_text(
+            "BRIDGE_MODES = ('round_trip',)\n"
+            'FBX = r"__FBX_PATH__"\n'
+            'OUT = r"__OUT_FILE__"\n'
+            "SCALE = __SCALE__\n",
+            encoding="utf-8",
+        )
+        self.launched, self.runs = [], []
+        self._orig_run = app_handoff.ScriptRunDeliverer.run
+
+        def _fake_run(app_exe, script_text, *, artifact, launch_args, timeout,
+                      env=None, expect=None):
+            self.runs.append({"artifact": artifact, "expect": expect})
+            Path(artifact).write_text("{}", encoding="utf-8")
+            return ScriptRunResult(
+                artifact=artifact, returncode=0, output="", duration=0.5,
+                script_path="S.py",
+            )
+
+        app_handoff.ScriptRunDeliverer.run = staticmethod(_fake_run)
+
+    def tearDown(self):
+        app_handoff.ScriptRunDeliverer.run = staticmethod(self._orig_run)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _bridge(self):
+        tmp, launched, ingested = self.tmp, self.launched, []
+
+        class _ArtifactRoundTripBridge(_StubScriptBridge):
+            # ONE spec serving both blocking modes: identical machinery, and only the
+            # destination of the artifact differs. Assigned before super().__init__,
+            # which is where the mode->deliverer registry is built.
+            def __init__(inner, **kw):
+                inner.run_spec = ScriptLaunchSpec(
+                    app=AppSpec(name="StubApp"),
+                    template_dir=tmp,
+                    launch_args=lambda script: ["-b", script],
+                    modes=(SAVE_AS, ROUND_TRIP),
+                )
+                super().__init__(tmp, launched, **kw)
+
+            def _ingest(inner, result, objects, payload, request):
+                ingested.append(dict(result))
+                return {**result, "reassembled": len(objects)}
+
+        br = _ArtifactRoundTripBridge()
+        br.ingested = ingested
+        return br
+
+    def test_round_trip_serves_an_artifact_writing_template(self):
+        br = self._bridge()
+        out = str(self.tmp / "bake.result.json")
+        result = br.round_trip(objects=["a", "b"], template="bake", out=out)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["mode"], ROUND_TRIP)
+        self.assertEqual(result["output"], out)
+        # Judged by CREATION (a new file), not by the payload having changed -- and
+        # written to the staging sibling first, exactly like save_as.
+        self.assertIsNone(self.runs[0]["expect"])
+        self.assertNotEqual(self.runs[0]["artifact"], out)
+        # The return leg ran: that is the whole difference from save_as.
+        self.assertEqual(result["reassembled"], 2)
+        self.assertEqual(len(br.ingested), 1)
+
+    def test_round_trip_is_gated_on_the_deliverer_not_on_round_trip_spec(self):
+        """This bridge has no ``round_trip_spec`` at all and must still work."""
+        br = self._bridge()
+        self.assertIsNone(br.round_trip_spec)
+        self.assertIn(ROUND_TRIP, br.deliverers)
+        self.assertIsNotNone(
+            br.round_trip(objects=["a"], template="bake", out=str(self.tmp / "o.json"))
+        )
+
+    def test_a_bridge_without_the_mode_refuses_and_says_where_to_declare_it(self):
+        br = _StubScriptBridge(self.tmp, self.launched)  # send-only
+        self.assertNotIn(ROUND_TRIP, br.deliverers)
+        self.assertIsNone(br.round_trip(objects=["a"], template="bake"))
+        self.assertEqual(self.runs, [])
+
+    def test_the_combo_listing_covers_every_registered_mode(self):
+        """A secondary spec's modes must reach the panel's (template, mode) listing.
+
+        ``list_template_modes`` filters declarations against the allowed tuple and
+        silently falls back to its FIRST entry, so listing only ``spec.modes`` relabels
+        every blocking template as the interactive send -- which the panel then routes
+        through ``send()``, leaving ``__OUT_FILE__`` empty and the run to fail minutes
+        in. Derived from the deliverer registry so it cannot fall out of step.
+        """
+        br = self._bridge()
+        self.assertEqual(br.modes, (SEND_TO, SAVE_AS, ROUND_TRIP))
+        self.assertEqual(br.modes[0], SEND_TO)  # the lenient fallback is preserved
+        self.assertIn(("bake", ROUND_TRIP), br.list_template_modes())
+
+        # A send-only bridge is unaffected: no secondary spec, no extra modes.
+        self.assertEqual(_StubScriptBridge(self.tmp, self.launched).modes, (SEND_TO,))
 
 
 if __name__ == "__main__":

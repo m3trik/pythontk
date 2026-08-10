@@ -1632,6 +1632,22 @@ class ImgUtils(HelpMixin):
         return out
 
     @staticmethod
+    def flip_rect_v(rect: Sequence[float]) -> List[float]:
+        """A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.
+
+        The scaleOffset rects this module produces are bottom-left-origin UV
+        space (Unity ``lightmapScaleOffset``); glTF texture space runs top-down
+        (``v' = 1 - v``), so a rect published into a glTF texture transform
+        (``KHR_texture_transform``) keeps its scales and flips only the V
+        offset: ``oy' = 1 - sy - oy``. Involutory -- applying it twice returns
+        the input -- so the same helper converts either direction, and being
+        THE helper is the point: one V-flip authored twice is how the two
+        conventions drift.
+        """
+        sx, sy, ox, oy = (float(v) for v in rect)
+        return [sx, sy, ox, 1.0 - sy - oy]
+
+    @staticmethod
     def inset_atlas_rects(
         rects: Sequence[Tuple[float, float, float, float]],
         size: Union[int, Tuple[int, int]],
@@ -2002,6 +2018,66 @@ class ImgUtils(HelpMixin):
 
         return np.dot(data[..., :3], [0.2989, 0.5870, 0.1140])
 
+    @staticmethod
+    def kelvin_to_linear_rgb(
+        kelvin: float, normalize: bool = True
+    ) -> Tuple[float, float, float]:
+        """Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.
+
+        Sits with the other colour-space conversions here rather than on the
+        ``Color`` value type: it CONVERTS into a colour, it does not describe
+        one. Deliberately pure stdlib -- no numpy, no Pillow -- so it still
+        answers when this module's optional imports degraded to ``None``.
+
+        For authoring light colour, where the value a renderer wants is linear
+        and the number an artist thinks in is Kelvin -- 2700K domestic warm,
+        3000K halogen, 3500-4100K office troffer, 5600K daylight, 6500K
+        neutral white. Returned linear, not display-referred: a light colour
+        picker's "warm white" is an sRGB-encoded value, and feeding that to a
+        light makes it markedly too pale.
+
+        Tanner Helland's piecewise fit to the Planckian locus (valid ~1000K to
+        40000K, within a few percent over the range that matters here),
+        converted from its sRGB output to linear. An **approximation**: hosts
+        with their own blackbody conversion -- Blender's ``use_temperature``,
+        for one -- will differ slightly, so a scene light authored at 5000K
+        here and a host-side light set to 5000K are close but not identical.
+
+        Parameters:
+            kelvin: Colour temperature.
+            normalize: Scale so the largest channel is 1.0 (the usual want:
+                temperature sets the HUE and a separate intensity sets the
+                level). ``False`` keeps the fit's own relative magnitudes.
+
+        Returns:
+            ``(r, g, b)`` linear floats.
+        """
+        temperature = max(1000.0, min(40000.0, float(kelvin))) / 100.0
+
+        if temperature <= 66.0:
+            red = 255.0
+            green = 99.4708025861 * math.log(temperature) - 161.1195681661
+        else:
+            red = 329.698727446 * ((temperature - 60.0) ** -0.1332047592)
+            green = 288.1221695283 * ((temperature - 60.0) ** -0.0755148492)
+
+        if temperature >= 66.0:
+            blue = 255.0
+        elif temperature <= 19.0:
+            blue = 0.0
+        else:
+            blue = 138.5177312231 * math.log(temperature - 10.0) - 305.0447927307
+
+        srgb = [max(0.0, min(255.0, channel)) / 255.0 for channel in (red, green, blue)]
+        # sRGB EOTF -- the fit outputs display-referred values.
+        linear = [
+            c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in srgb
+        ]
+        if normalize:
+            peak = max(linear) or 1.0
+            linear = [c / peak for c in linear]
+        return tuple(linear)
+
     @classmethod
     def convert_rgb_to_hsv(cls, image):
         """Convert an RGB image to HSV mode.
@@ -2311,6 +2387,66 @@ class ImgUtils(HelpMixin):
         if isinstance(data, Image.Image):
             return cls._linear_to_srgb_image(data)
         return cls._linear_to_srgb_np(data)
+
+    #: Percentile used to normalize an HDR image for 8-bit web encoding. High enough
+    #: that only genuine light sources clip, low enough that one hot texel cannot
+    #: crush the whole map. Shared contract with blendertk's ``encode_for_web``
+    #: (bpy-I/O twin -- Blender ships no cv2); both test suites pin the same golden
+    #: values so the implementations cannot drift.
+    HDR_WEB_PERCENTILE = 99.5
+
+    @classmethod
+    def encode_hdr_for_web(cls, path, percentile=None):
+        """Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.
+
+        The divisor is the *percentile* of the image's nonzero values, so the useful
+        range fills the 8-bit encoding and only genuine light sources clip; the scalar
+        is returned so a viewer can multiply it back and recover linear intensity
+        (the ``lightmap_web`` manifest's per-material ``intensity``).
+
+        Reads via cv2 directly, NOT :meth:`load_image` -- that path clips to 0-1 and
+        quantizes to 8-bit (its docstring says so), which would destroy exactly the
+        range this normalization exists to keep. The divide happens BEFORE
+        :meth:`linear_to_srgb`, which clips.
+
+        Parameters:
+            path: An EXR/HDR file (any float image cv2 can read works).
+            percentile: Normalization percentile. Default :attr:`HDR_WEB_PERCENTILE`.
+
+        Returns:
+            ``(png_bytes, scalar)`` -- multiply the decoded colour by ``scalar`` to
+            recover linear intensity.
+
+        Raises:
+            ImportError: cv2 unavailable (it is the only float-image reader here).
+            ValueError: the file could not be read as an image.
+        """
+        try:
+            import cv2
+        except ImportError as e:
+            raise ImportError(
+                "OpenCV (cv2) is required to encode HDR images for the web."
+            ) from e
+
+        percentile = cls.HDR_WEB_PERCENTILE if percentile is None else float(percentile)
+        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        if img is None:
+            raise ValueError(f"Unreadable image: {path}")
+        arr = np.asarray(img, dtype=np.float32)
+        if arr.ndim == 2:
+            arr = arr[:, :, None].repeat(3, axis=2)
+        bgr = arr[:, :, :3]  # lightmaps are opaque; drop any alpha
+
+        lit = bgr[bgr > 0.0]
+        scalar = float(np.percentile(lit, percentile)) if lit.size else 1.0
+        scalar = max(scalar, 1e-6)
+
+        srgb = cls._linear_to_srgb_np(np.clip(bgr / scalar, 0.0, 1.0))
+        out = np.clip(srgb * 255.0 + 0.5, 0, 255).astype(np.uint8)
+        ok, buf = cv2.imencode(".png", out)  # cv2 reads AND writes BGR: no swap needed
+        if not ok:
+            raise ValueError(f"PNG encode failed for {path}")
+        return buf.tobytes(), scalar
 
     @classmethod
     def generate_mipmaps(cls, image: Union[str, Image.Image]) -> List[Image.Image]:
