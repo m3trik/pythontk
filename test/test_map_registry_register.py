@@ -329,3 +329,206 @@ class TestPackedMapContract(RegistryStateGuard):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSharesWorkflow(unittest.TestCase):
+    """``shares_workflow`` — the registry's own map-vs-target compatibility answer.
+
+    Exists so a converter never hardcodes an engine name to ask "is this source
+    map the right packing for what I'm writing?". ``pack_orm_texture`` uses it to
+    warn when it is handed a mask map from another engine family.
+    """
+
+    def setUp(self):
+        self.registry = MapRegistry.instance()
+
+    def test_orm_family_maps_share_a_target(self):
+        """ORM is trivially compatible with itself, and Albedo+Transparency
+        genuinely declares glTF — which is why it passes through the base-colour
+        slot unchanged."""
+        self.assertIs(self.registry.shares_workflow("ORM", "ORM"), True)
+        self.assertIs(
+            self.registry.shares_workflow("Albedo_Transparency", "ORM"), True
+        )
+
+    def test_foreign_engine_packings_report_a_mismatch(self):
+        """MSAO targets HDRP and Metallic_Smoothness targets URP; neither shares
+        a target with ORM, so both are reported as mismatches."""
+        self.assertIs(self.registry.shares_workflow("MSAO", "ORM"), False)
+        self.assertIs(
+            self.registry.shares_workflow("Metallic_Smoothness", "ORM"), False
+        )
+
+    def test_an_absent_declaration_is_not_a_mismatch(self):
+        """``None``, not ``False``, when either side declares no workflows.
+
+        MRAO ships with an empty list and every loose map does, so a caller that
+        tested falsiness rather than ``is False`` would warn about all of them.
+        """
+        self.assertIsNone(self.registry.shares_workflow("MRAO", "ORM"))
+        self.assertIsNone(self.registry.shares_workflow("Metallic", "ORM"))
+
+    def test_an_unknown_map_type_is_not_a_mismatch(self):
+        self.assertIsNone(self.registry.shares_workflow("NotAMapType", "ORM"))
+        self.assertIsNone(self.registry.shares_workflow("ORM", "NotAMapType"))
+
+
+class TestPackOrmWarnsOnForeignPacking(unittest.TestCase):
+    """The warning ``pack_orm_texture`` emits for a handled-but-mismatched map."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _map(self, name, mode, colour):
+        from PIL import Image
+
+        path = os.path.join(self.tmp, name)
+        Image.new(mode, (8, 8), colour).save(path)
+        return path
+
+    def test_msao_is_handled_but_reported(self):
+        """Correct output AND a warning naming both target sets — silence would
+        leave the source set mismatched forever while every push pays for the
+        channel split and the 8-bit smoothness inversion."""
+        msao = self._map("c_MSAO.png", "RGBA", (200, 60, 0, 100))
+
+        with self.assertLogs(MapFactory.logger, level="WARNING") as captured:
+            orm = MapFactory.pack_orm_texture(None, None, msao, save=False)
+        self.assertEqual(orm.getpixel((0, 0)), (60, 155, 200))
+        message = "\n".join(captured.output)
+        self.assertIn("MSAO", message)
+        self.assertIn("Unity HDRP", message)
+
+    def test_an_orm_source_is_silent(self):
+        """ORM in, ORM out — nothing to report, and the values round-trip."""
+        orm_path = self._map("y_ORM.png", "RGB", (40, 80, 120))
+
+        with self.assertLogs(MapFactory.logger, level="WARNING") as captured:
+            MapFactory.logger.warning("sentinel")  # assertLogs needs >=1 record
+            orm = MapFactory.pack_orm_texture(None, None, orm_path, save=False)
+        self.assertEqual(orm.getpixel((0, 0)), (40, 80, 120))
+        self.assertEqual(
+            [line for line in captured.output if "sentinel" not in line],
+            [],
+            "an ORM source must not warn",
+        )
+
+    def test_a_map_declaring_no_workflow_is_silent(self):
+        """MRAO decomposes correctly and says nothing: its empty workflow list
+        is an absent declaration, not an incompatible one."""
+        mrao = self._map("z_MRAO.png", "RGB", (200, 90, 60))
+
+        with self.assertLogs(MapFactory.logger, level="WARNING") as captured:
+            MapFactory.logger.warning("sentinel")
+            orm = MapFactory.pack_orm_texture(None, None, mrao, save=False)
+        # MRAO rgb layout is R=Metallic, G=Roughness, B=AO.
+        self.assertEqual(orm.getpixel((0, 0)), (60, 90, 200))
+        self.assertEqual(
+            [line for line in captured.output if "sentinel" not in line], []
+        )
+
+
+class TestForeignPackings(unittest.TestCase):
+    """``foreign_packings`` — the single mismatch predicate.
+
+    Read by ``pack_orm_texture``'s per-map warning, ``set_glb_metallic_roughness``'s
+    highlighted summary, and both DCCs' ``check_material_compatibility`` gate, so
+    the definition of "wrong packing for this target" exists exactly once.
+    """
+
+    def test_reports_foreign_packings_with_their_map_type(self):
+        found = MapFactory.foreign_packings(
+            ["/t/a_MSAO.png", "/t/b_MetallicSmoothness.png"], target="ORM"
+        )
+        self.assertEqual(
+            found, {"/t/a_MSAO.png": "MSAO", "/t/b_MetallicSmoothness.png": "Metallic_Smoothness"}
+        )
+
+    def test_appropriate_and_undeclared_maps_are_not_reported(self):
+        """ORM and Albedo+Transparency declare glTF; MRAO and loose maps declare
+        nothing, and an absent declaration is not a mismatch."""
+        self.assertEqual(
+            MapFactory.foreign_packings(
+                [
+                    "/t/a_ORM.png",
+                    "/t/b_Albedo_Transparency.png",
+                    "/t/c_MRAO.png",
+                    "/t/d_Roughness.png",
+                    "/t/e_Normal_OpenGL.png",
+                ],
+                target="ORM",
+            ),
+            {},
+        )
+
+    def test_non_paths_and_duplicates_are_tolerated(self):
+        """Mixed lists of paths and in-memory images are the normal input, and a
+        path repeated across slots must be reported once."""
+        from PIL import Image
+
+        found = MapFactory.foreign_packings(
+            [None, "", Image.new("L", (2, 2)), "/t/a_MSAO.png", "/t/a_MSAO.png"]
+        )
+        self.assertEqual(found, {"/t/a_MSAO.png": "MSAO"})
+
+    def test_workflow_mode_judges_by_declared_membership(self):
+        """``workflow=`` — the exporter's form of the question. The user chose a
+        registry workflow (a texture template); a packed source is foreign when
+        it does not declare that workflow. Note the reversal HDRP produces:
+        there ORM is the foreign one and MSAO is native."""
+        self.assertEqual(
+            MapFactory.foreign_packings(
+                ["/t/a_MSAO.png", "/t/b_ORM.png", "/t/c_Albedo_Transparency.png"],
+                workflow="glTF 2.0",
+            ),
+            {"/t/a_MSAO.png": "MSAO"},
+        )
+        self.assertEqual(
+            MapFactory.foreign_packings(
+                ["/t/a_MSAO.png", "/t/b_ORM.png"], workflow="Unity HDRP"
+            ),
+            {"/t/b_ORM.png": "ORM"},
+        )
+
+    def test_an_unknown_workflow_reports_nothing(self):
+        """A stale persisted UI value must never become "every mask map is
+        foreign" and block an export — it warns and reports nothing."""
+        with self.assertLogs(MapFactory.logger, level="WARNING") as captured:
+            found = MapFactory.foreign_packings(
+                ["/t/a_MSAO.png"], workflow="NotAWorkflow"
+            )
+        self.assertEqual(found, {})
+        self.assertIn("NotAWorkflow", "\n".join(captured.output))
+
+    def test_loose_maps_are_never_reported(self):
+        """Regression: only a PACKED map can be foreign to a target.
+
+        A loose map's ``workflows`` answers a different question — which presets
+        *emit* it — so ``Ambient_Occlusion`` (Standard only) and ``Emissive``
+        share no workflow with ORM and a general form reported both as engine
+        mismatches. That fired the exporter gate on almost every scene: the
+        production room's sidecar reported 6 offenders, of which 3 were an
+        ordinary AO map and two ordinary emissive maps.
+        """
+        self.assertEqual(
+            MapFactory.foreign_packings(
+                [
+                    "/t/a_AO.png",
+                    "/t/b_Emissive.png",
+                    "/t/c_Roughness.png",
+                    "/t/d_Metallic.png",
+                    "/t/e_Base_Color.png",
+                    "/t/f_Normal_OpenGL.png",
+                ],
+                target="ORM",
+            ),
+            {},
+        )
+
+    def test_target_is_honoured(self):
+        """MSAO is native to HDRP, so against an HDRP-family packing it is fine —
+        the predicate is about the TARGET, not about MSAO."""
+        self.assertEqual(
+            MapFactory.foreign_packings(["/t/a_MSAO.png"], target="MSAO"), {}
+        )

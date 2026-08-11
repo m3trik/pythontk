@@ -992,6 +992,115 @@ class TestImgUtilsMemory(unittest.TestCase):
         orm = TextureMapFactory.pack_orm_texture(None, rough, None, save=False)
         self.assertEqual(orm.getpixel((0, 0)), (255, 100, 0))
 
+    def _msao_source(self, name="probe_MSAO.png"):
+        """A canonical HDRP mask map: R=Metallic, G=AO, B=Detail, A=Smoothness."""
+        path = os.path.join(self.test_dir, name)
+        Image.new("RGBA", self.size, (200, 60, 0, 100)).save(path)
+        return path
+
+    def test_pack_orm_texture_decomposes_a_packed_source(self):
+        """A packed map in ANY slot supplies every channel it carries.
+
+        Regression: the WebXR preview's scene sidecar describes a material whose
+        only mask is an MSAO map as ``{"metallic": <MSAO>}`` — the one slot it
+        fits. Measured on a production room that produced roughness **0**
+        (mirror-smooth) and metallic 0.43 against a true 0.016, because the
+        packed RGBA was flattened to luminance for the metallic channel and the
+        other two took their fill values. Worse than no repair at all: it
+        overwrote a roughly-correct converted ORM with a confidently wrong one.
+        """
+        orm = TextureMapFactory.pack_orm_texture(
+            None, None, self._msao_source(), save=False
+        )
+        occlusion, roughness, metallic = orm.getpixel((0, 0))
+        self.assertEqual(occlusion, 60)  # MSAO's G, not the 255 fill
+        self.assertEqual(roughness, 155)  # 255 - smoothness(100), not the 0 fill
+        self.assertEqual(metallic, 200)  # MSAO's R, not its luminance
+
+    def test_pack_orm_texture_prefers_a_loose_map_over_the_packed_one(self):
+        """Naming both means "use the packed map for what the loose ones don't"."""
+        rough = Image.new("L", self.size, 111)
+
+        orm = TextureMapFactory.pack_orm_texture(
+            None, rough, self._msao_source(), save=False
+        )
+        occlusion, roughness, metallic = orm.getpixel((0, 0))
+        self.assertEqual(roughness, 111)  # the explicit loose map wins
+        self.assertEqual(occlusion, 60)  # still recovered from the MSAO
+        self.assertEqual(metallic, 200)
+
+    def test_pack_orm_texture_leaves_loose_sources_untouched(self):
+        """The expansion is a no-op for the loose-map case (guards a regression
+        in the far more common path)."""
+        ao = Image.new("L", self.size, 50)
+        rough = Image.new("L", self.size, 100)
+        metal = Image.new("L", self.size, 150)
+
+        orm = TextureMapFactory.pack_orm_texture(ao, rough, metal, save=False)
+        self.assertEqual(orm.getpixel((0, 0)), (50, 100, 150))
+
+    def test_pack_orm_texture_names_its_output_from_the_packed_path(self):
+        """``save=True`` derives the filename from the ORIGINAL argument.
+
+        The expansion replaces a packed path with in-memory channels, so a
+        naming pass reading the expanded values would raise "cannot derive
+        output directory from Image object" for every packed input.
+        """
+        out = TextureMapFactory.pack_orm_texture(
+            None, None, self._msao_source("named_MSAO.png"), save=True
+        )
+        self.assertTrue(os.path.isfile(out))
+        self.assertIn("named", os.path.basename(out))
+
+    def test_pack_orm_texture_names_a_packed_map_that_carries_no_orm_channel(self):
+        """An Albedo+Transparency map fills no ORM slot — say so, don't flatten it.
+
+        Its path is cleared rather than luminance-flattened into a channel it
+        has nothing to do with, so when it was the only source the pack fails
+        with ``No input images provided`` — which names nothing useful. The
+        warning is the only thing that points at the real cause.
+        """
+        path = os.path.join(self.test_dir, "x_Albedo_Transparency.png")
+        Image.new("RGBA", self.size, (10, 20, 30, 40)).save(path)
+
+        # The logger OBJECT, not its name: LoggingMixin builds its logger
+        # outside the standard registry, so `getLogger(name)` hands back a
+        # different instance and the assertion never sees the record.
+        with self.assertLogs(TextureMapFactory.logger, level="WARNING") as captured:
+            with self.assertRaises(ValueError):
+                TextureMapFactory.pack_orm_texture(None, None, path, save=False)
+        self.assertIn("Albedo_Transparency", "\n".join(captured.output))
+
+        # With a loose map alongside it, the pack still succeeds on that map.
+        rough = Image.new("L", self.size, 111)
+        orm = TextureMapFactory.pack_orm_texture(None, rough, path, save=False)
+        self.assertEqual(orm.getpixel((0, 0)), (255, 111, 0))
+
+    def test_pack_orm_texture_passes_an_orm_source_through_unchanged(self):
+        """ORM is already the glTF layout, so decomposing and repacking it must
+        round-trip exactly — the cheapest path for a caller that has one."""
+        path = os.path.join(self.test_dir, "y_ORM.png")
+        Image.new("RGB", self.size, (40, 80, 120)).save(path)
+
+        orm = TextureMapFactory.pack_orm_texture(None, None, path, save=False)
+        self.assertEqual(orm.getpixel((0, 0)), (40, 80, 120))
+
+    def test_unpack_to_channels_reports_what_a_map_carries(self):
+        """The generic front door: canonical map type -> image, and ``{}`` for a
+        loose map with nothing to decompose. Reports ``Smoothness`` rather than
+        ``Roughness`` — converting is the consumer's call."""
+        carried = TextureMapFactory.unpack_to_channels(self._msao_source())
+        self.assertEqual(
+            sorted(carried), ["Ambient_Occlusion", "Metallic", "Smoothness"]
+        )
+        self.assertEqual(carried["Metallic"].getpixel((0, 0)), 200)
+        self.assertEqual(carried["Ambient_Occlusion"].getpixel((0, 0)), 60)
+        self.assertEqual(carried["Smoothness"].getpixel((0, 0)), 100)
+
+        loose = os.path.join(self.test_dir, "probe_Roughness.png")
+        Image.new("L", self.size, 100).save(loose)
+        self.assertEqual(TextureMapFactory.unpack_to_channels(loose), {})
+
     def test_unpack_albedo_transparency_memory(self):
         """Test unpack_albedo_transparency returns tuple of Images when save=False."""
         albedo = Image.new("RGBA", self.size, (200, 100, 50, 128))
@@ -1405,6 +1514,135 @@ class InsetAtlasRectsTest(unittest.TestCase):
             self.assertGreaterEqual(ioy, oy)
             self.assertLessEqual(iox + isx, ox + sx + 1e-9)
             self.assertLessEqual(ioy + isy, oy + sy + 1e-9)
+
+
+class SnapAtlasRectsTest(unittest.TestCase):
+    """ImgUtils.snap_atlas_rects — published rects agree with written texels."""
+
+    def test_snapped_rect_edges_land_on_texel_grid(self):
+        rects = ImgUtils.inset_atlas_rects(
+            ImgUtils.compute_atlas_layout([3.0, 1.0, 2.0, 5.0]), 256, 4
+        )
+        for sx, sy, ox, oy in ImgUtils.snap_atlas_rects(rects, 256):
+            for edge in (ox * 256, oy * 256, (ox + sx) * 256, (oy + sy) * 256):
+                self.assertAlmostEqual(edge, round(edge), places=6)
+
+    def test_snap_is_idempotent_and_matches_pixel_rects(self):
+        # The defect this exists for: assemble_atlas writes at rounded pixel
+        # edges while the un-snapped float rect is what got published -- up to
+        # half a texel of gutter sampled along every rect edge. Snapping must
+        # make atlas_pixel_rects(snapped) == atlas_pixel_rects(original) and
+        # a second snap a no-op.
+        rects = ImgUtils.inset_atlas_rects(
+            ImgUtils.compute_atlas_layout([1.0, 1.0, 1.0, 1.0, 7.0]), 128, 2
+        )
+        snapped = ImgUtils.snap_atlas_rects(rects, 128)
+        self.assertEqual(
+            ImgUtils.atlas_pixel_rects(rects, 128),
+            ImgUtils.atlas_pixel_rects(snapped, 128),
+        )
+        self.assertEqual(snapped, ImgUtils.snap_atlas_rects(snapped, 128))
+
+    def test_degenerate_rect_passes_through(self):
+        (rect,) = ImgUtils.snap_atlas_rects([(0.0, 0.5, 0.25, 0.25)], 64)
+        self.assertEqual(rect, (0.0, 0.5, 0.25, 0.25))
+
+
+class InsetRectsToTexelCentersTest(unittest.TestCase):
+    """ImgUtils.inset_rects_to_texel_centers — edge UVs sample border-texel centers.
+
+    The defect this exists for: a rect edge on a texel BOUNDARY makes every
+    bilinear tap along a shared 3D edge split onto the neighboring item's
+    gutter texel — up to 50% of the tap's weight reading another item's
+    lighting.
+    """
+
+    def test_full_span_edges_move_to_border_texel_centers(self):
+        # A snapped cell [32..64) x [0..32) px at 128: uv 0/1 must map to the
+        # centers of the border texels (32.5 / 63.5), not the boundaries.
+        (sx, sy, ox, oy) = ImgUtils.inset_rects_to_texel_centers(
+            [(0.25, 0.25, 0.25, 0.0)], 128
+        )[0]
+        self.assertAlmostEqual(ox * 128, 32.5, places=6)
+        self.assertAlmostEqual((ox + sx) * 128, 63.5, places=6)
+        self.assertAlmostEqual(oy * 128, 0.5, places=6)
+        self.assertAlmostEqual((oy + sy) * 128, 31.5, places=6)
+
+    def test_partial_bbox_maps_island_edges_to_centers(self):
+        # Crop-composed production case: island u [0.0013, 0.332] folded so it
+        # spans an ~30px cell. The ISLAND edges (not the rect's 0/1) must land
+        # on texel centers, and interior mapping stays within half a texel.
+        rect = (0.3448275862068966, 0.12890625, 0.48046875, 0.15234375)
+        bbox = (0.001292, 0.003876, 0.332041, 0.996124)
+        (sx, sy, ox, oy) = ImgUtils.inset_rects_to_texel_centers(
+            [rect], 256, bboxes=[bbox]
+        )[0]
+        for uv, px in ((bbox[0], None), (bbox[2], None)):
+            edge = (ox + sx * uv) * 256
+            self.assertAlmostEqual(edge % 1.0, 0.5, places=6, msg=f"u={uv} -> {edge}")
+        for vv in (bbox[1], bbox[3]):
+            edge = (oy + sy * vv) * 256
+            self.assertAlmostEqual(edge % 1.0, 0.5, places=6, msg=f"v={vv} -> {edge}")
+        # Interior samples shift by less than one texel vs the original rect.
+        u_mid = (bbox[0] + bbox[2]) / 2
+        self.assertLess(
+            abs((ox + sx * u_mid) - (rect[2] + rect[0] * u_mid)) * 256, 1.0
+        )
+
+    def test_none_bbox_entry_means_full_coverage(self):
+        rects = [(0.5, 0.5, 0.0, 0.0), (0.5, 0.5, 0.5, 0.5)]
+        with_none = ImgUtils.inset_rects_to_texel_centers(rects, 64, bboxes=[None, None])
+        without = ImgUtils.inset_rects_to_texel_centers(rects, 64)
+        self.assertEqual(with_none, without)
+
+    def test_sub_two_texel_content_passes_through(self):
+        # One-texel-wide content has no interior to stretch across.
+        (rect,) = ImgUtils.inset_rects_to_texel_centers([(1 / 64, 0.5, 0.0, 0.0)], 64)
+        self.assertEqual(rect, (1 / 64, 0.5, 0.0, 0.0))
+
+    def test_exact_boundary_is_float_noise_tolerant(self):
+        # Edges arriving a hair past an exact texel boundary must not gain or
+        # lose a texel to floor/ceil.
+        noisy = (0.25 + 1e-9, 0.25, 0.25 - 1e-9, 0.0)
+        clean = (0.25, 0.25, 0.25, 0.0)
+        self.assertEqual(
+            ImgUtils.inset_rects_to_texel_centers([noisy], 128),
+            ImgUtils.inset_rects_to_texel_centers([clean], 128),
+        )
+
+
+class FillEmptyTexelsTest(unittest.TestCase):
+    """ImgUtils.fill_empty_texels — no background texel survives the fill."""
+
+    def test_every_empty_texel_takes_its_nearest_valid_color(self):
+        img = np.zeros((16, 16, 3), dtype=np.float32)
+        img[2:6, 2:6] = (1.0, 2.0, 3.0)  # one island far from the far corner
+        out = ImgUtils.fill_empty_texels(img)
+        self.assertTrue((out > 0).all(), "background texels survived the fill")
+        # The far corner's nearest valid texel is the island: same color.
+        np.testing.assert_allclose(out[15, 15], (1.0, 2.0, 3.0))
+        # Valid texels are untouched.
+        np.testing.assert_allclose(out[2:6, 2:6], img[2:6, 2:6])
+
+    def test_two_islands_fill_from_the_nearer_one(self):
+        img = np.zeros((8, 32), dtype=np.float32)
+        img[:, 0:2] = 1.0
+        img[:, 30:32] = 5.0
+        mask = img > 0
+        out = ImgUtils.fill_empty_texels(img, mask=mask)
+        self.assertEqual(float(out[4, 3]), 1.0)  # near the left island
+        self.assertEqual(float(out[4, 28]), 5.0)  # near the right island
+
+    def test_all_empty_returns_copy_unchanged(self):
+        img = np.zeros((4, 4, 3), dtype=np.float32)
+        out = ImgUtils.fill_empty_texels(img)
+        self.assertEqual(float(out.sum()), 0.0)
+
+    def test_mask_shape_mismatch_raises(self):
+        with self.assertRaises(ValueError):
+            ImgUtils.fill_empty_texels(
+                np.zeros((4, 4), dtype=np.float32), mask=np.ones((2, 2), dtype=bool)
+            )
 
 
 class FlipRectVTest(unittest.TestCase):

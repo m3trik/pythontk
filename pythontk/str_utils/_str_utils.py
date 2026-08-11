@@ -623,7 +623,7 @@ class StrUtils(CoreUtils):
 
     @staticmethod
     @CoreUtils.listify(threading=True)
-    def truncate(string, length=75, mode="start", insert=".."):
+    def truncate(string, length=75, mode="start", insert="..", head=None):
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.
 
@@ -640,6 +640,11 @@ class StrUtils(CoreUtils):
                   Falls back to 'middle' when there is nothing to drop between
                   a head and a tail.
             insert (str): Characters to add at the trimmed area. (default: ellipsis)
+            head (int): 'path' mode only — cap the leading components kept, so
+                the budget the head would have taken goes to the tail instead
+                (``head=1`` keeps just the drive/root). None grows the head
+                greedily with whatever the tail could not use. Ignored by the
+                other modes.
 
         Returns:
             (str)
@@ -650,6 +655,8 @@ class StrUtils(CoreUtils):
             truncate('12345678', 6, 'middle') #returns: '12..78' (middle mode)
             truncate('O:/Cloud/jets/c130j/sourceimages/tex/x_DIFF.png', 36, 'path')
                 #returns: 'O:/Cloud/jets/../tex/x_DIFF.png' (path mode)
+            truncate('O:/Cloud/jets/c130j/sourceimages/tex/x_DIFF.png', 36, 'path', head=1)
+                #returns: 'O:/../sourceimages/tex/x_DIFF.png' (capped head, wider tail)
         """
         if not string or not isinstance(string, str):
             return string
@@ -675,7 +682,7 @@ class StrUtils(CoreUtils):
         elif mode == "middle":
             return StrUtils._truncate_middle(string, length, insert)
         elif mode == "path":
-            return StrUtils._truncate_path(string, length, insert)
+            return StrUtils._truncate_path(string, length, insert, head)
         else:
             # Fallback to start trimming (default behavior)
             return insert + string[-length:]
@@ -695,7 +702,7 @@ class StrUtils(CoreUtils):
         return string[:left] + insert + string[-right:]
 
     @staticmethod
-    def _truncate_path(string, length, insert):
+    def _truncate_path(string, length, insert, head=None):
         """Component-aware middle truncation — the 'path' mode of :meth:`truncate`.
 
         A character-count middle cut lands wherever it lands, so a path comes
@@ -707,6 +714,10 @@ class StrUtils(CoreUtils):
         goes back to the head. Degenerate shapes — nothing between a head and a
         tail, or a filename that alone overruns the budget — degrade to
         :meth:`_truncate_middle` rather than inventing a boundary.
+
+        ``head`` caps that leading run (``head=1`` = drive/root only). Capping it
+        is what lets a caller spend the budget on the end of the path instead:
+        the tail is grown first, so a lower cap can only leave the tail wider.
         """
         # Preserve any leading separator run (UNC "//server/share", posix root).
         stripped = string.lstrip("/\\")
@@ -724,11 +735,14 @@ class StrUtils(CoreUtils):
         # Keeping head + tail must still leave a component to drop, or the
         # insert would mark an elision that never happened ("a/../b/c").
         keepable = len(parts) - 1
+        max_head = keepable if head is None else max(1, int(head))
 
         head_count, tail_count = 1, 1
         if len(build(1, 1)) > length:
             return StrUtils._truncate_middle(string, length, insert)
-        if 3 <= keepable and len(build(2, 1)) <= length:  # drive/root + 1st dir
+        if (  # drive/root + 1st dir
+            max_head >= 2 and 3 <= keepable and len(build(2, 1)) <= length
+        ):
             head_count = 2
 
         # Tail first — the filename end is what identifies the file.
@@ -736,8 +750,8 @@ class StrUtils(CoreUtils):
             if len(build(head_count, tail_count + 1)) > length:
                 break
             tail_count += 1
-        # Then spend whatever is left widening the head.
-        while head_count + tail_count < keepable:
+        # Then spend whatever is left widening the head, up to the cap.
+        while head_count < max_head and head_count + tail_count < keepable:
             if len(build(head_count + 1, tail_count)) > length:
                 break
             head_count += 1

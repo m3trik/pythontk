@@ -14,8 +14,11 @@ from pythontk.core_utils.engines.textures.map_factory import (
     ConversionRegistry,
     BaseColorHandler,
     ORMMapHandler,
+    MRAOMapHandler,
+    MaskMapHandler,
 )
 from pythontk.core_utils.engines.textures.map_factory import handlers as _handlers_mod
+from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
 
 class TestBaseColorHandlerAlbedoTransparencyFailure(unittest.TestCase):
@@ -178,6 +181,135 @@ class TestORMHandlerFreshPack(unittest.TestCase):
             ),
             "fresh pack lost the AO/Rough/Metal channel order",
         )
+
+
+class TestMissingMapRule(unittest.TestCase):
+    """The 'Missing Maps' rule decides what a packed map does when one of its
+    source channels can't be resolved. Three settings, shared verbatim with the
+    Map Packer panel: skip (never write an incomplete map), multi (write it once
+    2+ channels resolved), force (always write). The legacy ``force_packed_maps``
+    bool must keep resolving to ``force`` — configs and scripts still set it."""
+
+    def setUp(self):
+        import pythontk as ptk
+
+        self._artifacts = ptk.TempArtifacts("handlers_missing_map_rule")
+        self.test_dir = self._artifacts.dir_path()
+        self.output_dir = os.path.join(self.test_dir, "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def tearDown(self):
+        self._artifacts.cleanup()
+
+    def _map(self, map_type, value):
+        path = os.path.join(self.test_dir, f"mat_{map_type}.png")
+        ImgUtils.save_image(ImgUtils.create_image("L", (16, 16), value), path)
+        return path
+
+    def _result(self, handler, inventory, **config):
+        ctx = TextureProcessor(
+            inventory=inventory,
+            config={"orm_map": True, "mask_map": True, "rename": True, **config},
+            output_dir=self.output_dir,
+            base_name="mat",
+            ext="png",
+            conversion_registry=MapFactory._conversion_registry,
+            logger=MagicMock(),
+        )
+        return handler().process(ctx)
+
+    def _orm_result(self, inventory, **config):
+        return self._result(ORMMapHandler, inventory, **config)
+
+    def test_rule_resolution_and_legacy_alias(self):
+        for config, expected in (
+            ({}, MapRegistry.MISSING_SKIP),
+            ({"missing_map_rule": "multi"}, MapRegistry.MISSING_MULTI),
+            ({"missing_map_rule": "FORCE"}, MapRegistry.MISSING_FORCE),
+            ({"missing_map_rule": "nonsense"}, MapRegistry.MISSING_SKIP),
+            ({"force_packed_maps": True}, MapRegistry.MISSING_FORCE),
+            # An explicit rule outranks the legacy bool.
+            (
+                {"force_packed_maps": True, "missing_map_rule": "skip"},
+                MapRegistry.MISSING_SKIP,
+            ),
+        ):
+            with self.subTest(config=config):
+                self.assertEqual(
+                    MapRegistry.resolve_missing_map_rule(config), expected
+                )
+
+    def test_multi_sits_between_skip_and_force(self):
+        """Two of three channels resolved: only 'skip' refuses to pack."""
+        inventory = {
+            "Ambient_Occlusion": self._map("Ambient_Occlusion", 100),
+            "Roughness": self._map("Roughness", 180),
+        }  # metallic absent -> would fill black
+        self.assertIsNone(
+            self._orm_result(dict(inventory)),
+            "default (skip) wrote an ORM with an unresolved metallic channel",
+        )
+        for rule in (MapRegistry.MISSING_MULTI, MapRegistry.MISSING_FORCE):
+            with self.subTest(rule=rule):
+                self.assertIsNotNone(
+                    self._orm_result(dict(inventory), missing_map_rule=rule),
+                    f"'{rule}' refused a set with 2 of 3 channels resolved",
+                )
+
+    def test_single_channel_packs_only_under_force(self):
+        """One of three resolved is a map wearing a packed name — 'multi' skips
+        it; only 'force' writes it."""
+        inventory = {"Ambient_Occlusion": self._map("Ambient_Occlusion", 100)}
+        self.assertIsNone(
+            self._orm_result(
+                dict(inventory), missing_map_rule=MapRegistry.MISSING_MULTI
+            ),
+            "'multi' packed a set with a single resolved channel",
+        )
+        self.assertIsNotNone(
+            self._orm_result(
+                dict(inventory), missing_map_rule=MapRegistry.MISSING_FORCE
+            ),
+            "'force' refused to pack",
+        )
+        # Legacy spelling of the same intent.
+        self.assertIsNotNone(
+            self._orm_result(dict(inventory), force_packed_maps=True),
+            "the legacy force_packed_maps bool no longer forces a pack",
+        )
+
+    def test_every_packing_answers_a_lone_channel_the_same_way(self):
+        """ORM/MRAO refused any single-channel set while the Mask Map wrote one
+        under EVERY rule — a metallic-only MSAO fills white smoothness, i.e.
+        mirror-smooth, which is exactly what the 'skip' rule exists to prevent.
+        All three packings must agree: a lone channel needs 'Pack Anyway'."""
+        singles = {
+            "Metallic": self._map("Metallic", 30),
+            "Ambient_Occlusion": self._map("Ambient_Occlusion", 100),
+            "Smoothness": self._map("Smoothness", 200),
+        }
+        for handler in (ORMMapHandler, MRAOMapHandler, MaskMapHandler):
+            for map_type, path in singles.items():
+                with self.subTest(handler=handler.__name__, only=map_type):
+                    inventory = {map_type: path}
+                    for rule in (
+                        MapRegistry.MISSING_SKIP,
+                        MapRegistry.MISSING_MULTI,
+                    ):
+                        self.assertIsNone(
+                            self._result(
+                                handler, dict(inventory), missing_map_rule=rule
+                            ),
+                            f"'{rule}' packed a set with only {map_type}",
+                        )
+                    self.assertIsNotNone(
+                        self._result(
+                            handler,
+                            dict(inventory),
+                            missing_map_rule=MapRegistry.MISSING_FORCE,
+                        ),
+                        f"'force' refused a set with only {map_type}",
+                    )
 
 
 if __name__ == "__main__":

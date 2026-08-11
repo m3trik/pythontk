@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-10_
+_Generated: 2026-08-11_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -136,7 +136,7 @@ _Generated: 2026-08-10_
 
 ### `core_utils/engines/textures/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
 - `class MapFactory(LoggingMixin)`
-  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, get_tile_token, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, resolve_normal_maps, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
+  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, get_tile_token, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, resolve_normal_maps, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, foreign_packings, unpack_to_channels, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
 
 ### `core_utils/engines/textures/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
 - `class MapConversion`
@@ -177,7 +177,7 @@ _Generated: 2026-08-10_
 - `class MapType`
   - methods: compose_aliases, carried_types
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, resolve_type_from_path, get_suffix_strip_pattern, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_config
+  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, resolve_type_from_path, get_suffix_strip_pattern, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`
@@ -258,7 +258,7 @@ _Generated: 2026-08-10_
 - `class RingBufferHandler(internal_logging.Handler)`
   - methods: emit, clear, format_records
 - `class TableMixin`
-  - methods: format_table, log_table
+  - methods: format_table, log_table, log_group
 - `class LoggingMixin(TableMixin)`
   - methods: logger, class_logger, logging, set_log_level, set_log_file, enable_log_buffer, disable_log_buffer, clear_log_buffer, dump_log
 
@@ -358,7 +358,7 @@ _Generated: 2026-08-10_
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, free_space, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
+  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, path_length_limit, exceeds_path_length, free_space, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
 
 ### `file_utils/mesh_cleaner.py` — Mesh repair / cleanup via PyMeshLab (optional dependency).
 - `class MeshCleaner`
@@ -366,7 +366,7 @@ _Generated: 2026-08-10_
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, read_scene_sidecar, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, set_glb_emissive, set_glb_base_color
+  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, set_glb_emissive, set_glb_base_color
 
 ### `file_utils/metadata.py`
 - `class MetadataInternal`
@@ -421,7 +421,7 @@ _Generated: 2026-08-10_
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`

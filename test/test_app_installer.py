@@ -450,6 +450,36 @@ class TestAppInstaller(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             AppInstaller._extract(zip_path, dest, "zip")
 
+    def test_extract_tar_rejects_a_sibling_that_extends_the_destination(self):
+        """A '..' hop into a sibling whose name merely EXTENDS the destination
+        ('safe_dest_old' beside 'safe_dest') is still an escape.
+
+        Specifically the TAR guard: its compare never landed on a separator
+        boundary, so a bare startswith accepted this outright. (The zip guard
+        always had the boundary -- asserting this through a zip would pass
+        either way and prove nothing.) Only reachable on interpreters without
+        ``tarfile.data_filter``, which is the branch this exercises; where the
+        stdlib filter exists it rejects the member first.
+        """
+        import io
+        import tarfile as _tf
+
+        dest = os.path.join(self.tmp, "sibling_dest")
+        os.makedirs(dest)
+        # ../sibling_dest_old/x -> a real sibling directory, not a child.
+        member = "../" + os.path.basename(dest) + "_old/x"
+
+        tar_path = os.path.join(self.tmp, "sibling.tar")
+        with _tf.open(tar_path, "w") as tf:
+            info = _tf.TarInfo(name=member)
+            info.size = 5
+            tf.addfile(info, io.BytesIO(b"owned"))
+
+        with self.assertRaises((RuntimeError, _tf.TarError)):
+            AppInstaller._extract(tar_path, dest, "tar")
+        # And nothing was written outside the destination.
+        self.assertFalse(os.path.exists(dest + "_old"))
+
     def test_extract_zip_allows_normal_members(self):
         """Normal zip members still extract fine after zip-slip protection."""
         zip_path = self._make_zip("subdir/tool.exe", b"OK")

@@ -12,6 +12,7 @@ import shutil
 import struct
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
@@ -67,7 +68,61 @@ class MeshConvert(HelpMixin):
     #: (:meth:`build_scene_sidecar`). Bump on any change to the envelope's
     #: top-level shape; adding a *section* is not a bump — sections are the
     #: extension point and a reader skips ones it does not know.
-    SIDECAR_VERSION = 1
+    #:
+    #: v2 added ``handoff`` (the standalone-reader contract, written at build
+    #: time) plus ``textures`` and ``validate`` (content-addressed resolution
+    #: and integrity counts, written by :meth:`apply_scene_sidecar`).
+    SIDECAR_VERSION = 2
+
+    #: The standalone-reader contract embedded in every envelope's ``handoff``
+    #: section. It exists because the deliverable is routinely handed on ALONE —
+    #: to a dev, to a viewer that is not ours, to an agent given one ``.glb`` and
+    #: no conversation — and the single most expensive misunderstanding is
+    #: treating a section's authoring-time texture path as something to resolve
+    #: on disk. Written here once, as data in the artifact, rather than as prose
+    #: in a doc the reader was never given: a rule that only exists in
+    #: documentation is not part of the hand-off.
+    #:
+    #: Kept to plain declarative sentences about THIS file's own structure — no
+    #: instructions to the reader about what to do next, which is what makes it
+    #: safe for an agent to read as untrusted content.
+    #: Phrased to read correctly from either place this envelope lives --
+    #: embedded in the GLB's ``extras``, and in the ``.scene.json`` inspection
+    #: copy the bridges write beside the payload -- so it refers to the asset
+    #: through the envelope's own ``asset`` key rather than saying "this file".
+    HANDOFF_INSTRUCTIONS = (
+        "The glTF 2.0 asset named by 'asset' is self-contained: every texture it "
+        "references is embedded, so it loads and inspects with no external files "
+        "and no filesystem paths. 'extras.scene_sidecar' describes the authoring "
+        "scene's material state for the channels an FBX interchange step cannot "
+        "carry; 'extras.scene_sidecar_applied' reports, per section, how many of "
+        "those entries matched a material in this file. Section entries name "
+        "each texture by its authoring-time path. That path is PROVENANCE ONLY "
+        "and is not expected to exist on any other machine: resolve it by "
+        "looking it up in the top-level 'textures' map, which gives the glTF "
+        "'images' index that actually carries those bytes here, their sha256, "
+        "and their size -- several section entries can resolve to one image, "
+        "because a metallic/roughness/occlusion trio is repacked into a single "
+        "ORM image (R=occlusion, G=roughness, B=metallic). 'validate' records "
+        "how many entries each section carries and how many texture references "
+        "resolve, so a truncated envelope is detectable; the per-reference "
+        "sha256 is what verifies the payloads themselves. Passes that run after "
+        "this envelope is written may add further images, so do not expect the "
+        "file's total image count to match anything here. All "
+        "colours are linear glTF factors. When 'extras.lightmap_web' is present, "
+        "the materials it names carry a BAKED LIGHTMAP in occlusionTexture on "
+        "TEXCOORD_1 rather than ambient occlusion, sRGB-encoded, and its "
+        "'intensity' is the multiplier that restores the bake's original range; "
+        "a reader that does not rebind it renders a plausible greyscale "
+        "occlusion instead. Check 'version' against the schema you expect."
+    )
+
+    #: Default worker cap for :meth:`optimize_glb_textures`' encode pass, capped
+    #: again by the core count at call time. Deliberately well below a modern
+    #: core count -- see the phase-B comment there: the ceiling is host memory
+    #: (each worker holds a fully decoded 4K source), not cores, because this
+    #: routinely runs inside a DCC already holding the exported scene.
+    OPTIMIZE_WORKERS = 8
 
     #: Sidecar section -> the writer that applies it to a GLB, in application
     #: order. This is the applier column of the scene-data grid: a new kind of
@@ -283,6 +338,29 @@ class MeshConvert(HelpMixin):
             textures.append({"source": image_index, "sampler": 0})
             return len(textures) - 1
 
+        def image_for_texture(self, texture_index: Any) -> Optional[int]:
+            """Image index a texture samples, or ``None``.
+
+            The inverse of :meth:`texture_for_image`, and the one place that
+            knows an ``EXT_texture_webp`` binding shadows the plain ``source``:
+            after :meth:`optimize_glb_textures` a texture carries both, the
+            extension being the one a WebP-aware loader reads. Bounds-checked
+            like :meth:`base_color_image` -- a negative index is malformed, not
+            a reference to the last texture.
+            """
+            textures = self.textures
+            if not isinstance(texture_index, int):
+                return None
+            if not 0 <= texture_index < len(textures):
+                return None
+            texture = textures[texture_index]
+            source = (
+                (texture.get("extensions") or {}).get("EXT_texture_webp") or {}
+            ).get("source", texture.get("source"))
+            if not isinstance(source, int) or not 0 <= source < len(self.images):
+                return None
+            return source
+
         def base_color_image(self, mat: dict) -> Optional[int]:
             """Index of *mat*'s base-colour image, or ``None`` if it has none.
 
@@ -291,24 +369,16 @@ class MeshConvert(HelpMixin):
             Written out twice it had already drifted -- one copy bounds-checked
             the image index and the other left it to the probe to notice.
 
-            Both bounds are checked, not just the upper one: glTF indices are
-            non-negative by spec, so a negative one means a malformed file --
-            and left to Python's own indexing it would quietly resolve to the
-            *last* texture and report a finding against the wrong material
-            rather than being skipped.
+            The texture -> image half (including both bounds checks, and the
+            ``EXT_texture_webp`` shadowing) is :meth:`image_for_texture`'s job;
+            this adds only the material -> texture hop. Written out in full it
+            had already drifted once, so there is one copy of the walk.
             """
             pbr = mat.get("pbrMetallicRoughness") or {}
             bct = pbr.get("baseColorTexture")
             if not bct:
                 return None
-            tex_idx = bct.get("index")
-            textures = self.textures
-            if not isinstance(tex_idx, int) or not 0 <= tex_idx < len(textures):
-                return None
-            img_idx = textures[tex_idx].get("source")
-            if not isinstance(img_idx, int) or not 0 <= img_idx < len(self.images):
-                return None
-            return img_idx
+            return self.image_for_texture(bct.get("index"))
 
         def image_label(self, img_idx: int) -> str:
             """How a finding or a fix record names an image.
@@ -655,13 +725,22 @@ class MeshConvert(HelpMixin):
         dev tool holding only the deliverable and this data) parses against::
 
             {
-              "version": 1,              # SIDECAR_VERSION
+              "version": 2,              # SIDECAR_VERSION
               "source": {"application": "maya", "version": "2025"},
               "asset": "<payload basename>",
               "color_space": "linear",   # every color below, as the appliers
                                          #   also expect (glTF factors)
-              "sections": {...}          # the extension point
+              "sections": {...},         # the extension point
+              "handoff": {               # the standalone-reader contract
+                "instructions": "<HANDOFF_INSTRUCTIONS>",
+                "reads": {...}           # extras key -> what it holds
+              }
             }
+
+        :meth:`apply_scene_sidecar` adds two more top-level keys when it embeds
+        the envelope, because only it can know them: ``textures`` (each
+        authoring path -> the glTF image index and sha256 actually carrying it)
+        and ``validate`` (the counts the envelope was written against).
 
         Scope note — this is *not* a second channel registry beside the DCC
         packages' ``DataNodes``. Tool-authored semantic metadata (shots, audio
@@ -686,6 +765,20 @@ class MeshConvert(HelpMixin):
             "asset": asset,
             "color_space": "linear",
             "sections": dict(sections or {}),
+            "handoff": {
+                "instructions": cls.HANDOFF_INSTRUCTIONS,
+                # Where the rest of the self-description lives. Derived from the
+                # registries rather than listed by hand, so a section or a
+                # manifest added later cannot silently fall out of the contract.
+                "reads": {
+                    "extras.scene_sidecar": "this envelope",
+                    "extras.scene_sidecar_applied": "per-section apply outcome",
+                    f"extras.{cls.LIGHTMAP_WEB_KEY}": (
+                        "materials whose occlusion carrier is a baked lightmap"
+                    ),
+                },
+                "sections": sorted(cls.SIDECAR_APPLIERS),
+            },
         }
 
     @classmethod
@@ -755,8 +848,47 @@ class MeshConvert(HelpMixin):
                     logger.info("Sidecar %r applied to %s.", section, len(applied))
                     summary[section] = f"{len(applied)} of {len(data)}"
                 extras = edit.gltf.setdefault("extras", {})
-                extras["scene_sidecar"] = sidecar
+                # A COPY, with the resolution keys added: the caller's envelope
+                # is theirs (the bridges keep it, and write a `.scene.json`
+                # inspection copy from it), and only this pass can know which
+                # glTF image each authoring path became.
+                embedded = dict(sidecar)
+                embedded["textures"] = cls._sidecar_texture_map(edit)
+                # Deliberately NOT the file's total image/texture counts. Later
+                # passes add images -- the lightmap applier runs after this in
+                # every production path -- so a total stamped here is stale on
+                # arrival, and a reader using it as an integrity check would
+                # reject every lightmapped deliverable. What is stable is what
+                # this envelope itself claims: how many entries each section
+                # carries and how many texture references resolve. Those, plus
+                # the per-reference digests, are the check worth making.
+                embedded["validate"] = {
+                    "sections": {
+                        name: len(entries)
+                        for name, entries in sections.items()
+                        # A malformed envelope (a null section, say) is skipped
+                        # by the dispatch above; sizing it must not be the thing
+                        # that raises -- the container catch here only handles
+                        # OSError/ValueError, so a TypeError would abort a whole
+                        # apply that was otherwise fine.
+                        if hasattr(entries, "__len__")
+                    },
+                    "textures": len(embedded["textures"]),
+                }
+                extras["scene_sidecar"] = embedded
                 extras["scene_sidecar_applied"] = dict(summary)
+                # Every reference is meant to carry a content address; one that
+                # cannot be digested is an entry a verifying reader has no way
+                # to check, so a shortfall is said out loud rather than shipped
+                # as a quietly incomplete map.
+                stamped = cls._stamp_sidecar_digests(edit)
+                if stamped != len(embedded["textures"]):
+                    logger.warning(
+                        "Sidecar: %d of %d texture reference(s) could not be "
+                        "content-addressed (their image payload was unreadable).",
+                        len(embedded["textures"]) - stamped,
+                        len(embedded["textures"]),
+                    )
                 edit.dirty = True
         except (OSError, ValueError) as error:
             logger.warning("Sidecar not applied to %s: %s", glb, error)
@@ -766,6 +898,142 @@ class MeshConvert(HelpMixin):
                 if sections.get(section)
             }
         return summary
+
+    @classmethod
+    def _sidecar_texture_map(
+        cls, edit: "MeshConvert.GlbEdit"
+    ) -> Dict[str, Dict[str, Any]]:
+        """``{authoring path: {"image": index}}`` for everything this session embedded.
+
+        The join a standalone reader needs and a path cannot give it: a section
+        entry names a texture by the path it had on the authoring machine, which
+        resolves nowhere else, so the envelope carries the map from that name to
+        the glTF ``images`` index actually holding those bytes.
+        :meth:`_stamp_sidecar_digests` fills in the content address.
+
+        Derived wholly from :attr:`GlbEdit.embedded` (source key -> texture
+        index), which is why it needs no knowledge of any section's shape and a
+        section added later is covered for free. Two wrinkles that shape it:
+
+        * The ORM writer's cache key is the three source paths joined by ``|``,
+          because the trio collapses into ONE packed image. Splitting it back
+          out is what lets each of ``metallic``/``roughness``/``occlusion``
+          resolve -- all three to the same index, which is the truth.
+        * ``None`` appears in that join for a slot with no map (``"a|None|b"``),
+          and is not a path. A real file named ``None`` is indistinguishable
+          here, which costs nothing: it would resolve to the image it is
+          actually part of.
+        """
+        resolved: Dict[str, Dict[str, Any]] = {}
+        for cache_key, texture_index in edit.embedded.items():
+            image_index = edit.image_for_texture(texture_index)
+            if image_index is None:
+                continue
+            for path in str(cache_key).split("|"):
+                if path and path != "None":
+                    # setdefault, not assignment: one path CAN legitimately
+                    # resolve to two images -- embedded whole for one channel
+                    # and folded into an ORM for another -- and a single-valued
+                    # map can only say one. First wins, which is well defined
+                    # because SIDECAR_APPLIERS fixes the order and the whole
+                    # embed is the more direct answer than a channel of a pack.
+                    # Assignment made the winner depend on applier order, which
+                    # is the kind of thing that changes silently.
+                    resolved.setdefault(path, {"image": image_index})
+        return resolved
+
+    @classmethod
+    def _stamp_sidecar_digests(cls, edit: "MeshConvert.GlbEdit") -> int:
+        """Refresh the embedded envelope's content addresses; return how many.
+
+        Split from :meth:`_sidecar_texture_map` because the two answer questions
+        with different lifetimes. *Which* image carries a path is decided once,
+        when the sidecar is applied, and never changes -- image indices are
+        stable. *What those bytes are* changes afterwards:
+        :meth:`optimize_glb_textures` resizes and re-encodes every image it
+        touches, so a digest taken at apply time describes bytes the delivered
+        file no longer contains. So the digest is stamped by whoever last wrote
+        the payloads, and this is idempotent so both callers can.
+
+        Reads the envelope out of ``extras`` rather than taking it as an
+        argument: the optimize pass has no sidecar in hand and must not need
+        one -- it just refreshes whatever the file already declares.
+        """
+        sidecar = (edit.gltf.get("extras") or {}).get("scene_sidecar")
+        entries = sidecar.get("textures") if isinstance(sidecar, dict) else None
+        if not isinstance(entries, dict):
+            return 0
+        images = edit.images
+        stamped = 0
+        for ref in entries.values():
+            if not isinstance(ref, dict):
+                continue
+            index = ref.get("image")
+            if not isinstance(index, int) or not 0 <= index < len(images):
+                continue
+            payload = edit._image_payload(images[index])
+            if not payload:
+                continue
+            ref["sha256"] = hashlib.sha256(payload).hexdigest()
+            ref["bytes"] = len(payload)
+            mime = images[index].get("mimeType")
+            if mime:
+                ref["mimeType"] = mime
+            stamped += 1
+        if stamped:
+            edit.dirty = True
+        return stamped
+
+    @classmethod
+    def sidecar_foreign_packings(
+        cls,
+        sidecar: Optional[Dict[str, Any]],
+        target: str = "ORM",
+        workflow: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """``{path: map type}`` for envelope textures authored for another engine.
+
+        The pre-flight half of the compatibility story: given a built scene
+        sidecar, which of the maps it is about to carry into a glTF deliverable
+        are packed for a *different* engine family? Answers before any
+        conversion runs, so an exporter can gate on it (see mayatk's /
+        blendertk's ``check_material_compatibility``) rather than discovering it
+        in the log afterwards.
+
+        Lives here because :meth:`build_scene_sidecar` owns the envelope schema
+        and mayatk/blendertk cannot import each other -- written per DCC, the
+        walk over ``sections`` would drift the moment a section was added. The
+        *judgement* is not duplicated either: it delegates to
+        :meth:`MapFactory.foreign_packings`, the single predicate.
+
+        Every string value in every section is offered, so a section added
+        later is covered without editing this. That is safe because the
+        predicate only reports paths it can resolve to a declared map type.
+
+        Parameters:
+            sidecar: A :meth:`build_scene_sidecar` envelope, or ``None``.
+            target: The map type the deliverable wants (``"ORM"`` for glTF).
+            workflow: A registry workflow name instead of a map-type *target* --
+                the form an exporter's texture-template selection arrives in.
+                Takes precedence over *target*; see
+                :meth:`MapFactory.foreign_packings` for the two judgements.
+
+        Returns:
+            ``{path: map type}``; empty for ``None``, an empty envelope, or a
+            source set that is already appropriate.
+        """
+        from pythontk.core_utils.engines.textures.map_factory import MapFactory
+
+        paths: List[str] = []
+        for entry in ((sidecar or {}).get("sections") or {}).values():
+            if not isinstance(entry, dict):
+                continue
+            for spec in entry.values():
+                if isinstance(spec, str):
+                    paths.append(spec)
+                elif isinstance(spec, dict):
+                    paths.extend(v for v in spec.values() if isinstance(v, str))
+        return MapFactory.foreign_packings(paths, target=target, workflow=workflow)
 
     @classmethod
     def read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
@@ -845,6 +1113,7 @@ class MeshConvert(HelpMixin):
         search_dirs: Sequence[str] = (),
         carrier: str = "occlusion",
         percentile: Optional[float] = None,
+        replace_authored: bool = True,
     ) -> List[Dict[str, Any]]:
         """Wire a host DCC's committed lightmaps into a GLB for the web viewer.
 
@@ -860,13 +1129,18 @@ class MeshConvert(HelpMixin):
         AO rather than to nothing.
 
         A GLB with no manifest is a clean no-op, which is what makes it safe to run
-        unconditionally after every conversion. Every miss is loud: an object name
-        that matches no node, a primitive without ``TEXCOORD_1`` (the FBX was
-        exported without the second UV set), an EXR that cannot be found, and two
-        objects claiming one material with different maps (atlas packing prevents
-        this; reaching it means per-object maps on a shared material -- the symptom
-        is one object wearing another's lighting) are each warned and skipped, never
-        guessed at.
+        unconditionally after every conversion. Name matching is exact first, then
+        namespace-tolerant: a name that misses is retried with the ``NS:`` prefix
+        stripped from both sides and binds only when that leaf is unambiguous among
+        the GLB's nodes (manifests and exports can disagree about namespaces
+        without either being wrong -- an older publisher stripped them, some
+        exporters flatten them). Every remaining miss is loud: an ambiguous leaf,
+        a name matching no node at all, a primitive without ``TEXCOORD_1`` (the
+        FBX was exported without the second UV set), an EXR that cannot be found,
+        and two objects claiming one material with different maps (atlas packing
+        prevents this; reaching it means per-object maps on a shared material --
+        the symptom is one object wearing another's lighting) are each warned and
+        skipped, never guessed at.
 
         Parameters:
             glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
@@ -877,6 +1151,16 @@ class MeshConvert(HelpMixin):
                 slot carries the map (mirror of blendertk's ``CARRIERS``).
             percentile: Encode divisor percentile
                 (default :attr:`ImgUtils.HDR_WEB_PERCENTILE`).
+            replace_authored: Whether a map already sitting in the carrier slot
+                gives way to the lightmap. ``True`` (default) displaces it with
+                a warning -- a bake IS the deliverable, and its occlusion term
+                supersedes a separate AO map. ``False`` keeps the authored map
+                and skips the lightmap for that material, warned. Either way, a
+                slot holding the material's own ``metallicRoughnessTexture`` is
+                NOT authored -- that is the packed-ORM occlusion binding
+                (:meth:`set_glb_metallic_roughness`, or FBX2glTF's converted
+                packing), whose R channel the bake already contains -- so it is
+                displaced silently regardless.
 
         **Per-instance atlas rects travel as glTF-standard ``KHR_texture_transform``.**
         A manifest record with a non-identity ``scaleOffset`` (an instance's patch of a
@@ -902,6 +1186,26 @@ class MeshConvert(HelpMixin):
         slot = "occlusionTexture" if carrier != "emissive" else "emissiveTexture"
         identity = [1.0, 1.0, 0.0, 0.0]
         records: List[Dict[str, Any]] = []
+
+        def _authored_carrier(material: dict) -> Optional[dict]:
+            """The AUTHORED map in the carrier slot, or ``None``.
+
+            A slot reference sharing its texture index with the material's own
+            ``metallicRoughnessTexture`` is the packed-ORM occlusion binding,
+            not an authored map -- its R channel is AO the bake already
+            contains (with real bounce), so displacing it is never a loss and
+            never worth a warning.
+            """
+            existing = material.get(slot)
+            if not existing:
+                return None
+            if slot == "occlusionTexture":
+                mr = (material.get("pbrMetallicRoughness") or {}).get(
+                    "metallicRoughnessTexture"
+                )
+                if mr and existing.get("index") == mr.get("index"):
+                    return None
+            return existing
         # ONE session for the read and the write: the manifest is read from the very
         # GLB being edited, so re-opening the path to find it would re-read and
         # re-parse the file that GlbEdit exists to read exactly once.
@@ -938,13 +1242,26 @@ class MeshConvert(HelpMixin):
                 if "mesh" in node:
                     nodes_by_name.setdefault(node.get("name", ""), []).append(node)
                     mesh_users[node["mesh"]] = mesh_users.get(node["mesh"], 0) + 1
+            # Namespace-tolerant fallback index (Maya ``NS:leaf``). The manifest
+            # and the export can disagree about namespaces without either being
+            # wrong -- an older publisher stripped them, some exporters flatten
+            # them -- and an exact-only match then silently unbinds every
+            # namespaced object (a delivered room whose referenced racks all
+            # rendered black). Match exact first; fall back to comparing with
+            # the namespace stripped from BOTH sides, but only when that leaf
+            # is unambiguous among the GLB's nodes -- a guessed bind on a
+            # duplicate leaf would put one object's lighting on another.
+            leaf_index: Dict[str, List[str]] = {}
+            for full in nodes_by_name:
+                leaf_index.setdefault(full.rsplit(":", 1)[-1], []).append(full)
 
             # exr abspath -> encode scalar; ``None`` records a failed encode so a map
             # shared by several objects is not retried (and re-logged) per object.
             scalars: Dict[str, Optional[float]] = {}
             claimed: Dict[int, str] = {}  # material index -> exr abspath
-            # Source material indices whose authored carrier map was displaced -- so
-            # the warning fires once however many instance clones are made from it.
+            # Source material indices whose authored carrier map was already
+            # reported (displaced, or kept under replace_authored=False) -- so the
+            # warning fires once however many instances or primitives share it.
             dropped_authored: Set[int] = set()
             web_materials: Dict[str, Dict[str, Any]] = {}
             used_transform = False
@@ -953,6 +1270,18 @@ class MeshConvert(HelpMixin):
                 rect = [float(v) for v in (entry.get("scaleOffset") or identity)]
                 has_rect = rect != identity
                 nodes = nodes_by_name.get(name or "")
+                if not nodes and name:
+                    leaves = leaf_index.get(name.rsplit(":", 1)[-1]) or []
+                    if len(leaves) == 1:
+                        nodes = nodes_by_name[leaves[0]]
+                    elif len(leaves) > 1:
+                        logger.warning(
+                            "Lightmap for %r: leaf name matches several GLB "
+                            "nodes (%s) -- ambiguous, not bound.",
+                            name,
+                            ", ".join(sorted(leaves)),
+                        )
+                        continue
                 if not nodes:
                     logger.warning(
                         "Lightmap for %r: no mesh node by that name in the GLB "
@@ -994,7 +1323,9 @@ class MeshConvert(HelpMixin):
                             scalars[src] = None
                         else:
                             scalars[src] = encoded
-                            cls._embed_image_bytes(edit, src, png, name=png_name)
+                            cls._embed_image_bytes(
+                                edit, src, png, name=png_name, clamp=True
+                            )
                     return scalars[src]
 
                 for node in nodes:
@@ -1032,25 +1363,41 @@ class MeshConvert(HelpMixin):
                             # compliant viewer applies it with no custom code. The
                             # clone is JSON only (same shader inputs, same embedded
                             # texture index).
+                            base = gltf["materials"][mi]
+                            base_name = base.get("name") or f"mat{mi}"
+                            # The authored gate runs BEFORE the encode: _scalar()
+                            # embeds on first use, so skipping after it would leave
+                            # an orphan texture in the file when every instance of
+                            # the material is kept authored. Warn ONCE per source
+                            # material, not once per clone: a room whose 46 pieces
+                            # share one material would otherwise emit 46 identical
+                            # lines and bury every other warning in the log. The
+                            # instance names are the noise here -- the material and
+                            # the count are the finding.
+                            if _authored_carrier(base) is not None:
+                                if not replace_authored:
+                                    if mi not in dropped_authored:
+                                        dropped_authored.add(mi)
+                                        logger.warning(
+                                            "Material %r keeps its authored %s; its "
+                                            "instance lightmaps are not bound "
+                                            "(replace_authored=False).",
+                                            base_name,
+                                            slot,
+                                        )
+                                    continue
+                                if mi not in dropped_authored:
+                                    dropped_authored.add(mi)
+                                    logger.warning(
+                                        "Material %r: its authored %s is dropped on "
+                                        "every lightmap clone made from it (the viewer "
+                                        "rebinds the slot to lightMap).",
+                                        base_name,
+                                        slot,
+                                    )
                             scalar = _scalar()
                             if scalar is None:  # encode failed, already logged
                                 continue
-                            base = gltf["materials"][mi]
-                            base_name = base.get("name") or f"mat{mi}"
-                            # Warn ONCE per source material, not once per clone: a
-                            # room whose 46 pieces share one material would otherwise
-                            # emit 46 identical lines and bury every other warning in
-                            # the log. The instance names are the noise here -- the
-                            # material and the count are the finding.
-                            if base.get(slot) and mi not in dropped_authored:
-                                dropped_authored.add(mi)
-                                logger.warning(
-                                    "Material %r: its authored %s is dropped on every "
-                                    "lightmap clone made from it (the viewer rebinds "
-                                    "the slot to lightMap).",
-                                    base_name,
-                                    slot,
-                                )
                             clone = copy.deepcopy(base)
                             clone["name"] = f"{base_name}~lm{len(gltf['materials'])}"
                             g_rect = ImgUtils.flip_rect_v(rect)
@@ -1094,14 +1441,32 @@ class MeshConvert(HelpMixin):
                             )
                             continue
                         material = gltf["materials"][mi]
-                        if mi not in claimed and material.get(slot):
-                            # An AUTHORED map already sits on the carrier slot (a
-                            # real AO map, say). The lightmap must still ship --
-                            # that is the whole deliverable -- but silently
-                            # discarding authored data is not this function's call
-                            # to make quietly.
+                        if mi not in claimed and _authored_carrier(material):
+                            # An AUTHORED map sits on the carrier slot (a real AO
+                            # map, say -- the packed-ORM binding is already ruled
+                            # out). The default displaces it, loudly: the bake IS
+                            # the deliverable, but silently discarding authored
+                            # data is not this function's call to make quietly.
+                            # replace_authored=False keeps it instead, and the
+                            # lightmap for this material is not bound. The skip
+                            # never sets ``claimed``, so it once-guards through
+                            # ``dropped_authored`` -- per material, or a shared
+                            # material would repeat the line for every primitive
+                            # of every object wearing it. (The displace branch
+                            # once-guards naturally: binding sets ``claimed``.)
+                            if not replace_authored:
+                                if mi not in dropped_authored:
+                                    dropped_authored.add(mi)
+                                    logger.warning(
+                                        "Material %r keeps its authored %s; its "
+                                        "lightmaps are not bound "
+                                        "(replace_authored=False).",
+                                        material.get("name") or mi,
+                                        slot,
+                                    )
+                                continue
                             logger.warning(
-                                "Material %r: replacing its existing %s with the "
+                                "Material %r: replacing its authored %s with the "
                                 "lightmap (the viewer rebinds it to the lightMap "
                                 "slot).",
                                 material.get("name") or mi,
@@ -1449,6 +1814,7 @@ class MeshConvert(HelpMixin):
         max_size: int = 2048,
         image_format: str = "WEBP",
         quality: int = 85,
+        workers: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Downsize and re-encode a GLB's embedded images for web delivery.
 
@@ -1466,9 +1832,13 @@ class MeshConvert(HelpMixin):
         resized so its longest edge is *max_size*, and re-encoded -- WebP by
         default: alpha-capable, universally decoded by WebXR-class browsers,
         and roughly an order of magnitude smaller than PNG at visually equal
-        quality. Images the ``lightmap_web`` manifest names are exempt from
-        the RESIZE (the bake sized them deliberately) but still re-encode.
-        A re-encode that comes out larger keeps the original bytes.
+        quality. Lightmaps are exempt from the resize (the bake sized them
+        deliberately) and re-encode LOSSLESS (lossy WebP's 4:2:0 chroma
+        blotches magenta/green on near-black texels); exemption is both by
+        the names the ``lightmap_web`` manifest lists and structurally, by
+        texCoord-1 occlusion/emissive binding, so a digest-deduped image
+        whose name lies is still protected. A re-encode that comes out
+        larger keeps the original bytes.
 
         The BIN chunk is repacked -- image payloads replaced, former data-URI
         images relocated into it (dropping base64's 33%), every other
@@ -1486,6 +1856,9 @@ class MeshConvert(HelpMixin):
             max_size: Longest edge kept after resize. 0/None skips resizing.
             image_format: ``"WEBP"`` (default) or any PIL-writable format.
             quality: Lossy quality for WEBP/JPEG.
+            workers: Concurrent encode threads. Defaults to
+                :attr:`OPTIMIZE_WORKERS` capped by the core count; 1 forces the
+                serial path.
 
         Returns:
             Summary dict: ``images`` (converted count), ``bytes_before`` /
@@ -1519,63 +1892,126 @@ class MeshConvert(HelpMixin):
                         exempt.add(os.path.basename(entry["map"]))
             except (ValueError, AttributeError):
                 pass
+            # Structural exemption alongside the name set: an image bound as a
+            # texCoord-1 occlusion/emissive map IS a lightmap however it is
+            # named -- the digest dedupe can hand a lightmap payload the name
+            # of whichever image embedded those bytes first, and a name-only
+            # check then resizes/lossy-encodes it anyway.
+            exempt_indices: Set[int] = set()
+            for mat in gltf.get("materials") or []:
+                for slot in ("occlusionTexture", "emissiveTexture"):
+                    ref = mat.get(slot) or {}
+                    if ref.get("texCoord") != 1:
+                        continue
+                    src = edit.image_for_texture(ref.get("index"))
+                    if src is not None:
+                        exempt_indices.add(src)
 
-            # Pass 1: re-encode. ``replacements`` keys the image INDEX to its
-            # new payload; identical source payloads collapse via digest.
-            replacements: Dict[int, bytes] = {}
-            encoded_by_digest: Dict[Tuple[str, bool], bytes] = {}
+            # Pass 1, phase A (serial, cheap): classify every image and collect
+            # ONE job per distinct (payload, exemption) pair. The exemption is
+            # part of the key because the same bytes named both as a source
+            # texture and as a lightmap must not share the resized encoding.
             before = after = 0
+            jobs: Dict[Tuple[str, bool], bytes] = {}
+            labels: Dict[Tuple[str, bool], Union[str, int]] = {}
+            key_by_index: Dict[int, Tuple[str, bool]] = {}
             for index, image in enumerate(images):
                 payload = edit._image_payload(image)
                 if not payload:
                     continue
                 before += len(payload)
-                is_exempt = (image.get("name") or "") in exempt
-                # The exemption is part of the key: the same bytes named both
-                # as a source texture and as a lightmap must not share the
-                # resized encoding.
-                cache_key = (hashlib.sha256(payload).hexdigest(), is_exempt)
-                encoded = encoded_by_digest.get(cache_key)
+                is_exempt = index in exempt_indices or (image.get("name") or "") in exempt
+                key = (hashlib.sha256(payload).hexdigest(), is_exempt)
+                key_by_index[index] = key
+                jobs.setdefault(key, payload)
+                labels.setdefault(key, image.get("name") or index)
+
+            def _encode(key: Tuple[str, bool]) -> Optional[bytes]:
+                """Decode, resize and re-encode one job; ``None`` keeps the original."""
+                payload, is_exempt = jobs[key], key[1]
+                try:
+                    pil = Image.open(io.BytesIO(payload))
+                    pil.load()
+                except Exception as error:  # noqa: BLE001 — a bad image keeps its bytes
+                    logger.warning(
+                        "optimize_glb_textures: unreadable image %r: %s",
+                        labels[key],
+                        error,
+                    )
+                    return None
+                if max_size and max(pil.size) > max_size and not is_exempt:
+                    scale = max_size / float(max(pil.size))
+                    pil = pil.resize(
+                        (
+                            max(1, round(pil.size[0] * scale)),
+                            max(1, round(pil.size[1] * scale)),
+                        ),
+                        Image.LANCZOS,
+                    )
+                if mime == "image/png":
+                    save_kwargs = {}
+                elif is_exempt and image_format.upper() == "WEBP":
+                    # Lightmaps must round-trip pixel-exact. Lossy WebP is
+                    # YUV 4:2:0 -- chroma at half resolution, quantized --
+                    # which on near-black lightmap texels shows as magenta/
+                    # green blotching and smears color across atlas rect
+                    # borders. Lossless WebP still beats the source PNG.
+                    save_kwargs = {"lossless": True, "quality": 100}
+                else:
+                    save_kwargs = {"quality": quality}
+                buffer = io.BytesIO()
+                try:
+                    pil.save(buffer, format=image_format, **save_kwargs)
+                except Exception as error:  # noqa: BLE001
+                    logger.warning(
+                        "optimize_glb_textures: %s re-encode failed for %r: %s",
+                        image_format,
+                        labels[key],
+                        error,
+                    )
+                    return None
+                encoded = buffer.getvalue()
+                # Keep the original when the re-encode came out larger.
+                return None if len(encoded) >= len(payload) else encoded
+
+            # Phase B: run those jobs concurrently. Pillow does the decode,
+            # resize and encode in C with the GIL released, and the encode alone
+            # is ~60% of this pass, so threads scale it close to linearly --
+            # measured on a production room GLB (27 images, 239 MB of source
+            # PNG): 31.8s serial. Threads, not processes: the payloads are
+            # already in this process's memory, and pickling hundreds of MB out
+            # to workers would cost more than the encode saves.
+            #
+            # Capped well below the core count on purpose. Each worker holds a
+            # fully decoded source (a 4096 RGBA is 67 MB) plus its resize and
+            # encode buffers, and this routinely runs inside a DCC that is
+            # already holding the scene the export came from -- so the ceiling
+            # is host memory, not cores.
+            count = max(
+                1,
+                min(
+                    workers or min(cls.OPTIMIZE_WORKERS, os.cpu_count() or 1),
+                    len(jobs),
+                ),
+            )
+            if count > 1:
+                with ThreadPoolExecutor(
+                    max_workers=count, thread_name_prefix="ptk-glb-optimize"
+                ) as pool:
+                    encoded_by_key = dict(zip(jobs, pool.map(_encode, list(jobs))))
+            else:
+                encoded_by_key = {key: _encode(key) for key in jobs}
+
+            # Phase C (serial): fan the per-job results back out to the image
+            # indices that share them. ``replacements`` keys the image INDEX to
+            # its new payload.
+            replacements: Dict[int, bytes] = {}
+            for index, key in key_by_index.items():
+                encoded = encoded_by_key.get(key)
                 if encoded is None:
-                    try:
-                        pil = Image.open(io.BytesIO(payload))
-                        pil.load()
-                    except Exception as error:  # noqa: BLE001 — a bad image keeps its bytes
-                        logger.warning(
-                            "optimize_glb_textures: unreadable image %r: %s",
-                            image.get("name") or index,
-                            error,
-                        )
-                        after += len(payload)
-                        continue
-                    if max_size and max(pil.size) > max_size and not is_exempt:
-                        scale = max_size / float(max(pil.size))
-                        pil = pil.resize(
-                            (
-                                max(1, round(pil.size[0] * scale)),
-                                max(1, round(pil.size[1] * scale)),
-                            ),
-                            Image.LANCZOS,
-                        )
-                    buffer = io.BytesIO()
-                    save_kwargs = {"quality": quality} if mime != "image/png" else {}
-                    try:
-                        pil.save(buffer, format=image_format, **save_kwargs)
-                    except Exception as error:  # noqa: BLE001
-                        logger.warning(
-                            "optimize_glb_textures: %s re-encode failed for %r: %s",
-                            image_format,
-                            image.get("name") or index,
-                            error,
-                        )
-                        after += len(payload)
-                        continue
-                    encoded = buffer.getvalue()
-                    if len(encoded) >= len(payload):
-                        encoded = payload  # keep the original; it was smaller
-                    encoded_by_digest[cache_key] = encoded
-                if encoded is not payload:
-                    replacements[index] = encoded
+                    after += len(jobs[key])
+                    continue
+                replacements[index] = encoded
                 after += len(encoded)
 
             if not replacements:
@@ -1584,42 +2020,78 @@ class MeshConvert(HelpMixin):
             # Pass 2: repack the BIN. Existing views keep their INDEX (that is
             # what accessors and images reference); only offsets/lengths move.
             views = gltf.get("bufferViews") or []
-            image_view_owner = {
-                img.get("bufferView"): idx
-                for idx, img in enumerate(images)
-                if "bufferView" in img
-            }
+            # view -> EVERY image that reads it, not just one. FBX2glTF really
+            # does point two images at a single bufferView (measured: 4 such
+            # pairs on a production room GLB), and co-owners can differ in the
+            # one thing that decides their encoding -- a lightmap is exempt from
+            # the resize and encodes lossless, its co-owner is not. Recording a
+            # single owner per view silently handed the loser the winner's
+            # bytes: with the lightmap winning, its co-owner kept full
+            # resolution; with the order reversed the LIGHTMAP got resized and
+            # lossy-encoded, which is precisely the corruption the structural
+            # exemption above exists to prevent.
+            image_view_owners: Dict[int, List[int]] = {}
+            for idx, img in enumerate(images):
+                if "bufferView" in img:
+                    image_view_owners.setdefault(img["bufferView"], []).append(idx)
+
             blob = edit.bin_data
             chunks: List[bytes] = []
             offset = 0
+            #: ``(image index, bytes)`` for images that cannot read an existing
+            #: view -- carried as bytes because a co-owner may need the
+            #: ORIGINAL payload (it had no replacement of its own).
+            relocate: List[Tuple[int, bytes]] = []
             for view_index, view in enumerate(views):
-                owner = image_view_owner.get(view_index)
-                if owner is not None and owner in replacements:
-                    data = replacements[owner]
+                owners = image_view_owners.get(view_index, [])
+                # The overwhelmingly common case -- one image owns the view and
+                # was re-encoded -- takes the new bytes without ever reading the
+                # old ones, which for a 60 MB source PNG is the copy worth
+                # skipping. Anything else needs the original, either to keep it
+                # or to compare co-owners against.
+                if len(owners) == 1 and owners[0] in replacements:
+                    data = original = replacements[owners[0]]
                     view.pop("byteStride", None)
                 else:
                     start = view.get("byteOffset", 0)
-                    data = bytes(blob[start : start + view["byteLength"]]) if blob else b""
+                    original = (
+                        bytes(blob[start : start + view["byteLength"]]) if blob else b""
+                    )
+                    if owners and owners[0] in replacements:
+                        data = replacements[owners[0]]
+                        view.pop("byteStride", None)
+                    else:
+                        data = original
+                # A co-owner whose final bytes differ from what this view now
+                # holds cannot read it; give it its own copy.
+                relocate.extend(
+                    (idx, replacements.get(idx, original))
+                    for idx in owners[1:]
+                    if replacements.get(idx, original) != data
+                )
                 view["byteOffset"] = offset
                 view["byteLength"] = len(data)
                 padded = data + b"\x00" * ((4 - (len(data) % 4)) % 4)
                 chunks.append(padded)
                 offset += len(padded)
 
-            # Former data-URI images relocate into the BIN as new views --
-            # appended, so no existing index moves.
-            for index, image in enumerate(images):
-                if "bufferView" in image or index not in replacements:
-                    continue
-                data = replacements[index]
+            # Former data-URI images had no view at all, so they relocate too.
+            relocate.extend(
+                (index, replacements[index])
+                for index, image in enumerate(images)
+                if "bufferView" not in image and index in replacements
+            )
+            # Appended, so no existing view index moves (accessors reference
+            # them by index).
+            for index, data in relocate:
                 views.append(
                     {"buffer": 0, "byteOffset": offset, "byteLength": len(data)}
                 )
                 padded = data + b"\x00" * ((4 - (len(data) % 4)) % 4)
                 chunks.append(padded)
                 offset += len(padded)
-                image["bufferView"] = len(views) - 1
-                image.pop("uri", None)
+                images[index]["bufferView"] = len(views) - 1
+                images[index].pop("uri", None)
 
             for index in replacements:
                 images[index]["mimeType"] = mime
@@ -1641,6 +2113,12 @@ class MeshConvert(HelpMixin):
                     used.append("EXT_texture_webp")
 
             edit.replace_rest(new_bin)
+            # Re-encoding invalidated every content address the sidecar
+            # recorded at apply time. Restamped from the repacked payloads
+            # (image INDICES are untouched above, which is what makes this a
+            # refresh rather than a rebuild) so the digests describe the bytes
+            # actually delivered. A file with no sidecar is a no-op.
+            cls._stamp_sidecar_digests(edit)
 
         summary = {
             "images": len(replacements),
@@ -1674,10 +2152,18 @@ class MeshConvert(HelpMixin):
 
         Packing follows the glTF convention (R=occlusion, G=roughness, B=metallic)
         through :meth:`MapFactory.pack_orm_texture` -- the registry's one ORM
-        packer -- with R filled white so the same image stays neutral if a later
-        writer wires it as ``occlusionTexture``. The packed image embeds through
+        packer -- with R filled white when no AO source resolves, so the
+        occlusion binding below stays neutral. The packed image embeds through
         the same session cache as every other writer, so two materials naming the
         same source maps share one embed.
+
+        The packed image is also bound as the material's ``occlusionTexture``
+        (glTF's packed-ORM idiom -- occlusion is read from that slot alone, so
+        an unbound R channel is dead payload) whenever the slot is free or
+        still points at the converted ORM this write replaces; an authored
+        separate AO map is never displaced. A lightmap applied afterwards
+        recognises the ORM binding by its shared texture index and takes the
+        slot silently (:meth:`apply_glb_lightmaps`).
 
         Parameters:
             glb: Path to a binary glTF (.glb), modified in place, or an open
@@ -1698,6 +2184,12 @@ class MeshConvert(HelpMixin):
 
         records: List[Dict] = []
         packed_cache: Dict[Tuple, Optional[int]] = {}
+        #: Source paths that actually reached a material, for the summary below.
+        #: Collected as the loop writes rather than read back off
+        #: *metallic_roughness*, because that input includes materials
+        #: `_match_glb_materials` found no match for and maps whose pack failed
+        #: -- counting those makes the headline claim work that never happened.
+        written: List[str] = []
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
             for name, spec, mat in cls._match_glb_materials(
@@ -1735,10 +2227,30 @@ class MeshConvert(HelpMixin):
                     continue
 
                 pbr = mat.setdefault("pbrMetallicRoughness", {})
+                prior = (pbr.get("metallicRoughnessTexture") or {}).get("index")
                 pbr["metallicRoughnessTexture"] = {"index": tex_index}
                 # The map is authoritative; factors are multipliers on it.
                 pbr["metallicFactor"] = 1.0
                 pbr["roughnessFactor"] = 1.0
+                # glTF reads occlusion ONLY from ``occlusionTexture``, so the
+                # AO packed into R is dead weight unless it is bound there --
+                # the same image in both slots is the spec's own packed-ORM
+                # idiom. Bind when the slot is free, and REPOINT it when it
+                # still names the converted ORM this write just replaced
+                # (FBX2glTF binds its own packing there, and leaving that
+                # reference samples the stale -- measured, often solid-white
+                # -- image). A separate authored AO map is left alone. R
+                # fills white when no AO source resolved, so the binding is
+                # neutral in that case, never wrong. A lightmap pass running
+                # after this recognises the shared index and takes the slot
+                # (see apply_glb_lightmaps) -- a bake carries its own
+                # occlusion, computed with real bounce.
+                occlusion = mat.get("occlusionTexture")
+                if occlusion is None or (
+                    prior is not None and occlusion.get("index") == prior
+                ):
+                    mat["occlusionTexture"] = {"index": tex_index}
+                written.extend(src for src in sources if isinstance(src, str))
                 records.append(
                     {
                         "material": name,
@@ -1750,6 +2262,29 @@ class MeshConvert(HelpMixin):
             if not records:
                 return []
             edit.dirty = True
+
+        # One highlighted headline for the whole pass. The per-map detail is
+        # already logged by `pack_orm_texture`, but in a DCC those lines arrive
+        # amid hundreds of others and the artist has no reason to be reading the
+        # log at all -- so the actionable summary gets the `highlight` preset
+        # (rendered by the DCC log handler; a plain handler ignores the extra
+        # and prints the same text). Named counts, not paths: the detail lines
+        # carry those, and this has to stay one scannable line.
+        foreign = MapFactory.foreign_packings(written)
+        if foreign:
+            by_type: Dict[str, int] = {}
+            for map_type in foreign.values():
+                by_type[map_type] = by_type.get(map_type, 0) + 1
+            logger.warning(
+                "Materials repacked from a non-glTF mask packing: %s. "
+                "They render correctly, but roughness is reconstructed rather "
+                "than authored -- re-export the source set for an ORM target.",
+                ", ".join(
+                    f"{count} {name} map{'' if count == 1 else 's'}"
+                    for name, count in sorted(by_type.items())
+                ),
+                extra={"preset": "highlight"},
+            )
 
         return records
 
@@ -1960,6 +2495,7 @@ class MeshConvert(HelpMixin):
         raw: bytes,
         mime: str = "image/png",
         name: Optional[str] = None,
+        clamp: bool = False,
     ) -> int:
         """Embed already-encoded image bytes; return the texture index.
 
@@ -1968,6 +2504,14 @@ class MeshConvert(HelpMixin):
         images/textures/samplers plumbing and the same session dedupe cache --
         keyed by *cache_key* (the SOURCE file's abspath), so an atlas shared by six
         objects costs one embed.
+
+        ``clamp=True`` samples the new texture CLAMP_TO_EDGE instead of the
+        default REPEAT -- for atlases. Atlas rects can legally extend past
+        [0, 1] (an island crop folded into the published rect), and REPEAT
+        turns any tap past an atlas edge into the OPPOSITE edge's texels --
+        an unrelated object's lighting. Clamping returns the nearest real
+        content instead. Only the texture created here is affected; sampler 0
+        (shared by the file's ordinary materials) keeps its wrap.
         """
         gltf, cache = edit.gltf, edit.embedded
         if cache_key in cache:
@@ -1996,7 +2540,16 @@ class MeshConvert(HelpMixin):
         digests.setdefault(digest, len(images) - 1)
         if not samplers:  # one repeat sampler is enough for a preview
             samplers.append({"wrapS": 10497, "wrapT": 10497})
-        textures.append({"source": len(images) - 1, "sampler": 0})
+        sampler_index = 0
+        if clamp:
+            wanted = {"wrapS": 33071, "wrapT": 33071}  # CLAMP_TO_EDGE
+            sampler_index = next(
+                (i for i, s in enumerate(samplers) if s == wanted), None
+            )
+            if sampler_index is None:
+                samplers.append(dict(wanted))
+                sampler_index = len(samplers) - 1
+        textures.append({"source": len(images) - 1, "sampler": sampler_index})
         cache[cache_key] = len(textures) - 1
         return cache[cache_key]
 

@@ -855,6 +855,179 @@ class FileTest(BaseTestCase):
             self.assertIsNone(FileUtils.free_space("Z:/x/y/z.csv"))
 
     # -------------------------------------------------------------------------
+    # is_under Tests
+    # -------------------------------------------------------------------------
+
+    def test_is_under_true_for_a_descendant(self):
+        root = os.path.normpath("/proj")
+        self.assertTrue(FileUtils.is_under(os.path.join(root, "a", "b.png"), root))
+
+    def test_is_under_requires_a_separator_boundary(self):
+        """A bare startswith puts '/proj2/x.png' inside '/proj'."""
+        self.assertFalse(
+            FileUtils.is_under(
+                os.path.normpath("/proj2/x.png"), os.path.normpath("/proj")
+            )
+        )
+
+    def test_is_under_normalizes_separators_and_trailing_slash(self):
+        self.assertTrue(FileUtils.is_under("O:/proj/sub/x.png", "O:/proj/"))
+        if os.name == "nt":  # mixed separators only occur on Windows
+            self.assertTrue(FileUtils.is_under("O:/proj/sub/x.png", "O:\\proj"))
+
+    def test_is_under_inclusive_controls_the_identity_case(self):
+        root = os.path.normpath("/proj")
+        self.assertTrue(FileUtils.is_under(root, root))
+        self.assertFalse(FileUtils.is_under(root, root, inclusive=False))
+
+    def test_is_under_case_follows_the_platform(self):
+        under = FileUtils.is_under(
+            os.path.normpath("/PROJ/x.png"), os.path.normpath("/proj")
+        )
+        self.assertEqual(under, os.name == "nt")
+
+    def test_is_under_empty_operands_are_false(self):
+        self.assertFalse(FileUtils.is_under("", "/proj"))
+        self.assertFalse(FileUtils.is_under("/proj/x.png", ""))
+
+    def test_is_under_does_not_touch_the_filesystem_or_the_cwd(self):
+        """No abspath: a relative path must not be resolved against the CWD."""
+        self.assertFalse(FileUtils.is_under("x.png", os.getcwd()))
+
+    # -------------------------------------------------------------------------
+    # is_rooted_path / resolve_output_dir Tests
+    # -------------------------------------------------------------------------
+
+    def test_is_rooted_path_needs_a_drive_or_posix_root(self):
+        self.assertTrue(FileUtils.is_rooted_path("C:/bakes"))
+        self.assertTrue(FileUtils.is_rooted_path(r"\\server\share\bakes"))
+        self.assertFalse(FileUtils.is_rooted_path("bakes"))
+        self.assertFalse(FileUtils.is_rooted_path(""))
+
+    def test_is_rooted_path_rejects_a_driveless_root_on_windows(self):
+        """os.path.isabs('/new') is True on Windows and resolves to the CURRENT
+        drive's root -- which is why this test exists rather than isabs."""
+        self.assertEqual(FileUtils.is_rooted_path("/new"), os.sep == "/")
+
+    def test_is_rooted_path_rejects_a_drive_relative_entry(self):
+        """'C:new' carries a drive but no root: Windows resolves it against the
+        CWD *on that drive*, so it is the same trap as '/new' in another
+        spelling -- a full path only when the drive is followed by a root."""
+        self.assertFalse(FileUtils.is_rooted_path("C:new"))
+        self.assertFalse(FileUtils.is_rooted_path("C:"))
+        self.assertTrue(FileUtils.is_rooted_path("C:/new"))
+        self.assertTrue(FileUtils.is_rooted_path(r"C:\new"))
+
+    def test_resolve_output_dir_empty_entry_is_the_base(self):
+        base = os.path.normpath("/proj/sourceimages")
+        self.assertEqual(FileUtils.resolve_output_dir("", base), base)
+        self.assertEqual(FileUtils.resolve_output_dir("   ", base), base)
+
+    def test_resolve_output_dir_joins_a_subdirectory_entry(self):
+        base = os.path.normpath("/proj/sourceimages")
+        self.assertEqual(
+            FileUtils.resolve_output_dir("lightmaps", base),
+            os.path.join(base, "lightmaps"),
+        )
+        self.assertEqual(
+            FileUtils.resolve_output_dir("bake/lm", base),
+            os.path.normpath(os.path.join(base, "bake/lm")),
+        )
+
+    def test_resolve_output_dir_treats_a_separator_spelled_entry_as_a_subdir(self):
+        """'/new/' and 'new' name the same folder -- the driveless-root trap."""
+        base = os.path.normpath("/proj/sourceimages")
+        self.assertEqual(
+            FileUtils.resolve_output_dir("/lightmaps/", base),
+            os.path.join(base, "lightmaps"),
+        )
+
+    def test_resolve_output_dir_keeps_a_full_path(self):
+        base = os.path.normpath("/proj/sourceimages")
+        full = "C:/bakes/lm" if os.name == "nt" else "/bakes/lm"
+        self.assertEqual(
+            FileUtils.resolve_output_dir(full, base), os.path.normpath(full)
+        )
+
+    def test_resolve_output_dir_strips_quotes_and_expands(self):
+        base = os.path.normpath("/proj/sourceimages")
+        self.assertEqual(
+            FileUtils.resolve_output_dir('  " lightmaps "  ', base),
+            os.path.join(base, "lightmaps"),
+        )
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"PTK_OUT": "lightmaps"}):
+            var = "%PTK_OUT%" if os.name == "nt" else "$PTK_OUT"
+            self.assertEqual(
+                FileUtils.resolve_output_dir(var, base),
+                os.path.join(base, "lightmaps"),
+            )
+
+    def test_resolve_output_dir_never_returns_a_relative_path(self):
+        """A relative result would be created against the process CWD by the
+        caller's makedirs -- in a DCC, wherever the app was launched from."""
+        self.assertIsNone(FileUtils.resolve_output_dir("lightmaps", ""))
+        self.assertIsNone(FileUtils.resolve_output_dir("", None))
+        full = "C:/bakes" if os.name == "nt" else "/bakes"
+        self.assertEqual(
+            FileUtils.resolve_output_dir(full, None), os.path.normpath(full)
+        )
+
+    def test_resolve_output_dir_drive_relative_entry_is_a_subdir(self):
+        """'C:new' must not pass through verbatim: makedirs would create it
+        against the CWD on drive C:, which is the relative-path failure this
+        promises never to return."""
+        base = os.path.normpath("/proj/sourceimages")
+        for entry in ("C:new", "C:bake/lm"):
+            resolved = FileUtils.resolve_output_dir(entry, base)
+            self.assertTrue(
+                os.path.isabs(resolved), f"{entry!r} resolved to {resolved!r}"
+            )
+            self.assertTrue(FileUtils.is_under(resolved, base))
+
+    # -------------------------------------------------------------------------
+    # path_length_limit / exceeds_path_length Tests
+    # -------------------------------------------------------------------------
+
+    def test_path_length_limit_is_a_plausible_os_cap(self):
+        """Windows reports MAX_PATH or the extended max; POSIX reports PATH_MAX."""
+        limit = FileUtils.path_length_limit()
+        self.assertIsInstance(limit, int)
+        if os.name == "nt":
+            self.assertIn(limit, (260, 32767))
+        else:
+            self.assertGreaterEqual(limit, 255)
+
+    def test_exceeds_path_length_honors_an_explicit_budget(self):
+        """An explicit limit overrides the OS cap — callers leave headroom."""
+        path = os.path.abspath("a/b/c.png")
+        self.assertTrue(FileUtils.exceeds_path_length(path, len(path) - 1))
+        self.assertFalse(FileUtils.exceeds_path_length(path, len(path)))
+
+    def test_exceeds_path_length_measures_the_absolute_form(self):
+        """A short relative path resolving to a long absolute one still counts."""
+        rel = "t.png"
+        absolute = os.path.abspath(rel)
+        self.assertGreater(len(absolute), len(rel))
+        self.assertTrue(FileUtils.exceeds_path_length(rel, len(rel)))
+
+    def test_exceeds_path_length_empty_never_exceeds(self):
+        self.assertFalse(FileUtils.exceeds_path_length(""))
+        self.assertFalse(FileUtils.exceeds_path_length(None))
+
+    def test_exceeds_path_length_defaults_to_the_os_limit(self):
+        limit = FileUtils.path_length_limit()
+        long_path = os.path.abspath("x/" * (limit // 2 + 8) + "t.png")
+        self.assertGreater(len(long_path), limit)
+        self.assertTrue(FileUtils.exceeds_path_length(long_path))
+
+    def test_path_length_limit_is_cached_as_the_os_constant_it_is(self):
+        """A per-call registry read would answer the same thing every time."""
+        self.assertIs(FileUtils.path_length_limit(), FileUtils.path_length_limit())
+        self.assertGreater(FileUtils.path_length_limit.cache_info().hits, 0)
+
+    # -------------------------------------------------------------------------
     # get_dir_contents / get_object_path regression tests
     # -------------------------------------------------------------------------
 

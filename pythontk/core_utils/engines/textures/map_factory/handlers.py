@@ -97,24 +97,27 @@ class ORMMapHandler(WorkflowHandler):
             if context.logger:
                 context.logger.warning("No AO map, using white for ORM red channel")
 
-        if not roughness:
-            if not context.config.get("force_packed_maps", False):
+        # AO is exempt from the rule below — its fill is neutral white. An
+        # absent roughness or metallic fills BLACK, which reads downstream as a
+        # mirror-smooth surface, so those only ship when the Missing Maps rule
+        # tolerates them.
+        allow_incomplete = MapRegistry.allow_incomplete_pack(
+            context.config, [ao, roughness, metallic]
+        )
+        for name, channel, resolved in (
+            ("roughness", "green", roughness),
+            ("metallic", "blue", metallic),
+        ):
+            if resolved:
+                continue
+            if not allow_incomplete:
                 if context.logger:
-                    context.logger.warning("No roughness map for ORM green channel")
+                    context.logger.warning(f"No {name} map for ORM {channel} channel")
                 return None
             if context.logger:
                 context.logger.warning(
-                    "No roughness map for ORM green channel, using black (forced)"
-                )
-
-        if not metallic:
-            if not context.config.get("force_packed_maps", False):
-                if context.logger:
-                    context.logger.warning("No metallic map for ORM blue channel")
-                return None
-            if context.logger:
-                context.logger.warning(
-                    "No metallic map for ORM blue channel, using black (forced)"
+                    f"No {name} map for ORM {channel} channel, using black "
+                    "(Missing Maps rule)"
                 )
 
         try:
@@ -183,19 +186,19 @@ class MRAOMapHandler(WorkflowHandler):
         if not any([metallic, roughness, ao]):
             return None
 
-        if not metallic and not context.config.get("force_packed_maps", False):
-            if context.logger:
-                context.logger.warning(
-                    "No metallic map for MRAO red channel"
-                )
-            return None
-
-        if not roughness and not context.config.get("force_packed_maps", False):
-            if context.logger:
-                context.logger.warning(
-                    "No roughness map for MRAO green channel"
-                )
-            return None
+        # As with ORM: AO fills white (neutral), metallic/roughness fill black,
+        # so only the latter two gate on the Missing Maps rule.
+        allow_incomplete = MapRegistry.allow_incomplete_pack(
+            context.config, [metallic, roughness, ao]
+        )
+        for name, channel, resolved in (
+            ("metallic", "red", metallic),
+            ("roughness", "green", roughness),
+        ):
+            if not resolved and not allow_incomplete:
+                if context.logger:
+                    context.logger.warning(f"No {name} map for MRAO {channel} channel")
+                return None
 
         layout = context.config.get("mrao_layout", "rgb")
         detail = None
@@ -275,16 +278,24 @@ class MaskMapHandler(WorkflowHandler):
         smoothness, invert = context.resolve_smoothness_channel()
 
         # Ensure we have at least one component
-        if not any([metallic, ao, smoothness]):
+        resolved = [c for c in (metallic, ao, smoothness) if c]
+        if not resolved:
             return None
 
-        # Special case: If only AO is present, we proceed but log a message.
-        if ao and not metallic and not smoothness:
-            if not context.config.get("force_packed_maps", False):
+        # A lone resolved channel is one map wearing a packed name: the other two
+        # become constant fills, and an absent smoothness fills WHITE — every
+        # surface mirror-smooth. So it gates on the Missing Maps rule, exactly as
+        # ORM/MRAO gate their non-neutral channels ('Pack Anyway' still ships it).
+        # Only the AO-only case used to gate here, which left a metallic-only or
+        # smoothness-only set writing a Mask Map under EVERY rule — the one
+        # packing that disagreed with its siblings.
+        if len(resolved) < 2:
+            if not MapRegistry.allow_incomplete_pack(context.config, resolved):
                 return None
             if context.logger:
                 context.logger.info(
-                    "Only AO map present, generating Mask Map with default Metallic/Smoothness"
+                    "Only one source map present, generating Mask Map with "
+                    "defaults for the other channels"
                 )
 
         if not metallic:

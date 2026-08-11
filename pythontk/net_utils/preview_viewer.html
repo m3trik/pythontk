@@ -69,6 +69,8 @@
 <div id="controls">
   <button class="ui" id="scaleToggle" title="Toggle between a fitted preview size and the model's true scale">Scale: fit</button>
   <button class="ui" id="frameBtn" title="Re-frame the camera on the model">Frame</button>
+  <button class="ui" id="lightToggle" hidden
+          title="Baked lighting plus a dim environment (which is what makes normal maps and specular visible), or the bake on its own">Light: bake + env</button>
 </div>
 
 <script>
@@ -112,6 +114,7 @@ const el = {
   hint: document.getElementById('hint'),
   scaleToggle: document.getElementById('scaleToggle'),
   frameBtn: document.getElementById('frameBtn'),
+  lightToggle: document.getElementById('lightToggle'),
 };
 
 /* ---------------------------------------------------------------- scene --- */
@@ -127,10 +130,10 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15171a);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-// Kept as a handle, not just assigned: a lightmapped model switches the viewer's own
-// lighting off (see load()), and a later un-lightmapped one has to switch it back on.
-const defaultEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environment = defaultEnvironment;
+// Assigned for the life of the session. A lightmapped model used to switch this off
+// entirely; it is now only dimmed, via `scene.environmentIntensity`, because switching it
+// off takes every normal map with it (see LIGHTMAP_ENV_INTENSITY).
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 // The RoomEnvironment IBL above is the main light. Piling a bright hemisphere
 // and key light on top of it (as this once did, at 1.6 and 2.2) drives every
@@ -141,6 +144,34 @@ scene.environment = defaultEnvironment;
 // of five 8-bit levels, indistinguishable from white. One modest key light for
 // form definition is enough alongside the environment.
 const DEFAULT_KEY_INTENSITY = 0.9;
+// How much environment a LIGHTMAPPED scene keeps. Not zero, and that is the whole point:
+// three.js adds lightmap irradiance through BRDF_Lambert, which has no normal term, so a
+// bake supplies light that does not vary with the surface normal at all. Switch the
+// viewer's own lighting fully off and nothing left in the render samples the normal --
+// normal maps, roughness and every specular highlight go inert and the model reads dead
+// flat. Measured on a production room: 51 of 57 materials lightmapped, all 54 normal maps
+// correctly bound at texCoord 0, no surface detail visible anywhere. The environment is
+// the right thing to keep because it is omnidirectional -- it cannot contradict the bake's
+// shadow DIRECTION the way a key light would -- and its view/normal-dependent specular
+// term (getIBLRadiance, which takes the normal) is exactly what makes a normal map
+// legible. The key light still goes off; a directional diffuse gradient is precisely the
+// second, contradictory rig to avoid.
+//
+// Applied through `scene.environmentIntensity`, which is SCENE-WIDE, because that is the
+// only lever the renderer honours here: a material-level `envMapIntensity` is silently
+// overwritten for exactly the materials this affects --
+//
+//     if (material.isMeshStandardMaterial && material.envMap === null
+//         && scene.environment !== null) m_uniforms.envMapIntensity.value
+//                                            = scene.environmentIntensity;
+//
+// and every GLTFLoader material is a MeshStandardMaterial with no envMap of its own. (An
+// earlier revision of this fix set the material property and did nothing at all.) So a
+// partly-baked scene dims its un-baked props along with the baked geometry; they stay lit,
+// just cooler. Per-material control would mean giving each one `material.envMap = <the
+// shared PMREM texture>` to opt out of that override, which disposeModel would then
+// destroy on the next push -- not worth it for a preview.
+const LIGHTMAP_ENV_INTENSITY = 0.25;
 const keyLight = new THREE.DirectionalLight(0xffffff, DEFAULT_KEY_INTENSITY);
 keyLight.position.set(3, 6, 4);
 scene.add(keyLight);
@@ -255,7 +286,16 @@ function frameCamera() {
 //     multiplying it back is what restores the original exposure.
 //
 // Also clears the slot it arrived in, so the same texture is not applied twice under two
-// different interpretations.
+// different interpretations. Returns how many materials it bound, which is what decides
+// the scene's lighting policy (see applyLighting).
+//
+// Which real slot each carrier arrives in — mirrors blendertk's LightmapWebExport.CARRIERS.
+// A Map rather than an object literal because the lookup decides whether to REBIND a
+// material: property access on an object literal walks the prototype chain, so a manifest
+// naming 'constructor' as its carrier would hand back a truthy function and slip past the
+// refusal below. Map.get answers only for keys actually in the table.
+const CARRIER_SLOTS = new Map([['occlusion', 'aoMap'], ['emissive', 'emissiveMap']]);
+
 function applyLightmaps(gltf) {
   let manifest = null;
   for (const holder of [gltf.parser?.json?.scenes?.[0]?.extras, gltf.parser?.json?.extras, gltf.scene?.userData]) {
@@ -266,10 +306,16 @@ function applyLightmaps(gltf) {
   }
   if (!manifest || !manifest.materials) return 0;
 
+  // An unknown carrier is REFUSED rather than defaulted. The previous form special-cased
+  // 'fused' (a bake level both DCC tools have since removed, so nothing can emit it) and
+  // sent everything else to aoMap, so the only branch it had was dead while any future or
+  // misspelled carrier would be rebound under the interpretation it is least likely to
+  // want. Not binding leaves the map in the slot it arrived in, where it still reads as
+  // plausible occlusion.
   const carrier = manifest.carrier || 'occlusion';
-  if (carrier === 'fused') return 0; // already the material's own appearance — nothing to rebind
+  const slot = CARRIER_SLOTS.get(carrier);
+  if (!slot) return 0;
 
-  const slot = carrier === 'emissive' ? 'emissiveMap' : 'aoMap';
   const uv = manifest.uv ?? 1;
   let bound = 0;
 
@@ -283,6 +329,11 @@ function applyLightmaps(gltf) {
 
       texture.colorSpace = manifest.encoding === 'srgb' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       texture.channel = uv;
+      // Floors/walls fill the frame at grazing angles, where plain trilinear
+      // collapses the atlas to its coarsest mips and rect gutters average into
+      // the content as dark tile borders. Anisotropic taps keep fine-mip
+      // detail along the view direction; 8 is plenty and headset-safe.
+      texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
       texture.needsUpdate = true;
 
       material.lightMap = texture;
@@ -295,6 +346,29 @@ function applyLightmaps(gltf) {
     }
   });
   return bound;
+}
+
+// The whole lighting policy, in one place, so the load path and the toggle cannot drift
+// into disagreeing about it. `bakeOnly` drops the environment to nothing, which is what
+// tells a flat-looking model caused by a bad bake apart from one caused by the viewer's
+// own lighting — the question that toggle exists to answer.
+let lightmapped = 0;
+let bakeOnly = false;
+
+function applyLighting() {
+  scene.environmentIntensity = lightmapped ? (bakeOnly ? 0 : LIGHTMAP_ENV_INTENSITY) : 1;
+  keyLight.intensity = lightmapped ? 0 : DEFAULT_KEY_INTENSITY;
+  el.lightToggle.hidden = !lightmapped;
+  el.lightToggle.textContent = `Light: ${bakeOnly ? 'bake only' : 'bake + env'}`;
+}
+
+// Guarded, because the keyboard shortcut works whether or not the button is showing: on an
+// un-lightmapped model the toggle has no effect to see, so flipping it there would silently
+// leave the flag set and open the NEXT lightmapped push with no environment at all.
+function toggleBakeOnly() {
+  if (!lightmapped) return;
+  bakeOnly = !bakeOnly;
+  applyLighting();
 }
 
 function describe(root) {
@@ -340,13 +414,13 @@ async function load(url, version) {
   current = gltf.scene;
   pivot.add(current);
 
-  // A lightmapped model already contains its lighting. Leaving the viewer's own IBL and
-  // key light on would add a second, contradictory light rig on top of the bake — the
-  // baked shadows stay put while everything around them lifts, which reads as a washed
-  // out model rather than as double lighting, so it is easy to misdiagnose as a bad bake.
-  const lightmapped = applyLightmaps(gltf);
-  scene.environment = lightmapped ? null : defaultEnvironment;
-  keyLight.intensity = lightmapped ? 0 : DEFAULT_KEY_INTENSITY;
+  // A lightmapped model already contains its DIFFUSE lighting, so the key light goes
+  // off: a second directional rig on top of the bake leaves the baked shadows in place
+  // while everything around them lifts, which reads as a washed out model rather than as
+  // double lighting and is easy to misdiagnose as a bad bake. The environment is a
+  // different case and stays on, dimmed rather than removed — see LIGHTMAP_ENV_INTENSITY.
+  lightmapped = applyLightmaps(gltf);
+  applyLighting();
 
   const box = new THREE.Box3().setFromObject(current);
   modelBounds = {
@@ -424,9 +498,11 @@ addEventListener('pagehide', () => { navigator.sendBeacon('viewer-closed', ''); 
 
 el.scaleToggle.addEventListener('click', () => { realScale = !realScale; layout(); });
 el.frameBtn.addEventListener('click', frameCamera);
+el.lightToggle.addEventListener('click', toggleBakeOnly);
 addEventListener('keydown', (event) => {
   if (event.key === 'r') { realScale = !realScale; layout(); }
   if (event.key === 'f') frameCamera();
+  if (event.key === 'l') toggleBakeOnly();
 });
 
 addEventListener('resize', () => {

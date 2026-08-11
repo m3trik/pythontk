@@ -305,6 +305,12 @@ class AppInstaller:
         Tar extraction filters members to prevent path-traversal attacks
         (CVE-2007-4559): absolute paths and ``..`` components are rejected.
         """
+        # Deferred because ``file_utils`` itself imports from ``core_utils``,
+        # so a module-level import here risks a cycle — the same reason, and
+        # the same pattern, as ``preset_store`` and ``package_manager``. (It
+        # does not close one today; the convention is what keeps it that way.)
+        from pythontk.file_utils._file_utils import FileUtils
+
         at = archive_type.lower().lstrip(".")
         if at == "zip":
             with zipfile.ZipFile(archive_path, "r") as zf:
@@ -312,10 +318,12 @@ class AppInstaller:
                 dest_real = os.path.realpath(dest)
                 for member in zf.namelist():
                     resolved = os.path.realpath(os.path.join(dest, member))
-                    if (
-                        not resolved.startswith(dest_real + os.sep)
-                        and resolved != dest_real
-                    ):
+                    # Both sides are already realpath'd, so is_under's pure
+                    # string test is the whole judgement -- and it normalizes
+                    # case, which a bare startswith does not: on Windows a
+                    # member landing in `C:\Dest\x` under a `C:\dest` root read
+                    # as an escape and aborted a legitimate install.
+                    if not FileUtils.is_under(resolved, dest_real):
                         raise RuntimeError(
                             f"Zip member {member!r} escapes " f"destination directory"
                         )
@@ -333,9 +341,15 @@ class AppInstaller:
                 if hasattr(tarfile, "data_filter"):
                     tf.extractall(dest, filter="data")
                 else:
+                    dest_real = os.path.realpath(dest)
                     for member in tf.getmembers():
                         resolved = os.path.realpath(os.path.join(dest, member.name))
-                        if not resolved.startswith(os.path.realpath(dest)):
+                        # is_under lands the comparison on a separator
+                        # boundary; the bare startswith this replaces let a
+                        # sibling directory whose name merely EXTENDS the
+                        # destination ("/opt/app-old" under "/opt/app") pass
+                        # the traversal guard outright.
+                        if not FileUtils.is_under(resolved, dest_real):
                             raise RuntimeError(
                                 f"Tar member {member.name!r} escapes "
                                 f"destination directory"

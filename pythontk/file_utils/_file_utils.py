@@ -4,6 +4,7 @@ import sys
 import os
 import re
 import json
+import functools
 import traceback
 from typing import Union, List, Tuple, Optional
 
@@ -73,6 +74,177 @@ class FileUtils(HelpMixin):
         except (OSError, ValueError, AttributeError):
             return False
         return bool(attrs & (offline | recall_on_open | recall_on_data_access))
+
+    @staticmethod
+    def is_under(path: str, directory: str, inclusive: bool = True) -> bool:
+        """Is *path* inside *directory*?
+
+        A pure shape test on the two strings — no filesystem access, no
+        ``abspath``: resolving a relative path here would silently measure it
+        against the process CWD, which is almost never the base a caller means
+        (a DCC resolves against its project root). Both arguments must
+        therefore already be absolute, or relative to the same base.
+
+        Separators and (on Windows) case are normalized, and the comparison
+        lands on a separator boundary — a bare ``startswith`` puts
+        ``/proj2/x.png`` inside ``/proj``.
+
+        Parameters:
+            path (str): The path to test.
+            directory (str): The directory it might live under.
+            inclusive (bool): Whether *path* == *directory* counts as inside.
+
+        Returns:
+            bool: True when *path* is inside *directory*.
+        """
+        if not (path and directory):
+            return False
+        p = os.path.normcase(os.path.normpath(path))
+        d = os.path.normcase(os.path.normpath(directory))
+        if p == d:
+            return inclusive
+        return p.startswith(d.rstrip(os.sep) + os.sep)
+
+    @staticmethod
+    def is_rooted_path(text: str) -> bool:
+        """Does *text* name a full path rather than a subdirectory?
+
+        Deliberately stricter than ``os.path.isabs``, which calls a rooted but
+        driveless ``"/new"`` absolute on Windows and then resolves it to the
+        *current drive's* root — so a user typing ``"/new"`` into a
+        directory field as a separator-spelled ``"new"`` silently lands
+        somewhere else entirely. A path counts as rooted only with a drive or
+        UNC share (Windows), or a leading ``/`` (POSIX).
+
+        A drive alone is not enough: ``"C:new"`` carries a drive but no root,
+        and Windows resolves it against the current directory *on that drive* —
+        the same trap as ``"/new"`` in another spelling. The drive must be
+        followed by a separator. (A UNC share is inherently rooted, so
+        ``splitdrive`` returning ``"//server/share"`` needs no such check.)
+
+        Parameters:
+            text (str): The directory entry to classify.
+
+        Returns:
+            bool: True when *text* is a full path; False when it names a
+            subdirectory (including "" ).
+        """
+        if not text:
+            return False
+        drive, remainder = os.path.splitdrive(text)
+        if drive:
+            # "C:" needs a root after it; a UNC share ("//server/share") is one.
+            return remainder[:1] in ("/", "\\") or drive[:1] in ("/", "\\")
+        return os.sep == "/" and text.startswith("/")
+
+    @classmethod
+    def resolve_output_dir(cls, entry: str, base: Optional[str]) -> Optional[str]:
+        """Resolve a user-typed output-directory *entry* against *base*.
+
+        The one rule behind every "optional output directory" field: empty
+        means *base*, a full path (:meth:`is_rooted_path`) wins outright, and
+        anything else is a subdirectory of *base* — which is the portable
+        spelling, since it survives the project being moved or copied.
+
+        The entry is treated as typed-by-a-human: surrounding whitespace and
+        the quotes a path picks up when pasted out of a file manager are
+        stripped, ``~`` and environment variables expand, and a bare entry's
+        own leading/trailing separators are dropped so ``"/new/"`` and
+        ``"new"`` name the same folder.
+
+        Never returns a *relative* path: a relative result would be created
+        against the process CWD by the eventual ``os.makedirs``, and in a DCC
+        that is wherever the app happened to be launched from. With no *base*
+        to resolve against, a subdirectory entry is unanswerable and ``None``
+        is returned so the caller can fall back to its own default.
+
+        Parameters:
+            entry (str): The field's text.
+            base (str): Directory a subdirectory entry is relative to.
+
+        Returns:
+            str: The absolute output directory, or None when neither the entry
+            nor *base* can supply one.
+        """
+        text = (entry or "").strip().strip("\"'").strip()
+        if not text:
+            return base or None
+        text = os.path.expanduser(os.path.expandvars(text))
+        if cls.is_rooted_path(text):
+            return os.path.normpath(text)
+        if not base:
+            return None
+        # A subdirectory entry's drive (the "C:" of a drive-relative "C:new")
+        # names no root, so it cannot be honoured -- and left on, os.path.join
+        # would discard *base* and hand back the relative entry unchanged.
+        text = os.path.splitdrive(text)[1]
+        return os.path.normpath(os.path.join(base, text.strip("/\\").strip()))
+
+    @staticmethod
+    @functools.lru_cache(maxsize=1)
+    def path_length_limit() -> int:
+        """The longest path this OS will accept, in characters.
+
+        Windows caps a path at ``MAX_PATH`` (260) unless the machine opts into
+        long paths (``LongPathsEnabled``), which raises it to the extended-length
+        maximum of 32767. POSIX reports ``PATH_MAX`` via ``pathconf``, falling
+        back to the near-universal 4096.
+
+        A limit is about what will *travel*, not only what this machine will
+        open: a 300-character path that works here breaks on the next artist's
+        box, in a zip, or in a DCC that still calls the ANSI API.
+
+        Cached for the process: this is an OS constant, and flipping the
+        registry value only takes effect for processes started afterwards, so
+        a per-call registry read would answer the same thing every time.
+
+        Returns:
+            int: Maximum path length in characters.
+        """
+        if os.name == "nt":
+            try:
+                import winreg
+
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SYSTEM\CurrentControlSet\Control\FileSystem",
+                ) as key:
+                    enabled, _type = winreg.QueryValueEx(key, "LongPathsEnabled")
+            except (ImportError, OSError):
+                enabled = 0
+            # 32767 is the extended-length maximum (\\?\-prefixed paths).
+            return 32767 if enabled else 260
+        try:
+            limit = os.pathconf("/", "PC_PATH_MAX")
+        except (AttributeError, OSError, ValueError):
+            limit = None
+        return int(limit) if limit else 4096
+
+    @staticmethod
+    def exceeds_path_length(path: str, limit: Optional[int] = None) -> bool:
+        """Is *path* longer than the OS path-length limit?
+
+        Measures the ABSOLUTE form — the string the filesystem ultimately
+        sees. A relative path is resolved against the CWD, which is a guess:
+        a caller whose paths resolve against something else (a DCC project
+        root, a library file) must resolve them itself first and pass the
+        result, or the answer measures the wrong string. Resolving is still
+        the right default — measuring a relative path verbatim would silently
+        under-report, and a missed over-long path is the failure this exists
+        to catch. Empty paths never exceed.
+
+        Parameters:
+            path (str): Path to measure (environment variables expanded).
+            limit (int, optional): Override the OS limit — pass a stricter
+                budget to leave room for a deeper destination tree.
+
+        Returns:
+            bool: True when the path is over the limit.
+        """
+        if not path:
+            return False
+        cap = FileUtils.path_length_limit() if limit is None else int(limit)
+        return len(os.path.abspath(os.path.expandvars(path))) > cap
 
     @staticmethod
     def free_space(path: str) -> Optional[int]:
@@ -396,8 +568,9 @@ class FileUtils(HelpMixin):
             inc_roots: set = set()
 
             def _under_inc(root):
-                r = os.path.normcase(root)
-                return any(r == p or r.startswith(p + os.sep) for p in inc_roots)
+                # inc_roots entries are already normcased; is_under normcases
+                # both sides again, which is idempotent.
+                return any(FileUtils.is_under(root, p) for p in inc_roots)
 
             for root, dirs, files in os.walk(base, topdown=True):
                 if has_dir_filter:

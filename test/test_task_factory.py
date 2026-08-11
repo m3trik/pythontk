@@ -246,5 +246,24 @@ class TaskFactoryTest(unittest.TestCase):
         self.assertFalse(r._deferred_restores)
 
 
+class CheckCountTest(unittest.TestCase):
+    """The counts the DCC exporters print as "Checks Passed: N/N"."""
+
+    def test_counts_exclude_a_check_whose_method_does_not_exist(self):
+        """A check with no method is warn-skipped and never runs, so counting
+        it makes the banner claim a check passed that was never made."""
+        r = _Recorder()
+        self.assertTrue(
+            r.run_tasks({"check_ok": True, "check_absent": True, "task_plain": 1})
+        )
+        self.assertEqual(r._last_check_count, 1)
+        self.assertEqual(r._last_task_count, 1)
+
+    def test_counts_exclude_a_task_whose_method_does_not_exist(self):
+        r = _Recorder()
+        r.run_tasks({"check_ok": True, "task_plain": 1, "task_absent": 1})
+        self.assertEqual(r._last_task_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

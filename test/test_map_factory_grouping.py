@@ -414,6 +414,304 @@ class CoverageAwareRedundancyTest(BaseTestCase):
         self.assertIn("Ambient_Occlusion", d)
 
 
+class PackedVsPackedTest(BaseTestCase):
+    """Two PACKED maps carrying the same channels must not both survive.
+
+    Regression (found live): the glTF preset connected BOTH an ORM and an HDRP
+    MSAO. Precedence is keyed off `replaces`, and no packing lists another
+    packing — so the requested ORM retired the loose Metallic/Roughness/AO
+    first, after which the MSAO saw no loose components left and took the
+    "sole source of its channels" branch. Both then wired into the same
+    metallic / roughness / AO slots, and the FBX-safe connection carried the
+    foreign mask map into the GLB as dead payload.
+    """
+
+    def _preset(self, workflow, **overrides):
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry
+
+        cfg = dict(MapRegistry().get_workflow_presets()[workflow])
+        cfg.update(overrides)
+        return cfg
+
+    def test_gltf_preset_drops_the_hdrp_mask_map(self):
+        """The reported bug: glTF wants ORM, so the MSAO is foreign."""
+        from pythontk.core_utils.engines.textures.map_registry import WF
+
+        d = {
+            "Base_Color": "/x/a_Base_color.png",
+            "Normal_OpenGL": "/x/a_Normal_OpenGL.png",
+            "ORM": "/x/a_ORM.png",
+            "MSAO": "/x/a_MSAO.png",
+        }
+        report = MapFactory.filter_redundant_maps(d, config=self._preset(WF.GLTF))
+
+        self.assertIn("ORM", d, "glTF's own packing must survive")
+        self.assertNotIn("MSAO", d, "the HDRP mask map must not stay wired")
+        self.assertIn("MSAO", report["dropped"])
+        self.assertIn("ORM", report["dropped"]["MSAO"])
+        self.assertEqual(sorted(d), ["Base_Color", "Normal_OpenGL", "ORM"])
+
+    def test_hdrp_preset_drops_the_gltf_orm(self):
+        """Symmetric: the gap kept whichever packing the preset did not want."""
+        from pythontk.core_utils.engines.textures.map_registry import WF
+
+        d = {"ORM": "/x/a_ORM.png", "MSAO": "/x/a_MSAO.png"}
+        MapFactory.filter_redundant_maps(d, config=self._preset(WF.HDRP))
+
+        self.assertEqual(list(d), ["MSAO"])
+
+    def test_explicit_flag_outranks_force_packed_maps(self):
+        """`force_packed_maps` must not promote a foreign packing to a peer.
+
+        It means "emit a packed map even with a source channel missing", not
+        "keep every packing" — otherwise ticking it re-opens the double-wire.
+        """
+        from pythontk.core_utils.engines.textures.map_registry import WF
+
+        d = {"ORM": "/x/a_ORM.png", "MSAO": "/x/a_MSAO.png"}
+        MapFactory.filter_redundant_maps(
+            d, config=self._preset(WF.GLTF, force_packed_maps=True)
+        )
+
+        self.assertEqual(list(d), ["ORM"])
+
+    def test_no_config_keeps_exactly_one_packing(self):
+        """With no stated target, the broadly-targeted packing wins.
+
+        The compositor calls this with no config; "legacy packed-wins" is about
+        packed-vs-LOOSE and never licensed two packings fighting for one slot.
+        ORM declares UE/glTF/Godot, MSAO only HDRP.
+        """
+        d = {"ORM": "/x/a_ORM.png", "MSAO": "/x/a_MSAO.png"}
+        MapFactory.filter_redundant_maps(d)
+
+        self.assertEqual(list(d), ["ORM"])
+
+    def test_a_three_way_pile_up_collapses_in_one_pass(self):
+        """All three drive metallic / roughness / AO, so only one may survive.
+
+        Pins the descending walk: the MSAO is judged against both survivors
+        that outrank it, and the Metallic_Smoothness against the ORM, in a
+        single pass. This is the blendertk `resolve_pbr_plan` case at the SSoT
+        layer, where the behaviour is actually decided.
+        """
+        d = {
+            "ORM": "/x/a_ORM.png",
+            "MSAO": "/x/a_MaskMap.png",
+            "Metallic_Smoothness": "/x/a_MetallicSmoothness.png",
+        }
+        report = MapFactory.filter_redundant_maps(d)
+
+        self.assertEqual(list(d), ["ORM"])
+        self.assertEqual(sorted(report["dropped"]), ["MSAO", "Metallic_Smoothness"])
+        self.assertEqual(
+            report["extracted"], {}, "every channel is derivable from the ORM"
+        )
+
+    def test_non_overlapping_packings_both_survive(self):
+        """Albedo_Transparency shares no channel with ORM — it is not a rival."""
+        from pythontk.core_utils.engines.textures.map_registry import WF
+
+        d = {
+            "Albedo_Transparency": "/x/a_Albedo_Transparency.png",
+            "ORM": "/x/a_ORM.png",
+        }
+        MapFactory.filter_redundant_maps(d, config=self._preset(WF.GLTF))
+
+        self.assertEqual(sorted(d), ["Albedo_Transparency", "ORM"])
+
+    def test_lone_packed_map_is_untouched(self):
+        """No rival packing: the MSAO is still the sole source of its channels."""
+        from pythontk.core_utils.engines.textures.map_registry import WF
+
+        d = {"MSAO": "/x/a_MSAO.png"}
+        MapFactory.filter_redundant_maps(d, config=self._preset(WF.GLTF))
+
+        self.assertEqual(list(d), ["MSAO"])
+
+    def test_loose_maps_still_retire_behind_the_surviving_packing(self):
+        """The packed-vs-loose pass must still run on what the pre-pass leaves."""
+        from pythontk.core_utils.engines.textures.map_registry import WF
+
+        d = {
+            "ORM": "/x/a_ORM.png",
+            "MSAO": "/x/a_MSAO.png",
+            "Metallic": "/x/a_Metallic.png",
+            "Roughness": "/x/a_Roughness.png",
+            "Ambient_Occlusion": "/x/a_AO.png",
+        }
+        MapFactory.filter_redundant_maps(d, config=self._preset(WF.GLTF))
+
+        self.assertEqual(list(d), ["ORM"])
+
+
+class PackedVsPackedExtractionTest(BaseTestCase):
+    """A losing packing may carry a channel the winner does not — never lose it."""
+
+    def setUp(self):
+        super().setUp()
+        import pythontk as ptk
+
+        self._artifacts = ptk.TempArtifacts("packed_conflict")
+        self.tmp = self._artifacts.dir_path()
+
+    def tearDown(self):
+        self._artifacts.cleanup()
+        super().tearDown()
+
+    def _msao(self, name="asset_MSAO.png", ao=200):
+        """RGBA MSAO: R=Metallic 30, G=AO `ao`, B=Detail 0, A=Smoothness 90."""
+        from PIL import Image
+
+        path = os.path.join(self.tmp, name)
+        Image.merge(
+            "RGBA", [Image.new("L", (8, 8), v) for v in (30, ao, 0, 90)]
+        ).save(path)
+        return path
+
+    def _metallic_smoothness(self, name="asset_MetallicSmoothness.png"):
+        from PIL import Image
+
+        path = os.path.join(self.tmp, name)
+        Image.merge(
+            "RGBA", [Image.new("L", (8, 8), v) for v in (60, 60, 60, 150)]
+        ).save(path)
+        return path
+
+    def test_uncovered_channel_is_extracted_before_the_loser_drops(self):
+        """URP wants Metallic_Smoothness, which carries no AO — extract MSAO's."""
+        from PIL import Image
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry, WF
+
+        d = {
+            "MSAO": self._msao(),
+            "Metallic_Smoothness": self._metallic_smoothness(),
+        }
+        report = MapFactory.filter_redundant_maps(
+            d, config=dict(MapRegistry().get_workflow_presets()[WF.URP])
+        )
+
+        self.assertNotIn("MSAO", d, "the foreign packing should retire")
+        self.assertIn("Metallic_Smoothness", d)
+        self.assertIn("Ambient_Occlusion", d, "AO channel lost with the MSAO")
+        self.assertEqual(
+            list(report["extracted"]),
+            ["Ambient_Occlusion"],
+            "only the channel the winner cannot supply should be written",
+        )
+        self.assertEqual(
+            Image.open(d["Ambient_Occlusion"]).convert("L").getpixel((4, 4)), 200
+        )
+
+    def test_a_surviving_loose_map_is_not_re_extracted_from_the_loser(self):
+        """A channel the inventory already carries loose must not be rewritten.
+
+        The winner (Metallic_Smoothness) carries no AO, but the caller listed
+        their own AO map. Extracting the loser's AO channel anyway swaps that
+        inventory entry for a derived file — so the material gets channel data
+        in place of the authored map, plus a redundant write. The on-disk
+        `output_path_for` guard does not catch it: the caller's file need not
+        sit under the canonical name (measured — it produced
+        `asset_Ambient_Occlusion.png` beside an `asset_Mixed_AO.png`).
+        """
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry, WF
+
+        loose_ao = os.path.join(self.tmp, "asset_Mixed_AO.png")
+        from PIL import Image
+
+        Image.new("L", (8, 8), 55).save(loose_ao)
+
+        d = {
+            "MSAO": self._msao(),
+            "Metallic_Smoothness": self._metallic_smoothness(),
+            "Ambient_Occlusion": loose_ao,
+        }
+        report = MapFactory.filter_redundant_maps(
+            d, config=dict(MapRegistry().get_workflow_presets()[WF.URP])
+        )
+
+        self.assertNotIn("MSAO", d)
+        self.assertEqual(report["extracted"], {}, "nothing needed extracting")
+        self.assertEqual(
+            d["Ambient_Occlusion"], loose_ao, "the caller's own AO was replaced"
+        )
+        self.assertNotIn(
+            "asset_Ambient_Occlusion.png",
+            os.listdir(self.tmp),
+            "a redundant AO was extracted beside the caller's own",
+        )
+
+    def test_extraction_unavailable_keeps_both_rather_than_losing_a_channel(self):
+        """Lossless direction: keep the rival rather than drop its only AO."""
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry, WF
+
+        d = {
+            "MSAO": self._msao(),
+            "Metallic_Smoothness": self._metallic_smoothness(),
+        }
+        MapFactory.filter_redundant_maps(
+            d,
+            config=dict(MapRegistry().get_workflow_presets()[WF.URP]),
+            extract_missing=False,
+        )
+
+        self.assertIn("MSAO", d, "dropping it would lose the AO channel")
+        self.assertIn("Metallic_Smoothness", d)
+
+
+class PackedPrecedenceTest(BaseTestCase):
+    """`MapRegistry.packed_precedence` — the deterministic packed-map ranking."""
+
+    def setUp(self):
+        super().setUp()
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry
+
+        self.registry = MapRegistry()
+
+    def _rank(self, config, *names):
+        order = self.registry.packed_precedence(config)
+        return [n for n in order if n in names]
+
+    def test_requested_packing_outranks_every_other(self):
+        from pythontk.core_utils.engines.textures.map_registry import WF
+
+        preset = self.registry.get_workflow_presets()[WF.GLTF]
+        self.assertEqual(self._rank(preset, "ORM", "MSAO", "MRAO")[0], "ORM")
+
+    def test_a_named_request_outranks_both_force_and_breadth(self):
+        """MSAO is asked for by name; ORM only by force — and ORM is broader.
+
+        If the force escape hatch conferred the same level as a named flag,
+        the breadth tiebreak would put the ORM first and the mask map would
+        lose under a preset that explicitly asked for it.
+        """
+        order = self._rank(
+            {"mask_map": True, "orm_map": False, "force_packed_maps": True},
+            "ORM",
+            "MSAO",
+        )
+        self.assertEqual(order, ["MSAO", "ORM"])
+
+    def test_breadth_breaks_ties_when_nothing_is_requested(self):
+        """ORM targets UE/glTF/Godot; MSAO only HDRP; MRAO declares none."""
+        self.assertEqual(
+            self._rank(None, "ORM", "MSAO", "MRAO"), ["ORM", "MSAO", "MRAO"]
+        )
+
+    def test_every_packed_type_is_listed_exactly_once(self):
+        order = self.registry.packed_precedence(None)
+        packed = [
+            n for n in self.registry.get_map_types() if self.registry.get(n).is_packed
+        ]
+        self.assertEqual(sorted(order), sorted(packed))
+        self.assertEqual(len(order), len(set(order)), "duplicate entries")
+
+    def test_loose_types_are_never_listed(self):
+        order = self.registry.packed_precedence(None)
+        self.assertNotIn("Metallic", order)
+        self.assertNotIn("Base_Color", order)
+
+
 class ResolveNormalMapsTest(BaseTestCase):
     """One normal map per inventory, optionally in a requested convention.
 

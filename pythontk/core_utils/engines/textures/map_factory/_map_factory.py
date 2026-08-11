@@ -15,8 +15,10 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterable,
     List,
     Optional,
+    Set,
     Tuple,
     Type,
     Union,
@@ -76,6 +78,11 @@ class MapFactory(LoggingMixin):
         "output_profile": None,
         "use_input_fallbacks": True,
         "use_output_fallbacks": True,
+        # What a packed map does when its source channels aren't all resolvable
+        # (MapRegistry.MISSING_SKIP / _MULTI / _FORCE). None defers to the legacy
+        # ``force_packed_maps`` bool, then to MISSING_SKIP — see
+        # MapRegistry.resolve_missing_map_rule.
+        "missing_map_rule": None,
         # Workflow flags
         "albedo_transparency": False,
         "metallic_smoothness": False,
@@ -1080,11 +1087,21 @@ class MapFactory(LoggingMixin):
         config: Dict[str, Any] = None,
         extract_missing: bool = True,
     ) -> Dict[str, Dict[str, str]]:
-        """Resolve packed/loose map redundancy in-place — losslessly.
+        """Resolve packed-map redundancy in-place — losslessly.
 
-        A packed map (ORM/MSAO/MRAO/…) and its loose components (Metallic,
-        Roughness, AO, …) are mutually redundant — wiring both fights over the
-        same material slots. Which one wins depends on the target workflow:
+        A packed map (ORM/MSAO/MRAO/…) is redundant against two different
+        things, and both are resolved here because either one left standing
+        wires the same material slots twice.
+
+        **Rival packings** run first (:meth:`_resolve_packed_conflicts`). Two
+        packings can carry the same channels — ORM and the HDRP mask map both
+        drive metallic / roughness / AO — and ``replaces`` cannot express that,
+        so the loser is chosen by :meth:`MapRegistry.packed_precedence` and its
+        uncovered channels extracted before it drops.
+
+        **Loose components** (Metallic, Roughness, AO, …) are then weighed
+        against the surviving packing. Which side wins depends on the target
+        workflow:
 
         - **Packed workflow** — the packed map is a requested output, or no
           ``config`` is supplied (legacy behavior): the packed map supersedes
@@ -1113,8 +1130,11 @@ class MapFactory(LoggingMixin):
             sorted_maps: ``{map_type: path-or-[paths]}``. Mutated in place.
             config: Optional workflow config. When provided, redundancy
                 direction follows each packed map's ``config_key`` flag (plus
-                ``force_packed_maps``); ``dry_run`` plans extractions without
-                writing them. When omitted, packed maps always win.
+                any ``missing_map_rule`` past ``skip``); ``dry_run`` plans
+                extractions without writing them. When omitted, a packed map
+                always wins against its LOOSE components — rival packings are
+                still reduced to one, since two of them driving the same slots
+                was never a legitimate outcome to preserve.
             extract_missing: Allow extracting uncovered channels to files.
 
         Returns:
@@ -1125,25 +1145,23 @@ class MapFactory(LoggingMixin):
         registry = cls._map_registry
 
         def drop(map_type: str, reason: str) -> None:
-            cls.logger.info(
-                f"Skipping {map_type} map ({reason})",
-                extra={"preset": "highlight"},
-            )
-            del sorted_maps[map_type]
-            report["dropped"][map_type] = reason
+            cls._drop_map(sorted_maps, report, map_type, reason)
 
-        def first_path(value) -> Optional[str]:
-            if isinstance(value, (list, tuple)):
-                value = value[0] if value else None
-            return value if isinstance(value, str) else None
+        # Rival PACKED maps first: `replaces` cannot express that conflict, so
+        # leaving it to the loop below lets the requested packing retire the
+        # loose components and the rival then read as a sole source.
+        cls._resolve_packed_conflicts(sorted_maps, config, extract_missing, report)
 
-        def is_loose(map_type: str) -> bool:
-            map_def = registry.get(map_type)
-            return not (map_def and map_def.is_packed)
-
-        for dominant, redundants in precedence_rules.items():
+        for dominant, declared_redundants in precedence_rules.items():
             if not (dominant in sorted_maps and sorted_maps[dominant]):
                 continue
+
+            # LOOSE components only. A `replaces` entry naming another PACKING
+            # (MSAO lists Metallic_Smoothness) would let this pass retire a
+            # rival on name alone — no ranking, no coverage check — and so
+            # overturn the packed-vs-packed pass above, which may have kept
+            # both deliberately because dropping one would lose a channel.
+            redundants = [r for r in declared_redundants if cls._is_loose(r)]
 
             # Does the target workflow actually want this packed map as output?
             # Default True keeps legacy "packed wins" behavior when no config.
@@ -1152,8 +1170,10 @@ class MapFactory(LoggingMixin):
             if config is not None:
                 key = map_def.config_key if map_def else None
                 if key:
-                    packed_requested = bool(config.get(key)) or bool(
-                        config.get("force_packed_maps")
+                    packed_requested = (
+                        bool(config.get(key))
+                        or registry.resolve_missing_map_rule(config)
+                        != registry.MISSING_SKIP
                     )
 
             if packed_requested:
@@ -1170,31 +1190,18 @@ class MapFactory(LoggingMixin):
             # per declared channel: covered when the carried type — or a loose
             # type a registered conversion derives it from — survives the drop.
             present = {
-                t for t, v in sorted_maps.items() if v and t != dominant and is_loose(t)
+                t for t, v in sorted_maps.items() if v and t != dominant and cls._is_loose(t)
             }
 
-            def channel_covered(carried_type: str) -> bool:
-                if carried_type in present:
-                    return True
-                for conv in cls._conversion_registry.get_conversions_for(
-                    carried_type
-                ):
-                    if (
-                        len(conv.source_types) == 1
-                        and conv.source_types[0] in present
-                    ):
-                        return True
-                return False
-
             carried = map_def.carried_types() if map_def else []
-            uncovered = [t for t in carried if not channel_covered(t)]
+            uncovered = [t for t in carried if not cls._channel_covered(t, present)]
 
             if uncovered:
                 extracted = None
                 if extract_missing:
                     extracted = cls._extract_channels_from_packed(
                         dominant,
-                        first_path(sorted_maps[dominant]),
+                        cls._first_path(sorted_maps[dominant]),
                         uncovered,
                         config,
                     )
@@ -1212,18 +1219,198 @@ class MapFactory(LoggingMixin):
                             drop(redundant, reason)
                     continue
 
-                as_list = isinstance(sorted_maps[dominant], (list, tuple))
-                for map_type, path in extracted.items():
-                    sorted_maps[map_type] = [path] if as_list else path
-                    report["extracted"][map_type] = path
-                    cls.logger.info(
-                        f"Extracted {map_type} from {dominant} ({path})",
-                        extra={"preset": "highlight"},
-                    )
+                cls._absorb_extracted(sorted_maps, report, dominant, extracted)
 
             drop(dominant, "superseded by separate maps")
 
         return report
+
+    # --- redundancy internals, shared by both passes -----------------------
+
+    @staticmethod
+    def _first_path(value) -> Optional[str]:
+        """The single path behind an inventory value (path or list of paths)."""
+        if isinstance(value, (list, tuple)):
+            value = value[0] if value else None
+        return value if isinstance(value, str) else None
+
+    @classmethod
+    def _drop_map(
+        cls,
+        sorted_maps: Dict[str, Any],
+        report: Dict[str, Dict[str, str]],
+        map_type: str,
+        reason: str,
+    ) -> None:
+        """Remove ``map_type`` from the inventory and record why."""
+        cls.logger.info(
+            f"Skipping {map_type} map ({reason})",
+            extra={"preset": "highlight"},
+        )
+        del sorted_maps[map_type]
+        report["dropped"][map_type] = reason
+
+    @classmethod
+    def _absorb_extracted(
+        cls,
+        sorted_maps: Dict[str, Any],
+        report: Dict[str, Dict[str, str]],
+        source_type: str,
+        extracted: Dict[str, str],
+    ) -> None:
+        """Add extracted loose maps to the inventory, keeping its value shape."""
+        as_list = isinstance(sorted_maps[source_type], (list, tuple))
+        for map_type, path in extracted.items():
+            sorted_maps[map_type] = [path] if as_list else path
+            report["extracted"][map_type] = path
+            cls.logger.info(
+                f"Extracted {map_type} from {source_type} ({path})",
+                extra={"preset": "highlight"},
+            )
+
+    @classmethod
+    def _is_loose(cls, map_type: str) -> bool:
+        """Is ``map_type`` a separate map rather than a packing?
+
+        Unknown types count as loose: a type the registry does not define
+        cannot be asserted to pack anything.
+        """
+        map_def = cls._map_registry.get(map_type)
+        return not (map_def and map_def.is_packed)
+
+    @classmethod
+    def _channel_covered(cls, carried_type: str, present: Set[str]) -> bool:
+        """Does anything in ``present`` source ``carried_type``?
+
+        Covered when the type is present outright, or when a single-source
+        conversion derives it from something that is. That second arm is what
+        makes the judgement work across packings as well as loose maps: the
+        registry declares ``Roughness <- Smoothness`` *and*
+        ``Roughness <- ORM``, so a surviving ORM demonstrably covers an MSAO's
+        metallic / AO / smoothness channels. Shared by both redundancy passes
+        so that "covered" means one thing.
+        """
+        if carried_type in present:
+            return True
+        for conv in cls._conversion_registry.get_conversions_for(carried_type):
+            if len(conv.source_types) == 1 and conv.source_types[0] in present:
+                return True
+        return False
+
+    @classmethod
+    def _resolve_packed_conflicts(
+        cls,
+        sorted_maps: Dict[str, Any],
+        config: Optional[Dict[str, Any]],
+        extract_missing: bool,
+        report: Dict[str, Dict[str, str]],
+    ) -> None:
+        """Reduce rival PACKED maps to the one this workflow wants.
+
+        The packed-vs-loose pass cannot do this. Precedence is keyed off
+        :attr:`MapType.replaces`, which lists the LOOSE maps a packing absorbs
+        — no packing lists another — so two packings never meet there. Worse,
+        the loose pass actively hides the conflict: the requested packing
+        retires the loose Metallic/Roughness/AO first, after which the rival
+        finds no loose components left and takes the "sole source of its
+        channels" branch. Measured live on a glTF 2.0 conversion, which
+        connected an ORM *and* an HDRP MSAO to the same three slots.
+
+        Rivalry is judged by channel coverage, not by name: a packing is a
+        rival only when a more-preferred one covers at least one channel it
+        carries, so ``Albedo_Transparency`` (base colour + opacity) is never
+        weighed against an ORM. Preference is
+        :meth:`MapRegistry.packed_precedence` — a total order, so the survivor
+        does not depend on which rival was judged first.
+
+        Lossless, like the loose pass: channels nothing else supplies are
+        extracted from the loser before it is dropped, and if extraction is
+        unavailable the loser is KEPT (with a warning) rather than taking its
+        only copy of a channel with it. "Nothing else" counts surviving LOOSE
+        maps as well as the winners — otherwise a channel the caller already
+        listed loose is extracted anyway, and their entry is replaced by
+        derived data.
+
+        Modifies ``sorted_maps`` and ``report`` in place.
+        """
+        registry = cls._map_registry
+        order = [
+            t
+            for t in registry.packed_precedence(config)
+            if t in sorted_maps and sorted_maps[t]
+        ]
+        if len(order) < 2:
+            return
+
+        # Least-preferred first: a loser is judged against the survivors that
+        # outrank it, so a three-way pile-up collapses in one pass. Descending
+        # is what makes `order[:rank]` safe to use unfiltered — only indices
+        # ABOVE the current one have been dropped, so every more-preferred
+        # entry is still in `sorted_maps`.
+        for rank in range(len(order) - 1, 0, -1):
+            loser = order[rank]
+            winners = order[:rank]
+
+            map_def = registry.get(loser)
+            carried = map_def.carried_types() if map_def else []
+
+            # Rivalry is decided against the WINNERS alone. A channel some
+            # loose map happens to cover says nothing about whether two
+            # PACKINGS collide — an ORM beside a loose Metallic is the loose
+            # pass's business, and crediting that here would make the ORM look
+            # like a rival of whatever packing outranked it.
+            rivals = set(winners)
+            uncovered = [t for t in carried if not cls._channel_covered(t, rivals)]
+            if len(uncovered) == len(carried):
+                continue  # shares no channel with any winner — not a rival
+
+            # For what must be EXTRACTED, a surviving loose map counts too:
+            # re-extracting a channel one already supplies swaps the caller's
+            # own entry for derived data (measured: an `asset_Mixed_AO.png`
+            # replaced by an extracted `asset_Ambient_Occlusion.png` — the
+            # canonical-name guard in `_extract_channels_from_packed` cannot
+            # catch it, since the caller's file need not use that name).
+            # Excluded are any the winners will retire below: `replaces` may
+            # name a type its packing does not carry (MSAO lists Specular),
+            # which would leave that channel with no source at all.
+            retired = {r for w in winners for r in registry.get(w).replaces}
+            loose = {
+                t
+                for t, v in sorted_maps.items()
+                if v and t != loser and t not in retired and cls._is_loose(t)
+            }
+            uncovered = [t for t in uncovered if not cls._channel_covered(t, loose)]
+
+            if uncovered:
+                extracted = (
+                    cls._extract_channels_from_packed(
+                        loser,
+                        cls._first_path(sorted_maps[loser]),
+                        uncovered,
+                        config,
+                    )
+                    if extract_missing
+                    else None
+                )
+                if extracted is None:
+                    # Keeping both double-wires the shared slots, but dropping
+                    # the loser would lose a channel outright. Say so instead
+                    # of picking silently.
+                    cls.logger.warning(
+                        f"{loser} loses to {winners[0]} as a rival packing, but "
+                        f"its {', '.join(uncovered)} channel has no other "
+                        "source and extraction is unavailable — keeping both. "
+                        "They will drive the same material slots."
+                    )
+                    continue
+                cls._absorb_extracted(sorted_maps, report, loser, extracted)
+
+            cls._drop_map(
+                sorted_maps,
+                report,
+                loser,
+                f"superseded by {winners[0]} (rival packing for the same channels)",
+            )
 
     @classmethod
     def _extract_channels_from_packed(
@@ -1326,7 +1513,10 @@ class MapFactory(LoggingMixin):
                       - use_output_fallbacks (bool): Allow substituting missing maps with alternatives (e.g. AO -> Mask).
                       - convert (bool): Enable format conversion/renaming.
                       - optimize (bool): Enable image optimization.
-                      - force_packed_maps (bool): Force generation of packed maps even if components are missing.
+                      - missing_map_rule (str): What a packed map does when its source
+                        channels aren't all resolvable - "skip" (default), "multi"
+                        (pack once 2+ channels resolved), or "force" (always pack).
+                      - force_packed_maps (bool): Legacy alias for missing_map_rule="force".
 
         Returns:
             List[str] if a single asset was processed.
@@ -2584,6 +2774,11 @@ class MapFactory(LoggingMixin):
 
         Returns:
             str | Image.Image: Path to the packed ORM texture or PIL Image.
+
+        Any of the three may name a **packed** map (MSAO, ORM, MRAO, ...) rather
+        than a loose one; it is decomposed first and supplies every channel it
+        carries, with smoothness inverted to roughness on the way. See
+        :meth:`_resolve_orm_sources` for why that is not the caller's job.
         """
         if ao_map_path and isinstance(ao_map_path, str):
             ImgUtils.assert_pathlike(ao_map_path, "ao_map_path")
@@ -2592,8 +2787,17 @@ class MapFactory(LoggingMixin):
         if metallic_map_path and isinstance(metallic_map_path, str):
             ImgUtils.assert_pathlike(metallic_map_path, "metallic_map_path")
 
+        # Expanded after the assertions (which reject an Image) but the ORIGINAL
+        # arguments still name the output below: expansion replaces a packed
+        # path with in-memory channels, and deriving the name from those would
+        # turn every packed input into the "cannot derive from Image" error.
+        originals = (ao_map_path, roughness_map_path, metallic_map_path)
+        ao_map_path, roughness_map_path, metallic_map_path = cls._resolve_orm_sources(
+            *originals
+        )
+
         if save and output_path is None:
-            source_map = ao_map_path or roughness_map_path or metallic_map_path
+            source_map = next((src for src in originals if src), None)
             if not source_map:
                 raise ValueError("No source maps provided to derive output name")
 
@@ -2939,6 +3143,258 @@ class MapFactory(LoggingMixin):
         ImgUtils.save_image(smoothness_image, output_path, **kwargs)
 
         return output_path
+
+    #: Packed map type -> (unpacker, the canonical map types it returns, in order).
+    #: The dispatch table :meth:`unpack_to_channels` reads.
+    #:
+    #: Keyed off the registry's canonical names but dispatched to the specific
+    #: unpackers rather than derived from :attr:`MapType.channels`, because the
+    #: layout a packed map actually ships in is not always the canonical one:
+    #: MSAO and MRAO each have two in the wild, auto-detected per image from the
+    #: presence of an alpha channel. ``channels`` names the canonical layout
+    #: only, so driving the split from it would silently mis-read the other.
+    #:
+    #: Spec/Gloss is deliberately absent: recovering metallic/roughness from it
+    #: is a PBR *conversion* (see ``convert_specgloss_to_pbr``), not a channel
+    #: split, so listing it here would promise a decomposition that is wrong.
+    PACKED_UNPACKERS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
+        "ORM": ("unpack_orm_texture", ("Ambient_Occlusion", "Roughness", "Metallic")),
+        "MRAO": (
+            "unpack_mrao_texture",
+            ("Metallic", "Roughness", "Ambient_Occlusion"),
+        ),
+        "MSAO": (
+            "unpack_msao_texture",
+            ("Metallic", "Ambient_Occlusion", "Smoothness"),
+        ),
+        "Metallic_Smoothness": (
+            "unpack_metallic_smoothness",
+            ("Metallic", "Smoothness"),
+        ),
+        "Albedo_Transparency": (
+            "unpack_albedo_transparency",
+            ("Base_Color", "Opacity"),
+        ),
+    }
+
+    @classmethod
+    def foreign_packings(
+        cls,
+        sources: Iterable[Any],
+        target: str = "ORM",
+        workflow: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """``{path: map type}`` for **packed** sources belonging to another engine.
+
+        The one predicate behind every "is this source set right for what I'm
+        writing?" question in the pipeline -- :meth:`pack_orm_texture`'s
+        per-map warning, the GLB writer's highlighted summary, and both DCCs'
+        Scene Exporter gate all read it, so a mismatch is defined once.
+
+        Two callers, two ways of naming what "right" means, one judgement:
+
+        * A **writer** knows what it is emitting, not which engine this run
+          serves -- the GLB channel writer emits an ORM whether the deliverable
+          is for three.js, UE or Godot. It names *target* as a map type, and
+          the judgement is :meth:`MapRegistry.shares_workflow` -- so no engine
+          name is hardcoded, and a packing that declares no workflows
+          (``MRAO``) is never accused of anything.
+        * An **exporter** knows the opposite: the user chose a texture
+          template, i.e. a registry workflow, and the packing follows from it.
+          It names *workflow* (which then takes precedence over *target*), and
+          a packed source is foreign when it does not declare that workflow.
+          An unknown workflow name -- a stale persisted UI value after a
+          registry rename -- reports nothing rather than everything, because a
+          wrong name must never turn into "every mask map in the scene is
+          foreign" and block an export.
+
+        **Only packed maps are eligible**, and that restriction is the whole
+        contract, not an optimisation. A *packing* belongs to an engine family
+        -- MSAO is how HDRP wants a mask, ORM is how glTF/UE/Godot want one --
+        so comparing two packings' declared workflows is meaningful. A LOOSE
+        map's ``workflows`` answers a different question: which presets *emit*
+        it. ``Ambient_Occlusion`` declares only the Standard preset and
+        ``Emissive`` likewise, so a general form reported both as foreign to
+        glTF -- flagging an ordinary AO map as an engine mismatch, which would
+        have made the exporter gate fire on almost every scene.
+
+        Parameters:
+            sources: Texture paths (non-strings and falsy entries are skipped,
+                so a mixed list of paths and in-memory images is fine).
+            target: The packing being written. Sources are reported when they
+                share none of its declared workflows.
+
+        Returns:
+            ``{path: map type}``, one entry per distinct offending path, in
+            first-seen order. Empty when every source is loose, appropriate, or
+            undeclared.
+        """
+        registry = MapRegistry.instance()
+        if workflow is not None and workflow not in registry.get_workflow_presets():
+            cls.logger.warning(
+                "foreign_packings: unknown workflow %r - reporting nothing. "
+                "Known workflows: %s.",
+                workflow,
+                ", ".join(registry.get_workflow_presets()),
+            )
+            return {}
+        found: Dict[str, str] = {}
+        for src in sources:
+            if not isinstance(src, str) or not src or src in found:
+                continue
+            map_type = cls.resolve_map_type(src)
+            entry = registry.get(map_type) if map_type else None
+            if not entry or not entry.is_packed or not entry.workflows:
+                continue
+            if workflow is not None:
+                if workflow not in entry.workflows:
+                    found[src] = map_type
+            elif registry.shares_workflow(map_type, target) is False:
+                found[src] = map_type
+        return found
+
+    @classmethod
+    def unpack_to_channels(
+        cls,
+        source: Union[str, "Image.Image"],
+        map_type: Optional[str] = None,
+        save: bool = False,
+    ) -> Dict[str, "Image.Image"]:
+        """The loose maps a packed source map carries, keyed by canonical type.
+
+        The generic front door to the ``unpack_*`` family: given *any* texture,
+        return ``{canonical map type: image}`` for what it actually carries, or
+        ``{}`` when it is a loose map with nothing to decompose. That lets a
+        consumer ask "what channels can I get out of this file?" without first
+        knowing which packing scheme it is -- which is what every caller that
+        wires a source set into a fixed set of engine slots needs.
+
+        Reports what the map *carries*, not what a caller wants: an MSAO map
+        yields ``Smoothness``, never ``Roughness``. Converting between the two
+        is the consumer's call (:meth:`convert_smoothness_to_roughness`) and
+        folding it in here would make the return type a lie in the one case a
+        caller genuinely wants smoothness.
+
+        Parameters:
+            source: Texture path, or an already-loaded image (then *map_type*
+                is required -- there is no filename to classify).
+            map_type: Canonical map type, when it is already known or cannot be
+                resolved from the name. Defaults to classifying *source*.
+            save: Write the extracted channels to disk instead of returning
+                in-memory images.
+
+        Returns:
+            ``{canonical map type: image}``; empty when *source* is not a
+            packed map this can decompose.
+        """
+        if map_type is None and isinstance(source, str):
+            map_type = cls.resolve_map_type(source)
+        entry = cls.PACKED_UNPACKERS.get(map_type or "")
+        if not entry:
+            return {}
+        method, carried = entry
+        unpacked = getattr(cls, method)(source, save=save)
+        return {
+            name: image
+            for name, image in zip(carried, unpacked)
+            if image is not None
+        }
+
+    @classmethod
+    def _resolve_orm_sources(
+        cls,
+        ao: Optional[Union[str, "Image.Image"]],
+        roughness: Optional[Union[str, "Image.Image"]],
+        metallic: Optional[Union[str, "Image.Image"]],
+    ) -> Tuple[Any, Any, Any]:
+        """Expand any packed map among the three ORM sources into loose channels.
+
+        A packed source map in *any* of the three slots supplies **every**
+        channel it carries, not just the slot it happened to arrive in -- that
+        is what packing means. Without this, a caller holding only an MSAO map
+        can describe it to :meth:`pack_orm_texture` in exactly one way (as one
+        of the three slots), and every way is wrong: the packed RGBA is
+        flattened to luminance for that one channel and the other two fall back
+        to their fill values. Measured on a production room, MSAO named as the
+        metallic source produced roughness **0** (mirror-smooth) and metallic
+        0.43 against a true 0.016 -- worse than the unrepaired conversion,
+        because it overwrote a roughly-correct ORM with a confidently wrong one.
+
+        A loose map the caller passed explicitly always wins over the same
+        channel recovered from a packed one: naming both means "use the packed
+        map for what the loose maps don't cover".
+        """
+        # Classified once and threaded through: `resolve_map_type` parses the
+        # filename against the whole alias list, and `unpack_to_channels` would
+        # otherwise repeat it per source.
+        packed = {}
+        for src in (ao, roughness, metallic):
+            if isinstance(src, str) and src not in packed:
+                map_type = cls.resolve_map_type(src)
+                if map_type in cls.PACKED_UNPACKERS:
+                    packed[src] = map_type
+        if not packed:
+            return ao, roughness, metallic
+
+        slots = {
+            "Ambient_Occlusion": ao,
+            "Roughness": roughness,
+            "Metallic": metallic,
+        }
+        # Handled, but say so. A mask map from another engine family unpacks and
+        # repacks correctly, and staying silent means the mismatch is never fixed
+        # at the source -- while every push pays for a full-resolution channel
+        # split and an 8-bit round trip (MSAO carries smoothness, so roughness is
+        # reconstructed by inversion rather than read from an authored map), and
+        # any channel ORM has no slot for is dropped.
+        registry = MapRegistry.instance()
+        foreign = cls.foreign_packings(packed, target="ORM")
+        for src, map_type in foreign.items():
+            cls.logger.warning(
+                "pack_orm_texture: %r is a %s map (targets %s), not an "
+                "ORM-family packing (targets %s). Unpacked and repacked it, "
+                "but re-exporting the source set for an ORM target avoids "
+                "the conversion.",
+                os.path.basename(src),
+                map_type,
+                ", ".join(registry.get(map_type).workflows) or "unspecified",
+                ", ".join(registry.get("ORM").workflows),
+            )
+
+        for src, map_type in packed.items():  # one unpack per distinct map
+            carried = cls.unpack_to_channels(src, map_type=map_type)
+            if not any(name in slots for name in carried) and "Smoothness" not in carried:
+                # A packed map that carries no ORM channel at all (an
+                # Albedo_Transparency, say) cannot fill any slot, and its path
+                # is cleared below -- so if it was the only source, the pack
+                # then fails with "no input images provided", which names
+                # nothing useful. Say what was actually wrong here.
+                cls.logger.warning(
+                    "pack_orm_texture: %r is a %s map, which carries none of "
+                    "occlusion/roughness/metallic - ignoring it.",
+                    os.path.basename(src),
+                    map_type,
+                )
+            if "Roughness" not in carried and "Smoothness" in carried:
+                # glTF and every ORM consumer want roughness; the mask-map
+                # family stores its inverse. Dropping the inversion is the
+                # subtler half of the same bug -- it previews as "everything
+                # is shiny where it should be matte", which reads as a bad
+                # material rather than as a lost conversion.
+                carried["Roughness"] = cls.convert_smoothness_to_roughness(
+                    carried.pop("Smoothness"), save=False
+                )
+            for name, image in carried.items():
+                if name not in slots:
+                    continue  # a channel ORM has no slot for (Detail, Opacity)
+                if slots[name] is src or not slots[name]:
+                    slots[name] = image
+        # A slot still holding a packed path is one that map carries no channel
+        # for; leaving the path would flatten the whole packed image into it.
+        for name, value in slots.items():
+            if isinstance(value, str) and value in packed:
+                slots[name] = None
+        return slots["Ambient_Occlusion"], slots["Roughness"], slots["Metallic"]
 
     @classmethod
     def unpack_orm_texture(

@@ -73,7 +73,7 @@ class MapType:
         default_factory=list
     )  # Maps that this map renders redundant
     config_key: Optional[str] = (
-        None  # SSoT for the config flag gating this packed map as a desired OUTPUT (note MSAO -> "mask_map", not "msao_map"). filter_redundant_maps consults it (where the map declares `replaces`) to choose packed vs. separate maps.
+        None  # SSoT for the config flag gating this packed map as a desired OUTPUT (note MSAO -> "mask_map", not "msao_map"). filter_redundant_maps consults it (where the map declares `replaces`) to choose packed vs. separate maps, and `packed_precedence` reads it to rank RIVAL packings (a set with both an ORM and an MSAO) — the flag is what says which one this workflow wants.
     )
     channels: Dict[str, str] = field(
         default_factory=dict
@@ -195,6 +195,17 @@ class MapType:
 
 class MapRegistry(SingletonMixin):
     """Central registry for map type definitions."""
+
+    # Policy for a packed map (ORM / MRAO / MSAO) whose source channels aren't
+    # all resolvable — config key ``missing_map_rule``. Shared vocabulary with
+    # the Map Packer's 'Missing Maps' control, so a set that packs there packs
+    # the same way here. See :meth:`resolve_missing_map_rule`.
+    MISSING_SKIP = "skip"  # default: don't write an incomplete packed map
+    MISSING_MULTI = "multi"  # write it only if 2+ source channels resolved
+    MISSING_FORCE = "force"  # always write; absent channels take their fill
+    # Resolved source channels each rule needs before an incomplete packed map
+    # is still written. SKIP needs them all, i.e. never writes an incomplete one.
+    MISSING_MAP_MINIMUMS = {MISSING_SKIP: 0, MISSING_MULTI: 2, MISSING_FORCE: 1}
 
     _precedence_rules = None
     _workflow_settings = {
@@ -1245,6 +1256,30 @@ class MapRegistry(SingletonMixin):
             )
         return self._suffix_strip_pattern
 
+    def shares_workflow(self, name: str, other: str) -> Optional[bool]:
+        """Whether two map types declare any target workflow in common.
+
+        The registry's own answer to "is this source map the right packing for
+        that target?", so a consumer never hardcodes an engine name to find
+        out. Asked between two MAP TYPES rather than against a workflow
+        constant because that is what a converter actually knows: a writer
+        emitting an ORM can ask whether the map it was handed targets the same
+        engines ORM does, without caring which of UE/glTF/Godot this particular
+        run is for.
+
+        Returns ``None`` when either map declares no workflows at all. An
+        **absent** declaration is not an incompatible one -- ``MRAO`` ships with
+        an empty list today, and every loose map does -- so a caller warning on
+        a mismatch must test ``is False``, not falsiness, or it cries wolf on
+        everything unlabelled.
+        """
+        entry, against = self.get(name), self.get(other)
+        if entry is None or against is None:
+            return None
+        if not entry.workflows or not against.workflows:
+            return None
+        return bool(set(entry.workflows) & set(against.workflows))
+
     def get_workflow_presets(self) -> Dict[str, Dict[str, Any]]:
         """Generate the workflow presets dictionary."""
         presets = {}
@@ -1317,6 +1352,60 @@ class MapRegistry(SingletonMixin):
             }
         return self._precedence_rules
 
+    def packed_precedence(self, config: Dict[str, Any] = None) -> List[str]:
+        """Packed map types ranked most- to least-wanted for ``config``'s target.
+
+        Two packings can carry the same channels — ORM and the HDRP mask map
+        both drive metallic / roughness / AO — so an inventory holding both
+        wires those slots twice. :attr:`MapType.replaces` cannot express that
+        conflict: it lists the LOOSE maps a packing absorbs, and no packing
+        absorbs another. This is the missing ordering, and it is *total*, so
+        the survivor never depends on registration order or on which rival
+        happened to be judged first.
+
+        Ranked by, in order:
+
+        1. **Requested by name** — ``config`` sets the map's ``config_key``.
+           That is the workflow speaking: the glTF 2.0 preset sets ``orm_map``
+           and leaves ``mask_map`` off, so its ORM outranks an MSAO.
+        2. **Requested by force** — any ``missing_map_rule`` past
+           :attr:`MISSING_SKIP` (including the legacy ``force_packed_maps``).
+           It means "emit a packed map even with a source channel missing", so
+           it is weaker evidence than a named flag and must never let a foreign
+           packing tie with the one the preset asked for.
+        3. **Declared breadth** — how many workflows the packing targets. With
+           nothing requested (the compositor calls with no config at all) the
+           broadly-targeted packing beats the engine-specific one: ORM ships to
+           UE / glTF / Godot, MSAO only to HDRP.
+        4. **Registration order** — a stable last resort, so two runs over the
+           same inventory can never disagree.
+
+        Parameters:
+            config: A resolved workflow config, or None for "no stated target"
+                (which ranks by declared breadth alone).
+
+        Returns:
+            list[str]: Every registered packed map type, most-preferred first.
+        """
+        cfg = config or {}
+        forced = self.resolve_missing_map_rule(cfg) != self.MISSING_SKIP
+
+        def rank(item: Tuple[int, str]) -> Tuple[int, int, int]:
+            index, name = item
+            m = self._maps[name]
+            if m.config_key and cfg.get(m.config_key):
+                level = 2
+            elif forced:
+                level = 1
+            else:
+                level = 0
+            return (-level, -len(m.workflows), index)
+
+        packed = [
+            (i, name) for i, (name, m) in enumerate(self._maps.items()) if m.is_packed
+        ]
+        return [name for _, name in sorted(packed, key=rank)]
+
     def get_scale_as_mask_types(self) -> List[str]:
         """Get list of map types that should be scaled as masks."""
         return [name for name, m in self._maps.items() if m.scale_as_mask]
@@ -1350,6 +1439,54 @@ class MapRegistry(SingletonMixin):
     def get_map_modes(self) -> Dict[str, str]:
         """Generate the map modes dictionary."""
         return {name: m.mode for name, m in self._maps.items() if m.mode is not None}
+
+    @classmethod
+    def resolve_missing_map_rule(cls, config: Dict[str, Any] = None) -> str:
+        """The 'Missing Maps' policy ``config`` asks for.
+
+        ``missing_map_rule`` names it outright (:attr:`MISSING_SKIP` /
+        :attr:`MISSING_MULTI` / :attr:`MISSING_FORCE`). The older boolean
+        ``force_packed_maps`` still resolves — True is :attr:`MISSING_FORCE` —
+        so configs and scripts written against it keep their behavior.
+
+        Anything unset or unrecognised lands on :attr:`MISSING_SKIP`, the safe
+        end: an incomplete set writes nothing rather than a packed map whose
+        absent channels are a constant fill, indistinguishable downstream from
+        a legitimately flat channel.
+
+        Parameters:
+            config: A resolved workflow config, or None.
+
+        Returns:
+            str: One of the ``MISSING_*`` rules.
+        """
+        cfg = config or {}
+        rule = cfg.get("missing_map_rule")
+        if isinstance(rule, str) and rule.lower() in cls.MISSING_MAP_MINIMUMS:
+            return rule.lower()
+        return cls.MISSING_FORCE if cfg.get("force_packed_maps") else cls.MISSING_SKIP
+
+    @classmethod
+    def allow_incomplete_pack(
+        cls, config: Dict[str, Any], components: List[Any]
+    ) -> bool:
+        """Whether an incomplete packed map may still be written.
+
+        Applied at the points where a packing has already failed to resolve a
+        channel whose fill value isn't neutral, so the answer is purely the
+        rule's minimum measured against what *did* resolve.
+
+        Parameters:
+            config: A resolved workflow config (see
+                :meth:`resolve_missing_map_rule`).
+            components: The packing's source channels — any iterable whose
+                falsy entries are the ones that failed to resolve.
+
+        Returns:
+            bool: True when the rule tolerates the missing channels.
+        """
+        minimum = cls.MISSING_MAP_MINIMUMS[cls.resolve_missing_map_rule(config)]
+        return bool(minimum) and sum(1 for c in components if c) >= minimum
 
     def resolve_config(
         self, config: Union[str, Dict[str, Any]] = None, **kwargs
