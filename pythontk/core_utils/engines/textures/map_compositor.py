@@ -236,11 +236,18 @@ class MapCompositor(ptk.LoggingMixin):
             preset="italic",
         )
 
+        # Surface per-set progress in the UI panel — prepare_maps' own logger
+        # writes to its class stream, which the engine's UI handler doesn't
+        # see. logger= below catches everything else.
+        #
+        # Collected, not logged per tick: each log record renders as its own
+        # paragraph in a text-widget handler, so a per-set line turned a
+        # 20-set batch into 20 blank-line-separated sections. One log_group
+        # after the run says the same thing as a single block.
+        ticks: List[str] = []
+
         def _progress(current: int, total: int, message: str) -> None:
-            # Surface per-set progress in the UI panel — prepare_maps' own
-            # logger writes to its class stream, which the engine's UI
-            # handler doesn't see. logger= below catches everything else.
-            self.logger.info(f"  [{current}/{total}] {message}")
+            ticks.append(f"[{current}/{total}] {message}")
 
         try:
             results = ptk.MapFactory.prepare_maps(
@@ -252,8 +259,19 @@ class MapCompositor(ptk.LoggingMixin):
                 **workflow_config,
             )
         except Exception as e:
+            # Report what completed BEFORE the error, not after it: a `finally`
+            # here would print the progress block below the failure it preceded.
+            # Guarded on ticks — the logger's log_group degrades an empty list
+            # to a bare title, i.e. "Prepared 0 set(s)" for a failure that
+            # happened before any set was reached.
+            if ticks:
+                self.logger.log_group(
+                    f"Prepared {len(ticks)} set(s) before the failure", ticks
+                )
             self.logger.error(f"Output template failed: {e}")
             return []
+        if ticks:
+            self.logger.log_group(f"Prepared {len(ticks)} set(s)", ticks)
 
         if isinstance(results, dict):
             return [p for paths in results.values() for p in paths]

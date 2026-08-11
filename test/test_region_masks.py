@@ -70,6 +70,30 @@ class RasterizeUvTrianglesTest(unittest.TestCase):
         self.assertEqual(cover[60, 32], 255)  # bottom rows filled
         self.assertEqual(cover[4, 32], 0)  # top rows empty
 
+    def test_full_coverage_means_exactly_full(self):
+        # A consumer thresholding on "this texel lies ENTIRELY inside" -- the
+        # lightmap baker's coverage refill, which uses it to tell an island's
+        # own texels from the ring a bake renders past its border -- needs 255
+        # to mean exactly that. A quad ending mid-texel must leave that texel
+        # strictly below 255 and its inside neighbour at 255.
+        quad = [
+            [(0.0, 0.0), (0.5078125, 0.0), (0.5078125, 1.0)],
+            [(0.0, 0.0), (0.5078125, 1.0), (0.0, 1.0)],
+        ]
+        # size 64 -> the edge falls at texel 32.5: col 31 full, 32 half, 33 out.
+        cover = ptk.ImgUtils.rasterize_uv_triangles(quad, size=64, supersample=4)
+        self.assertEqual(cover[32, 31], 255)
+        self.assertTrue(0 < cover[32, 32] < 255)
+        self.assertEqual(cover[32, 33], 0)
+
+    def test_geometry_outside_the_image_is_cropped_not_smeared(self):
+        # Clamping a vertex would drag the edges meeting it across the image
+        # and paint a wedge along the border; cropping the bbox leaves a
+        # wholly-outside triangle contributing nothing.
+        tri = [[(1.2, 0.4), (1.6, 0.5), (1.2, 0.6)]]
+        cover = ptk.ImgUtils.rasterize_uv_triangles(tri, size=32, supersample=1)
+        self.assertEqual(int(cover.max()), 0)
+
 
 class RegionGroupTest(unittest.TestCase):
     def test_slot_range_enforced(self):

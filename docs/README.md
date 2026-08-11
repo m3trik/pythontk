@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-2805%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-2916%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -53,7 +53,7 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | `img_utils` | Pillow-backed image ops, channel packing, exposure equalization, image curation, mask generation |
 | `iter_utils` | Flatten, dedupe, wildcard filtering of lists/dicts, integer-sequence collapse |
 | `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, safe expression evaluation |
-| `net_utils` | SSH client, generic JSON-RPC client + DCC plugin installer, credentials, port/RDP helpers |
+| `net_utils` | SSH client, generic JSON-RPC client + DCC plugin installer, credentials, port/RDP helpers, [live WebXR preview server](webxr_preview.md) |
 | `str_utils` | Sanitizing, batch rename, affix handling, `FuzzyMatcher`, hotkey-token parsing |
 | `vid_utils` | Frame rate probing, compression, sharpest-frame extraction |
 
@@ -216,6 +216,10 @@ Beyond the data-type utilities, `core_utils` supplies the machinery the layers a
 - **`QcLog` / `QcGate`** — structured run logs and threshold-based acceptance gates for batch pipelines.
 - **`HierarchyPath` / `HierarchyIndexer` / `HierarchyMatching` / `HierarchyAnalyzer` / `HierarchyDiff`** — delimited-path hierarchy toolkit: `HierarchyPath` is the single home for path-string primitives (namespace cleaning, split/join, leaf/parent/tail); indexing and exact / tail-path / fuzzy matching build on it; the analyzer detects *moved* items (deterministic best-pair assignment), and `HierarchyDiff.from_differences` turns analyzer records into a JSON-serializable diff.
 - **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in. Reachable from a shell (or an agent) without a REPL snippet via `python -m pythontk <dotted.path> [member] [--json|--source|--where|--signature|--brief]`; it reads the *live* object, so it answers what the static [`API_REGISTRY.md`](../API_REGISTRY.md) cannot.
+
+## Guides
+
+- **[Live WebXR preview](webxr_preview.md)** — the shared DCC → glTF → headset pipeline (`PreviewServer` / `PreviewDeliverer` / `PreviewBridge` + `MeshConvert` + the bundled three.js viewer): how a baked lightmap is carried through a format that has no lightmap slot, what the scene sidecar repairs and how to read it back out of the deliverable, and the measured size/memory budget.
 
 ## Links
 

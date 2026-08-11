@@ -10,6 +10,7 @@ Run with:
     python -m pytest test_mesh_convert.py -v
     python test_mesh_convert.py
 """
+import hashlib
 import io
 import json
 import os
@@ -1214,6 +1215,313 @@ class TestGlbEditSession(unittest.TestCase):
             max(decode(gltf["images"][1]).size), 128, "lightmap must keep its size"
         )
 
+    def test_metallic_roughness_summary_counts_only_what_it_wrote(self):
+        """The foreign-packing headline must not claim work that never happened.
+
+        It is derived from the sources that actually reached a material, not from
+        the input spec: ``_match_glb_materials`` drops entries naming a material
+        the GLB does not have, and a pack failure drops more. Counting the input
+        made the headline say "2 MSAO maps" when one of the two materials was
+        never touched.
+        """
+        from PIL import Image
+
+        msao_present = os.path.join(self.tmp, "present_MSAO.png")
+        msao_absent = os.path.join(self.tmp, "absent_MSAO.png")
+        Image.new("RGBA", (8, 8), (200, 60, 0, 100)).save(msao_present)
+        Image.new("RGBA", (8, 8), (10, 20, 0, 30)).save(msao_absent)
+
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [{"name": "present"}],
+            }
+        )
+        with self.assertLogs(
+            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+        ) as caught:
+            records = MeshConvert.set_glb_metallic_roughness(
+                path,
+                {
+                    "present": {"metallic": msao_present},
+                    "absent": {"metallic": msao_absent},
+                },
+            )
+        self.assertEqual(len(records), 1, "only the matched material is written")
+        headline = [m for m in caught.output if "non-glTF mask packing" in m]
+        self.assertEqual(len(headline), 1, f"one headline expected: {caught.output}")
+        self.assertIn("1 MSAO map", headline[0])
+        self.assertNotIn("2 MSAO", headline[0])
+
+    def test_optimize_splits_a_shared_bufferview_when_owners_diverge(self):
+        """Two images can share ONE bufferView, and then need different bytes.
+
+        FBX2glTF really emits this (measured: 4 such pairs on a production room
+        GLB). Co-owners differ in the one thing that decides their encoding --
+        a lightmap is exempt from the resize and encodes lossless, its co-owner
+        is not -- so recording a single owner per view handed the loser the
+        winner's bytes. With the lightmap winning, its co-owner silently kept
+        full resolution; with the order reversed, the LIGHTMAP got resized and
+        lossy-encoded, which is exactly the corruption the structural exemption
+        exists to prevent. Asserted in BOTH orders, because the old bug was
+        invisible in one of them.
+        """
+        import random
+
+        from PIL import Image
+
+        rng = random.Random(11)
+        source = Image.new("RGB", (128, 128))
+        source.putdata([(rng.randrange(256),) * 3 for _ in range(128 * 128)])
+        buffer = io.BytesIO()
+        source.save(buffer, format="PNG")
+        png = buffer.getvalue()
+
+        for names in (
+            ["source.png", "room_Lightmap.png"],
+            ["room_Lightmap.png", "source.png"],
+        ):
+            path = self._write_glb(
+                {
+                    "asset": {"version": "2.0"},
+                    "extras": {
+                        "lightmap_web": {
+                            "materials": {"M": {"map": "room_Lightmap.png"}}
+                        }
+                    },
+                    # Both images point at bufferView 0.
+                    "images": [
+                        {"bufferView": 0, "mimeType": "image/png", "name": name}
+                        for name in names
+                    ],
+                    "textures": [{"source": i} for i in range(len(names))],
+                    "bufferViews": [
+                        {"buffer": 0, "byteOffset": 0, "byteLength": len(png)}
+                    ],
+                    "buffers": [{"byteLength": len(png)}],
+                },
+                bin_chunk=png + b"\x00" * ((4 - len(png) % 4) % 4),
+            )
+            MeshConvert.optimize_glb_textures(path, max_size=64)
+
+            edit = MeshConvert._read_glb(path)
+            gltf, blob = edit.gltf, edit.bin_data
+            by_name = {}
+            for image in gltf["images"]:
+                view = gltf["bufferViews"][image["bufferView"]]
+                by_name[image["name"]] = bytes(
+                    blob[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+                )
+            self.assertNotEqual(
+                by_name["source.png"],
+                by_name["room_Lightmap.png"],
+                f"co-owners must not share one encoding (order {names})",
+            )
+            self.assertEqual(
+                max(Image.open(io.BytesIO(by_name["source.png"])).size),
+                64,
+                f"source must resize (order {names})",
+            )
+            self.assertEqual(
+                max(Image.open(io.BytesIO(by_name["room_Lightmap.png"])).size),
+                128,
+                f"lightmap must keep its size (order {names})",
+            )
+            # VP8L is the lossless WebP chunk; VP8 (no L) is the lossy one.
+            self.assertEqual(
+                by_name["room_Lightmap.png"][12:16],
+                b"VP8L",
+                f"lightmap must encode lossless (order {names})",
+            )
+
+    def test_optimize_is_byte_identical_across_worker_counts(self):
+        """The concurrent encode pass must be a pure speedup, not a new variable.
+
+        The encode is ~60% of the pass and Pillow releases the GIL through it,
+        so it runs on a thread pool (measured on a production room GLB: 31.8s ->
+        7.1s). Threads make the ordering of the per-image work nondeterministic,
+        and the pass also *dedupes* identical payloads across images -- so if a
+        result were ever attributed to the wrong image index, the artifact would
+        differ run to run with nothing failing. Pin the whole file: serial and
+        concurrent must produce the same bytes.
+
+        Distinct payloads AND a duplicated one, so both the encode path and the
+        dedupe fan-out are covered.
+        """
+        import random
+
+        from PIL import Image
+
+        def noisy_png(seed, size=96):
+            rng = random.Random(seed)
+            im = Image.new("RGB", (size, size))
+            im.putdata(
+                [
+                    (rng.randrange(256), rng.randrange(256), rng.randrange(256))
+                    for _ in range(size * size)
+                ]
+            )
+            buffer = io.BytesIO()
+            im.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        payloads = [noisy_png(seed) for seed in range(5)]
+        payloads.append(payloads[0])  # a duplicate: two images, one encode
+
+        views, chunks, offset = [], [], 0
+        for png in payloads:
+            views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(png)})
+            padded = png + b"\x00" * ((4 - len(png) % 4) % 4)
+            chunks.append(padded)
+            offset += len(padded)
+        gltf = {
+            "asset": {"version": "2.0"},
+            "images": [
+                {"bufferView": i, "mimeType": "image/png", "name": f"t{i}.png"}
+                for i in range(len(payloads))
+            ],
+            "textures": [{"source": i} for i in range(len(payloads))],
+            "bufferViews": views,
+            "buffers": [{"byteLength": offset}],
+        }
+        bin_chunk = b"".join(chunks)
+
+        digests, summaries = [], []
+        for workers in (1, 4):
+            path = self._write_glb(
+                json.loads(json.dumps(gltf)), bin_chunk=bin_chunk
+            )
+            summaries.append(
+                MeshConvert.optimize_glb_textures(path, max_size=48, workers=workers)
+            )
+            digests.append(hashlib.sha256(open(path, "rb").read()).hexdigest())
+
+        self.assertEqual(
+            digests[0],
+            digests[1],
+            "concurrent encode produced a different GLB than the serial path",
+        )
+        self.assertEqual(summaries[0], summaries[1])
+        self.assertEqual(summaries[0]["images"], len(payloads))
+
+    def test_optimize_encodes_lightmaps_lossless(self):
+        """Lightmaps re-encode LOSSLESS (VP8L), sources stay lossy (VP8).
+
+        Lossy WebP is YUV 4:2:0 -- on a lightmap's near-black texels the
+        chroma quantization reads as magenta/green blotching, and the 2x2
+        chroma blocks smear color across atlas rect borders. The exemption
+        must therefore cover the ENCODE, not just the resize.
+        """
+        import base64 as b64
+        import random
+
+        from PIL import Image
+
+        def noisy_png(seed):
+            rng = random.Random(seed)
+            im = Image.new("RGB", (64, 64))
+            im.putdata(
+                [
+                    (rng.randrange(256), rng.randrange(256), rng.randrange(256))
+                    for _ in range(64 * 64)
+                ]
+            )
+            buffer = io.BytesIO()
+            im.save(buffer, format="PNG")
+            return im, buffer.getvalue()
+
+        lm_img, lm_png = noisy_png(1)
+        _src_img, src_png = noisy_png(2)
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "extras": {
+                    "lightmap_web": {"materials": {"M": {"map": "room_Lightmap.png"}}}
+                },
+                "images": [
+                    {
+                        "name": "room_Lightmap.png",
+                        "uri": "data:image/png;base64,"
+                        + b64.b64encode(lm_png).decode("ascii"),
+                        "mimeType": "image/png",
+                    },
+                    {
+                        "name": "source.png",
+                        "uri": "data:image/png;base64,"
+                        + b64.b64encode(src_png).decode("ascii"),
+                        "mimeType": "image/png",
+                    },
+                ],
+                "textures": [{"source": 0}, {"source": 1}],
+            }
+        )
+        MeshConvert.optimize_glb_textures(path)
+
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        blob = edit.bin_data
+
+        def payload(image):
+            view = gltf["bufferViews"][image["bufferView"]]
+            return bytes(
+                blob[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+            )
+
+        lm_bytes = payload(gltf["images"][0])
+        self.assertEqual(lm_bytes[12:16], b"VP8L", "lightmap must be lossless WebP")
+        self.assertEqual(
+            Image.open(io.BytesIO(lm_bytes)).convert("RGB").tobytes(),
+            lm_img.tobytes(),
+            "lossless lightmap must round-trip pixel-exact",
+        )
+        self.assertEqual(
+            payload(gltf["images"][1])[12:16], b"VP8 ", "source stays lossy"
+        )
+
+    def test_optimize_exempts_by_binding_when_the_name_lies(self):
+        """Structural exemption: an image bound as a texCoord-1 occlusion map
+        is a lightmap whatever its name says (digest dedupe can hand a
+        lightmap payload another image's name), so it must keep its size."""
+        import base64 as b64
+
+        from PIL import Image
+
+        im = Image.new("RGB", (128, 128), (10, 12, 14))
+        buffer = io.BytesIO()
+        im.save(buffer, format="PNG")
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [
+                    {
+                        "name": "definitely_not_a_lightmap.png",
+                        "uri": "data:image/png;base64,"
+                        + b64.b64encode(buffer.getvalue()).decode("ascii"),
+                        "mimeType": "image/png",
+                    }
+                ],
+                "textures": [{"source": 0}],
+                "materials": [
+                    {
+                        "name": "M",
+                        "occlusionTexture": {"index": 0, "texCoord": 1},
+                    }
+                ],
+            }
+        )
+        MeshConvert.optimize_glb_textures(path, max_size=64)
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        view = gltf["bufferViews"][gltf["images"][0]["bufferView"]]
+        raw = bytes(
+            edit.bin_data[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+        )
+        self.assertEqual(
+            max(Image.open(io.BytesIO(raw)).size),
+            128,
+            "texCoord-1 occlusion image must not resize",
+        )
+
     def test_metallic_roughness_repair_replaces_a_white_orm(self):
         """The packed ORM must carry the REAL maps, blue channel = metallic.
 
@@ -1263,6 +1571,68 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertEqual(pixels[1], 128, "green channel must be the roughness map")
         self.assertEqual(pixels[0], 255, "red (occlusion) fills white when absent")
         self.assertEqual(pbr["metallicFactor"], 1.0)
+
+    def test_metallic_roughness_binds_occlusion_to_the_packed_orm(self):
+        """The AO packed into R must actually be sampled: glTF reads occlusion
+        ONLY from ``occlusionTexture``, so an ORM bound solely as
+        ``metallicRoughnessTexture`` ships its AO as dead payload (measured on
+        a delivered preview GLB: 0 of 57 materials sampled it). Three cases,
+        one rule each:
+
+        * a free slot binds (the spec's packed-ORM idiom -- same image, both
+          slots);
+        * a slot still naming the converted ORM this write replaces is
+          REPOINTED (FBX2glTF binds its own packing there, and the stale
+          reference samples the -- often solid-white -- image it emitted);
+        * a separate authored AO map is left alone.
+        """
+        from PIL import Image
+
+        ao = os.path.join(self.tmp, "ao.png")
+        Image.new("L", (4, 4), 200).save(ao)
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [
+                    {"name": "free"},
+                    {
+                        "name": "stale",
+                        "pbrMetallicRoughness": {
+                            "metallicRoughnessTexture": {"index": 0}
+                        },
+                        "occlusionTexture": {"index": 0},
+                    },
+                    {
+                        "name": "authored",
+                        "pbrMetallicRoughness": {
+                            "metallicRoughnessTexture": {"index": 0}
+                        },
+                        "occlusionTexture": {"index": 1},
+                    },
+                ],
+                "textures": [{"source": 0}, {"source": 1}],
+                "images": [{"name": "fbx2gltf_orm.png"}, {"name": "real_ao.png"}],
+            }
+        )
+        spec = {"occlusion": ao}
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_metallic_roughness(
+                session,
+                {"free": dict(spec), "stale": dict(spec), "authored": dict(spec)},
+            )
+        gltf = MeshConvert._read_glb(path).gltf
+        by_name = {m["name"]: m for m in gltf["materials"]}
+        for case in ("free", "stale"):
+            mat = by_name[case]
+            packed = mat["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"]
+            self.assertEqual(
+                mat["occlusionTexture"]["index"], packed, f"{case}: slot must bind"
+            )
+        self.assertEqual(
+            by_name["authored"]["occlusionTexture"]["index"],
+            1,
+            "an authored separate AO map must never be displaced",
+        )
 
     def test_metallic_roughness_shared_sources_pack_once(self):
         """N materials naming the same maps must cost one pack + one embed."""
@@ -1369,16 +1739,182 @@ class TestSceneSidecar(unittest.TestCase):
             sections, source={"application": "test", "version": "0"}, asset="scene.fbx"
         )
 
+    def _assert_embeds(self, glb, envelope):
+        """The embedded envelope is the caller's plus the resolution keys.
+
+        Not equality: only the apply pass can know which glTF image each
+        authoring path became, so it embeds a COPY carrying ``textures`` and
+        ``validate``. Equality here would also mean the caller's dict had been
+        mutated behind their back -- the bridges keep that object and write a
+        ``.scene.json`` inspection copy from it.
+        """
+        embedded = MeshConvert.read_scene_sidecar(glb)
+        self.assertEqual(set(embedded) - set(envelope), {"textures", "validate"})
+        self.assertEqual(
+            {k: v for k, v in embedded.items() if k in envelope}, envelope
+        )
+        self.assertNotIn("textures", envelope, "caller's envelope was mutated")
+        return embedded
+
     def test_build_scene_sidecar_owns_the_frozen_top_level(self):
         """Standalone readers parse against exactly these keys."""
         envelope = self._envelope({"emissive": {"m": {"color": [1, 0, 0]}}})
         self.assertEqual(
             set(envelope),
-            {"version", "source", "asset", "color_space", "sections"},
+            {"version", "source", "asset", "color_space", "sections", "handoff"},
         )
         self.assertEqual(envelope["version"], MeshConvert.SIDECAR_VERSION)
         self.assertEqual(envelope["color_space"], "linear")
         self.assertEqual(envelope["asset"], "scene.fbx")
+
+    def test_handoff_states_the_contract_a_standalone_reader_needs(self):
+        """The rule that only lives in the artifact, not in a doc: a section's
+        texture path is provenance, and ``textures`` is what resolves it.
+
+        Asserted on substance rather than wording -- the instructions have to
+        name the trap (paths do not resolve) and the escape (the map), or an
+        agent handed one .glb will go looking on a filesystem. ``reads`` is
+        derived from the registries so a section or manifest added later cannot
+        fall out of the contract silently.
+        """
+        handoff = self._envelope({})["handoff"]
+        text = handoff["instructions"].lower()
+        self.assertIn("provenance only", text)
+        self.assertIn("textures", text)
+        self.assertIn("lightmap", text)
+        self.assertEqual(handoff["sections"], sorted(MeshConvert.SIDECAR_APPLIERS))
+        self.assertIn(
+            f"extras.{MeshConvert.LIGHTMAP_WEB_KEY}", handoff["reads"]
+        )
+
+    def test_apply_resolves_every_authoring_path_to_an_embedded_image(self):
+        """The content-addressed join: path -> glTF image index + sha256.
+
+        Covers the ORM wrinkle too -- the packer's cache key is the three
+        source paths joined by ``|`` because the trio collapses into ONE image,
+        so all three must resolve, to the same index, and the digest must match
+        the bytes actually embedded.
+        """
+        from PIL import Image
+
+        rough = os.path.join(self.tmp, "r.png")
+        metal = os.path.join(self.tmp, "m.png")
+        emit = os.path.join(self.tmp, "e.png")
+        Image.new("L", (4, 4), 90).save(rough)
+        Image.new("L", (4, 4), 10).save(metal)
+        Image.new("RGB", (4, 4), (5, 6, 7)).save(emit)
+
+        glb = self._write_glb(materials=[{"name": "m"}])
+        envelope = self._envelope(
+            {
+                "emissive": {"m": {"texture": emit}},
+                "metallic_roughness": {"m": {"roughness": rough, "metallic": metal}},
+            }
+        )
+        MeshConvert.apply_scene_sidecar(glb, envelope)
+        embedded = self._assert_embeds(glb, envelope)
+
+        refs = embedded["textures"]
+        for path in (rough, metal, emit):
+            self.assertIn(path, refs, "every authoring path must resolve")
+        self.assertEqual(
+            refs[rough]["image"],
+            refs[metal]["image"],
+            "the ORM trio collapses into one image",
+        )
+        self.assertNotEqual(refs[emit]["image"], refs[rough]["image"])
+        self.assertNotIn("None", refs, "an absent slot is not a path")
+
+        # Digests must address the bytes really present, resolved the way a
+        # standalone reader would: sidecar path -> image index -> payload.
+        with MeshConvert.open_glb(glb) as edit:
+            for path, ref in refs.items():
+                payload = edit._image_payload(edit.images[ref["image"]])
+                self.assertEqual(
+                    ref["sha256"],
+                    hashlib.sha256(payload).hexdigest(),
+                    f"{path}: digest must match the embedded payload",
+                )
+                self.assertEqual(ref["bytes"], len(payload))
+        self.assertEqual(
+            embedded["validate"]["sections"], {"emissive": 1, "metallic_roughness": 1}
+        )
+        self.assertEqual(embedded["validate"]["textures"], len(refs))
+        # NOT the file's totals: the lightmap applier runs after this in every
+        # production path and adds images, so a total stamped here would be
+        # stale on arrival and a reader checking it would reject a good file.
+        self.assertNotIn("images", embedded["validate"])
+
+    def test_a_path_used_by_two_channels_resolves_deterministically(self):
+        """One path CAN become two images -- embedded whole for one channel and
+        folded into an ORM for another -- and a single-valued map can only say
+        one. First wins, fixed by SIDECAR_APPLIERS order, so the answer does not
+        depend on which applier happened to run last."""
+        from PIL import Image
+
+        shared = os.path.join(self.tmp, "shared.png")
+        Image.new("RGB", (4, 4), (9, 9, 9)).save(shared)
+        glb = self._write_glb(materials=[{"name": "m"}])
+        envelope = self._envelope(
+            {
+                "emissive": {"m": {"texture": shared}},
+                "metallic_roughness": {"m": {"roughness": shared}},
+            }
+        )
+        MeshConvert.apply_scene_sidecar(glb, envelope)
+        refs = MeshConvert.read_scene_sidecar(glb)["textures"]
+
+        with MeshConvert.open_glb(glb) as edit:
+            emissive_image = edit.image_for_texture(
+                edit.gltf["materials"][0]["emissiveTexture"]["index"]
+            )
+            packed_image = edit.image_for_texture(
+                edit.gltf["materials"][0]["pbrMetallicRoughness"][
+                    "metallicRoughnessTexture"
+                ]["index"]
+            )
+        self.assertNotEqual(emissive_image, packed_image, "two distinct embeds")
+        self.assertEqual(
+            refs[shared]["image"],
+            emissive_image,
+            "the whole-image embed wins over a channel of a pack",
+        )
+
+    def test_apply_survives_a_malformed_section_when_sizing_validate(self):
+        """A null section is skipped by the dispatch, so sizing it for
+        ``validate`` must not be the thing that raises: the container catch
+        handles OSError/ValueError only, so a TypeError from ``len(None)`` would
+        abort an apply that was otherwise entirely fine."""
+        glb = self._write_glb(materials=[{"name": "m"}])
+        envelope = self._envelope({"emissive": None, "base_color": {"m": {"color": [0, 1, 0]}}})
+        summary = MeshConvert.apply_scene_sidecar(glb, envelope)
+        self.assertEqual(summary, {"base_color": "1 of 1"})
+        embedded = MeshConvert.read_scene_sidecar(glb)
+        self.assertEqual(embedded["validate"]["sections"], {"base_color": 1})
+
+    def test_optimize_restamps_digests_it_invalidated(self):
+        """The lifetime bug this guards: ``optimize_glb_textures`` re-encodes
+        every image, so a digest taken at apply time describes bytes the
+        delivered file no longer holds. Content addressing that does not
+        address the delivered content is worse than none -- a reader that
+        verifies would reject a perfectly good artifact."""
+        from PIL import Image
+
+        big = os.path.join(self.tmp, "big.png")
+        Image.new("RGB", (128, 128), (30, 60, 90)).save(big)
+        glb = self._write_glb(materials=[{"name": "m"}])
+        envelope = self._envelope({"emissive": {"m": {"texture": big}}})
+        MeshConvert.apply_scene_sidecar(glb, envelope)
+        before = MeshConvert.read_scene_sidecar(glb)["textures"][big]["sha256"]
+
+        MeshConvert.optimize_glb_textures(glb, max_size=32)
+        after = MeshConvert.read_scene_sidecar(glb)["textures"][big]
+        self.assertNotEqual(after["sha256"], before, "re-encode must restamp")
+        with MeshConvert.open_glb(glb) as edit:
+            payload = edit._image_payload(edit.images[after["image"]])
+        self.assertEqual(after["sha256"], hashlib.sha256(payload).hexdigest())
+        self.assertEqual(after["bytes"], len(payload))
+        self.assertEqual(after["mimeType"], "image/webp")
 
     def test_apply_dispatches_sections_and_embeds_the_envelope(self):
         """Apply + embed happen in one session; the artifact self-describes."""
@@ -1391,11 +1927,10 @@ class TestSceneSidecar(unittest.TestCase):
             self.assertEqual(
                 edit.gltf["materials"][0]["emissiveFactor"], [1.0, 0.0, 0.0]
             )
-            self.assertEqual(edit.gltf["extras"]["scene_sidecar"], envelope)
             self.assertEqual(
                 edit.gltf["extras"]["scene_sidecar_applied"], summary
             )
-        self.assertEqual(MeshConvert.read_scene_sidecar(glb), envelope)
+        self._assert_embeds(glb, envelope)
 
     def test_apply_composes_with_an_open_session(self):
         """Session form: the owner writes once; apply must not write for itself."""
@@ -1423,14 +1958,14 @@ class TestSceneSidecar(unittest.TestCase):
         glb = self._write_glb(materials=[{"name": "m"}])
         envelope = self._envelope({})
         self.assertEqual(MeshConvert.apply_scene_sidecar(glb, envelope), {})
-        self.assertEqual(MeshConvert.read_scene_sidecar(glb), envelope)
+        self._assert_embeds(glb, envelope)
 
     def test_unknown_sections_are_skipped_never_fatal(self):
         """Forward compatibility: a reader skips sections it does not know."""
         glb = self._write_glb(materials=[{"name": "m"}])
         envelope = self._envelope({"lights": {"key": {"intensity": 5}}})
         self.assertEqual(MeshConvert.apply_scene_sidecar(glb, envelope), {})
-        self.assertEqual(MeshConvert.read_scene_sidecar(glb), envelope)
+        self._assert_embeds(glb, envelope)
 
     def test_fbx_to_glb_sidecar_param_applies_in_the_conversion_pass(self):
         """The one-parameter path every production caller uses."""
@@ -1455,7 +1990,7 @@ class TestSceneSidecar(unittest.TestCase):
         ):
             out = MeshConvert.fbx_to_glb(src, dst, overwrite=True, sidecar=envelope)
 
-        self.assertEqual(MeshConvert.read_scene_sidecar(out), envelope)
+        self._assert_embeds(out, envelope)
         with MeshConvert.open_glb(out) as edit:
             self.assertEqual(
                 edit.gltf["materials"][0]["emissiveFactor"], [0.0, 1.0, 0.0]
@@ -1616,6 +2151,100 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertEqual(MeshConvert.apply_glb_lightmaps(glb), [])
         with open(glb, "rb") as f:
             self.assertEqual(f.read(), before, "no-op must not rewrite")
+
+    def test_namespaced_node_binds_a_stripped_manifest_name(self):
+        """Namespace tolerance, the direction that shipped black racks: an
+        older publisher stripped ``NS:`` from the manifest while the FBX kept
+        it on the node -- exact matching bound nothing and every referenced
+        object lost its lighting. The stripped leaf is unambiguous here, so
+        it must bind."""
+        exr = self._exr()
+        glb = self._glb(
+            self._scene(
+                self._manifest([{"name": "room", "map": os.path.basename(exr)}]),
+                objects=("VDATS_DA:room",),
+            )
+        )
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["object"], "room")
+
+    def test_manifest_namespace_binds_a_stripped_node(self):
+        """The reverse direction: a namespaced manifest against an exporter
+        that flattened namespaces out of the node names."""
+        exr = self._exr()
+        glb = self._glb(
+            self._scene(
+                self._manifest(
+                    [{"name": "VDATS_DA:room", "map": os.path.basename(exr)}]
+                ),
+                objects=("room",),
+            )
+        )
+        self.assertEqual(len(MeshConvert.apply_glb_lightmaps(glb)), 1)
+
+    def test_ambiguous_leaf_is_not_guessed(self):
+        """Two nodes stripping to the same leaf: binding either would put one
+        object's lighting on the other -- skip loudly instead."""
+        exr = self._exr()
+        glb = self._glb(
+            self._scene(
+                self._manifest([{"name": "room", "map": os.path.basename(exr)}]),
+                objects=("NS_A:room", "NS_B:room"),
+            )
+        )
+        self.assertEqual(MeshConvert.apply_glb_lightmaps(glb), [])
+
+    def test_exact_match_outranks_leaf_fallback(self):
+        """When the manifest name exists verbatim, a same-leaf sibling under a
+        namespace must not attract the binding."""
+        exr = self._exr()
+        glb = self._glb(
+            self._scene(
+                self._manifest(
+                    [
+                        {
+                            "name": "room",
+                            "map": os.path.basename(exr),
+                            "scaleOffset": [0.5, 0.5, 0.0, 0.0],
+                        }
+                    ]
+                ),
+                objects=("room", "NS_A:room"),
+            )
+        )
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual(len(records), 1)
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+        # Only the exact-name node's primitive gained the per-instance material
+        # clone (the rect forces one); the namespaced sibling keeps material 0.
+        exact_mat = gltf["meshes"][gltf["nodes"][0]["mesh"]]["primitives"][0][
+            "material"
+        ]
+        sibling_mat = gltf["meshes"][gltf["nodes"][1]["mesh"]]["primitives"][0][
+            "material"
+        ]
+        self.assertGreater(exact_mat, 1, "rect binding must clone the material")
+        self.assertEqual(sibling_mat, 0)
+
+    def test_lightmap_texture_samples_clamp_to_edge(self):
+        """Atlas rects legally extend past [0,1]; REPEAT would wrap a tap past
+        an atlas edge onto the opposite side's unrelated texels. The lightmap's
+        texture must clamp -- without disturbing sampler 0 (the file default)."""
+        exr = self._exr()
+        glb = self._glb(
+            self._scene(
+                self._manifest([{"name": "room", "map": os.path.basename(exr)}])
+            )
+        )
+        MeshConvert.apply_glb_lightmaps(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+        oc = gltf["materials"][0]["occlusionTexture"]
+        sampler = gltf["samplers"][gltf["textures"][oc["index"]]["sampler"]]
+        self.assertEqual(sampler, {"wrapS": 33071, "wrapT": 33071})
+        self.assertEqual(gltf["samplers"][0], {"wrapS": 10497, "wrapT": 10497})
 
     def test_missing_texcoord1_is_skipped_loudly_not_bound(self):
         """No second UV set = the FBX shipped without lightmap UVs; binding the
@@ -1791,6 +2420,106 @@ class TestGlbLightmaps(unittest.TestCase):
             MeshConvert.apply_glb_lightmaps(glb)
         displaced = [m for m in caught.output if "is dropped on every" in m]
         self.assertEqual(len(displaced), 1, f"one line expected, got {caught.output}")
+
+    def test_lightmap_displaces_a_packed_orm_occlusion_silently(self):
+        """A slot holding the material's own metallicRoughnessTexture is the
+        packed-ORM occlusion binding (set_glb_metallic_roughness, or FBX2glTF's
+        converted packing), not an authored map -- its R channel is AO the bake
+        already contains. Displacing it must not fire the authored-map warning:
+        with the ORM writer now binding that slot on nearly every repaired
+        material, the warning would fire on nearly every lightmapped material
+        and bury the real signal it exists to carry."""
+        exr = self._exr()
+        gltf = self._scene(
+            self._manifest([{"name": "room", "map": os.path.basename(exr)}])
+        )
+        gltf["materials"][0].update(
+            {
+                "pbrMetallicRoughness": {"metallicRoughnessTexture": {"index": 0}},
+                "occlusionTexture": {"index": 0},
+            }
+        )
+        gltf["textures"] = [{"source": 0}]
+        gltf["images"] = [{"name": "orm.png"}]
+        glb = self._glb(gltf)
+        with self.assertNoLogs(
+            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+        ):
+            records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual(len(records), 1)
+        with MeshConvert.open_glb(glb) as edit:
+            oc = edit.gltf["materials"][0]["occlusionTexture"]
+        self.assertEqual(oc["texCoord"], 1, "the lightmap must take the slot")
+
+    def test_replace_authored_false_keeps_the_authored_carrier(self):
+        """The gate: an authored AO map survives and the lightmap stands down.
+
+        Skipping has to happen BEFORE the encode-and-embed, or a material whose
+        every instance keeps its authored map would still carry the lightmap
+        PNG as an orphan texture nothing samples. And it must warn ONCE for the
+        shared material, not once per object/primitive wearing it -- the skip
+        path never sets ``claimed``, so without its own once-guard a 46-piece
+        room would repeat the line 46 times.
+        """
+        exr = self._exr()
+        basename = os.path.basename(exr)
+        gltf = self._scene(
+            self._manifest(
+                [{"name": "room", "map": basename}, {"name": "prop", "map": basename}]
+            ),
+            objects=("room", "prop"),  # two objects, one shared material
+        )
+        gltf["materials"][0]["occlusionTexture"] = {"index": 0}  # authored, no ORM
+        gltf["textures"] = [{"source": 0}]
+        gltf["images"] = [{"name": "hand_authored_ao.png"}]
+        glb = self._glb(gltf)
+        with self.assertLogs(
+            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+        ) as caught:
+            records = MeshConvert.apply_glb_lightmaps(glb, replace_authored=False)
+        self.assertEqual(records, [])
+        kept = [m for m in caught.output if "replace_authored=False" in m]
+        self.assertEqual(len(kept), 1, f"one line expected, got {caught.output}")
+        with MeshConvert.open_glb(glb) as edit:
+            gltf_after = edit.gltf
+        self.assertEqual(
+            gltf_after["materials"][0]["occlusionTexture"], {"index": 0}
+        )
+        self.assertEqual(
+            len(gltf_after.get("images") or []),
+            1,
+            "the skipped lightmap must not be embedded as an orphan",
+        )
+        self.assertNotIn("lightmap_web", gltf_after.get("extras", {}))
+
+    def test_replace_authored_false_skips_instance_clones_without_orphans(self):
+        """Same gate on the rect path: no clones, and no orphan atlas embed --
+        the authored check has to run before ``_scalar()``."""
+        self._exr("atlas.exr")
+        gltf = self._scene(
+            self._manifest(
+                [
+                    {
+                        "name": f"wall_{i}",
+                        "map": "atlas.exr",
+                        "scaleOffset": [0.5, 1.0, 0.5 * (i % 2), 0.0],
+                    }
+                    for i in range(2)
+                ]
+            ),
+            objects=("wall_0", "wall_1"),
+        )
+        gltf["materials"][0]["occlusionTexture"] = {"index": 0}  # authored
+        gltf["textures"] = [{"source": 0}]
+        gltf["images"] = [{"name": "hand_authored_ao.png"}]
+        glb = self._glb(gltf)
+        records = MeshConvert.apply_glb_lightmaps(glb, replace_authored=False)
+        self.assertEqual(records, [])
+        with MeshConvert.open_glb(glb) as edit:
+            gltf_after = edit.gltf
+        self.assertEqual(len(gltf_after["materials"]), 2, "no ~lm clones")
+        self.assertEqual(len(gltf_after.get("images") or []), 1, "no orphan embed")
+        self.assertNotIn("extensionsUsed", gltf_after)
 
     def test_identity_rects_change_nothing_structural(self):
         """An explicit identity scaleOffset is the plain path: shared material

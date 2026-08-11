@@ -12,6 +12,7 @@ asset.
 import base64
 import json
 import os
+import re
 import struct
 import sys
 import unittest
@@ -315,6 +316,37 @@ class PreviewServerTestCase(unittest.TestCase):
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
         self.assertIn(f"sendBeacon('{VIEWER_CLOSED_PATH}'", page)
+
+    def test_a_lightmapped_model_keeps_some_environment_lighting(self):
+        """Zero environment on a lightmapped model renders it dead flat.
+
+        three.js adds ``lightMap`` irradiance through ``BRDF_Lambert``, which
+        has no normal term -- a bake supplies light that does not vary with the
+        surface normal. Switch the viewer's own lighting fully off (as this
+        once did) and nothing left in the render samples the normal at all, so
+        every correctly-bound normal map, all roughness variation and every
+        specular highlight go inert. Measured on a production room GLB: 51 of
+        57 materials lightmapped, all 54 normal maps bound at texCoord 0, and
+        no surface detail visible anywhere. The environment is what stays on to
+        carry the normal-dependent specular term, so a zero (or absent) level
+        here is the regression.
+
+        It also has to be applied through ``scene.environmentIntensity``, the
+        only lever the renderer honours: a material-level ``envMapIntensity``
+        is overwritten from the scene value for precisely the materials this
+        affects (``isMeshStandardMaterial`` with no ``envMap`` of its own,
+        which is every GLTFLoader material), so setting it there renders the
+        whole fix inert -- verified against the three.js 0.169.0 source, and
+        the first cut of this fix did exactly that.
+        """
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        match = re.search(r"const LIGHTMAP_ENV_INTENSITY = ([0-9.]+)", page)
+        self.assertIsNotNone(
+            match, "the viewer no longer declares a lightmapped-scene env level"
+        )
+        self.assertGreater(float(match.group(1)), 0.0)
+        self.assertIn("scene.environmentIntensity = lightmapped", page)
 
     def test_timeout_tolerates_hidden_tab_throttling(self):
         """Browsers throttle a hidden tab's timers to ~1/min; 90s clears that."""
@@ -738,7 +770,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         envelope = payload.extras["scene_sidecar"]
         self.assertEqual(
             set(envelope),
-            {"version", "source", "asset", "color_space", "sections"},
+            {"version", "source", "asset", "color_space", "sections", "handoff"},
         )
         self.assertEqual(envelope["version"], MeshConvert.SIDECAR_VERSION)
         self.assertEqual(envelope["source"], {"application": "stub", "version": "0"})

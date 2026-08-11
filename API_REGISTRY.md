@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-10_
+_Generated: 2026-08-11_
 
 ## Index
 
@@ -472,7 +472,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 ``MapFactory`` -- the texture-map workflow orchestrator.
 
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L61)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L63)** — Refactored factory with pluggable workflow system.
   - `MapFactory.map_types(cls) -> Dict[str, Tuple[str, ...]]` — ``{canonical_key: (canonical, *aliases)}`` for every registered map.
   - `MapFactory.passthrough_maps(cls) -> List[str]` — Maps passed through to the output when no handler consumes them.
   - `MapFactory.packed_grayscale_maps(cls) -> List[str]` — Maps that scale down by ``mask_map_scale`` (packed/mask data).
@@ -493,7 +493,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.get_map_fallbacks(cls, map_type: str) -> Tuple[str, ...]` *(class)* — Get fallback map types for a given map type.
   - `MapFactory.get_precedence_rules(cls) -> Dict[str, List[str]]` *(class)* — Returns a dictionary of map precedence rules.
   - `MapFactory.resolve_normal_maps(cls, sorted_maps: Dict[str, Any], target_format: Optional[str] = None, convert: bool = True) -> Dict[str, Dict[str, str]]` *(class)* — Reduce an inventory to exactly ONE normal map — optionally in a given convention.
-  - `MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, Any], config: Dict[str, Any] = None, extract_missing: bool = True) -> Dict[str, Dict[str, str]]` *(class)* — Resolve packed/loose map redundancy in-place — losslessly.
+  - `MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, Any], config: Dict[str, Any] = None, extract_missing: bool = True) -> Dict[str, Dict[str, str]]` *(class)* — Resolve packed-map redundancy in-place — losslessly.
   - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
   - `MapFactory.pack_transparency_into_albedo(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…
   - `MapFactory.pack_smoothness_into_metallic(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
@@ -512,6 +512,8 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.pack_mrao_texture(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']` *(class)* — Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.
   - `MapFactory.convert_smoothness_to_roughness(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Convert a Smoothness map to a Roughness map by inverting the grayscale values.
   - `MapFactory.convert_roughness_to_smoothness(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Convert a Roughness map to a Smoothness map by inverting the grayscale values.
+  - `MapFactory.foreign_packings(cls, sources: Iterable[Any], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* — ``{path: map type}`` for **packed** sources belonging to another engine.
+  - `MapFactory.unpack_to_channels(cls, source: Union[str, 'Image.Image'], map_type: Optional[str] = None, save: bool = False) -> Dict[str, 'Image.Image']` *(class)* — The loose maps a packed source map carries, keyed by canonical type.
   - `MapFactory.unpack_orm_texture(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]` *(class)* — Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.
   - `MapFactory.unpack_msao_texture(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]` *(class)* — Unpack Metallic, AO, and Smoothness from a combined MSAO texture.
   - `MapFactory.unpack_mrao_texture(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]` *(class)* — Unpack Metallic, Roughness, and AO from a combined MRAO texture.
@@ -546,31 +548,31 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `ORMMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L150)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
+- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L153)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
   - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L244)** — Handles Unity HDRP Mask Map (MSAO).
+- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L247)** — Handles Unity HDRP Mask Map (MSAO).
   - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L340)** — Handles packed Metallic+Smoothness.
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L351)** — Handles packed Metallic+Smoothness.
   - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L413)** — Handles separate metallic and roughness maps.
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L424)** — Handles separate metallic and roughness maps.
   - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
   - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L450)** — Handles base color / albedo with optional packing.
+- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L461)** — Handles base color / albedo with optional packing.
   - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L602)** — Handles normal map format conversion.
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L613)** — Handles normal map format conversion.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L780)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L791)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -655,18 +657,22 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapRegistry.split_tile_token(cls, name_only: str) -> Tuple[str, str]` *(class)* — Split a trailing UDIM / UV-tile token off an extension-less filename.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
   - `MapRegistry.get_suffix_strip_pattern(self) -> Optional[str]` — Regex matching one trailing map-type suffix (any registered alias).
+  - `MapRegistry.shares_workflow(self, name: str, other: str) -> Optional[bool]` — Whether two map types declare any target workflow in common.
   - `MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]` — Generate the workflow presets dictionary.
   - `MapRegistry.get_map_types(self) -> Dict[str, Tuple[str, ...]]` — Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.
   - `MapRegistry.get_aliases_by_len_desc(self) -> List[str]` — Every registered canonical name and alias, sorted longest-first.
   - `MapRegistry.get_fallbacks(self) -> Dict[str, Tuple[str, ...]]` — Generate the input fallback dictionary.
   - `MapRegistry.get_output_fallbacks(self) -> Dict[str, Tuple[str, ...]]` — Generate the output fallback dictionary.
   - `MapRegistry.get_precedence_rules(self) -> Dict[str, List[str]]` — Generate the precedence rules dictionary.
+  - `MapRegistry.packed_precedence(self, config: Dict[str, Any] = None) -> List[str]` — Packed map types ranked most- to least-wanted for ``config``'s target.
   - `MapRegistry.get_scale_as_mask_types(self) -> List[str]` — Get list of map types that should be scaled as masks.
   - `MapRegistry.get_resolution_critical_types(self) -> List[str]` — Get list of map types whose surface detail requires full resolution.
   - `MapRegistry.is_resolution_critical(self, name: str) -> bool` — True when surface detail for ``name`` requires full resolution.
   - `MapRegistry.get_passthrough_maps(self) -> List[str]` — Get list of maps that should be passed through if not consumed.
   - `MapRegistry.get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]` — Generate the map backgrounds dictionary.
   - `MapRegistry.get_map_modes(self) -> Dict[str, str]` — Generate the map modes dictionary.
+  - `MapRegistry.resolve_missing_map_rule(cls, config: Dict[str, Any] = None) -> str` *(class)* — The 'Missing Maps' policy ``config`` asks for.
+  - `MapRegistry.allow_incomplete_pack(cls, config: Dict[str, Any], components: List[Any]) -> bool` *(class)* — Whether an incomplete packed map may still be written.
   - `MapRegistry.resolve_config(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]` — Resolve configuration from presets, dicts, and kwargs.
 
 <a id="core_utils--engines--textures--mat_report"></a>
@@ -894,7 +900,8 @@ Class-scoped logging toolkit.
 - **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1457)** — Mixin for formatting data as ASCII tables.
   - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1590)** — Mixin class for logging utilities.
+  - `TableMixin.log_group(self, title: str, items: List[str], level: str = 'info') -> None` — Log a titled list of related lines as a single record.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1632)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
@@ -1194,9 +1201,14 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
 <a id="file_utils--_file_utils"></a>
 ### `file_utils/_file_utils.py`
 
-- **[`class FileUtils(HelpMixin)`](pythontk/pythontk/file_utils/_file_utils.py#L16)**
+- **[`class FileUtils(HelpMixin)`](pythontk/pythontk/file_utils/_file_utils.py#L17)**
   - `FileUtils.is_valid(filepath: str, expected_type: Optional[str] = None) -> bool` *(static)* — Check if a path is valid, optionally requiring a specific type ('file' or 'dir').
   - `FileUtils.is_cloud_placeholder(filepath: str) -> bool` *(static)* — Return True if *filepath* is an online-only cloud-sync placeholder.
+  - `FileUtils.is_under(path: str, directory: str, inclusive: bool = True) -> bool` *(static)* — Is *path* inside *directory*?
+  - `FileUtils.is_rooted_path(text: str) -> bool` *(static)* — Does *text* name a full path rather than a subdirectory?
+  - `FileUtils.resolve_output_dir(cls, entry: str, base: Optional[str]) -> Optional[str]` *(class)* — Resolve a user-typed output-directory *entry* against *base*.
+  - `FileUtils.path_length_limit() -> int` *(static)* — The longest path this OS will accept, in characters.
+  - `FileUtils.exceeds_path_length(path: str, limit: Optional[int] = None) -> bool` *(static)* — Is *path* longer than the OS path-length limit?
   - `FileUtils.free_space(path: str) -> Optional[int]` *(static)* — Return free space (bytes) on the volume that holds *path*.
   - `FileUtils.format_bytes(size_bytes, unknown: str = '(unknown)') -> str` *(static)* — Render a byte count using the largest unit that keeps the number small.
   - `FileUtils.format_bytes_delta(cls, before, after, unknown: str = '(unknown)') -> str` *(class)* — Render a ``before -> after`` size transition with a percent delta.
@@ -1234,18 +1246,19 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
-- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L50)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L51)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* — Apply a scene-sidecar envelope to a GLB and embed it in its extras.
+  - `MeshConvert.sidecar_foreign_packings(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* — ``{path: map type}`` for envelope textures authored for another engine.
   - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The scene-sidecar envelope embedded in a GLB, or ``None``.
   - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.
-  - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
+  - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
-  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
+  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
   - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
@@ -1426,10 +1439,13 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
   - `ImgUtils.set_contrast(cls, image, level=255)` *(class)* — Parameters:
   - `ImgUtils.gaussian_blur(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']` *(class)* — Apply a Gaussian blur to an image or 2D/3D numpy array.
   - `ImgUtils.dilate_image(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8) -> 'np.ndarray'` *(static)* — Extend valid pixels outward into empty (background) regions.
+  - `ImgUtils.fill_empty_texels(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None) -> 'np.ndarray'` *(class)* — Fill EVERY empty texel with its nearest valid texel's color.
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
   - `ImgUtils.atlas_pixel_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]` *(static)* — Convert normalized ``scaleOffset`` rects to integer pixel rects.
   - `ImgUtils.flip_rect_v(rect: Sequence[float]) -> List[float]` *(static)* — A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.
   - `ImgUtils.inset_atlas_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]` *(static)* — Shrink each atlas rect by a pixel gutter on every side.
+  - `ImgUtils.snap_atlas_rects(cls, rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[float, float, float, float]]` *(class)* — Snap normalized atlas rects onto the atlas's integer texel grid.
+  - `ImgUtils.inset_rects_to_texel_centers(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], bboxes: Optional[Sequence[Optional[Tuple[float, float, float, float]]]] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Re-aim each rect so its content's edge UVs sample border-texel CENTERS.
   - `ImgUtils.assemble_atlas(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'` *(class)* — Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
   - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
   - `ImgUtils.rasterize_uv_triangles(cls, triangles, size: int = 512, supersample: int = 4) -> 'np.ndarray'` *(class)* — Rasterize filled UV-space triangles into a single-channel coverage image.
@@ -1717,7 +1733,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
   - `StrUtils.insert(cls, src, ins, at, occurrence=1, before=False)` *(class)* — Insert character(s) into a string at a given location.
   - `StrUtils.rreplace(string, old, new='', count=None)` *(static)* — Replace occurrances in a string from right to left.
   - `StrUtils.collapse_delimiter_runs(string, delimiter='_', strip_trailing=True)` *(static)* — Collapse consecutive delimiter runs to a single delimiter.
-  - `StrUtils.truncate(string, length=75, mode='start', insert='..')` *(static)* — Shorten the given string to the given length.
+  - `StrUtils.truncate(string, length=75, mode='start', insert='..', head=None)` *(static)* — Shorten the given string to the given length.
   - `StrUtils.get_trailing_integers(string, inc=0, as_string=False)` *(static)* — Returns any integers from the end of the given string.
   - `StrUtils.find_str(cls, find, strings, regex=False, ignore_case=False)` *(class)* — Filter for elements that containing the given string in a list of strings.
   - `StrUtils.find_str_and_format(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)` *(class)* — Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…

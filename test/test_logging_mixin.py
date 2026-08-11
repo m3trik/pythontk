@@ -1125,6 +1125,99 @@ class LoggingMixinQualityPassRegressionTest(BaseTestCase):
         for token in ("Totals", "name", "count", "alpha", "beta"):
             self.assertIn(token, msg)
 
+    def test_log_group_emits_single_record(self):
+        """The mixin's log_group mirrors log_table: one raw record, so a
+        widget handler renders the whole group as ONE paragraph."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget, use_html=False)
+        handler.setLevel(logging.DEBUG)
+        Foo.logger.handlers = [handler]
+
+        Foo().log_group("Totals", ["alpha", "beta"])
+        self.assertEqual(len(widget.messages), 1)
+        for token in ("Totals", "alpha", "beta"):
+            self.assertIn(token, widget.messages[0])
+
+    def test_log_group_falls_back_on_an_unpatched_logger(self):
+        """Bug: engines that accept a caller-supplied ``logger=`` (shader
+        templates, and any future one) were handed a plain stdlib logger and
+        raised ``AttributeError: 'Logger' object has no attribute
+        'log_group'``. The mixin degrades to one line per item instead."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        plain = logging.getLogger("test_log_group_plain_logger")
+        plain.handlers = [_Capture()]
+        plain.setLevel(logging.INFO)
+        plain.propagate = False
+        self.assertFalse(hasattr(plain, "log_raw"), "logger must be unpatched")
+
+        foo = Foo()
+        foo.logger = plain  # engines assign a caller-supplied logger like this
+        foo.log_group("Totals", ["alpha", "beta"])
+
+        self.assertEqual(records, ["Totals", "  alpha", "  beta"])
+
+    def test_log_group_level_means_the_same_thing_on_both_paths(self):
+        """``level`` is the group's severity, not a per-path knob: it colours
+        the title on a patched logger and picks the log method on the plain
+        fallback. A mismatch here would make the same call render as INFO in a
+        panel and WARNING in a log file."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        # Patched path: the title carries the level's colour.
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget, use_html=True)
+        handler.setLevel(logging.DEBUG)
+        Foo.logger.handlers = [handler]
+        Foo().log_group("Totals", ["alpha"], level="warning")
+        self.assertIn(LoggerExt.get_color("WARNING"), widget.messages[0])
+
+        # Plain path: the records come out at that level.
+        levels = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                levels.append(record.levelname)
+
+        plain = logging.getLogger("test_log_group_level_plain")
+        plain.handlers = [_Capture()]
+        plain.setLevel(logging.DEBUG)
+        plain.propagate = False
+
+        foo = Foo()
+        foo.logger = plain
+        foo.log_group("Totals", ["alpha"], level="warning")
+        self.assertEqual(levels, ["WARNING", "WARNING"])
+
+    def test_log_group_ignores_an_empty_item_list(self):
+        """No items means nothing worth a section — emit nothing at all,
+        rather than a bare orphan title."""
+
+        class Foo(LoggingMixin):
+            pass
+
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget, use_html=False)
+        handler.setLevel(logging.DEBUG)
+        Foo.logger.handlers = [handler]
+
+        Foo().log_group("Totals", [])
+        self.assertEqual(widget.messages, [])
+
     def test_format_table_display_width_alignment(self):
         """Bug: format_table measured cells with len() — an emoji/CJK cell
         (display width 2, len 1) misaligned every column after it."""

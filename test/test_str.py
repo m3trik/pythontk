@@ -498,6 +498,60 @@ class StrTest(BaseTestCase):
             "sourceimages/textures/…/crate_DIFF.png",
         )
 
+    def test_truncate_path_head_cap_widens_the_tail(self):
+        """``head`` pins the front so the budget lands on the filename end."""
+        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        capped = StrUtils.truncate(p, 48, "path", "…", head=1)
+        self.assertEqual(capped, "O:/…/sourceimages/textures/c130j_body_DIFF.png")
+        self.assertLessEqual(len(capped), 48)
+        # Same budget, uncapped: the head takes what the tail could not use.
+        uncapped = StrUtils.truncate(p, 48, "path", "…")
+        self.assertEqual(uncapped, "O:/Cloud/Projects/…/textures/c130j_body_DIFF.png")
+
+    def test_truncate_path_head_cap_never_narrows_the_tail(self):
+        """The tail is grown first, so a lower cap can only widen it."""
+        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+
+        def tail_len(result):
+            return len(result.split("…", 1)[1])
+
+        for length in (40, 48, 56, 67, 80):
+            wide = StrUtils.truncate(p, length, "path", "…")
+            narrow = StrUtils.truncate(p, length, "path", "…", head=1)
+            if "…" in wide and "…" in narrow:
+                self.assertGreaterEqual(tail_len(narrow), tail_len(wide), length)
+
+    def test_truncate_path_head_none_is_the_previous_behavior(self):
+        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        self.assertEqual(
+            StrUtils.truncate(p, 48, "path", "…", head=None),
+            StrUtils.truncate(p, 48, "path", "…"),
+        )
+
+    def test_truncate_path_head_below_one_is_clamped(self):
+        """A head of 0 would leave no anchor at all; 1 is the floor."""
+        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        self.assertEqual(
+            StrUtils.truncate(p, 48, "path", "…", head=0),
+            StrUtils.truncate(p, 48, "path", "…", head=1),
+        )
+
+    def test_truncate_path_head_cap_ignored_by_other_modes(self):
+        p = "O:/Cloud/Projects/jets/sourceimages/c130j_body_DIFF.png"
+        for mode in ("start", "end", "middle"):
+            self.assertEqual(
+                StrUtils.truncate(p, 30, mode, "…", head=1),
+                StrUtils.truncate(p, 30, mode, "…"),
+            )
+
+    def test_truncate_path_head_cap_still_marks_a_real_elision(self):
+        """Capping the head must not emit an insert between adjacent parts."""
+        p = "aaa/bbb/ccc.png"
+        result = StrUtils.truncate(p, 13, "path", "…", head=1)
+        kept = [c for c in result.split("/") if c != "…"]
+        if "…" in result:
+            self.assertLess(len(kept), len(p.split("/")))
+
     def test_truncate_path_cuts_only_at_separators(self):
         """The point of 'path' over 'middle': no half-component at the seam."""
         p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"

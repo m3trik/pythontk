@@ -1523,6 +1523,70 @@ class ImgUtils(HelpMixin):
             out = out[..., 0]
         return out.astype(arr.dtype, copy=False)
 
+    @classmethod
+    def fill_empty_texels(
+        cls,
+        image: "np.ndarray",
+        mask: Optional["np.ndarray"] = None,
+    ) -> "np.ndarray":
+        """Fill EVERY empty texel with its nearest valid texel's color.
+
+        The complement of :meth:`dilate_image`: dilation grows a smooth
+        averaged gutter a few px wide, but anything beyond it stays
+        background. Background texels are what a GPU mip chain averages into
+        content at every level -- a black background reads as a dark halo
+        around each island/atlas rect the moment the texture is minified
+        (distant/grazing views), darkening the border of every instance that
+        samples it. After this fill no texel is background, so every mip
+        level averages plausible nearby lighting instead.
+
+        Nearest-neighbor via cv2's distance transform when available (one
+        O(n) pass -- flood-filling a 2048 map by iteration is hundreds of
+        full-image passes); falls back to :meth:`dilate_image`
+        ``iterations=-1`` without cv2.
+
+        Parameters:
+            image: HxW or HxWxC array. Not modified -- a copy is returned.
+            mask: HxW truthy "valid" mask. Defaults to "any channel > 0"
+                (see :meth:`dilate_image` for why baked maps should pass
+                their real coverage mask instead).
+
+        Returns:
+            Image with every empty texel filled; same shape/dtype as input.
+        """
+        arr = np.asarray(image)
+        if mask is None:
+            valid = (arr > 0).any(axis=2) if arr.ndim == 3 else arr > 0
+        else:
+            valid = np.asarray(mask).astype(bool)
+            if valid.shape != arr.shape[:2]:
+                raise ValueError(f"mask shape {valid.shape} != image {arr.shape[:2]}")
+        if valid.all():
+            return arr.copy()
+        if not valid.any():
+            return arr.copy()  # nothing to spread from
+
+        try:
+            import cv2
+        except ImportError:
+            return cls.dilate_image(arr, mask=valid, iterations=-1)
+
+        # Distance transform on the EMPTY set with pixel-index labels: each
+        # empty texel's label is its nearest VALID texel, one pass, exact.
+        empty_u8 = (~valid).astype(np.uint8)
+        _, labels = cv2.distanceTransformWithLabels(
+            empty_u8, cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL
+        )
+        # Labels index the zero-pixels of the input (the valid set) in row
+        # scan order; map label -> flat pixel index, then gather.
+        valid_flat = np.flatnonzero(valid.ravel())
+        out = arr.copy()
+        flat = out.reshape(-1, arr.shape[2]) if arr.ndim == 3 else out.reshape(-1)
+        src = valid_flat[labels.ravel() - 1]
+        empty_flat = ~valid.ravel()
+        flat[empty_flat] = flat[src[empty_flat]]
+        return out
+
     @staticmethod
     def compute_atlas_layout(
         weights: Sequence[float],
@@ -1690,6 +1754,113 @@ class ImgUtils(HelpMixin):
         return out
 
     @classmethod
+    def snap_atlas_rects(
+        cls,
+        rects: Sequence[Tuple[float, float, float, float]],
+        size: Union[int, Tuple[int, int]],
+    ) -> List[Tuple[float, float, float, float]]:
+        """Snap normalized atlas rects onto the atlas's integer texel grid.
+
+        :meth:`compute_atlas_layout` / :meth:`inset_atlas_rects` produce
+        arbitrary float rects, but :meth:`assemble_atlas` writes content at
+        ROUNDED pixel edges (:meth:`atlas_pixel_rects`). Publishing the
+        un-rounded float as the engine's ``scaleOffset`` therefore samples up
+        to half a texel of the neighboring gutter along every rect edge --
+        on instanced tiles that sliver lands on the same shared 3D edge from
+        both sides and reads as a thin dark border. Snapping re-derives each
+        rect FROM its integer pixel rect, so the published rect and the
+        written texels agree exactly.
+
+        Degenerate rects (zero pixel extent after rounding) are returned
+        unchanged -- :meth:`assemble_atlas` skips placing those, so there is
+        nothing to agree with.
+
+        Parameters:
+            rects: ``(scaleX, scaleY, offsetX, offsetY)`` rects in [0, 1] UV
+                space (bottom-left origin).
+            size: Atlas pixel size -- ``int`` for square, or ``(width, height)``.
+
+        Returns:
+            The snapped rects, same format and order as the input.
+        """
+        w_px, h_px = (size, size) if isinstance(size, int) else size
+        out: List[Tuple[float, float, float, float]] = []
+        pixel_rects = cls.atlas_pixel_rects(rects, (w_px, h_px))
+        for rect, (row0, row1, col0, col1) in zip(rects, pixel_rects):
+            if row1 - row0 <= 0 or col1 - col0 <= 0:
+                out.append(tuple(float(v) for v in rect))
+                continue
+            sx = (col1 - col0) / w_px
+            sy = (row1 - row0) / h_px
+            ox = col0 / w_px
+            oy = 1.0 - row1 / h_px  # back to bottom-left origin
+            out.append((sx, sy, ox, oy))
+        return out
+
+    @staticmethod
+    def inset_rects_to_texel_centers(
+        rects: Sequence[Tuple[float, float, float, float]],
+        size: Union[int, Tuple[int, int]],
+        bboxes: Optional[
+            Sequence[Optional[Tuple[float, float, float, float]]]
+        ] = None,
+    ) -> List[Tuple[float, float, float, float]]:
+        """Re-aim each rect so its content's edge UVs sample border-texel CENTERS.
+
+        A rect whose content edge lies on a texel BOUNDARY makes every
+        bilinear tap along that edge split between the content's border texel
+        and the texel beyond it -- in a packed atlas that texel is gutter
+        shared with whatever unrelated item landed next door, so up to half
+        of an edge tap's weight reads another item's lighting. (A sampling
+        defect in its own right; it is not the only thing that can put a line
+        on a shared 3D edge -- an island-border falloff baked INTO the source
+        map survives this entirely.) The standard lightmap convention maps the content's
+        outermost UVs to the CENTER of its outermost texels instead: an edge
+        tap then reads the border texel pure, and neighboring gutters only
+        matter to minified mips (which dilation already covers). The sub-texel
+        stretch this introduces (content spans n texels, sampling spans n-1)
+        is invisible on lighting data.
+
+        Per axis, the content span ``[edge0_px, edge1_px]`` is re-mapped to
+        ``[floor(edge0_px) + 0.5, ceil(edge1_px) - 0.5]``. A rect whose
+        content spans under two texels on either axis is returned unchanged
+        (there is no interior to stretch across).
+
+        Parameters:
+            rects: ``(scaleX, scaleY, offsetX, offsetY)`` rects in [0, 1] UV
+                space (bottom-left origin). Crop-composed rects extending past
+                the unit square are fine -- only the content bbox matters.
+            size: Atlas pixel size -- ``int`` for square, or ``(width, height)``.
+            bboxes: Per-rect content bbox ``(u0, v0, u1, v1)`` in the rect's
+                OWN uv space (the UVs the engine will sample through it).
+                ``None`` -- or a ``None`` entry -- means full coverage
+                ``(0, 0, 1, 1)``.
+
+        Returns:
+            The adjusted rects, same format and order as the input.
+        """
+        w_px, h_px = (size, size) if isinstance(size, int) else size
+        eps = 1e-6  # tolerate float noise on exact texel boundaries
+        out: List[Tuple[float, float, float, float]] = []
+        for i, (sx, sy, ox, oy) in enumerate(rects):
+            bbox = bboxes[i] if bboxes is not None else None
+            u0, v0, u1, v1 = bbox if bbox is not None else (0.0, 0.0, 1.0, 1.0)
+            if u1 - u0 <= 0 or v1 - v0 <= 0:
+                out.append((float(sx), float(sy), float(ox), float(oy)))
+                continue
+            x0 = math.floor((ox + sx * u0) * w_px + eps) + 0.5
+            x1 = math.ceil((ox + sx * u1) * w_px - eps) - 0.5
+            y0 = math.floor((oy + sy * v0) * h_px + eps) + 0.5
+            y1 = math.ceil((oy + sy * v1) * h_px - eps) - 0.5
+            if x1 - x0 < 1.0 or y1 - y0 < 1.0:
+                out.append((float(sx), float(sy), float(ox), float(oy)))
+                continue
+            nsx = (x1 - x0) / ((u1 - u0) * w_px)
+            nsy = (y1 - y0) / ((v1 - v0) * h_px)
+            out.append((nsx, nsy, x0 / w_px - u0 * nsx, y0 / h_px - v0 * nsy))
+        return out
+
+    @classmethod
     def assemble_atlas(
         cls,
         images: Sequence["np.ndarray"],
@@ -1842,14 +2013,21 @@ class ImgUtils(HelpMixin):
         has. V is flipped to image coordinates ((0,0) = top-left) to match
         how UV-mapped textures are stored on disk.
 
+        The value is an exact coverage fraction to within the sampling rate,
+        so ``== 255`` means "every sample in this texel fell inside the
+        geometry" and can be thresholded on as such (what a lightmap bake
+        needs to tell an island's own texels from the ones it merely
+        overlaps). ``supersample`` sets that rate: 4 resolves coverage to
+        1/16 and costs ``(size * 4)²`` bytes of scratch.
+
         Parameters:
             triangles: (N, 3, 2) array-like of UV coordinates (V up, usually
-                in [0,1] — values outside are clipped to the image edge).
+                in [0,1] — geometry outside the unit square is cropped).
             size: Output square resolution in pixels.
             supersample: Coverage oversampling factor (1 = hard edges).
 
         Returns:
-            (size, size) uint8 coverage array (0 outside, 255 inside,
+            (size, size) uint8 coverage array (0 outside, 255 fully inside,
             anti-aliased edges between).
         """
         tris = np.asarray(triangles, dtype=float).reshape(-1, 3, 2)
@@ -1857,31 +2035,68 @@ class ImgUtils(HelpMixin):
         dim = int(size) * ss
         mask = np.zeros((dim, dim), dtype=np.uint8)
         for tri in tris:
-            px = np.clip(tri[:, 0] * dim, 0, dim - 1)
-            py = np.clip((1.0 - tri[:, 1]) * dim, 0, dim - 1)
-            cls._fill_triangle(mask, np.stack([px, py], axis=1).astype(np.int32))
+            px = tri[:, 0] * dim
+            py = (1.0 - tri[:, 1]) * dim
+            cls._fill_triangle(mask, np.stack([px, py], axis=1))
         if ss > 1:
-            mask = (
-                mask.reshape(size, ss, size, ss).astype(np.float32).mean(axis=(1, 3))
-            )
-            mask = np.clip(np.rint(mask), 0, 255).astype(np.uint8)
+            # Accumulate each ss x ss block into one output-sized integer
+            # buffer rather than casting the whole supersampled grid to
+            # float32: that cast is a transient FOUR TIMES the size of the
+            # grid it reduces -- measured 268 MB to downsample a 2048 map at
+            # supersample 4 -- allocated inside whatever host process is
+            # baking. The arithmetic is unchanged (every sample is 0 or 255,
+            # so the block mean is its sum over ss*ss either way) and the
+            # arithmetic stays integer end to end, so no float copy of either
+            # the grid or the result is ever materialized.
+            view = mask.reshape(size, ss, size, ss)
+            n = ss * ss
+            acc = np.zeros((size, size), dtype=np.uint32)
+            for i in range(ss):
+                for j in range(ss):
+                    acc += view[:, i, :, j]
+            # Round half up. Every sample is 0 or 255, so the only quotient
+            # that can land exactly on .5 is a half-covered texel (128 either
+            # way, matching the round-half-to-even this replaces), and the
+            # maximum is 255 exactly -- nothing to clip.
+            mask = ((acc + n // 2) // n).astype(np.uint8)
         return mask
 
     @staticmethod
     def _fill_triangle(mask, tri):
-        """Fill a 2D triangle (3x2 int pixel coords) into ``mask`` with 255 (numpy edge test)."""
+        """Fill a 2D triangle (3x2 float pixel coords) into ``mask`` with 255.
+
+        Samples at pixel CENTERS and keeps the vertices in floating point.
+        Both matter to any caller that reads the downsampled result as a
+        coverage FRACTION: testing at pixel corners offsets every edge by
+        half a sample, and rounding the vertices onto the sample grid first
+        moves them by up to a whole one. Against a supersampled grid those
+        biases are sub-texel, so they never showed as a visibly wrong mask --
+        but a consumer thresholding on FULL coverage reads the result as
+        "this texel lies entirely inside the shape" when part of it does not,
+        which is the one question a coverage mask exists to answer exactly.
+
+        Geometry outside the image is CROPPED (the bbox is clamped, the
+        vertices are not): clamping a vertex would drag the edge it belongs
+        to across the image and smear a triangle that merely overhangs into
+        a wedge along the border.
+        """
+        h, w = mask.shape[:2]
         xs, ys = tri[:, 0], tri[:, 1]
-        x0, x1 = int(xs.min()), int(xs.max())
-        y0, y1 = int(ys.min()), int(ys.max())
+        x0, x1 = int(np.floor(xs.min())), int(np.ceil(xs.max()))
+        y0, y1 = int(np.floor(ys.min())), int(np.ceil(ys.max()))
+        x0, y0 = max(x0, 0), max(y0, 0)
+        x1, y1 = min(x1, w - 1), min(y1, h - 1)
         if x1 < x0 or y1 < y0:
-            return
+            return  # wholly outside the image
         ax, ay = float(tri[0][0]), float(tri[0][1])
         bx, by = float(tri[1][0]), float(tri[1][1])
         cx, cy = float(tri[2][0]), float(tri[2][1])
         denom = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
-        if abs(denom) < 1e-9:
+        if abs(denom) < 1e-12:
             return  # degenerate
         yy, xx = np.mgrid[y0 : y1 + 1, x0 : x1 + 1]
+        xx = xx + 0.5
+        yy = yy + 0.5
         l1 = ((by - cy) * (xx - cx) + (cx - bx) * (yy - cy)) / denom
         l2 = ((cy - ay) * (xx - cx) + (ax - cx) * (yy - cy)) / denom
         l3 = 1.0 - l1 - l2

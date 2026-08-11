@@ -257,13 +257,29 @@ class TaskFactory:
 
         # Store counts so the caller (SceneExporter) can include them
         # in a single consolidated summary after the file is written.
-        self._last_task_count = len(tasks_only)
-        self._last_check_count = len(checks_only)
+        #
+        # Counted by what DISPATCHED, not by what was requested: a name with no
+        # method behind it is warn-skipped in _manage_context and never runs, so
+        # including it made the exporters' "Checks Passed: N/N" banner report a
+        # check that was never made.
+        self._last_task_count = self._dispatchable_count(tasks_only)
+        self._last_check_count = self._dispatchable_count(checks_only)
 
         self._log_execution_summary(
-            failed_checks, all_checks_passed, len(tasks_only), len(checks_only)
+            failed_checks,
+            all_checks_passed,
+            self._last_task_count,
+            self._last_check_count,
         )
         return all_checks_passed
+
+    def _dispatchable_count(self, tasks: Dict[str, Any]) -> int:
+        """How many of *tasks* have a method behind them.
+
+        The same predicate ``_manage_context`` filters on, so a reported count
+        can never exceed what actually ran.
+        """
+        return sum(1 for name in tasks if self._get_cached_method(name))
 
     def _is_sorted(self, d: Dict[str, Any]) -> bool:
         """Check if dictionary keys are already sorted."""

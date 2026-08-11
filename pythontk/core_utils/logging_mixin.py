@@ -1586,6 +1586,48 @@ class TableMixin:
             for line in table_str.split("\n"):
                 log_method(line)
 
+    def log_group(
+        self,
+        title: str,
+        items: List[str],
+        level: str = "info",
+    ) -> None:
+        """Log a titled list of related lines as a single record.
+
+        Sibling of :meth:`log_table` with the same contract: on a
+        LoggerExt-patched logger the whole group is ONE ``log_raw`` record —
+        widget handlers append one QTextBlock per record, so a line-per-item
+        loop renders as N blank-line-separated paragraphs instead of a list.
+
+        Use this (rather than ``logger.log_group``) from any class that may be
+        handed a caller-supplied ``logger=``: a plain stdlib logger carries no
+        ``log_group``, and this degrades to one prefixed line per item instead
+        of raising.
+
+        Args:
+            title: The group header text.
+            items: The lines listed under the title. Empty means nothing worth
+                a section, so nothing is emitted — never a bare orphan title.
+            level: Severity of the group, case-insensitive. Colours the title
+                on a patched logger and selects the log method on the plain
+                fallback — one meaning on both paths, so a caller never has to
+                know which one it hit.
+        """
+        if not items:
+            return
+
+        logger = getattr(self, "logger", None)
+        if logger is None:
+            print("\n".join([title] + [f"  {i}" for i in items]))
+        elif hasattr(logger, "log_group"):
+            # No .upper() needed — get_color normalizes the level name itself.
+            logger.log_group(title, items, level=level)
+        else:
+            log_method = getattr(logger, level.lower(), logger.info)
+            log_method(title)
+            for item in items:
+                log_method(f"  {item}")
+
 
 class LoggingMixin(TableMixin):
     """Mixin class for logging utilities.
