@@ -2015,5 +2015,195 @@ class TestKelvinToLinearRgb(unittest.TestCase):
         self.assertLess(self._fn()(2700)[1], 0.5)
 
 
+class WebPWriteTest(unittest.TestCase):
+    """WebP's writer defaults are the hazard, not the format.
+
+    Pillow writes WebP at *lossy q80* unless told otherwise, so picking
+    ".webp" off a format menu would silently degrade every map. save_image
+    inverts that: lossless unless a quality is asked for.
+    """
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="img_webp_")
+        # Noise, not a flat fill — a constant image survives any codec and
+        # would make a lossy write look lossless.
+        rng = np.random.default_rng(0)
+        self.src = Image.fromarray(
+            rng.integers(0, 255, (64, 64, 3), dtype=np.uint8), "RGB"
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def _path(self, name):
+        return os.path.join(self.test_dir, name)
+
+    def _max_error(self, path):
+        back = Image.open(path).convert("RGB")
+        return int(np.abs(np.asarray(self.src, np.int16) - np.asarray(back, np.int16)).max())
+
+    def test_webp_is_writable(self):
+        self.assertIn("webp", ImgUtils.writable)
+        self.assertIn("webp", ImgUtils.readable)
+
+    def test_defaults_to_lossless(self):
+        path = self._path("a.webp")
+        ImgUtils.save_image(self.src, path)
+        self.assertEqual(self._max_error(path), 0)
+
+    def test_quality_makes_it_lossy(self):
+        lossless, lossy = self._path("b.webp"), self._path("c.webp")
+        ImgUtils.save_image(self.src, lossless)
+        ImgUtils.save_image(self.src, lossy, quality=80)
+        self.assertGreater(self._max_error(lossy), 0)
+        self.assertLess(os.path.getsize(lossy), os.path.getsize(lossless))
+
+    def test_explicit_kwargs_outrank_the_default(self):
+        # A caller who really wants lossless-with-effort keeps control.
+        path = self._path("d.webp")
+        ImgUtils.save_image(self.src, path, quality=80, lossless=True)
+        self.assertEqual(self._max_error(path), 0)
+
+    def test_quality_on_a_lossless_container_is_ignored(self):
+        path = self._path("e.png")
+        ImgUtils.save_image(self.src, path, quality=10)
+        self.assertEqual(self._max_error(path), 0)
+
+    def test_oversize_raises_before_the_encoder_does(self):
+        big = Image.new("RGB", (ImgUtils.WEBP_MAX_DIMENSION + 1, 4))
+        with self.assertRaises(ValueError) as ctx:
+            ImgUtils.save_image(big, self._path("f.webp"))
+        self.assertIn(str(ImgUtils.WEBP_MAX_DIMENSION), str(ctx.exception))
+
+    def test_jpeg_defaults_to_444_chroma(self):
+        """4:2:0 is what destroys a normal map's X/Y vectors."""
+        path = self._path("g.jpg")
+        ImgUtils.save_image(self.src, path)
+        self.assertEqual(Image.open(path).layer[0][1:3], (1, 1))
+
+
+class EffectiveModeTest(unittest.TestCase):
+    """What a container actually stores, versus what it was handed.
+
+    Invisible until after the write — half of these raise instead of
+    degrading — so the table is measured, and the writer and the optimizer's
+    prediction both read from it.
+    """
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="img_mode_")
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_lossless_containers_hold_everything(self):
+        for ext in ("png", "tiff"):
+            for mode in ("L", "LA", "P", "RGB", "RGBA", "I;16"):
+                self.assertEqual(ImgUtils.effective_mode(mode, ext), mode)
+
+    def test_webp_has_no_grayscale_or_palette(self):
+        self.assertEqual(ImgUtils.effective_mode("L", "webp"), "RGB")
+        self.assertEqual(ImgUtils.effective_mode("P", "webp"), "RGB")
+        self.assertEqual(ImgUtils.effective_mode("LA", "webp"), "RGBA")
+        self.assertEqual(ImgUtils.effective_mode("RGB", "webp"), "RGB")
+
+    def test_jpeg_has_no_alpha(self):
+        for mode, expected in (("RGBA", "RGB"), ("LA", "L"), ("P", "RGB")):
+            self.assertEqual(ImgUtils.effective_mode(mode, "jpg"), expected)
+            self.assertEqual(ImgUtils.effective_mode(mode, "jpeg"), expected)
+
+    def test_leading_dot_and_case_are_tolerated(self):
+        self.assertEqual(ImgUtils.effective_mode("L", ".WEBP"), "RGB")
+
+    def test_unknown_container_passes_the_mode_through(self):
+        self.assertEqual(ImgUtils.effective_mode("L", "xyz"), "L")
+
+    def test_table_matches_what_pillow_actually_writes(self):
+        """The table is a measurement; this is the measurement."""
+        for ext, fallbacks in ImgUtils._CONTAINER_MODE_FALLBACKS.items():
+            for mode in fallbacks:
+                path = os.path.join(
+                    self.test_dir, f"m_{ext}_{mode.replace(';', '')}.{ext}"
+                )
+                ImgUtils.save_image(Image.new(mode, (8, 8)), path)
+                self.assertEqual(
+                    Image.open(path).mode,
+                    ImgUtils.effective_mode(mode, ext),
+                    f"{mode} -> .{ext}",
+                )
+
+    def test_modes_jpeg_used_to_reject_now_save(self):
+        """Regression: save_image special-cased only RGBA, so P / LA / I;16
+        raised OSError on a .jpg write."""
+        for mode in ("P", "LA", "RGBA", "I;16"):
+            path = os.path.join(self.test_dir, f"j_{mode.replace(';', '')}.jpg")
+            ImgUtils.save_image(Image.new(mode, (16, 16)), path)
+            self.assertTrue(os.path.isfile(path), mode)
+
+    def test_high_entropy_jpeg_survives_optimize(self):
+        """Regression: q95 + 4:4:4 + optimize=True overflowed Pillow's buffer.
+
+        In optimize mode libjpeg needs one buffer sized for the whole encoded
+        image, and Pillow guesses it from the pixel count (``2*w*h`` at quality
+        >= 95) on the assumption of 4:2:0 chroma. The JPEG defaults changed to
+        q95 at 4:4:4 -- right for a normal map, whose X/Y vectors chroma
+        subsampling turns to mush -- and full-resolution chroma on a
+        high-frequency map exceeds that guess, so Pillow raised ``OSError:
+        broken data stream when writing image file`` instead of growing it.
+
+        ``optimize=True`` is not hypothetical: ``MapOptimizer.optimize_map``
+        passes it on every save, so this broke the .jpg path of the texture
+        optimizer for exactly the detailed maps it exists to process. Measured
+        on random-noise RGB before the fix: 256^2 encoded to 159 KB against a
+        131 KB budget and 1024^2 to 2.48 MB against 2 MB -- every size failed.
+        """
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        for size in (256, 512):
+            noise = rng.integers(0, 256, (size, size, 3), dtype=np.uint8)
+            path = os.path.join(self.test_dir, f"noise_{size}.jpg")
+            ImgUtils.save_image(Image.fromarray(noise, "RGB"), path, optimize=True)
+            self.assertTrue(os.path.isfile(path), f"{size} did not write")
+            self.assertGreater(os.path.getsize(path), 0, f"{size} wrote empty")
+
+    def test_rgb_to_gif_quantises_adaptively(self):
+        """Regression: the container-mode fallback used the WEB palette.
+
+        GIF is always palettised, so ``_CONTAINER_MODE_FALLBACKS`` coerces
+        RGB -> P before the write. A bare ``convert("P")`` takes Pillow's
+        default 216-colour WEB palette, where the ``GifImagePlugin`` write this
+        fallback replaced quantised ADAPTIVELY. Measured on a gradient:
+        49/255 max (19.4 mean) round-trip error against the plugin's 17/2.76 --
+        a visible banding regression from a change meant only to pick the mode.
+        """
+        import numpy as np
+
+        size = 128
+        ramp = np.zeros((size, size, 3), np.uint8)
+        ramp[..., 0] = np.linspace(0, 255, size, dtype=np.uint8)[None, :]
+        ramp[..., 1] = np.linspace(0, 255, size, dtype=np.uint8)[:, None]
+        ramp[..., 2] = 128
+
+        path = os.path.join(self.test_dir, "ramp.gif")
+        ImgUtils.save_image(Image.fromarray(ramp, "RGB"), path)
+        back = np.asarray(Image.open(path).convert("RGB"), np.int16)
+        error = np.abs(back - ramp.astype(np.int16))
+
+        # The plugin's own adaptive quantisation scores 17 max / 2.76 mean; the
+        # WEB palette scores 49 / 19.4. Bound between them, nearer the good one.
+        self.assertLess(int(error.max()), 30, "palette looks non-adaptive")
+        self.assertLess(float(error.mean()), 6.0, "palette looks non-adaptive")
+
+    def test_jpeg_buffer_widening_is_not_leaked_globally(self):
+        """The MAXBLOCK bump is per-save: it is process-wide state."""
+        from PIL import ImageFile
+
+        before = ImageFile.MAXBLOCK
+        img = Image.new("RGB", (64, 64), (128, 64, 32))
+        ImgUtils.save_image(img, os.path.join(self.test_dir, "restore.jpg"), optimize=True)
+        self.assertEqual(ImageFile.MAXBLOCK, before)
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

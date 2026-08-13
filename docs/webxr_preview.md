@@ -171,6 +171,44 @@ so they ride a **material clone carrying `KHR_texture_transform`** — pure JSON
 accessors and the same embedded texture, so any compliant viewer renders the rect with no custom
 code.
 
+### Why a lightmap and not a fused unlit bake?
+
+The alternative — bake albedo × lighting into `baseColorTexture` and ship
+`KHR_materials_unlit` — is cheaper, more portable, and genuinely the right answer for some
+deliverables. Both bake tools once had that level and **removed it deliberately**. One question
+decides which applies:
+
+> **Does every surface have its own unique albedo texels?**
+
+- **No** — tiling, instancing, shared materials, i.e. most environment art → **lightmap.** Fusing
+  is structurally impossible without an albedo explosion: an instance sharing a material would need
+  its own copy of a map it currently shares.
+- **Yes** — uniquely unwrapped, non-instanced → **fused is viable and often preferable.**
+
+The reason is *frequency*, not texture count. Irradiance is smooth and cheap: a whole environment's
+lighting fits one atlas whose canvas **is** the bake resolution, so the bake tier alone sets that
+budget. Albedo carries text, decals, seams and grain, wants 2048² per material, and is reused across
+many objects. Separate maps let each be sampled at its natural frequency and multiplied at runtime;
+fusing forces one resolution and one UV layout on both, so you either pay albedo density for
+lighting or accept lighting density for albedo.
+
+Three secondary advantages, all load-bearing here: normal / roughness / specular response survives
+(a fused unlit asset cannot show a normal map at all, by construction); the HDR range survives, via
+the divisor described above, where an 8-bit fused base colour would have to tonemap it away
+permanently; and the albedo stays shareable across instances.
+
+**Where fused wins** and is worth reaching for: standalone mobile targets where fragment cost is the
+bottleneck (unlit does no lighting maths at all); maximum portability (one texture per material, no
+second UV set, no rebind, no manifest — every viewer renders it identically); and texture memory,
+where collapsing normal + ORM + lightmap to one map is the largest single reduction available.
+Architectural walkthroughs and product turntables are usually fused for exactly these reasons.
+
+It is not a binary, either. The usual middle ground is baked lighting for static geometry plus some
+cheap analytic term for everything it cannot cover — here that is the dimmed environment described
+in the next section, which is what carries specular and normal response rather than a probe system
+(there is none). Other points on the spectrum: fuse *indirect* only and keep direct lighting
+dynamic, or vertex-bake the low-frequency term.
+
 ### Are they combined with the viewer's default lighting?
 
 **Partly, and the details are load-bearing.**
@@ -188,13 +226,21 @@ code.
   cannot contradict the bake's shadow *direction* the way a key light would — while its view- and
   normal-dependent **specular** term (`getIBLRadiance`, which takes the normal) is exactly what
   makes a normal map legible.
-- The dimming is **scene-wide**, applied through `scene.environmentIntensity`, because that is the
-  only lever the renderer honours: three.js overwrites a *material's* `envMapIntensity` from the
-  scene value for any `MeshStandardMaterial` with no `envMap` of its own — which is every material
-  GLTFLoader produces. So a partly-baked scene dims its un-baked props along with the baked
-  geometry; they stay lit, just cooler. Per-material control would mean handing each material the
-  shared environment texture to opt out of that override, which the viewer's own dispose pass would
-  then destroy on the next push.
+- The dimming is **per material**, so a partly-baked scene stops under-lighting its un-baked props.
+  Only a lightmapped material already contains its diffuse lighting and wants the viewer's own light
+  held back; a prop carrying no bake is an ordinary PBR surface and gets the **full** environment.
+  This matters because scenes are routinely partly baked — measured on a production room, 51 of 57
+  materials — so a scene-wide dim left every un-baked prop cooler than it should be for a reason
+  invisible from the model.
+
+  The obstacle was real and is solved rather than accepted: three.js overwrites a *material's*
+  `envMapIntensity` from the scene value for any `MeshStandardMaterial` whose `envMap` is `null` —
+  which is every material GLTFLoader produces — so setting the property alone does nothing. The
+  opt-out is that `envMap === null` clause, so a baked material is handed the **shared** session
+  environment as its own `envMap`. That costs no extra upload (it is the texture the scene was
+  already lighting with) and stops the override. `disposeModel` is guarded to spare
+  `scene.environment` accordingly: it frees every texture-valued property of every material, and
+  without the guard the second push would render unlit — a failure no first-push check would catch.
 
 The **Light** button toggles between `bake + env` and `bake only`. That comparison is the one that
 tells a flat-looking model caused by a bad bake apart from one caused by the viewer's lighting

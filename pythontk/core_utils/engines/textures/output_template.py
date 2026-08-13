@@ -34,7 +34,7 @@ its budget carries the tighter web/headset delivery ceiling.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pythontk.core_utils.engines.textures.map_registry import WF, MapRegistry
 
@@ -49,21 +49,39 @@ class OutputSpec:
         compression: None (uncompressed) or a DDS block format. "DXT1"/"DXT3"/
             "DXT5"/"BC5" are written by Pillow directly; "BC7"/"BC6H" require an
             external codec registered via ``ImgUtils.register_dds_codec``.
+        quality: None (lossless) or a 1-100 lossy quality for the container's
+            codec. Distinct from ``compression``, which selects a *GPU block
+            format*: this is CPU-side container compression (WebP/JPEG), it
+            changes pixels rather than layout, and the two are independent.
+            Every built-in template leaves this None — see the catalogue note at
+            the bottom of this module. It exists so a profile *can* express
+            "ship albedo at q90" once a user-editable preset layer lands, and so
+            the value round-trips through ``to_dict``/``from_dict`` when it does.
+            A quality set here still passes the per-map-type safety gate in
+            ``MapRegistry.is_lossy_safe`` before reaching the writer.
     """
 
     ext: str = "png"
     bit_depth: int = 8
     compression: Optional[str] = None
+    quality: Optional[int] = None
 
     def to_dict(self) -> dict:
-        return {"ext": self.ext, "bit_depth": self.bit_depth, "compression": self.compression}
+        return {
+            "ext": self.ext,
+            "bit_depth": self.bit_depth,
+            "compression": self.compression,
+            "quality": self.quality,
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> "OutputSpec":
+        quality = d.get("quality")
         return cls(
             ext=d.get("ext", "png"),
             bit_depth=int(d.get("bit_depth", 8)),
             compression=d.get("compression"),
+            quality=int(quality) if quality is not None else None,
         )
 
 
@@ -253,6 +271,108 @@ class OutputTemplates:
         """
         return cls.get(profile).budget
 
+    # ------------------------------------------------------------------
+    # Selection SSoT — what a UI offers, and what a selection resolves to.
+    #
+    # Six panels across four packages (mayatk/blendertk game_shader,
+    # blendertk mat_updater + scene_exporter, the compositor and converter)
+    # each rebuilt this list and re-implemented the sentinel semantics. The
+    # copies had already drifted: some spell the defer-to-template option
+    # "Profile default", the converter spells its keep-the-source-container
+    # option "Original", and each re-derived "empty means defer" inline. A
+    # profile list is a property of the catalogue, so it belongs here with
+    # the catalogue — the panels keep only their widget wiring.
+    # ------------------------------------------------------------------
+
+    #: Label for "let the selected profile pick each map's container".
+    PROFILE_DEFAULT_LABEL = "Profile default"
+    #: Label for "keep whatever container each source already has".
+    ORIGINAL_LABEL = "Original"
+
+    @classmethod
+    def profile_choices(cls) -> List[Tuple[str, str]]:
+        """``(name, description)`` for every selectable workflow profile.
+
+        Ordered as the registry declares them. The description is the tooltip
+        every panel shows — sourced from ``MapRegistry``'s workflow settings so
+        the answer to "which one is right for me" is written once.
+
+        Returns:
+            list[tuple[str, str]]: ``(profile_name, description)`` pairs;
+            description is ``""`` when the profile declares none.
+        """
+        return [
+            (name, (preset or {}).get("description", ""))
+            for name, preset in MapRegistry().get_workflow_presets().items()
+        ]
+
+    @classmethod
+    def format_choices(
+        cls,
+        sentinel: Optional[str] = PROFILE_DEFAULT_LABEL,
+        writable: Optional[Tuple[str, ...]] = None,
+        sentinel_first: bool = False,
+    ) -> List[Tuple[str, str]]:
+        """``(label, value)`` for an output-container combo.
+
+        Parameters:
+            sentinel: Label for the deferring option —
+                :attr:`PROFILE_DEFAULT_LABEL` (defer to the profile's template),
+                :attr:`ORIGINAL_LABEL` (keep each source's container), or None
+                for concrete formats only. Its value is always ``""``, which is
+                what :meth:`resolve_selection` reads as "nothing forced".
+            writable: Override the container list (defaults to
+                ``ImgUtils.writable``). Injectable so a caller with a narrower
+                target — a container set a specific exporter accepts — is not
+                forced to rebuild the sentinel rule.
+            sentinel_first: Put the sentinel at index 0 instead of last.
+                **Position is a compatibility contract, not a style choice:**
+                panels persist a combobox by index, so moving the sentinel
+                silently re-points every saved selection (a user on "PNG" comes
+                back to "JPG"). Existing panels therefore keep the order they
+                shipped with — the converter's "Original" leads, game_shader's
+                "Profile default" trails — and new callers should take the
+                default and append.
+
+        Returns:
+            list[tuple[str, str]]: ``(label, value)`` pairs.
+        """
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        exts = ImgUtils.writable if writable is None else writable
+        choices = [(ext.upper(), ext) for ext in exts]
+        if sentinel:
+            if sentinel_first:
+                choices.insert(0, (sentinel, ""))
+            else:
+                choices.append((sentinel, ""))
+        return choices
+
+    @classmethod
+    def resolve_selection(
+        cls, profile: Optional[str], ext: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Turn a (profile, container) UI selection into call arguments.
+
+        Encodes the one rule the copies each reimplemented: **a concrete
+        container outranks the profile's template.** Naming an extension means
+        "write everything as this", so the profile must not also drive per-map
+        containers — but it still supplies the budget, which is why the profile
+        is returned rather than dropped.
+
+        Parameters:
+            profile: Selected profile name, or None/"" for none.
+            ext: Selected container (``""`` / None = the sentinel was chosen).
+
+        Returns:
+            tuple: ``(output_profile, output_type)`` as
+            :meth:`~pythontk.core_utils.engines.textures.map_optimizer.MapOptimizer.optimize_map`
+            takes them. ``output_type`` is None when the profile (or the
+            source) should decide.
+        """
+        ext = (ext or "").lower().lstrip(".")
+        return (profile or None), (ext or None)
+
 
 # Built-in catalogue — engine-import oriented: correct *uncompressed* source per map.
 # Assembled here (post-class) so it can use ``OutputTemplates._build``. Tune here or,
@@ -262,6 +382,12 @@ class OutputTemplates:
 # web/XR saving is KTX2 + Basis supercompression (KHR_texture_basisu), not PNG->JPG, and
 # defaulting to a lossy container would look like that win while delivering a fraction
 # of it — with no way for a caller to opt back out per map.
+#
+# Lossy delivery is therefore opt-in, never a default: a caller asks for it explicitly
+# via ``MapOptimizer.optimize_map(lossy_quality=...)`` (or, later, a preset layer setting
+# ``OutputSpec.quality``), and either route is filtered per map type by
+# ``MapRegistry.is_lossy_safe`` so the maps that cannot survive a lossy codec — normals,
+# ORM/MSAO, every linear channel — are refused rather than quietly degraded.
 OutputTemplates.BUILTIN = {
     WF.STD: OutputTemplates._build("png", budget=OutputTemplates._BUDGET_NONE),
     WF.URP: OutputTemplates._build("png", budget=OutputTemplates._BUDGET_MOBILE),

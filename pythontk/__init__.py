@@ -137,6 +137,7 @@ DEFAULT_INCLUDE = {
     "core_utils.step_toggle": ["StepToggle"],
     "core_utils.module_reloader": ["ModuleReloader", "ReloadReport", "reload_package"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
+    "core_utils.cancel_scope": ["CancelScope", "OperationCancelled"],
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
     "core_utils.status_badge": ["StatusBadge"],
     "core_utils.app_launcher": "AppLauncher",

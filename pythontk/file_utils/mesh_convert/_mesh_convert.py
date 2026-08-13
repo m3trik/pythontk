@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import base64
+import copy
 import hashlib
 import io
 import json
@@ -114,8 +115,67 @@ class MeshConvert(HelpMixin):
         "TEXCOORD_1 rather than ambient occlusion, sRGB-encoded, and its "
         "'intensity' is the multiplier that restores the bake's original range; "
         "a reader that does not rebind it renders a plausible greyscale "
-        "occlusion instead. Check 'version' against the schema you expect."
+        "occlusion instead. 'handoff.rendering' records the lighting setup the "
+        "reference viewer used to produce the look this asset was approved in: "
+        "the asset carries no lights of its own, so a viewer that lights it "
+        "differently renders something different without either side being "
+        "wrong. Check 'version' against the schema you expect."
     )
+
+    #: The reference viewer's lighting setup (``net_utils/preview_viewer.html``),
+    #: published as data so a recipient can reproduce the look the asset was
+    #: signed off in instead of inferring it. A baked asset needs this more than
+    #: an unbaked one, not less: its lighting is already in its textures, so the
+    #: viewer's own rig has to be *withheld* by exactly the right amount, and
+    #: every number below is a measured compromise rather than a default (see the
+    #: viewer's own comments for what each one is compensating for). Without it a
+    #: recipient reasonably adds a normal key light and blows out every baked
+    #: surface -- which reads as a bake regression and sends them back to the
+    #: baker, where nothing is wrong.
+    #:
+    #: ``test_preview_server`` pins these against the viewer's literals, so the
+    #: published contract cannot drift from what the viewer actually does.
+    RENDERING_POLICY: Dict[str, Any] = {
+        "renderer": {
+            "toneMapping": "ACESFilmic",
+            "toneMappingExposure": 1.0,
+            "outputColorSpace": "srgb",
+        },
+        "environment": {
+            "source": "three.js RoomEnvironment",
+            "prefilter": "PMREM",
+            "prefilterBlur": 0.04,
+            "intensity": 1.0,
+            "note": (
+                "The main light. Kept non-zero even for a fully baked asset: "
+                "lightmap irradiance carries no normal term, so with the "
+                "environment off nothing left in the render samples the normal "
+                "and normal maps, roughness and speculars all go inert."
+            ),
+        },
+        "keyLight": {
+            "type": "directional",
+            "color": "#ffffff",
+            "intensity": 0.9,
+            "position": [3, 6, 4],
+            "disabled_when": "any material in the asset is lightmapped",
+            "note": (
+                "Scene-wide, so it cannot be spared the baked geometry it would "
+                "contradict; it goes off entirely once anything is baked."
+            ),
+        },
+        "lightmappedMaterials": {
+            "envMapIntensity": 0.25,
+            "lightMapIntensity": (
+                "per material, from extras.lightmap_web.materials[<name>].intensity"
+            ),
+            "note": (
+                "Applied per material, not scene-wide: only a material that "
+                "carries a bake has its lighting already in it. Un-baked props in "
+                "the same asset keep the full environment (1.0)."
+            ),
+        },
+    }
 
     #: Default worker cap for :meth:`optimize_glb_textures`' encode pass, capped
     #: again by the core count at call time. Deliberately well below a modern
@@ -778,6 +838,12 @@ class MeshConvert(HelpMixin):
                     ),
                 },
                 "sections": sorted(cls.SIDECAR_APPLIERS),
+                # How to LIGHT what the sections describe. The rest of this
+                # envelope says what the asset is; without this, a recipient can
+                # rebuild every material correctly and still not reproduce the
+                # look, because the lighting lives in the viewer rather than in
+                # the file.
+                "rendering": copy.deepcopy(cls.RENDERING_POLICY),
             },
         }
 
@@ -1059,6 +1125,16 @@ class MeshConvert(HelpMixin):
     LIGHTMAP_METADATA_VERSION = 1
     #: Root-extras key the web viewer reads (``preview_viewer.html``).
     LIGHTMAP_WEB_KEY = "lightmap_web"
+    #: Per-object bake marker, riding the same FBX user-property channel as the
+    #: manifest (mayatk/blendertk ``LightmapBaker.LIGHTMAP_INFO_ATTR``). Carries
+    #: its own copy of the locate hint, once per lightmapped object.
+    LIGHTMAP_INFO_KEY = "lightmapInfo"
+    #: The publisher's absolute authoring directory for the baked maps -- a
+    #: BUILD-TIME hint for :meth:`apply_glb_lightmaps` to find the EXRs, with no
+    #: reader once they are embedded. Stripped on the way out (see
+    #: :meth:`_strip_locate_hints`); it is machine-specific, so shipping it leaks
+    #: the authoring drive layout and tells the recipient nothing they can use.
+    LOCATE_HINT_KEY = "dir"
 
     @classmethod
     def _lightmap_manifest(cls, gltf: dict) -> Optional[Dict[str, Any]]:
@@ -1091,6 +1167,96 @@ class MeshConvert(HelpMixin):
                 return None
             return data if isinstance(data, dict) else None
         return None
+
+    @classmethod
+    def without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]:
+        """Copy of a ``data_export`` snapshot with build-time locate hints removed.
+
+        The DCC-side counterpart to :meth:`_strip_locate_hints`, which does the
+        same job on a parsed glTF. Both mayatk and blendertk write an export
+        sidecar straight from a ``DataNodes.dump(decode=True)`` snapshot, and
+        that snapshot carries :attr:`LOCATE_HINT_KEY` -- an absolute authoring
+        directory that resolves nowhere but the machine that baked the maps, and
+        so discloses that machine's drive layout to whoever receives the file.
+
+        Lives here rather than in either DCC package because it is the same rule
+        as the glTF-side scrub applied to a different container: keeping the key
+        name, the channel name and the removal in one place is what stops a
+        second hint key from being added to two of the three and missed in the
+        third.
+
+        Never mutates: the caller's snapshot is a dump it may still be using,
+        and a scrub performed for *serialization* has no business editing it.
+        A snapshot that actually carries a hint therefore comes back as a new
+        dict; one that carries none is returned as-is, since copying a payload
+        with nothing to strip would churn every clean export for no benefit.
+        Either way the result is meant to be read, not edited in place.
+        """
+        section = data_export.get(cls.LIGHTMAP_METADATA_KEY)
+        # A snapshot taken WITHOUT decode=True leaves the manifest a JSON string;
+        # no production caller does that, and re-serializing one here would
+        # silently change the shape the sidecar records, so leave it alone.
+        if not isinstance(section, dict) or cls.LOCATE_HINT_KEY not in section:
+            # Nothing to strip: hand the snapshot straight back rather than
+            # churning a copy of a payload that is already clean (pinned by
+            # test_without_locate_hints_passes_clean_snapshots_through). Note
+            # this is the one path whose result is the caller's own object --
+            # safe because the contract is only that this never MUTATES the
+            # snapshot, and treating the return as read-only satisfies both.
+            return data_export
+        scrubbed = dict(data_export)
+        scrubbed[cls.LIGHTMAP_METADATA_KEY] = {
+            k: v for k, v in section.items() if k != cls.LOCATE_HINT_KEY
+        }
+        return scrubbed
+
+    @classmethod
+    def _strip_locate_hints(cls, gltf: dict) -> int:
+        """Drop the build-time :attr:`LOCATE_HINT_KEY` from a parsed glTF's extras.
+
+        Call once the maps are embedded: the hint's only reader is the applier's
+        own EXR lookup, so after that it is dead weight that ships an absolute
+        authoring path to whoever receives the file. Both carriers are scrubbed --
+        the scene-wide manifest and every per-object marker (which holds its own
+        copy, so a room with 46 lightmapped objects shipped 46 more).
+
+        Surgical by design: only this one key goes, leaving ``map``/``uv_set``/
+        ``intensity``/``scaleOffset`` intact, so a consumer reading the markers
+        keeps everything it can actually act on. A basename alone stays resolvable
+        against ``search_dirs`` or the GLB's own directory.
+
+        Returns the number of carriers changed (0 when there was nothing to strip).
+        """
+        stripped = 0
+        for node in gltf.get("nodes", []) or []:
+            props = (
+                ((node.get("extras") or {}).get("fromFBX") or {}).get("userProperties")
+                or {}
+            )
+            for key in (cls.LIGHTMAP_METADATA_KEY, cls.LIGHTMAP_INFO_KEY):
+                entry = props.get(key)
+                if entry is None:
+                    continue
+                wrapped = isinstance(entry, dict) and "value" in entry
+                raw = entry.get("value") if wrapped else entry
+                # Only the JSON-string form can hide a hint; anything else is
+                # either already a dict or not ours to rewrite.
+                try:
+                    data = json.loads(raw) if isinstance(raw, str) else raw
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(data, dict) or cls.LOCATE_HINT_KEY not in data:
+                    continue
+                data.pop(cls.LOCATE_HINT_KEY, None)
+                # Re-serialize in the shape it arrived in, so a reader that does
+                # not know about this scrub sees no structural change.
+                new = json.dumps(data) if isinstance(raw, str) else data
+                if wrapped:
+                    entry["value"] = new
+                else:
+                    props[key] = new
+                stripped += 1
+        return stripped
 
     @classmethod
     def read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
@@ -1515,6 +1681,14 @@ class MeshConvert(HelpMixin):
                     "encoding": "srgb",
                     "materials": web_materials,
                 }
+                # The maps are in the file now, so the authoring-path hints that
+                # found them have no reader left -- drop them here, where that is
+                # provably true, rather than at export (where the applier still
+                # needs them) or never (where they ship). Deliberately gated on a
+                # successful embed: a run that bound nothing leaves them intact so
+                # a retry -- after fixing a name mismatch, say -- can still locate
+                # the EXRs.
+                cls._strip_locate_hints(edit.gltf)
                 edit.dirty = True
         return records
 
@@ -2651,6 +2825,31 @@ class MeshConvert(HelpMixin):
                     factor.append(existing[3] if len(existing) > 3 else 1.0)
                     pbr["baseColorFactor"] = factor
                     entry_written = True
+                elif tex_index is not None:
+                    # A texture with no colour beside it: the TEXTURE is the
+                    # albedo, so the factor must be neutral or it tints what it
+                    # was only meant to carry. glTF multiplies the two, and the
+                    # converter's fallback is not authored intent -- measured on
+                    # a production room (StingrayPBS -> FBX2glTF 0.13.1): the FBX
+                    # carries no DiffuseColor at all for a Stingray material, so
+                    # every material arrived at a flat 0.5 grey and the whole
+                    # room shipped at HALF its authored albedo, texture correctly
+                    # rebound on top of it. The Maya side confirms the 0.5 is not
+                    # a choice: it is StingrayPBS's `-dv 0.5` attribute default,
+                    # inert under `use_color_map`, never set by the artist.
+                    #
+                    # Alpha is preserved for the same reason the colour branch
+                    # preserves it, and the write is skipped when the factor is
+                    # already neutral so an untouched material stays byte-stable.
+                    existing = pbr.get("baseColorFactor") or [1.0, 1.0, 1.0, 1.0]
+                    if [float(c) for c in existing[:3]] != [1.0, 1.0, 1.0]:
+                        factor = [
+                            1.0,
+                            1.0,
+                            1.0,
+                            existing[3] if len(existing) > 3 else 1.0,
+                        ]
+                        pbr["baseColorFactor"] = factor
 
                 if entry_written:
                     records.append(

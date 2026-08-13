@@ -8,6 +8,7 @@ import tempfile
 from unittest.mock import MagicMock, patch
 from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
 from pythontk import ExecutionMonitor as PublicExecutionMonitor
+from pythontk import CancelScope
 
 from conftest import BaseTestCase
 
@@ -111,17 +112,28 @@ class TestExecutionMonitor(BaseTestCase):
         # Should be called exactly once
         self.assertEqual(callback.call_count, 1)
 
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
+        return_value=True,
+    )
     @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
-    def test_on_long_execution_escape_cancel(self, mock_is_escape):
-        """Test that holding Escape interrupts execution if allowed."""
-        # Mock escape being pressed after a short delay
-        # We need is_escape_pressed to return False initially, then True
+    def test_on_long_execution_escape_cancel_legacy_interrupt(
+        self, mock_is_escape, _mock_fg
+    ):
+        """Without a scope, Esc still falls back to the legacy interrupt.
+
+        Back-compat only: callers that have not adopted ``CancelScope`` keep the
+        old (unsafe) behaviour rather than silently losing cancellation.
+        """
         mock_is_escape.side_effect = [False] * 5 + [True] * 100
 
         callback = MagicMock()
 
         @ExecutionMonitor.on_long_execution(
-            threshold=0.5, callback=callback, allow_escape_cancel=True
+            threshold=0.5,
+            callback=callback,
+            allow_escape_cancel=True,
+            escape_hold_seconds=0,
         )
         def escape_func():
             try:
@@ -136,6 +148,129 @@ class TestExecutionMonitor(BaseTestCase):
         self.assertEqual(result, "interrupted")
         # Callback shouldn't be called because we interrupted before threshold
         callback.assert_not_called()
+
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
+        return_value=True,
+    )
+    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
+    def test_escape_cancels_scope_without_interrupting_main(
+        self, mock_is_escape, _mock_fg
+    ):
+        """With a scope, Esc flags it — and never injects an exception."""
+        mock_is_escape.return_value = True
+        scope = CancelScope("test")
+        callback = MagicMock()
+
+        @ExecutionMonitor.on_long_execution(
+            threshold=5.0,
+            callback=callback,
+            allow_escape_cancel=True,
+            escape_hold_seconds=0,
+            cancel_scope=scope,
+        )
+        def cooperative_func():
+            # Cooperative consumer: notices the flag at its own checkpoint.
+            for _ in range(50):
+                if not scope.tick():
+                    return "cancelled"
+                time.sleep(0.05)
+            return "finished"
+
+        result = cooperative_func()
+        self.assertEqual(result, "cancelled")
+        self.assertTrue(scope.cancelled)
+        self.assertEqual(scope.reason, "escape")
+
+    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
+    def test_escape_ignored_when_not_foreground(self, mock_is_escape):
+        """Esc pressed while another app has focus must not cancel."""
+        mock_is_escape.return_value = True
+        scope = CancelScope("test")
+
+        with patch.object(
+            ExecutionMonitor, "is_foreground_process", return_value=False
+        ):
+
+            @ExecutionMonitor.on_long_execution(
+                threshold=5.0,
+                callback=MagicMock(),
+                allow_escape_cancel=True,
+                escape_hold_seconds=0,
+                cancel_scope=scope,
+            )
+            def func():
+                time.sleep(0.5)
+                return "finished"
+
+            self.assertEqual(func(), "finished")
+        self.assertFalse(scope.cancelled)
+
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
+        return_value=True,
+    )
+    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
+    def test_escape_requires_sustained_hold(self, mock_is_escape, _mock_fg):
+        """A momentary Esc tap (its dozen other DCC meanings) must not cancel."""
+        # Pressed for one sample, then released for the rest.
+        mock_is_escape.side_effect = [True] + [False] * 200
+        scope = CancelScope("test")
+
+        @ExecutionMonitor.on_long_execution(
+            threshold=5.0,
+            callback=MagicMock(),
+            allow_escape_cancel=True,
+            escape_hold_seconds=1.0,
+            cancel_scope=scope,
+        )
+        def func():
+            time.sleep(0.6)
+            return "finished"
+
+        self.assertEqual(func(), "finished")
+        self.assertFalse(scope.cancelled)
+
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+    )
+    def test_dialog_cancel_flags_scope_not_interrupt(self, mock_dialog):
+        """The dialog's Cancel button sets the scope; no async exception."""
+        mock_dialog.return_value = False  # Cancel
+        scope = CancelScope("test")
+
+        @ExecutionMonitor.execution_monitor(
+            threshold=0.1, message="Testing", cancel_scope=scope
+        )
+        def monitored_func():
+            for _ in range(50):
+                if not scope.tick():
+                    return "cancelled"
+                time.sleep(0.05)
+            return "finished"
+
+        self.assertEqual(monitored_func(), "cancelled")
+        self.assertEqual(scope.reason, "dialog")
+
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+    )
+    def test_dialog_warns_when_operation_has_no_checkpoints(self, mock_dialog):
+        """An operation that never ticks must not imply Cancel will work."""
+        mock_dialog.return_value = True  # Keep waiting
+        scope = CancelScope("monolith")
+
+        @ExecutionMonitor.execution_monitor(
+            threshold=0.1, message="Testing", cancel_scope=scope
+        )
+        def monolithic_func():
+            time.sleep(0.5)  # never reaches a checkpoint
+            return "done"
+
+        monolithic_func()
+        mock_dialog.assert_called()
+        body = mock_dialog.call_args[0][1]
+        self.assertIn("has not reported any cancellable", body)
 
     @patch(
         "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
@@ -738,9 +873,13 @@ class TestExecutionMonitor(BaseTestCase):
         )
 
     @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
+        return_value=True,
+    )
+    @patch(
         "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
     )
-    def test_escape_cancel_stays_active_after_callback(self, mock_is_escape):
+    def test_escape_cancel_stays_active_after_callback(self, mock_is_escape, _mock_fg):
         """Esc must keep working after the one-shot callback has fired.
 
         Bug: with ``interval=None`` the monitor thread exited right after the
@@ -749,6 +888,7 @@ class TestExecutionMonitor(BaseTestCase):
         threshold.
         """
         callback_fired = threading.Event()
+        scope = CancelScope("test")
 
         def cb():
             callback_fired.set()
@@ -758,17 +898,21 @@ class TestExecutionMonitor(BaseTestCase):
         mock_is_escape.side_effect = lambda: callback_fired.is_set()
 
         @ExecutionMonitor.on_long_execution(
-            threshold=0.1, callback=cb, interval=None, allow_escape_cancel=True
+            threshold=0.1,
+            callback=cb,
+            interval=None,
+            allow_escape_cancel=True,
+            escape_hold_seconds=0,
+            cancel_scope=scope,
         )
         def escape_after_callback_func():
-            try:
-                for _ in range(50):
-                    time.sleep(0.1)
-            except KeyboardInterrupt:
-                return "interrupted"
+            for _ in range(50):
+                if not scope.tick():
+                    return "cancelled"
+                time.sleep(0.1)
             return "finished"
 
-        self.assertEqual(escape_after_callback_func(), "interrupted")
+        self.assertEqual(escape_after_callback_func(), "cancelled")
         self.assertTrue(callback_fired.is_set())
 
     def test_start_heartbeat_writer_stop_joins_writer_thread(self):

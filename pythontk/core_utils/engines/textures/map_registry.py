@@ -1423,6 +1423,41 @@ class MapRegistry(SingletonMixin):
         m = self._maps.get(name)
         return True if m is None else m.resolution_critical
 
+    def is_lossy_safe(self, name: str) -> bool:
+        """True when ``name`` may be written to a lossy container.
+
+        Only *perceptual* maps qualify — those read as color through a
+        display transform, where a DCT/VP8 codec's error lands where the
+        human visual system is least sensitive. That is exactly
+        ``color_space == "sRGB"`` and not :attr:`MapType.is_packed`:
+
+        - **Linear maps carry geometry or coefficients, not color.** A lossy
+          codec spends its bit budget on chroma it assumes is correlated;
+          in a normal map the channels are an X/Y vector, so the error
+          becomes visible faceting on specular highlights. Measured on a
+          4K normal at WebP q95: max deviation 122/255, versus 9/255 for a
+          base color at the same setting.
+        - **Packed maps are three unrelated masks sharing a container.** ORM
+          / MSAO / Metallic_Smoothness have no cross-channel correlation to
+          exploit, so the codec's core assumption is simply false — and an
+          error in the metallic channel is not "slightly wrong color", it
+          is a different material.
+
+        Unknown names default to False for the same reason
+        :meth:`is_resolution_critical` defaults to True: an unrecognised map
+        must not be degraded on a guess.
+
+        Parameters:
+            name: Canonical map-type key (e.g. "Base_Color", "Normal").
+
+        Returns:
+            bool: True only for unpacked sRGB maps.
+        """
+        m = self._maps.get(name)
+        if m is None:
+            return False
+        return m.color_space == "sRGB" and not m.is_packed
+
     def get_passthrough_maps(self) -> List[str]:
         """Get list of maps that should be passed through if not consumed."""
         # Return all registered maps so anything not consumed by a handler is passed through

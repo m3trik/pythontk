@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-11_
+_Generated: 2026-08-13_
 
 ## Index
 
@@ -11,6 +11,7 @@ _Generated: 2026-08-11_
 - [`core_utils/app_handoff.py`](#core_utils--app_handoff) — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 - [`core_utils/app_installer.py`](#core_utils--app_installer)
 - [`core_utils/app_launcher.py`](#core_utils--app_launcher)
+- [`core_utils/cancel_scope.py`](#core_utils--cancel_scope) — Cooperative cancellation — one scope shared by every cancel affordance.
 - [`core_utils/class_property.py`](#core_utils--class_property)
 - [`core_utils/cli.py`](#core_utils--cli)
 - [`core_utils/color.py`](#core_utils--color) — Lightweight, DCC-agnostic color primitives.
@@ -207,6 +208,37 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `AppLauncher.find_app(app_identifier)` *(static)* — Attempts to locate the executable for the given application identifier.
   - `AppLauncher.get_running_processes(process_name)` *(static)* — Returns a list of PIDs of running processes matching the given name.
   - `AppLauncher.close_process(pid, force=False)` *(static)* — Terminates the process with the given PID.
+
+<a id="core_utils--cancel_scope"></a>
+### `core_utils/cancel_scope.py`
+
+Cooperative cancellation — one scope shared by every cancel affordance.
+
+- **[`class OperationCancelled(BaseException)`](pythontk/pythontk/core_utils/cancel_scope.py#L55)** — Raised at a checkpoint when the governing scope has been cancelled.
+- **[`class CancelScope`](pythontk/pythontk/core_utils/cancel_scope.py#L71)** — A cancellation flag with pull sources, ambient activation, and metrics.
+  - `CancelScope.cancelled(self) -> bool` *(property)* — True when this scope (or an enclosing one) has been cancelled.
+  - `CancelScope.reason(self) -> Optional[str]` *(property)* — Why the scope was cancelled (``None`` while it is still live).
+  - `CancelScope.tick_count(self) -> int` *(property)* — Number of cooperative checkpoints reached so far.
+  - `CancelScope.consumed(self) -> bool` *(property)* — True once a checkpoint has actually *reported* the cancellation.
+  - `CancelScope.has_ticked(self) -> bool` *(property)* — True once the operation has reached at least one checkpoint.
+  - `CancelScope.elapsed(self) -> float` *(property)* — Seconds since the scope was created.
+  - `CancelScope.elapsed_since_tick(self) -> Optional[float]` *(property)* — Seconds since the last checkpoint, or ``None`` if never ticked.
+  - `CancelScope.elapsed_since_request(self) -> Optional[float]` *(property)* — Seconds since cancellation was requested, or ``None`` if not.
+  - `CancelScope.add_source(self, source: Callable[[], bool]) -> 'CancelScope'` — Register a pull source;
+  - `CancelScope.remove_source(self, source: Callable[[], bool]) -> 'CancelScope'` — Unregister a pull source (no-op when absent).
+  - `CancelScope.add_listener(self, listener: Callable[['CancelScope'], None]) -> 'CancelScope'` — Register a callback fired once, when the scope is cancelled.
+  - `CancelScope.remove_listener(self, listener: Callable[['CancelScope'], None]) -> 'CancelScope'` — Unregister a cancel listener (no-op when absent).
+  - `CancelScope.cancel(self, reason: Optional[str] = None) -> None` — Request cancellation.
+  - `CancelScope.reset(self) -> None` — Clear cancellation and metrics so the scope can be reused.
+  - `CancelScope.poll(self) -> bool` — Reach a checkpoint;
+  - `CancelScope.tick(self) -> bool` — Checkpoint in bool style: ``True`` to continue, ``False`` if cancelled.
+  - `CancelScope.checkpoint(self) -> None` — Checkpoint in exception style: raise :class:`OperationCancelled`.
+  - `CancelScope.iterate(self, iterable: Iterable[T]) -> Iterator[T]` — Yield from *iterable*, checkpointing before each item.
+  - `CancelScope.activate(self)` — Install this scope as the ambient one for the calling thread.
+  - `CancelScope.current(cls) -> Optional['CancelScope']` *(class)* — The scope active on this thread, or ``None``.
+  - `CancelScope.check(cls) -> None` *(class)* — Ambient checkpoint (exception style).
+  - `CancelScope.proceed(cls) -> bool` *(class)* — Ambient checkpoint (bool style).
+  - `CancelScope.is_cancelled(cls) -> bool` *(class)* — Flag-only read of the ambient scope;
 
 <a id="core_utils--class_property"></a>
 ### `core_utils/class_property.py`
@@ -636,10 +668,12 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest') -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
   - `MapOptimizer.project(plan: List[Op], width: int, height: int, mode: str) -> Tuple[int, int, str]` *(static)* — Replay ``plan``'s op params to get the post-apply size and mode.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
-  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.resolve_quality(cls, lossy_quality: Optional[int], map_type_key: Optional[str], output_type: Optional[str], spec: Optional[OutputSpec] = None) -> Tuple[Optional[int], Optional[str]]` *(class)* — Decide the lossy quality a run may actually use, and why not.
+  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False, lossy_quality: int = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.channel_loss_warning(image: 'Image.Image', ext: str) -> Optional[str]` *(static)* — Warn when *ext* would discard a channel of *image* that holds data.
   - `MapOptimizer.format_result(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str` *(static)* — Render the one-line result summary for an optimized map.
   - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
-  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
+  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
 
 <a id="core_utils--engines--textures--map_registry"></a>
 ### `core_utils/engines/textures/map_registry.py`
@@ -668,6 +702,7 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapRegistry.get_scale_as_mask_types(self) -> List[str]` — Get list of map types that should be scaled as masks.
   - `MapRegistry.get_resolution_critical_types(self) -> List[str]` — Get list of map types whose surface detail requires full resolution.
   - `MapRegistry.is_resolution_critical(self, name: str) -> bool` — True when surface detail for ``name`` requires full resolution.
+  - `MapRegistry.is_lossy_safe(self, name: str) -> bool` — True when ``name`` may be written to a lossy container.
   - `MapRegistry.get_passthrough_maps(self) -> List[str]` — Get list of maps that should be passed through if not consumed.
   - `MapRegistry.get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]` — Generate the map backgrounds dictionary.
   - `MapRegistry.get_map_modes(self) -> Dict[str, str]` — Generate the map modes dictionary.
@@ -694,18 +729,21 @@ Per-map output-format templates — the "export preset" layer.
 - **[`class OutputSpec`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L43)** — How a single map is written to disk.
   - `OutputSpec.to_dict(self) -> dict`
   - `OutputSpec.from_dict(cls, d: dict) -> 'OutputSpec'` *(class)*
-- **[`class DeliveryBudget`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L71)** — A profile's advisory delivery limits — reported by default, not enforced.
+- **[`class DeliveryBudget`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L89)** — A profile's advisory delivery limits — reported by default, not enforced.
   - `DeliveryBudget.check(self, width: int, height: int) -> List[str]` — Return one message per budget rule ``width`` x ``height`` violates.
   - `DeliveryBudget.to_dict(self) -> dict`
   - `DeliveryBudget.from_dict(cls, d: dict) -> 'DeliveryBudget'` *(class)*
-- **[`class OutputTemplate`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L135)** — A profile's per-map output formats: a default spec + per-map-type overrides.
+- **[`class OutputTemplate`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L153)** — A profile's per-map output formats: a default spec + per-map-type overrides.
   - `OutputTemplate.resolve(self, map_type: Optional[str]) -> OutputSpec` — Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).
   - `OutputTemplate.to_dict(self) -> dict`
   - `OutputTemplate.from_dict(cls, d: dict) -> 'OutputTemplate'` *(class)*
-- **[`class OutputTemplates`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L172)** — Registry of the built-in per-profile output templates and their resolution.
+- **[`class OutputTemplates`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L190)** — Registry of the built-in per-profile output templates and their resolution.
   - `OutputTemplates.get(cls, profile: Optional[str]) -> OutputTemplate` *(class)* — Return the built-in template for *profile* (a ``WF`` key), or the default.
   - `OutputTemplates.resolve(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec` *(class)* — Resolve the :class:`OutputSpec` for *map_type* under *profile*.
   - `OutputTemplates.budget(cls, profile: Optional[str]) -> DeliveryBudget` *(class)* — Return the advisory :class:`DeliveryBudget` for *profile*.
+  - `OutputTemplates.profile_choices(cls) -> List[Tuple[str, str]]` *(class)* — ``(name, description)`` for every selectable workflow profile.
+  - `OutputTemplates.format_choices(cls, sentinel: Optional[str] = PROFILE_DEFAULT_LABEL, writable: Optional[Tuple[str, ...]] = None, sentinel_first: bool = False) -> List[Tuple[str, str]]` *(class)* — ``(label, value)`` for an output-container combo.
+  - `OutputTemplates.resolve_selection(cls, profile: Optional[str], ext: Optional[str]) -> Tuple[Optional[str], Optional[str]]` *(class)* — Turn a (profile, container) UI selection into call arguments.
 
 <a id="core_utils--engines--textures--region_masks"></a>
 ### `core_utils/engines/textures/region_masks.py`
@@ -756,12 +794,14 @@ Subprocess-based dialog viewer for custom button labels.
 <a id="core_utils--execution_monitor--_execution_monitor"></a>
 ### `core_utils/execution_monitor/_execution_monitor.py`
 
-- **[`class ExecutionMonitor`](pythontk/pythontk/core_utils/execution_monitor/_execution_monitor.py#L16)** — Utilities for monitoring and handling long-running executions.
+- **[`class ExecutionMonitor`](pythontk/pythontk/core_utils/execution_monitor/_execution_monitor.py#L53)** — Utilities for monitoring and handling long-running executions.
+  - `ExecutionMonitor.escape_hold_source(hold_seconds: float = 0.4, require_foreground: bool = True)` *(static)* — Build an Esc-hold probe for use as a ``CancelScope`` pull source.
+  - `ExecutionMonitor.is_foreground_process()` *(static)* — True when the focused window belongs to this process.
   - `ExecutionMonitor.is_escape_pressed()` *(static)* — Check if the Escape key is currently pressed (Windows & Linux).
   - `ExecutionMonitor.set_interpreter(cls, path)` *(class)* — Set a custom Python interpreter to use for subprocesses.
-  - `ExecutionMonitor.on_long_execution(threshold, callback, interval=None, allow_escape_cancel=False, indicator=None)` *(static)* — Decorator that triggers a callback if the decorated function
+  - `ExecutionMonitor.on_long_execution(threshold, callback, interval=None, allow_escape_cancel=False, indicator=None, cancel_scope=None, escape_hold_seconds=0.4)` *(static)* — Decorator that triggers a callback if the decorated function
   - `ExecutionMonitor.show_long_execution_dialog(title, message, force_action=None)` *(static)* — Show a dialog to ask the user how to proceed with a long operation.
-  - `ExecutionMonitor.execution_monitor(threshold, message, logger=None, allow_escape_cancel=False, show_dialog: bool = True, force_action: str | None = None, watchdog_timeout: float | None = None, watchdog_heartbeat_interval: float = 1.0, watchdog_check_interval: float = 1.0, watchdog_kill_tree: bool = True, watchdog_heartbeat_path: str | None = None, indicator: bool | str | None = None)` *(static)* — Decorator that monitors execution time and (optionally) prompts the user via a native
+  - `ExecutionMonitor.execution_monitor(threshold, message, logger=None, allow_escape_cancel=False, show_dialog: bool = True, force_action: str | None = None, watchdog_timeout: float | None = None, watchdog_heartbeat_interval: float = 1.0, watchdog_check_interval: float = 1.0, watchdog_kill_tree: bool = True, watchdog_heartbeat_path: str | None = None, indicator: bool | str | None = None, cancel_scope=None, escape_hold_seconds: float = 0.4)` *(static)* — Decorator that monitors execution time and (optionally) prompts the user via a native
   - `ExecutionMonitor.external_watchdog(timeout: float, message: str = 'Operation appears to have stalled', heartbeat_interval: float = 1.0, check_interval: float = 1.0, kill_tree: bool = True, logger=None, heartbeat_path: str | None = None)` *(static)* — Decorator that starts an OS-level watchdog for the current process.
 
 <a id="core_utils--execution_monitor--_gif_viewer"></a>
@@ -1246,13 +1286,14 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
-- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L51)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L52)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* — Apply a scene-sidecar envelope to a GLB and embed it in its extras.
   - `MeshConvert.sidecar_foreign_packings(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* — ``{path: map type}`` for envelope textures authored for another engine.
   - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The scene-sidecar envelope embedded in a GLB, or ``None``.
+  - `MeshConvert.without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]` *(class)* — Copy of a ``data_export`` snapshot with build-time locate hints removed.
   - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.
   - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
@@ -1408,6 +1449,8 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 ### `img_utils/_img_utils.py`
 
 - **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L46)** — Helper methods for working with image file formats.
+  - `ImgUtils.effective_mode(cls, mode: str, ext: str) -> str` *(class)* — The mode *ext* will actually store for an image in *mode*.
+  - `ImgUtils.dropped_channels(cls, mode: str, ext: str) -> Tuple[str, ...]` *(class)* — Band names *ext* cannot keep from an image in *mode*.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
   - `ImgUtils.allow_large_images(cls)` *(class)* — Context manager to safely load very large images.
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
@@ -1416,7 +1459,7 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
   - `ImgUtils.validate_image_integrity(filepath: str) -> Tuple[bool, str]` *(static)* — Cheaply check that an image file is complete and decodable.
   - `ImgUtils.create_image(mode, size=(4096, 4096), color=None)` *(static)* — Create a new image.
   - `ImgUtils.register_dds_codec(cls, codec) -> None` *(class)* — Register an external DDS codec for block formats Pillow can't write.
-  - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
+  - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
   - `ImgUtils.list_image_files(cls, directory, exts=None, full_paths=False)` *(class)* — Sorted image file names in a directory (non-recursive).
   - `ImgUtils.unique_dir_stems(dirs)` *(static)* — Unique, order-preserving output stems for a set of directories.

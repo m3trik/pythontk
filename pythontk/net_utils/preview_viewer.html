@@ -130,9 +130,10 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15171a);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-// Assigned for the life of the session. A lightmapped model used to switch this off
-// entirely; it is now only dimmed, via `scene.environmentIntensity`, because switching it
-// off takes every normal map with it (see LIGHTMAP_ENV_INTENSITY).
+// Assigned for the life of the session, and SHARED: a lightmapped model used to switch
+// this off entirely; it is now only dimmed, and dimmed per material, because switching it
+// off takes every normal map with it (see LIGHTMAP_ENV_INTENSITY). Baked materials point
+// their own `envMap` at this same texture, so `disposeModel` must not free it.
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 // The RoomEnvironment IBL above is the main light. Piling a bright hemisphere
@@ -154,23 +155,27 @@ const DEFAULT_KEY_INTENSITY = 0.9;
 // the right thing to keep because it is omnidirectional -- it cannot contradict the bake's
 // shadow DIRECTION the way a key light would -- and its view/normal-dependent specular
 // term (getIBLRadiance, which takes the normal) is exactly what makes a normal map
-// legible. The key light still goes off; a directional diffuse gradient is precisely the
-// second, contradictory rig to avoid.
+// legible. The key light still goes off when the model is FULLY baked; a directional
+// diffuse gradient is precisely the second, contradictory rig to avoid. It cannot be
+// withdrawn per material without render layers, so a partly-baked model keeps it for the
+// sake of the props that have no bake to contradict (see applyLighting).
 //
-// Applied through `scene.environmentIntensity`, which is SCENE-WIDE, because that is the
-// only lever the renderer honours here: a material-level `envMapIntensity` is silently
-// overwritten for exactly the materials this affects --
+// Applied PER MATERIAL. The obstacle is that a material-level `envMapIntensity` is
+// silently overwritten for exactly the materials this affects --
 //
 //     if (material.isMeshStandardMaterial && material.envMap === null
 //         && scene.environment !== null) m_uniforms.envMapIntensity.value
 //                                            = scene.environmentIntensity;
 //
-// and every GLTFLoader material is a MeshStandardMaterial with no envMap of its own. (An
-// earlier revision of this fix set the material property and did nothing at all.) So a
-// partly-baked scene dims its un-baked props along with the baked geometry; they stay lit,
-// just cooler. Per-material control would mean giving each one `material.envMap = <the
-// shared PMREM texture>` to opt out of that override, which disposeModel would then
-// destroy on the next push -- not worth it for a preview.
+// and every GLTFLoader material is a MeshStandardMaterial with no envMap of its own, so
+// setting the property alone does nothing at all (an earlier revision of this fix did
+// exactly that). The opt-out is the `envMap === null` clause: give a baked material the
+// SHARED environment as its own envMap and the renderer stops overwriting it. That costs
+// no extra upload -- it is the texture the scene was already lighting with -- and the only
+// thing it demands in return is that `disposeModel` spare it, since the model does not own
+// it. The scene-wide alternative dims a partly-baked model's UN-baked props along with the
+// baked geometry, for a reason invisible from the model, and scenes are routinely partly
+// baked (measured on a production room: 51 of 57 materials).
 const LIGHTMAP_ENV_INTENSITY = 0.25;
 const keyLight = new THREE.DirectionalLight(0xffffff, DEFAULT_KEY_INTENSITY);
 keyLight.position.set(3, 6, 4);
@@ -220,16 +225,29 @@ let current = null;
 let realScale = false;
 let modelBounds = null;
 
+// `node.material` is a single material, an ARRAY of them (a multi-material mesh), or
+// absent (any non-mesh in the graph). Every walk below has to handle all three, so the
+// normalization lives here once — three hand-rolled copies is exactly how one of them ends
+// up quietly missing the array case and skipping half a mesh's materials.
+function materialsOf(node) {
+  if (Array.isArray(node.material)) return node.material;
+  return node.material ? [node.material] : [];
+}
+
 function disposeModel(root) {
   // GLTFLoader allocates GPU resources that garbage collection cannot reclaim;
   // without this an edit-and-republish loop leaks a full copy of the model's
   // buffers and textures every single push.
   root.traverse((node) => {
     if (node.geometry) node.geometry.dispose();
-    const materials = Array.isArray(node.material) ? node.material : (node.material ? [node.material] : []);
-    for (const material of materials) {
+    for (const material of materialsOf(node)) {
       for (const value of Object.values(material)) {
-        if (value && value.isTexture) value.dispose();
+        // Everything here belongs to the MODEL and dies with it — except the
+        // shared environment, which is session-owned and assigned onto each
+        // lightmapped material to win back per-material `envMapIntensity`
+        // (see applyLighting). Disposing that would take the environment out
+        // from under every later push, and the model is not its owner.
+        if (value && value.isTexture && value !== scene.environment) value.dispose();
       }
       material.dispose();
     }
@@ -320,8 +338,7 @@ function applyLightmaps(gltf) {
   let bound = 0;
 
   gltf.scene.traverse((node) => {
-    const materials = Array.isArray(node.material) ? node.material : (node.material ? [node.material] : []);
-    for (const material of materials) {
+    for (const material of materialsOf(node)) {
       const entry = manifest.materials[material.name];
       if (!entry || material.userData.lightmapBound) continue;
       const texture = material[slot];
@@ -340,8 +357,16 @@ function applyLightmaps(gltf) {
       material.lightMapIntensity = entry.intensity ?? 1;
       material[slot] = null;
       if (carrier === 'emissive') material.emissive = new THREE.Color(0x000000);
+      // Opt this material OUT of the scene-wide envMapIntensity override: the
+      // renderer only forces it onto MeshStandardMaterials whose own envMap is
+      // null, so pointing it at the shared environment (the same texture the
+      // scene already lights with — no second upload, no visual change on its
+      // own) is what makes the per-material dimming in applyLighting stick.
+      // disposeModel is guarded against freeing it.
+      material.envMap = scene.environment;
       material.userData.lightmapBound = true;
       material.needsUpdate = true;
+      lightmappedMaterials.push(material);
       bound += 1;
     }
   });
@@ -352,11 +377,54 @@ function applyLightmaps(gltf) {
 // into disagreeing about it. `bakeOnly` drops the environment to nothing, which is what
 // tells a flat-looking model caused by a bad bake apart from one caused by the viewer's
 // own lighting — the question that toggle exists to answer.
+//
+// Applied PER MATERIAL, not scene-wide. Only a material that actually carries a bake has
+// its lighting already in it; a prop that does not is an ordinary PBR surface and wants
+// the full environment. The earlier scene-wide form dimmed both, so every un-baked prop in
+// a partly-baked scene rendered cooler than it should for no reason anyone could see from
+// the model — and a scene is routinely partly baked (measured on a production room: 51 of
+// 57 materials). `lightmappedMaterials` is rebuilt per load and holds only materials this
+// model owns, so it dies with the model.
 let lightmapped = 0;
+let lightmappedMaterials = [];
+let materialCount = 0;
 let bakeOnly = false;
 
 function applyLighting() {
-  scene.environmentIntensity = lightmapped ? (bakeOnly ? 0 : LIGHTMAP_ENV_INTENSITY) : 1;
+  // Left at 1 for everything the manifest did not name; the baked materials
+  // opt out of this via their own envMap (see applyLightmaps) and are dimmed
+  // individually just below.
+  scene.environmentIntensity = 1;
+  for (const material of lightmappedMaterials) {
+    material.envMapIntensity = bakeOnly ? 0 : LIGHTMAP_ENV_INTENSITY;
+  }
+  // The key light cannot go per material without render layers, so it stays
+  // scene-wide and goes off the moment ANYTHING is baked. Gating it on the
+  // model being FULLY baked (as this briefly did) is what blows out a baked
+  // room: a scene-wide term cannot be spared the geometry it contradicts, so
+  // a 0.9 directional light lands on surfaces whose lighting is already in
+  // their lightmap, and a room is routinely partly baked (measured: 51 of 57
+  // materials) so the gate never opens. It reads as a baker regression --
+  // re-baking with the Maya lights turned down changes nothing, because the
+  // extra light is added here, downstream of the EXR.
+  //
+  // The un-baked props that gate was added for are not left dark: the
+  // per-material split above holds them at the FULL environment (they were on
+  // 0.25 when the key light mattered, which is what made them look unlit), and
+  // the environment is normal- and view-dependent -- getIBLRadiance takes the
+  // normal -- so their normal maps and specular stay legible without it. What
+  // they give up is a directional diffuse gradient, which is precisely the
+  // term that must not reach the baked geometry standing beside them.
+  //
+  // Render layers would let the key light skip only the baked meshes, but
+  // layers 1 and 2 are already spoken for: three.js 0.169.0 -- the version
+  // pinned in the importmap above -- does `cameraL.layers.enable(1)` and
+  // `cameraR.layers.enable(2)` in WebXRManager, so geometry parked on layer 1
+  // renders to the LEFT EYE ONLY (read from that source, not assumed). A higher
+  // layer dodges the collision, but the mask still has to survive into the XR
+  // sub-cameras and the failure shows up in a headset rather than at the desk.
+  // Layers are also per OBJECT while a bake is per MATERIAL, so a mesh with
+  // mixed materials would need a conservative rule regardless.
   keyLight.intensity = lightmapped ? 0 : DEFAULT_KEY_INTENSITY;
   el.lightToggle.hidden = !lightmapped;
   el.lightToggle.textContent = `Light: ${bakeOnly ? 'bake only' : 'bake + env'}`;
@@ -369,6 +437,22 @@ function toggleBakeOnly() {
   if (!lightmapped) return;
   bakeOnly = !bakeOnly;
   applyLighting();
+}
+
+// Distinct materials on the model, by identity — the denominator for the HUD's baked
+// fraction. Counted by Set rather than by mesh: a room shares one material across dozens
+// of meshes, and an atlas bake clones it per rect, so a per-mesh tally would report a
+// denominator with no relation to the number of materials the manifest can name.
+//
+// Nothing branches on this. It once gated the key light ("off only when FULLY baked"),
+// which put a scene-wide light on top of every partly-baked room; the count is worth
+// REPORTING but is not a safe thing to make lighting policy out of (see applyLighting).
+function countMaterials(root) {
+  const seen = new Set();
+  root.traverse((node) => {
+    for (const material of materialsOf(node)) seen.add(material);
+  });
+  return seen.size;
 }
 
 function describe(root) {
@@ -414,11 +498,17 @@ async function load(url, version) {
   current = gltf.scene;
   pivot.add(current);
 
-  // A lightmapped model already contains its DIFFUSE lighting, so the key light goes
-  // off: a second directional rig on top of the bake leaves the baked shadows in place
-  // while everything around them lifts, which reads as a washed out model rather than as
-  // double lighting and is easy to misdiagnose as a bad bake. The environment is a
-  // different case and stays on, dimmed rather than removed — see LIGHTMAP_ENV_INTENSITY.
+  // A lightmapped material already contains its DIFFUSE lighting, so the viewer's own
+  // light is what has to give way: a second rig on top of a bake leaves the baked shadows
+  // in place while everything around them lifts, which reads as a washed out model rather
+  // than as double lighting and is easy to misdiagnose as a bad bake. Only the BAKED
+  // materials give way though — see applyLighting.
+  //
+  // Reset before applying, not after: these describe the model now on screen, and a load
+  // that failed or was superseded above must not leave the previous model's materials
+  // being driven by the toggle.
+  lightmappedMaterials = [];
+  materialCount = countMaterials(gltf.scene);
   lightmapped = applyLightmaps(gltf);
   applyLighting();
 
@@ -428,8 +518,12 @@ async function load(url, version) {
     center: box.getCenter(new THREE.Vector3()),
   };
 
+  // Reported as a FRACTION: "how much of this model is baked" is the fact that
+  // decides whether the viewer's own lighting is in play, and it is invisible
+  // from the render -- a mostly-baked room and a fully-baked one look alike
+  // until the difference is blamed on the baker.
   el.stats.textContent = describe(current)
-    + (lightmapped ? ` · ${lightmapped} lightmapped material${lightmapped === 1 ? '' : 's'}` : '');
+    + (lightmapped ? ` · ${lightmapped}/${materialCount} lightmapped materials` : '');
   setStatus(`v${version} · updated ${new Date().toLocaleTimeString()}`, 'live');
   layout();
   return true;
