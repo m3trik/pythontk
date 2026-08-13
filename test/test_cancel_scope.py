@@ -323,5 +323,61 @@ class TestMetrics(unittest.TestCase):
         self.assertIsNone(scope.elapsed_since_tick)
 
 
+class TestConsumed(unittest.TestCase):
+    """``cancelled`` is a REQUEST; ``consumed`` is the operation acknowledging it.
+
+    The distinction is what a caller must use before undoing anything: acting
+    on ``cancelled`` rolls back work that in fact completed.
+    """
+
+    def test_a_cancel_nobody_polls_is_not_consumed(self):
+        """The uncancellable-operation shape: flag set behind a monolithic call."""
+        scope = CancelScope("monolith")
+        scope.cancel("esc")
+        self.assertTrue(scope.cancelled)
+        self.assertFalse(scope.consumed, "nothing ever reported the stop")
+
+    def test_a_checkpoint_that_reports_the_stop_consumes_it(self):
+        scope = CancelScope("loop")
+        scope.cancel("esc")
+        self.assertFalse(scope.tick(), "premise: the checkpoint says stop")
+        self.assertTrue(scope.consumed)
+
+    def test_checkpoints_before_the_cancel_do_not_consume(self):
+        """Only a checkpoint that RETURNS cancelled counts."""
+        scope = CancelScope("loop")
+        for _ in range(3):
+            self.assertTrue(scope.tick())
+        self.assertTrue(scope.has_ticked, "premise: it did reach checkpoints")
+        self.assertFalse(scope.consumed, "but none of them reported a stop")
+
+    def test_checkpoint_style_consumes_too(self):
+        """Both consumption styles feed one flag, as with cancellation itself."""
+        scope = CancelScope("raiser")
+        scope.cancel("dialog")
+        with self.assertRaises(OperationCancelled):
+            scope.checkpoint()
+        self.assertTrue(scope.consumed)
+
+    def test_a_parent_cancel_consumed_at_a_child_checkpoint(self):
+        """Nested scopes: the child noticing is the operation noticing."""
+        outer = CancelScope("outer")
+        with outer.activate():
+            inner = CancelScope("inner")
+            with inner.activate():
+                outer.cancel("esc")
+                self.assertFalse(inner.tick())
+                self.assertTrue(inner.consumed)
+
+    def test_reset_clears_consumption(self):
+        scope = CancelScope("reused")
+        scope.cancel("esc")
+        scope.tick()
+        self.assertTrue(scope.consumed)
+        scope.reset()
+        self.assertFalse(scope.consumed)
+        self.assertFalse(scope.cancelled)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
