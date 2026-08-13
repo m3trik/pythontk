@@ -175,5 +175,101 @@ class ResolveOutputSpecTest(unittest.TestCase):
             self.assertIn(name, OutputTemplates.BUILTIN, f"missing template for {name}")
 
 
+class LossySafetyGateTest(unittest.TestCase):
+    """Which map types may be written to a lossy container.
+
+    Measured on a 4K source at WebP q95: a base color deviates by at most
+    9/255, a normal map by 122/255. The gate encodes that difference.
+    """
+
+    def setUp(self):
+        self.reg = MapRegistry()
+
+    def test_unpacked_srgb_maps_are_safe(self):
+        for name in ("Base_Color", "Diffuse", "Emissive"):
+            self.assertTrue(self.reg.is_lossy_safe(name), name)
+
+    def test_linear_maps_are_refused(self):
+        for name in ("Normal", "Normal_OpenGL", "Roughness", "Metallic", "Height"):
+            self.assertFalse(self.reg.is_lossy_safe(name), name)
+
+    def test_packed_maps_are_refused_even_when_srgb(self):
+        # Albedo_Transparency is sRGB but packs opacity into alpha — the
+        # channels are unrelated, which is the assumption a codec relies on.
+        for name in ("ORM", "MSAO", "MRAO", "Metallic_Smoothness", "Albedo_Transparency"):
+            self.assertFalse(self.reg.is_lossy_safe(name), name)
+
+    def test_unknown_map_defaults_to_refused(self):
+        self.assertFalse(self.reg.is_lossy_safe("Not_A_Real_Map"))
+        self.assertFalse(self.reg.is_lossy_safe(None))
+
+    def test_every_registered_map_agrees_with_its_fields(self):
+        # The predicate must stay derived, not drift into a hand-kept list.
+        for name, m in MapRegistry()._maps.items():
+            self.assertEqual(
+                self.reg.is_lossy_safe(name),
+                m.color_space == "sRGB" and not m.is_packed,
+                name,
+            )
+
+
+class SelectionChoicesTest(unittest.TestCase):
+    """The SSoT six panels populate their combos from."""
+
+    def test_profile_choices_match_the_registry(self):
+        names = [n for n, _ in OutputTemplates.profile_choices()]
+        self.assertEqual(names, list(MapRegistry().get_workflow_presets()))
+
+    def test_profile_choices_carry_descriptions(self):
+        for name, description in OutputTemplates.profile_choices():
+            self.assertTrue(description, f"{name} has no description tooltip")
+
+    def test_format_choices_put_the_sentinel_last_by_default(self):
+        choices = OutputTemplates.format_choices()
+        self.assertEqual(choices[-1], (OutputTemplates.PROFILE_DEFAULT_LABEL, ""))
+        self.assertEqual(choices[0][1], "png")
+
+    def test_sentinel_first_is_available_for_existing_panels(self):
+        # Position is a persistence contract — panels store the index.
+        choices = OutputTemplates.format_choices(
+            sentinel=OutputTemplates.ORIGINAL_LABEL, sentinel_first=True
+        )
+        self.assertEqual(choices[0], (OutputTemplates.ORIGINAL_LABEL, ""))
+
+    def test_format_choices_can_omit_the_sentinel(self):
+        choices = OutputTemplates.format_choices(sentinel=None)
+        self.assertTrue(all(value for _, value in choices))
+
+    def test_format_choices_accept_an_injected_container_list(self):
+        self.assertEqual(
+            OutputTemplates.format_choices(sentinel=None, writable=("png", "webp")),
+            [("PNG", "png"), ("WEBP", "webp")],
+        )
+
+    def test_resolve_selection(self):
+        self.assertEqual(
+            OutputTemplates.resolve_selection(WF.GLTF, ""), (WF.GLTF, None)
+        )
+        self.assertEqual(
+            OutputTemplates.resolve_selection(WF.GLTF, ".WEBP"), (WF.GLTF, "webp")
+        )
+        self.assertEqual(OutputTemplates.resolve_selection("", None), (None, None))
+
+
+class NoLossyDefaultsTest(unittest.TestCase):
+    def test_builtin_catalogue_never_ships_lossy(self):
+        """Lossy is opt-in. A template that defaulted to it would degrade
+        every map of that type without the caller ever asking."""
+        for name, template in OutputTemplates.BUILTIN.items():
+            self.assertIsNone(template.default.quality, name)
+            for map_type, spec in template.overrides.items():
+                self.assertIsNone(spec.quality, f"{name}/{map_type}")
+
+    def test_quality_round_trips(self):
+        spec = OutputSpec("webp", 8, None, 90)
+        self.assertEqual(OutputSpec.from_dict(spec.to_dict()), spec)
+        self.assertEqual(OutputSpec.from_dict({"ext": "webp"}).quality, None)
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

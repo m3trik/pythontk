@@ -984,6 +984,72 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertIsInstance(edit.bin_data, memoryview)
         self.assertEqual(bytes(edit.bin_data), b"GEOMETRY")
 
+    def test_a_base_color_texture_neutralises_the_converters_tint(self):
+        """A texture with no colour beside it must not stay multiplied by a tint.
+
+        Measured on a production room (StingrayPBS -> FBX2glTF 0.13.1): the FBX
+        carries no DiffuseColor for a Stingray material, so every material
+        reached the GLB at a flat 0.5 grey baseColorFactor. The sidecar rebound
+        the texture correctly on top of it and left the factor alone, and glTF
+        multiplies the two -- the whole room shipped at HALF its authored
+        albedo, with nothing in the envelope reporting a problem.
+        """
+        png = self._png()
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [
+                    {
+                        "name": "Body",
+                        "pbrMetallicRoughness": {
+                            "baseColorFactor": [0.5, 0.5, 0.5, 1.0]
+                        },
+                    }
+                ],
+            }
+        )
+        MeshConvert.set_glb_base_color(path, {"Body": {"texture": png}})
+
+        pbr = MeshConvert._read_glb(path).gltf["materials"][0]["pbrMetallicRoughness"]
+        self.assertEqual(pbr["baseColorFactor"], [1.0, 1.0, 1.0, 1.0])
+        self.assertIn("baseColorTexture", pbr)
+
+    def test_a_base_color_texture_keeps_the_materials_alpha(self):
+        """Neutralising the tint must not turn a transparent material opaque."""
+        png = self._png()
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [
+                    {
+                        "name": "Body",
+                        "pbrMetallicRoughness": {
+                            "baseColorFactor": [0.5, 0.5, 0.5, 0.25]
+                        },
+                    }
+                ],
+            }
+        )
+        MeshConvert.set_glb_base_color(path, {"Body": {"texture": png}})
+
+        pbr = MeshConvert._read_glb(path).gltf["materials"][0]["pbrMetallicRoughness"]
+        self.assertEqual(pbr["baseColorFactor"], [1.0, 1.0, 1.0, 0.25])
+
+    def test_an_explicit_base_colour_still_wins_over_the_texture(self):
+        """An authored tint is intent -- only the converter's fallback is reset."""
+        png = self._png()
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        MeshConvert.set_glb_base_color(
+            path, {"Body": {"texture": png, "color": (0.2, 0.4, 0.8)}}
+        )
+
+        pbr = MeshConvert._read_glb(path).gltf["materials"][0]["pbrMetallicRoughness"]
+        self.assertEqual(
+            [round(c, 3) for c in pbr["baseColorFactor"][:3]], [0.2, 0.4, 0.8]
+        )
+
     def test_a_shared_texture_is_embedded_once_across_channels(self):
         """One file on disk, one base64 copy — the embed cache spans the session."""
         png = self._png()
@@ -2136,6 +2202,106 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertAlmostEqual(
             web["materials"]["roomMat"]["intensity"], self.GOLDEN_CONSTANT, places=5
         )
+
+    def test_authoring_locate_hints_do_not_ship_in_the_glb(self):
+        """The ``dir`` hint is build-time only -- use it, then strip it.
+
+        The publisher stamps an ABSOLUTE authoring path into both the manifest
+        (``dir``) and every per-object ``lightmapInfo`` marker, so the applier can
+        find the EXR on the machine that baked it. Once the PNG is embedded that
+        path has no remaining reader, but it used to ride into the deliverable --
+        measured on a client hand-off, 49 copies of
+        ``O:\\Dropbox (Client)\\...\\sourceimages`` in one shipped GLB, leaking the
+        drive layout and the client's name to whoever received it.
+
+        Both halves are asserted together on purpose: strip too early and the
+        binding silently breaks (the map is located THROUGH this hint), so
+        "no absolute paths" alone would pass on a GLB with no lightmap at all.
+        """
+        exr = self._exr()
+        marker = {
+            "map": os.path.basename(exr),
+            "dir": self.tmp,
+            "uv_set": "lightmap",
+            "intensity": 1.0,
+        }
+        scene = self._scene(
+            self._manifest([{"name": "room", "map": os.path.basename(exr)}])
+        )
+        scene["nodes"][0]["extras"] = {
+            "fromFBX": {
+                "userProperties": {
+                    "lightmapInfo": {"type": "eFbxString", "value": json.dumps(marker)}
+                }
+            }
+        }
+        glb = self._glb(scene)
+
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual(len(records), 1, "the hint must still locate the EXR")
+
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+            raw = json.dumps(gltf)
+        # It bound -- so the strip below provably ran AFTER the hint was consumed.
+        self.assertEqual(gltf["materials"][0]["occlusionTexture"]["texCoord"], 1)
+
+        # Compared with backslashes removed. These paths sit inside JSON strings
+        # nested in a JSON document, so the separator arrives re-escaped (``\\``,
+        # then ``\\\\``) and a naive substring search for the plain path reports
+        # CLEAN on a GLB that is still leaking it -- the exact false negative that
+        # hid this in the first place.
+        self.assertNotIn(
+            self.tmp.replace("\\", ""),
+            raw.replace("\\", ""),
+            "the authoring directory shipped inside the GLB",
+        )
+        manifest = MeshConvert.read_glb_lightmap_manifest(glb) or {}
+        self.assertNotIn("dir", manifest, "manifest kept its locate hint")
+        node_marker = json.loads(
+            gltf["nodes"][0]["extras"]["fromFBX"]["userProperties"]["lightmapInfo"][
+                "value"
+            ]
+        )
+        self.assertNotIn("dir", node_marker, "per-node marker kept its locate hint")
+        # Scrub the leak, not the payload: what a consumer actually reads survives.
+        self.assertEqual(node_marker["map"], os.path.basename(exr))
+        self.assertEqual(node_marker["uv_set"], "lightmap")
+
+    def test_without_locate_hints_scrubs_a_data_export_snapshot(self):
+        """The DCC-side scrub both export sidecars delegate to.
+
+        mayatk and blendertk each write a sidecar straight from a
+        ``DataNodes.dump(decode=True)`` snapshot; the rule for what may not ship
+        lives here, with the key names and the glTF-side twin, so a second hint
+        key cannot be added to one container and missed in the other.
+        """
+        authored = r"O:\Dropbox (Client)\Team Folder\PROD\sourceimages"
+        snapshot = {
+            "lightmap_metadata": {
+                "version": 1,
+                "dir": authored,
+                "objects": [{"name": "room", "map": "room_Lightmap.exr"}],
+            },
+            "shot_metadata": {"shots": [1]},
+        }
+        out = MeshConvert.without_locate_hints(snapshot)
+        self.assertNotIn("dir", out["lightmap_metadata"])
+        # Scrubbed, not gutted -- and unrelated channels pass through untouched.
+        self.assertEqual(
+            out["lightmap_metadata"]["objects"],
+            [{"name": "room", "map": "room_Lightmap.exr"}],
+        )
+        self.assertEqual(out["shot_metadata"], {"shots": [1]})
+        # The caller's dump is theirs; a scrub for serialization must not edit it.
+        self.assertEqual(snapshot["lightmap_metadata"]["dir"], authored)
+
+    def test_without_locate_hints_passes_clean_snapshots_through(self):
+        """No hint, no copy -- the common case must not churn the payload."""
+        snapshot = {"lightmap_metadata": {"version": 1}, "shot_metadata": {}}
+        self.assertIs(MeshConvert.without_locate_hints(snapshot), snapshot)
+        empty: dict = {}
+        self.assertIs(MeshConvert.without_locate_hints(empty), empty)
 
     def test_no_manifest_is_a_clean_noop(self):
         glb = self._glb(

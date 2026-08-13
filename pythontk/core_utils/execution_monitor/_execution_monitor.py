@@ -13,11 +13,81 @@ import tempfile
 from functools import wraps
 
 
+class _EscapeHoldDetector:
+    """Stateful Esc-hold probe: ``True`` once Esc is held for *hold_seconds*.
+
+    Raw key state is the wrong signal to cancel on. Esc is the most overloaded
+    key in a DCC (dismiss popup, exit tool, stop playback) and
+    ``GetAsyncKeyState`` is system-wide, so a single positive sample means
+    almost nothing. Requiring a sustained hold *and* window ownership turns it
+    into a deliberate gesture.
+
+    Usable two ways with the same instance: called repeatedly from a monitor
+    thread, or registered as a :class:`~pythontk.CancelScope` pull source and
+    polled at the operation's own checkpoints.
+    """
+
+    def __init__(self, hold_seconds: float = 0.4, require_foreground: bool = True):
+        self.hold_seconds = max(0.0, float(hold_seconds))
+        self.require_foreground = bool(require_foreground)
+        self._held_since = None
+
+    def reset(self):
+        """Forget any in-progress hold."""
+        self._held_since = None
+
+    def __call__(self) -> bool:
+        if not ExecutionMonitor.is_escape_pressed():
+            self._held_since = None
+            return False
+        if self.require_foreground and not ExecutionMonitor.is_foreground_process():
+            self._held_since = None
+            return False
+
+        now = time.monotonic()
+        if self._held_since is None:
+            self._held_since = now
+        return (now - self._held_since) >= self.hold_seconds
+
+
 class ExecutionMonitor:
-    """Utilities for monitoring and handling long-running executions."""
+    """Utilities for monitoring and handling long-running executions.
+
+    Cancellation policy
+    -------------------
+    This class no longer cancels by injecting exceptions into the main thread.
+    ``_thread.interrupt_main`` and ``PyThreadState_SetAsyncExc`` deliver at an
+    arbitrary bytecode boundary, cannot be revoked once armed, and cannot
+    interrupt a native call at all — so a cancel would routinely land *after*
+    the operation finished, inside whatever unrelated code ran next.
+
+    Pass a :class:`~pythontk.CancelScope` (``cancel_scope=``) and every cancel
+    affordance here — the dialog's *Cancel* button, the Esc-hold poller — only
+    sets that scope's flag, which the operation consumes at a checkpoint it
+    chose. The async-exception paths survive solely behind the explicit
+    *Force Stop* / *Force Quit* buttons, which the user opts into knowing the
+    operation cannot be stopped safely.
+    """
 
     _x11_lib = None
     _x11_display = None
+
+    @staticmethod
+    def escape_hold_source(hold_seconds: float = 0.4, require_foreground: bool = True):
+        """Build an Esc-hold probe for use as a ``CancelScope`` pull source.
+
+        Parameters:
+            hold_seconds (float): Sustained hold required before reporting True.
+            require_foreground (bool): Ignore Esc unless the focused window
+                belongs to this process.
+
+        Returns:
+            Callable[[], bool]: Stateful probe; keep one instance per scope.
+
+        Example:
+            scope.add_source(ptk.ExecutionMonitor.escape_hold_source())
+        """
+        return _EscapeHoldDetector(hold_seconds, require_foreground)
 
     @staticmethod
     def _force_interrupt_main_thread():
@@ -67,8 +137,38 @@ class ExecutionMonitor:
                 pass
 
     @staticmethod
+    def is_foreground_process():
+        """True when the focused window belongs to this process.
+
+        Key-state probing via ``GetAsyncKeyState`` is **system-wide**: it reports
+        physical key state regardless of which application has focus, so Esc
+        pressed in a browser would cancel a background operation here. Gating on
+        window ownership removes that entire false-positive class.
+
+        Returns ``True`` on platforms where ownership can't be determined, so
+        the gate never *removes* an existing cancel affordance.
+        """
+        if sys.platform != "win32":
+            return True
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return False
+            pid = ctypes.c_ulong(0)
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            return pid.value == os.getpid()
+        except Exception:
+            return True
+
+    @staticmethod
     def is_escape_pressed():
-        """Check if the Escape key is currently pressed (Windows & Linux)."""
+        """Check if the Escape key is currently pressed (Windows & Linux).
+
+        Reports raw physical key state — it does **not** consider window focus.
+        Callers driving cancellation should gate on :meth:`is_foreground_process`
+        and require a sustained hold; see :meth:`_escape_hold_source`.
+        """
         try:
             if sys.platform == "win32":
                 # VK_ESCAPE is 0x1B
@@ -275,17 +375,23 @@ class ExecutionMonitor:
                 process.kill()
 
     @staticmethod
-    def _handle_callback_result(result):
+    def _handle_callback_result(result, cancel_scope=None):
         """Act on a monitor-callback result. Returns True to stop monitoring.
 
-        False           – interrupt the main thread (cooperative cancel).
+        False           – request cancellation: set *cancel_scope* when one was
+                          supplied (safe, cooperative), else fall back to the
+                          legacy ``interrupt_main`` for callers that have not
+                          adopted scopes yet.
         "FORCE_INTERRUPT" – raise SystemExit in the main thread.
         "FORCE_KILL"    – terminate the host process (last resort).
         "STOP_MONITORING" – stop silently.
         Anything else   – keep monitoring.
         """
         if result is False:
-            _thread.interrupt_main()
+            if cancel_scope is not None:
+                cancel_scope.cancel("dialog")
+            else:
+                _thread.interrupt_main()
             return True
         elif result == "FORCE_KILL":
             ExecutionMonitor._force_kill_process()
@@ -299,7 +405,13 @@ class ExecutionMonitor:
 
     @staticmethod
     def on_long_execution(
-        threshold, callback, interval=None, allow_escape_cancel=False, indicator=None
+        threshold,
+        callback,
+        interval=None,
+        allow_escape_cancel=False,
+        indicator=None,
+        cancel_scope=None,
+        escape_hold_seconds=0.4,
     ):
         """
         Decorator that triggers a callback if the decorated function
@@ -308,14 +420,19 @@ class ExecutionMonitor:
         Args:
             threshold (float): Time in seconds before callback is triggered.
             callback (callable): Function to call if threshold is exceeded.
-                                 If the callback returns False, a KeyboardInterrupt will be raised
-                                 in the main thread to attempt to abort the execution.
+                                 Returning False requests cancellation (see
+                                 :meth:`_handle_callback_result`).
             interval (float|bool, optional): If True, repeats every `threshold` seconds.
                                              If float, repeats every `interval` seconds.
-            allow_escape_cancel (bool): If True, holding Escape will interrupt the main thread immediately.
+            allow_escape_cancel (bool): If True, a sustained Escape hold (while this
+                                 process owns the focused window) requests cancellation.
             indicator (bool|str, optional): If True, displays a spinner overlay near the cursor.
                                             A string is a path to an animated GIF to show instead.
                                             Runs in a separate process to ensure animation during blocking tasks.
+            cancel_scope (CancelScope, optional): Scope to flag instead of interrupting
+                                 the main thread. Strongly preferred — see the class
+                                 docstring for why the interrupt path is unsafe.
+            escape_hold_seconds (float): Sustained hold required before Esc counts.
         """
         # If interval is True, use threshold as the interval
         repeat_interval = threshold if interval is True else interval
@@ -329,11 +446,25 @@ class ExecutionMonitor:
                 if indicator:
                     spinner_process = ExecutionMonitor._start_spinner_process(indicator)
 
+                escape_detector = (
+                    _EscapeHoldDetector(escape_hold_seconds)
+                    if allow_escape_cancel
+                    else None
+                )
+
+                def request_cancel(reason):
+                    """Request cancellation the safest way available."""
+                    if cancel_scope is not None:
+                        cancel_scope.cancel(reason)
+                    else:
+                        # Legacy path for callers that predate CancelScope.
+                        _thread.interrupt_main()
+
                 def wait_for_stop_or_timeout(duration):
                     """Returns "stop" if the function finished, "abort" if Esc
-                    interrupted it (interrupt is sent once, here), or None on
+                    requested cancellation (requested once, here), or None on
                     timeout."""
-                    if not allow_escape_cancel:
+                    if escape_detector is None:
                         return "stop" if stop_event.wait(duration) else None
 
                     # Polling
@@ -343,8 +474,8 @@ class ExecutionMonitor:
                         wait_time = min(step, remaining)
                         if stop_event.wait(wait_time):
                             return "stop"
-                        if ExecutionMonitor.is_escape_pressed():
-                            _thread.interrupt_main()
+                        if escape_detector():
+                            request_cancel("escape")
                             return "abort"
                         remaining -= wait_time
                     return None
@@ -354,13 +485,17 @@ class ExecutionMonitor:
                     if wait_for_stop_or_timeout(threshold):
                         return  # Function finished, or Esc already fired.
 
-                    stopped = ExecutionMonitor._handle_callback_result(callback())
+                    stopped = ExecutionMonitor._handle_callback_result(
+                        callback(), cancel_scope
+                    )
 
                     # If repeat_interval is set, keep repeating
                     while not stopped and repeat_interval:
                         if wait_for_stop_or_timeout(repeat_interval):
                             return
-                        stopped = ExecutionMonitor._handle_callback_result(callback())
+                        stopped = ExecutionMonitor._handle_callback_result(
+                            callback(), cancel_scope
+                        )
 
                     # Monitoring is over, but the Esc-cancel contract lasts for
                     # the whole execution — keep polling until the function ends.
@@ -556,6 +691,8 @@ class ExecutionMonitor:
         watchdog_kill_tree: bool = True,
         watchdog_heartbeat_path: str | None = None,
         indicator: bool | str | None = None,
+        cancel_scope=None,
+        escape_hold_seconds: float = 0.4,
     ):
         """
         Decorator that monitors execution time and (optionally) prompts the user via a native
@@ -582,6 +719,10 @@ class ExecutionMonitor:
             watchdog_heartbeat_path (str|None): Optional heartbeat file path override.
             indicator (bool|str, optional): If True, displays a spinner overlay near the cursor;
                 a string is a path to an animated GIF to show instead.
+            cancel_scope (CancelScope, optional): Scope flagged by the dialog's *Cancel*
+                button and by Esc, instead of interrupting the main thread. Also lets
+                the dialog tell the truth about whether cancelling can take effect.
+            escape_hold_seconds (float): Sustained Esc hold required to request cancel.
         """
 
         _dialog_shown = [False]
@@ -601,11 +742,23 @@ class ExecutionMonitor:
                 if allow_escape_cancel
                 else ""
             )
+            # Be honest about what Cancel can do. An operation that has never
+            # reached a checkpoint has no cooperative point to stop at, so a
+            # cancel request would sit unconsumed — saying "cancelled" there
+            # would be a lie the user acts on.
+            if cancel_scope is not None and not cancel_scope.has_ticked:
+                effect_hint = (
+                    "\n\nNote: this operation has not reported any cancellable "
+                    "points yet, so Cancel will only take effect if and when it "
+                    "reaches one."
+                )
+            else:
+                effect_hint = ""
             result = ExecutionMonitor.show_long_execution_dialog(
                 "Long Execution Warning",
                 f"{full_msg}\n\nThe operation is not responding.\n"
                 "You can keep waiting or cancel the operation."
-                f"{esc_hint}",
+                f"{esc_hint}{effect_hint}",
                 force_action=force_action,
             )
 
@@ -628,6 +781,8 @@ class ExecutionMonitor:
                 interval=True,
                 allow_escape_cancel=allow_escape_cancel,
                 indicator=indicator,
+                cancel_scope=cancel_scope,
+                escape_hold_seconds=escape_hold_seconds,
             )(func)
 
             if watchdog_timeout is not None:

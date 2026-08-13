@@ -439,6 +439,87 @@ class MapOptimizer(HelpMixin):
         return spec, budget, output_type, max_size, bool(force_pot), pot_mode
 
     @classmethod
+    def resolve_quality(
+        cls,
+        lossy_quality: Optional[int],
+        map_type_key: Optional[str],
+        output_type: Optional[str],
+        spec: Optional[OutputSpec] = None,
+    ) -> Tuple[Optional[int], Optional[str]]:
+        """Decide the lossy quality a run may actually use, and why not.
+
+        Three independent conditions have to hold before a pixel is degraded, and
+        each veto is *reported* rather than silently applied — a caller who asked
+        for lossy and got lossless must be able to tell, otherwise the option
+        looks broken when it is in fact protecting them:
+
+        1. Someone asked. ``lossy_quality`` (call-level) outranks
+           ``spec.quality`` (profile-level) so a UI toggle beats a preset.
+        2. The container can express it — :attr:`ImgUtils.LOSSY_FORMATS`.
+           Requesting q90 into a PNG is a no-op worth naming.
+        3. The map type survives it — :meth:`MapRegistry.is_lossy_safe`. This
+           is the one that matters: it is what stops a batch run from
+           destroying every normal map in a folder because the operator set one
+           dropdown.
+
+        Both :meth:`optimize_map` and :meth:`assess` route through here, for the
+        same reason the decision branches live in :meth:`plan` — a dry run that
+        predicted lossy while the real run refused it would be worse than no
+        prediction at all.
+
+        Parameters:
+            lossy_quality: Caller's explicit request, or None.
+            map_type_key: Canonical map-type key driving the safety gate.
+            output_type: Target container extension (with or without a dot).
+            spec: Active profile's :class:`OutputSpec`, when one is resolved.
+
+        Returns:
+            tuple: ``(quality, skip_reason)``. ``quality`` is None when the run
+            must stay lossless; ``skip_reason`` is a human-readable sentence
+            when a request was *declined*, and None when none was made.
+        """
+        requested = lossy_quality if lossy_quality is not None else (
+            spec.quality if spec else None
+        )
+        ext = (output_type or "").lower().lstrip(".")
+
+        if requested is None:
+            # Nobody named a quality -- but a container with no lossless mode
+            # (JPEG) degrades the pixels anyway, so *choosing it* is the
+            # request. Without this the gate only guarded the path nobody
+            # takes: an explicit quality on a normal map was refused aloud
+            # while picking ".jpg" off a format menu wrote it at the q95
+            # default with no warning at all. There is nothing to veto here --
+            # JPEG cannot be written losslessly and the caller asked for JPEG
+            # -- so this reports rather than refuses, which is the honest
+            # outcome and still lets a batch run be audited.
+            if ext in ImgUtils.ALWAYS_LOSSY_FORMATS and not MapRegistry().is_lossy_safe(
+                map_type_key
+            ):
+                return None, (
+                    f"'{ext}' has no lossless mode, so map type "
+                    f"'{map_type_key or 'unknown'}' is being written lossy: only "
+                    f"unpacked sRGB maps (base color, emissive) survive a lossy "
+                    f"codec — prefer png/webp for this map"
+                )
+            return None, None
+
+        if ext and ext not in ImgUtils.LOSSY_FORMATS:
+            return None, (
+                f"lossy quality {requested} ignored: '{ext}' is a lossless "
+                f"container (use {'/'.join(ImgUtils.LOSSY_FORMATS)})"
+            )
+
+        if not MapRegistry().is_lossy_safe(map_type_key):
+            return None, (
+                f"lossy quality {requested} refused for map type "
+                f"'{map_type_key or 'unknown'}': only unpacked sRGB maps "
+                f"(base color, emissive) survive a lossy codec — written lossless"
+            )
+
+        return int(requested), None
+
+    @classmethod
     def optimize_map(
         cls,
         texture_path: str,
@@ -455,6 +536,7 @@ class MapOptimizer(HelpMixin):
         allow_palette: bool = False,
         output_profile: str = None,
         enforce_budget: bool = False,
+        lossy_quality: int = None,
     ) -> str:
         """Optimizes a texture by resizing, setting bit depth, and adjusting image type.
 
@@ -481,6 +563,11 @@ class MapOptimizer(HelpMixin):
                 Default False — an over-budget map is correct, just expensive, so
                 it is not silently resampled. An explicit ``max_size`` /
                 ``force_pot`` always outranks the budget.
+            lossy_quality (int, optional): Request lossy container compression
+                (1-100) for this run. Applied only where it is safe — see
+                :meth:`resolve_quality`; a request against a normal / packed /
+                linear map, or a lossless container, is reported and the map is
+                written lossless. None (default) = always lossless.
 
         Returns:
             str: Path to the optimized texture.
@@ -576,6 +663,38 @@ class MapOptimizer(HelpMixin):
                 ),
             )
 
+        # Widen to what the target container can hold BEFORE reporting, so
+        # format_result describes the file on disk. WebP has no grayscale mode,
+        # so an "L" roughness map is stored as RGB — reporting the in-memory
+        # mode would claim 8-bit for a 24-bit file (and disagree with assess,
+        # which applies the same step to its projection).
+        out_ext = os.path.splitext(final_output_path)[1]
+        container_mode = ImgUtils.effective_mode(image.mode, out_ext)
+        if container_mode != image.mode:
+            lost = cls.channel_loss_warning(image, out_ext)
+            print(
+                f"# {os.path.basename(final_output_path)}: "
+                f"'{out_ext.lstrip('.')}' cannot store {image.mode}; "
+                f"written as {container_mode}."
+                + (f" *** DATA LOSS: {lost}. ***" if lost else "")
+            )
+            image = ImgUtils.enforce_mode(image, container_mode)
+
+        # Resolved against the path actually being written, not the requested
+        # output_type: with output_type=None the run keeps the source's
+        # extension, and a lossy request has to be judged against the container
+        # that will really receive it.
+        quality, quality_skipped = cls.resolve_quality(
+            lossy_quality,
+            map_type_key,
+            out_ext,
+            spec,
+        )
+        if quality_skipped:
+            print(
+                f"# {os.path.basename(final_output_path)}: {quality_skipped}"
+            )
+
         # Route through the capability-aware writer (single save SSoT) so the
         # correct backend handles each format (PIL for most, cv2 for EXR/HDR).
         # The extension on final_output_path drives format dispatch; the profile
@@ -586,6 +705,7 @@ class MapOptimizer(HelpMixin):
             optimize=True,
             bit_depth=target_bit_depth,
             compression=target_compression,
+            quality=quality,
         )
 
         print(
@@ -603,6 +723,46 @@ class MapOptimizer(HelpMixin):
                     f"[{output_profile}]: {message}"
                 )
         return final_output_path
+
+    @staticmethod
+    def channel_loss_warning(image: "Image.Image", ext: str) -> Optional[str]:
+        """Warn when *ext* would discard a channel of *image* that holds data.
+
+        A dropped channel is only a loss if something was in it. Alpha that is
+        uniformly opaque — a lightmap, an albedo with no transparency — costs
+        nothing, and shouting about it would train the reader past the line
+        that matters. A PACKED map is the case that matters: its alpha is a
+        material input (MSAO keeps Smoothness there), so discarding it changes
+        how the surface renders.
+
+        The wording lives here, once, for the same reason :class:`Op` carries
+        its own ``description``: :meth:`assess` must warn about this in a dry
+        run and :meth:`optimize_map` must say the same thing while writing.
+        Note it is invisible to the plan — a container's limits are not an op,
+        so it can never appear in ``reasons``.
+
+        Returns:
+            str | None: The warning, or None when nothing of substance is lost.
+        """
+        lost = ImgUtils.dropped_channels(image.mode, ext)
+        if not lost:
+            return None
+        try:
+            extrema = dict(zip(image.getbands(), image.getextrema()))
+        except OSError:  # truncated source — the writer will surface it
+            return None
+        carrying = [
+            band
+            for band in lost
+            if isinstance(extrema.get(band), tuple)
+            and extrema[band][0] != extrema[band][1]
+        ]
+        if not carrying:
+            return None
+        return (
+            f"channel {'/'.join(carrying)} carries data and is discarded by "
+            f"'{ext.lstrip('.').lower()}' - use png/tga/webp to keep it"
+        )
 
     @staticmethod
     def format_result(
@@ -670,6 +830,7 @@ class MapOptimizer(HelpMixin):
         output_profile: str = None,
         predict_size: bool = False,
         enforce_budget: bool = False,
+        lossy_quality: int = None,
     ) -> Dict[str, Any]:
         """Predict whether :meth:`optimize_map` would change ``texture_path``.
 
@@ -700,16 +861,23 @@ class MapOptimizer(HelpMixin):
             enforce_budget: Same semantics as :meth:`optimize_map` — predict a
                 run that applies the profile's advisory ``DeliveryBudget``
                 rather than one that only reports it.
+            lossy_quality: Same semantics as :meth:`optimize_map`. A request the
+                safety gate declines surfaces in ``warnings`` and the predicted
+                size (when *predict_size*) is the lossless one the run would
+                actually write.
 
         Returns:
             dict with:
                 recommended (bool): True if the plan is non-empty.
                 reasons (list[str]): Per-op descriptions from the plan.
-                warnings (list[str]): Advisory ``DeliveryBudget`` violations the
-                    predicted output would still carry. Always present, empty
-                    when there is no profile, no budget, or nothing to flag —
+                warnings (list[str]): What the run would NOT do, or would cost:
+                    advisory ``DeliveryBudget`` violations, a declined lossy
+                    request, and a channel the output container discards.
+                    Always present, empty when there is nothing to flag —
                     distinct from ``reasons``, which describe changes that
-                    *would* be made.
+                    *would* be made. The channel-loss entry can only appear
+                    here: a container's limits are not a plan op, so nothing
+                    in ``reasons`` ever mentions them.
                 current (dict): {path, name, width, height, mode, format,
                     size_bytes, bit_depth, map_type}.
                 predicted (dict): {width, height, mode, bit_depth, ext, path,
@@ -799,12 +967,18 @@ class MapOptimizer(HelpMixin):
 
         # Replay the plan for the projected size/mode (cheap), then optionally
         # encode for the projected byte count (not cheap — hence opt-in).
-        new_width, new_height, new_mode = cls.project(ops, width, height, mode)
+        new_width, new_height, planned_mode = cls.project(ops, width, height, mode)
         out_ext = (
             (output_type or FileUtils.format_path(texture_path, "ext"))
             .lower()
             .lstrip(".")
         )
+        # The plan decides a mode; the container decides whether it survives.
+        # Applied after project() rather than inside it so the replay stays a
+        # pure function of the plan — this is a property of the output format,
+        # which the plan never sees. Both are kept: the difference between them
+        # is exactly what the container costs, which is what gets warned about.
+        new_mode = ImgUtils.effective_mode(planned_mode, out_ext)
         predicted: Dict[str, Any] = {
             "width": new_width,
             "height": new_height,
@@ -821,6 +995,25 @@ class MapOptimizer(HelpMixin):
             ),
             "size_bytes": None,
         }
+        # Same gate the real run applies, against the same resolved extension, so
+        # a declined request is visible in the dry run instead of surfacing only
+        # once the batch has already been written.
+        quality, quality_skipped = cls.resolve_quality(
+            lossy_quality, map_type_key, out_ext, spec
+        )
+        predicted["quality"] = quality
+
+        # Gated on the PLANNED mode, not the source's: a plan that already
+        # coerces RGBA->RGB dropped the alpha itself and said so as an op, so
+        # the container is not what loses it. Only the source image can answer
+        # whether the channel held anything, and reading its extrema is far
+        # cheaper than converting a copy just to ask.
+        channel_loss = (
+            cls.channel_loss_warning(image, out_ext)
+            if ImgUtils.dropped_channels(planned_mode, out_ext)
+            else None
+        )
+
         if predict_size:
             predicted_bytes, size_error = cls._encoded_size(
                 image,
@@ -828,6 +1021,7 @@ class MapOptimizer(HelpMixin):
                 out_ext,
                 bit_depth=spec.bit_depth if spec else None,
                 compression=spec.compression if spec else None,
+                quality=quality,
             )
             predicted["size_bytes"] = predicted_bytes
             if size_error:
@@ -839,7 +1033,9 @@ class MapOptimizer(HelpMixin):
             # Against the *predicted* dimensions — the question a caller is asking
             # is whether the file this run would write lands within budget, not
             # whether the source did.
-            "warnings": budget.check(new_width, new_height) if budget else [],
+            "warnings": (budget.check(new_width, new_height) if budget else [])
+            + ([quality_skipped] if quality_skipped else [])
+            + ([channel_loss] if channel_loss else []),
             "current": {
                 "path": texture_path,
                 "name": os.path.basename(texture_path),
@@ -863,6 +1059,7 @@ class MapOptimizer(HelpMixin):
         ext: str,
         bit_depth: Optional[int] = None,
         compression: Optional[str] = None,
+        quality: Optional[int] = None,
     ) -> Tuple[Optional[int], Optional[str]]:
         """Byte count ``plan`` would produce, measured by a throwaway encode.
 
@@ -892,6 +1089,7 @@ class MapOptimizer(HelpMixin):
                 optimize=True,
                 bit_depth=bit_depth,
                 compression=compression,
+                quality=quality,
             )
             return os.path.getsize(probe), None
         except Exception as e:

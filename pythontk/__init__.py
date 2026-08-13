@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.14"
+__version__ = "0.9.16"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -137,6 +137,7 @@ DEFAULT_INCLUDE = {
     "core_utils.step_toggle": ["StepToggle"],
     "core_utils.module_reloader": ["ModuleReloader", "ReloadReport", "reload_package"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
+    "core_utils.cancel_scope": ["CancelScope", "OperationCancelled"],
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
     "core_utils.status_badge": ["StatusBadge"],
     "core_utils.app_launcher": "AppLauncher",

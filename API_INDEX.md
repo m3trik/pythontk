@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-11_
+_Generated: 2026-08-13_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -39,6 +39,11 @@ _Generated: 2026-08-11_
 ### `core_utils/app_launcher.py`
 - `class AppLauncher`
   - methods: launch, process_environ, handoff_env, run, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
+
+### `core_utils/cancel_scope.py` — Cooperative cancellation — one scope shared by every cancel affordance.
+- `class OperationCancelled(BaseException)`
+- `class CancelScope`
+  - methods: cancelled, reason, tick_count, consumed, has_ticked, elapsed, elapsed_since_tick, elapsed_since_request, add_source, remove_source, add_listener, remove_listener, cancel, reset, poll, tick, checkpoint, iterate, activate, current, check, proceed, is_cancelled
 
 ### `core_utils/class_property.py`
 - `class ClassProperty`
@@ -170,14 +175,14 @@ _Generated: 2026-08-11_
 ### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
 - `class Op`
 - `class MapOptimizer(HelpMixin)`
-  - methods: plan, project, apply, optimize_map, format_result, batch_optimize_maps, assess
+  - methods: plan, project, apply, resolve_quality, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, assess
 
 ### `core_utils/engines/textures/map_registry.py`
 - `class WF`
 - `class MapType`
   - methods: compose_aliases, carried_types
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, resolve_type_from_path, get_suffix_strip_pattern, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
+  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, resolve_type_from_path, get_suffix_strip_pattern, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`
@@ -191,7 +196,7 @@ _Generated: 2026-08-11_
 - `class OutputTemplate`
   - methods: resolve, to_dict, from_dict
 - `class OutputTemplates`
-  - methods: get, resolve, budget
+  - methods: get, resolve, budget, profile_choices, format_choices, resolve_selection
 
 ### `core_utils/engines/textures/region_masks.py` — Region-mask engine — named face-group masks that gate texture regions at runtime.
 - `class RegionGroup`
@@ -208,7 +213,7 @@ _Generated: 2026-08-11_
 
 ### `core_utils/execution_monitor/_execution_monitor.py`
 - `class ExecutionMonitor`
-  - methods: is_escape_pressed, set_interpreter, on_long_execution, show_long_execution_dialog, execution_monitor, external_watchdog
+  - methods: escape_hold_source, is_foreground_process, is_escape_pressed, set_interpreter, on_long_execution, show_long_execution_dialog, execution_monitor, external_watchdog
 
 ### `core_utils/execution_monitor/_gif_viewer.py`
 - `run(gif_path, target_size=DEFAULT_SIZE, pos=None)`
@@ -366,7 +371,7 @@ _Generated: 2026-08-11_
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, set_glb_emissive, set_glb_base_color
+  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, without_locate_hints, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, set_glb_emissive, set_glb_base_color
 
 ### `file_utils/metadata.py`
 - `class MetadataInternal`
@@ -421,7 +426,7 @@ _Generated: 2026-08-11_
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`

@@ -12,7 +12,11 @@ import shutil
 import tempfile
 import unittest
 
-from pythontk import DeliveryBudget, FileUtils, ImgUtils, OutputTemplates
+import numpy as np
+from PIL import Image
+
+from pythontk import DeliveryBudget, FileUtils, ImgUtils, OutputSpec, OutputTemplates
+from pythontk.core_utils.engines.textures.map_factory import MapFactory
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer, Op
 
 
@@ -541,6 +545,246 @@ class TestDeliveryBudget(_TextureFixture):
         self.assertEqual(MapOptimizer.assess(path, enforce_budget=True)["warnings"], [])
         written = MapOptimizer.optimize_map(path, enforce_budget=True)
         self.assertEqual(ImgUtils.ensure_image(written).size, (256, 256))
+
+
+class LossyQualityTest(_TextureFixture):
+    """The three vetoes in resolve_quality, and that assess honours all of them.
+
+    The dry run and the real run must reach the same verdict — a preview that
+    promised lossy while the run refused it would be worse than no preview.
+    """
+
+    def test_safe_map_and_lossy_container_pass(self):
+        quality, skipped = MapOptimizer.resolve_quality(90, "Base_Color", "webp")
+        self.assertEqual(quality, 90)
+        self.assertIsNone(skipped)
+
+    def test_unsafe_map_is_refused_with_a_reason(self):
+        for map_type in ("Normal", "ORM", "Roughness"):
+            quality, skipped = MapOptimizer.resolve_quality(90, map_type, "webp")
+            self.assertIsNone(quality, map_type)
+            self.assertIn(map_type, skipped)
+
+    def test_lossless_container_is_refused_with_a_reason(self):
+        quality, skipped = MapOptimizer.resolve_quality(90, "Base_Color", "png")
+        self.assertIsNone(quality)
+        self.assertIn("lossless container", skipped)
+
+    def test_no_request_is_not_a_refusal(self):
+        self.assertEqual(
+            MapOptimizer.resolve_quality(None, "Normal", "webp"), (None, None)
+        )
+
+    def test_a_jpeg_container_is_itself_a_lossy_request(self):
+        """JPEG has no lossless mode, so naming it IS asking for lossy.
+
+        This gate's own docstring says it is what stops "a batch run from
+        destroying every normal map in a folder because the operator set one
+        dropdown" -- and the container dropdown is exactly such a dropdown. An
+        explicit ``lossy_quality`` on a normal map was loudly refused, while
+        selecting ``.jpg`` and saying nothing about quality sailed past the
+        gate entirely and wrote it at the q95 default with ``warnings: []``.
+        The guarded path was the one nobody takes.
+
+        WebP must stay unaffected: it HAS a lossless mode and ``_apply_lossy_
+        kwargs`` defaults to it when no quality is requested, so nothing is
+        degraded there and a warning would be noise.
+        """
+        for map_type in ("Normal", "ORM", "Roughness"):
+            quality, skipped = MapOptimizer.resolve_quality(None, map_type, "jpg")
+            self.assertIsNone(quality, map_type)
+            self.assertIsNotNone(skipped, f"{map_type} into .jpg was not reported")
+            self.assertIn(map_type, skipped)
+
+        self.assertEqual(
+            MapOptimizer.resolve_quality(None, "Normal", "webp"), (None, None)
+        )
+        # A lossy-safe map into JPEG is the intended use -- no warning.
+        self.assertIsNone(MapOptimizer.resolve_quality(None, "Base_Color", "jpg")[1])
+
+    def test_call_level_quality_outranks_the_profile_spec(self):
+        spec = OutputSpec("webp", 8, None, 80)
+        quality, _ = MapOptimizer.resolve_quality(95, "Base_Color", "webp", spec)
+        self.assertEqual(quality, 95)
+        # ...and the spec still applies when the caller says nothing.
+        quality, _ = MapOptimizer.resolve_quality(None, "Base_Color", "webp", spec)
+        self.assertEqual(quality, 80)
+
+    def test_a_refused_request_surfaces_in_assess_warnings(self):
+        path = self.texture(name="rock_Normal.png")
+        report = MapOptimizer.assess(path, output_type="webp", lossy_quality=90)
+        self.assertIsNone(report["predicted"]["quality"])
+        self.assertTrue(any("refused" in w for w in report["warnings"]))
+
+    def test_an_accepted_request_shows_in_assess(self):
+        path = self.texture(name="rock_BaseColor.png")
+        report = MapOptimizer.assess(path, output_type="webp", lossy_quality=90)
+        self.assertEqual(report["predicted"]["quality"], 90)
+        self.assertEqual(report["warnings"], [])
+
+    def test_refused_map_is_written_losslessly(self):
+        """The guarantee that matters: asking for lossy on a normal map must
+        not degrade it, no matter how the request arrived."""
+        path = self.texture(name="rock_Normal.png")
+        written = MapOptimizer.optimize_map(
+            path, output_dir=self.test_dir, output_type="webp", lossy_quality=80
+        )
+        source = ImgUtils.ensure_image(path).convert("RGB")
+        result = ImgUtils.ensure_image(written).convert("RGB")
+        self.assertEqual(source.tobytes(), result.tobytes())
+
+    def test_assess_predicts_the_size_the_run_writes(self):
+        path = self.texture(name="rock_BaseColor.png")
+        predicted = MapOptimizer.assess(
+            path, output_type="webp", lossy_quality=80, predict_size=True
+        )["predicted"]["size_bytes"]
+        written = MapOptimizer.optimize_map(
+            path, output_dir=self.test_dir, output_type="webp", lossy_quality=80
+        )
+        self.assertEqual(predicted, os.path.getsize(written))
+
+
+class ContainerModeAgreementTest(_TextureFixture):
+    """assess must predict the mode the container will really store.
+
+    WebP has no grayscale mode, so an "L" map lands as RGB. Reporting the
+    in-memory mode claimed 8-bit for a 24-bit file and made the dry run
+    predict something the real run could not produce.
+    """
+
+    def test_assess_predicts_the_container_widened_mode(self):
+        path = self.texture(name="rock_Roughness.png", mode="L")
+        report = MapOptimizer.assess(path, output_type="webp")
+        self.assertEqual(report["predicted"]["mode"], "RGB")
+        self.assertEqual(report["predicted"]["bit_depth"], "24bit (8x3)")
+
+    def test_real_run_matches_the_prediction(self):
+        path = self.texture(name="rock_Roughness.png", mode="L")
+        predicted = MapOptimizer.assess(path, output_type="webp")["predicted"]
+        written = MapOptimizer.optimize_map(
+            path, output_dir=self.test_dir, output_type="webp"
+        )
+        self.assertEqual(ImgUtils.ensure_image(written).mode, predicted["mode"])
+
+    def test_png_keeps_grayscale(self):
+        path = self.texture(name="rock_Roughness.png", mode="L")
+        report = MapOptimizer.assess(path, output_type="png")
+        self.assertEqual(report["predicted"]["mode"], "L")
+        written = MapOptimizer.optimize_map(
+            path, output_dir=self.test_dir, output_type="png"
+        )
+        self.assertEqual(ImgUtils.ensure_image(written).mode, "L")
+
+
+class PackedMapIntegrityTest(_TextureFixture):
+    """A packed map's channels are independent data, not colour.
+
+    Optimize must carry all of them through — including for a map whose
+    filename the registry does not resolve, which is the common case for
+    project-specific packings (a "_Full" lightmap, an "LAOM" atlas).
+    """
+
+    def _packed(self, name="rock_MSAO.png", opaque_alpha=False):
+        rng = np.random.default_rng(0)
+        arr = rng.integers(0, 255, (64, 64, 4), dtype=np.uint8)
+        if opaque_alpha:
+            arr[..., 3] = 255
+        path = os.path.join(self.test_dir, name)
+        Image.fromarray(arr, "RGBA").save(path)
+        return path
+
+    def test_rgba_packing_survives_every_alpha_capable_container(self):
+        path = self._packed()
+        for ext in ("png", "webp", "tga"):
+            written = MapOptimizer.optimize_map(
+                path, output_dir=self.test_dir, output_type=ext
+            )
+            with ImgUtils.ensure_image(written) as result:
+                self.assertEqual(result.mode, "RGBA", ext)
+                self.assertEqual(len(result.getbands()), 4, ext)
+
+    def test_an_unresolved_map_type_is_passed_through_generically(self):
+        """No resolved type means no mode coercion — the plan's map-type
+        branches are all gated on it, so a custom packing keeps its channels."""
+        path = self._packed(name="WALL_mat_Full.png")
+        self.assertIsNone(MapFactory.resolve_map_type(path, key=True))
+
+        report = MapOptimizer.assess(path)
+        self.assertEqual(report["predicted"]["mode"], "RGBA")
+
+        written = MapOptimizer.optimize_map(path, output_dir=self.test_dir)
+        with ImgUtils.ensure_image(written) as result:
+            self.assertEqual(result.mode, "RGBA")
+
+    def test_resize_preserves_every_channel(self):
+        path = self._packed()
+        written = MapOptimizer.optimize_map(
+            path, output_dir=self.test_dir, max_size=32
+        )
+        with ImgUtils.ensure_image(written) as result:
+            self.assertEqual(result.size, (32, 32))
+            self.assertEqual(result.mode, "RGBA")
+
+    def test_dropping_a_channel_that_carries_data_is_called_out(self):
+        warning = MapOptimizer.channel_loss_warning(
+            ImgUtils.ensure_image(self._packed()), "jpg"
+        )
+        self.assertIsNotNone(warning)
+        self.assertIn("channel A", warning)
+
+    def test_dropping_a_uniform_channel_is_not_called_out(self):
+        """A lightmap's fully-opaque alpha costs nothing — shouting about it
+        would train the reader past the line that matters."""
+        self.assertIsNone(
+            MapOptimizer.channel_loss_warning(
+                ImgUtils.ensure_image(self._packed(opaque_alpha=True)), "jpg"
+            )
+        )
+
+    def test_no_warning_when_nothing_is_dropped(self):
+        image = ImgUtils.ensure_image(self._packed())
+        for ext in ("png", "webp", "tga"):
+            self.assertIsNone(MapOptimizer.channel_loss_warning(image, ext))
+
+    def test_the_dry_run_warns_before_the_channel_is_destroyed(self):
+        """The whole point of a dry run: learn that jpg kills Smoothness
+        BEFORE writing the batch, not from the log afterwards."""
+        path = self._packed()
+        report = MapOptimizer.assess(path, output_type="jpg")
+        self.assertTrue(
+            any("discarded" in w for w in report["warnings"]), report["warnings"]
+        )
+
+    def test_the_dry_run_stays_quiet_when_the_container_keeps_everything(self):
+        path = self._packed()
+        for ext in ("png", "webp", "tga"):
+            self.assertEqual(MapOptimizer.assess(path, output_type=ext)["warnings"], [])
+
+    def test_no_warning_when_the_plan_itself_dropped_the_channel(self):
+        """An ORM declares mode RGB, so the plan coerces an RGBA source and
+        reports it as an op — the container is not what loses the alpha, and
+        warning twice for one drop would misattribute it."""
+        path = self._packed(name="rock_ORM.png")
+        report = MapOptimizer.assess(path, output_type="jpg")
+        self.assertTrue(
+            any("map_type=ORM" in r and "RGBA -> RGB" in r for r in report["reasons"]),
+            report["reasons"],
+        )
+        # Scoped to the CHANNEL-drop warning, which is what this test is about:
+        # the plan already accounted for the alpha, so the container must not
+        # report it a second time. The separate lossy-codec warning (an ORM has
+        # no business in a container with no lossless mode) is a different axis
+        # and is pinned in LossyQualityTest -- asserting "no warnings at all"
+        # here would have silently forbidden it.
+        self.assertFalse(
+            [w for w in report["warnings"] if "discarded" in w], report["warnings"]
+        )
+
+    def test_grayscale_to_webp_widens_without_dropping(self):
+        # L -> RGB duplicates the channel; it is not a loss.
+        self.assertEqual(ImgUtils.dropped_channels("L", "webp"), ())
+        self.assertEqual(ImgUtils.dropped_channels("RGBA", "jpg"), ("A",))
+        self.assertEqual(ImgUtils.dropped_channels("RGBA", "png"), ())
 
 
 if __name__ == "__main__":

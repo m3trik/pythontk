@@ -331,13 +331,17 @@ class PreviewServerTestCase(unittest.TestCase):
         carry the normal-dependent specular term, so a zero (or absent) level
         here is the regression.
 
-        It also has to be applied through ``scene.environmentIntensity``, the
-        only lever the renderer honours: a material-level ``envMapIntensity``
-        is overwritten from the scene value for precisely the materials this
-        affects (``isMeshStandardMaterial`` with no ``envMap`` of its own,
-        which is every GLTFLoader material), so setting it there renders the
-        whole fix inert -- verified against the three.js 0.169.0 source, and
-        the first cut of this fix did exactly that.
+        The dimming is applied PER MATERIAL, and getting there needs one
+        specific trick: a material-level ``envMapIntensity`` is overwritten
+        from the scene value for precisely the materials this affects
+        (``isMeshStandardMaterial`` with no ``envMap`` of its own, which is
+        every GLTFLoader material), so setting it alone renders the whole fix
+        inert -- verified against the three.js 0.169.0 source, and the first
+        cut of this fix did exactly that. Assigning the shared environment
+        onto the material opts it out of that override, which is what makes
+        the per-material value stick. A scene-wide lever would work too, but
+        it dims the model's UN-baked props along with the baked geometry, and
+        a scene is routinely partly baked.
         """
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
@@ -346,7 +350,133 @@ class PreviewServerTestCase(unittest.TestCase):
             match, "the viewer no longer declares a lightmapped-scene env level"
         )
         self.assertGreater(float(match.group(1)), 0.0)
-        self.assertIn("scene.environmentIntensity = lightmapped", page)
+        # Per material, and only for the materials the manifest named.
+        self.assertIn("material.envMapIntensity = bakeOnly ? 0 : LIGHTMAP_ENV_INTENSITY", page)
+        self.assertIn("material.envMap = scene.environment", page)
+        # The override opt-out is only safe while disposeModel spares the
+        # shared texture; without that guard the second push runs unlit.
+        self.assertIn("value !== scene.environment", page)
+        # And the scene-wide lever must NOT be keyed off the bake any more.
+        self.assertNotIn("scene.environmentIntensity = lightmapped", page)
+
+    def test_published_rendering_policy_matches_the_viewer(self):
+        """The hand-off's lighting recipe must be what the viewer actually does.
+
+        ``MeshConvert.RENDERING_POLICY`` ships inside every deliverable as
+        ``handoff.rendering`` -- it is how a recipient reproduces the look the
+        asset was approved in, since the asset carries no lights of its own.
+        The viewer declares the same numbers in JavaScript, which no Python test
+        executes, so nothing but this pins the two together. A published recipe
+        that quietly stops matching the reference render is worse than none:
+        it is followed exactly and still yields a different image, and the
+        recipient has no way to tell it was the recipe that was wrong.
+        """
+        from pythontk import MeshConvert
+
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        policy = MeshConvert.RENDERING_POLICY
+
+        for const, published in (
+            ("DEFAULT_KEY_INTENSITY", policy["keyLight"]["intensity"]),
+            (
+                "LIGHTMAP_ENV_INTENSITY",
+                policy["lightmappedMaterials"]["envMapIntensity"],
+            ),
+        ):
+            match = re.search(rf"const {const} = ([0-9.]+)", page)
+            self.assertIsNotNone(match, f"the viewer no longer declares {const}")
+            self.assertEqual(
+                float(match.group(1)),
+                float(published),
+                f"{const} disagrees with the published handoff.rendering policy",
+            )
+
+        # The key light's OFF-CONDITION, not just its magnitude. 0.9 stayed 0.9
+        # right through the 2026-08-12 regression that gated the light on the
+        # asset being FULLY baked rather than partly, so a number-only check
+        # cannot see a condition invert -- and `disabled_when` is not a note,
+        # it is a field a recipient ACTS on: read the wrong way it puts a
+        # directional light on geometry whose lighting is already baked in.
+        #
+        # Asserted as "must not say the WRONG thing" rather than "must say this
+        # exact thing". Demanding a keyword (an earlier cut of this required
+        # "any") fails on a correct rewording -- "when the asset contains a
+        # lightmapped material" means the same and has no "any" -- and a test
+        # that fails on correct behaviour gets weakened rather than fixed. The
+        # structural answer is for the viewer to READ this policy instead
+        # (deferred -- see BACKLOG, "the WebXR viewer defines the viewing policy
+        # it is supposed to consume").
+        disabled_when = policy["keyLight"].get("disabled_when", "").lower()
+        self.assertTrue(
+            disabled_when.strip(),
+            "the recipe no longer states WHEN the key light is disabled -- the "
+            "half a recipient cannot infer from the intensity",
+        )
+        for misreading in ("all material", "every material", "fully baked"):
+            self.assertNotIn(
+                misreading,
+                disabled_when,
+                "the published off-condition has drifted to the FULLY-baked "
+                "reading the viewer was fixed away from",
+            )
+
+        # The named pieces of the rig, spelled as the viewer builds them.
+        self.assertIn("THREE.ACESFilmicToneMapping", page)
+        self.assertEqual(policy["renderer"]["toneMapping"], "ACESFilmic")
+        self.assertIn("new RoomEnvironment()", page)
+        self.assertIn("RoomEnvironment", policy["environment"]["source"])
+        blur = re.search(r"pmrem\.fromScene\(new RoomEnvironment\(\), ([0-9.]+)\)", page)
+        self.assertIsNotNone(blur, "the viewer no longer prefilters the environment")
+        # Compared as a NUMBER. Substring-matching this against the prose form
+        # ("PMREM, blur 0.04", as this first did) silently accepts a viewer that
+        # changed the blur to 0.0 -- "0.0" is a substring of "0.04".
+        self.assertEqual(
+            float(blur.group(1)), float(policy["environment"]["prefilterBlur"])
+        )
+        env = re.search(r"scene\.environmentIntensity = ([0-9.]+)", page)
+        self.assertIsNotNone(env, "the viewer no longer sets an environment level")
+        self.assertEqual(
+            float(env.group(1)), float(policy["environment"]["intensity"])
+        )
+
+    def test_the_key_light_goes_off_for_any_bake_at_all(self):
+        """A partly-baked model must not wear the key light over its bake.
+
+        The key light is scene-wide -- it cannot be withdrawn per material
+        without render layers -- so gating it on the model being FULLY baked
+        put a 0.9 directional light on top of geometry whose lighting is
+        already in its lightmap. A room is routinely partly baked (measured:
+        51 of 57 materials), so that gate never opened and every baked room
+        rendered blown out. The added light is invisible to the bake settings,
+        which is the tell: lowering the Maya lights and re-baking changes
+        nothing, because the extra term is applied downstream of the EXR.
+
+        The un-baked props the gate was added for are not left dark. They keep
+        the FULL environment via the per-material split above (they were on
+        0.25 when the key light mattered), and the environment is normal- and
+        view-dependent, so their normal maps and specular survive without it.
+
+        This also restores the "bake only" toggle as real isolation: it is
+        guarded on ``lightmapped``, so wherever it can be flipped the key light
+        is already off and a baked material is lit by its bake alone. Un-baked
+        props keep the full environment under the toggle -- they have no bake
+        to isolate, and blacking them out would answer no question.
+        """
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        self.assertIn("keyLight.intensity = lightmapped ? 0 : DEFAULT_KEY_INTENSITY", page)
+        # The DECLARATION, not the bare word: this file's comments discuss the
+        # removed gate by name, and a test that fires on prose about a dead
+        # mechanism teaches the next reader to delete the explanation rather
+        # than the code.
+        self.assertNotIn("const fullyBaked", page)
+        # The isolation holds only while the toggle stays guarded on the same
+        # condition the key light is keyed to; without this guard "bake only is
+        # reachable" and "key light is off" stop being the same state. Matched
+        # loosely on purpose -- a formatter adding braces to the guard clause
+        # would change nothing about the behaviour being pinned.
+        self.assertRegex(page, r"if \(!lightmapped\)\s*\{?\s*return")
 
     def test_timeout_tolerates_hidden_tab_throttling(self):
         """Browsers throttle a hidden tab's timers to ~1/min; 90s clears that."""

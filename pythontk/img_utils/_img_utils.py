@@ -25,7 +25,7 @@ except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
     np = None  # type: ignore
 try:
-    from PIL import Image, ImageOps, ImageFilter, ImageChops, ImageDraw
+    from PIL import Image, ImageOps, ImageFilter, ImageChops, ImageDraw, ImageMode
 except ImportError as e:
     print(f"# ImportError: {__file__}\n\t{e}")
     Image = None  # type: ignore
@@ -56,6 +56,7 @@ class ImgUtils(HelpMixin):
         "png": ImageFormat(True, True, "pil"),
         "jpg": ImageFormat(True, True, "pil"),
         "jpeg": ImageFormat(True, True, "pil"),
+        "webp": ImageFormat(True, True, "pil"),
         "bmp": ImageFormat(True, True, "pil"),
         "tga": ImageFormat(True, True, "pil"),
         "tiff": ImageFormat(True, True, "pil"),
@@ -85,6 +86,101 @@ class ImgUtils(HelpMixin):
     # DDS block-compression formats Pillow's writer handles directly (no external
     # tool). BC7 / BC6H are not in this set — they need a registered codec.
     PIL_DDS_PIXEL_FORMATS = ("DXT1", "DXT3", "DXT5", "BC5")
+
+    # Containers whose writer accepts a lossy quality setting. Everything else in
+    # ``image_formats`` is lossless (or float), so a quality request against one
+    # is a caller mistake worth naming rather than dropping on the floor.
+    LOSSY_FORMATS = ("jpg", "jpeg", "webp")
+
+    # The subset with NO lossless mode at all, so naming one as the output
+    # container IS a request to degrade the pixels -- there is no "write it
+    # losslessly instead" for these. WebP is deliberately absent: it has a
+    # lossless mode and ``_apply_lossy_kwargs`` selects it when no quality is
+    # requested, so a WebP target degrades nothing by default.
+    ALWAYS_LOSSY_FORMATS = ("jpg", "jpeg")
+
+    # JPEG has no lossless mode, so ``quality=None`` still has to pick a number.
+    # 95/4:4:4 rather than Pillow's 75/4:2:0: this is a *texture* library, and
+    # chroma subsampling is what turns a normal map's X/Y vectors to mush.
+    JPEG_DEFAULT_QUALITY = 95
+
+    # WebP's hard encoder ceiling on either edge. A larger source has to stay PNG
+    # or be resized first — the encoder's own error names the limit but not the fix.
+    WEBP_MAX_DIMENSION = 16383
+
+    # What each container ACTUALLY stores when it cannot hold the requested mode.
+    # Measured against Pillow's writers (save + reopen), not assumed — half of
+    # these raise rather than degrade, so a caller cannot discover them by
+    # inspecting the result.
+    #
+    # This exists because a container's limits are invisible until after the
+    # write: WebP has no grayscale mode at all, so an "L" roughness map comes
+    # back as RGB. Left implicit, the optimizer would report 8-bit for a file
+    # that is 24-bit on disk, and its dry run would predict a mode the real run
+    # could not produce. Only modes whose stored form DIFFERS are listed.
+    _CONTAINER_MODE_FALLBACKS: Dict[str, Dict[str, str]] = {
+        # No grayscale and no palette; alpha survives.
+        "webp": {"L": "RGB", "P": "RGB", "I;16": "RGB", "LA": "RGBA"},
+        # No alpha of any kind, no palette, 8-bit only.
+        "jpg": {"LA": "L", "P": "RGB", "RGBA": "RGB", "I;16": "L"},
+        "jpeg": {"LA": "L", "P": "RGB", "RGBA": "RGB", "I;16": "L"},
+        # Writes 24-bit; alpha is dropped and 16-bit grayscale flattened.
+        "bmp": {"LA": "L", "RGBA": "RGB", "I;16": "L"},
+        "tga": {"I;16": "RGB"},
+        # Always palettised, whatever goes in.
+        "gif": {"L": "P", "LA": "P", "RGB": "P", "RGBA": "P", "I;16": "P"},
+    }
+
+    @classmethod
+    def effective_mode(cls, mode: str, ext: str) -> str:
+        """The mode *ext* will actually store for an image in *mode*.
+
+        Returns *mode* unchanged when the container can hold it — including for
+        every container with no entry in :attr:`_CONTAINER_MODE_FALLBACKS`
+        (PNG/TIFF hold everything; EXR/HDR go through the float path).
+
+        Parameters:
+            mode: Requested PIL mode.
+            ext: Target extension, with or without a leading dot.
+
+        Returns:
+            str: The stored mode — use it to predict or report what is on disk
+            rather than what was handed to the writer.
+        """
+        ext = (ext or "").lower().lstrip(".")
+        return cls._CONTAINER_MODE_FALLBACKS.get(ext, {}).get(mode, mode)
+
+    @classmethod
+    def dropped_channels(cls, mode: str, ext: str) -> Tuple[str, ...]:
+        """Band names *ext* cannot keep from an image in *mode*.
+
+        A widening is not automatically a loss — "L" to WebP's RGB duplicates
+        the one channel it had. This names the channels that actually go away,
+        which for a PACKED map is the difference between a container note and
+        destroyed data: MSAO carries Smoothness in alpha, so writing one to
+        JPEG silently discards a material input rather than a transparency.
+
+        Returns:
+            tuple: Band names present in *mode* but absent from the stored
+            mode, in the source's own band order. Empty when nothing is lost.
+        """
+        stored = cls.effective_mode(mode, ext)
+        if stored == mode:
+            return ()
+        try:
+            have = ImageMode.getmode(mode).bands
+            kept = set(ImageMode.getmode(stored).bands)
+        except (KeyError, ValueError):
+            return ()
+        # Comparing band NAMES alone is wrong: it reports "L" as dropped when
+        # WebP stores an "L" map as RGB, which replicates the single channel
+        # rather than truncating it. A band only disappears when the stored
+        # mode has no counterpart carrying its data, and widening always has
+        # one — "L"/"P" -> RGB replicate or unroll, "RGB" -> "P" quantises but
+        # keeps colour, "I;16" -> "L" loses precision, not a channel. Across
+        # every entry in _CONTAINER_MODE_FALLBACKS that leaves alpha as the one
+        # band a container genuinely discards.
+        return tuple(b for b in have if b == "A" and b not in kept)
 
     # Optional external DDS codec for block formats Pillow can't write (BC7, BC6H).
     # Registered via :meth:`register_dds_codec`; ``None`` until an extension installs one.
@@ -450,6 +546,7 @@ class ImgUtils(HelpMixin):
         mode: str = None,
         bit_depth: int = None,
         compression: str = None,
+        quality: int = None,
         **kwargs,
     ):
         """Save an image to ``name``, dispatching on the file extension.
@@ -467,6 +564,10 @@ class ImgUtils(HelpMixin):
                 back to 8-bit with a warning. 32-bit float is the EXR/HDR path.
             compression (str, optional): DDS block format (e.g. "DXT5", "BC7").
                 Only honored for ``.dds`` — see :meth:`_save_dds_compressed`.
+            quality (int, optional): Lossy quality (1-100) for the
+                :attr:`LOSSY_FORMATS` containers. **None means lossless wherever
+                the container offers it** — see :meth:`_apply_lossy_kwargs`. A
+                value passed against a lossless container is reported and ignored.
             **kwargs: Additional arguments forwarded to PIL.Image.save (e.g.,
                 optimize=True, compress_level=9). Ignored for OpenCV-backed formats.
         """
@@ -499,11 +600,136 @@ class ImgUtils(HelpMixin):
         ):
             return
 
-        # Auto-convert RGBA to RGB if saving as JPEG to prevent OSError
-        if ext in ("jpg", "jpeg") and im.mode == "RGBA":
-            im = im.convert("RGB")
+        # Widen to what the container can actually hold. Replaces the former
+        # RGBA->RGB-for-JPEG special case, which covered only one of the four
+        # modes JPEG rejects (P, LA and I;16 raised OSError instead).
+        effective = cls.effective_mode(im.mode, ext)
+        if effective != im.mode:
+            if effective == "P" and im.mode in ("RGB", "L"):
+                # ADAPTIVE, not Pillow's default 216-colour WEB palette. This
+                # fallback replaced "let GifImagePlugin quantise on the way
+                # out", which used an adaptive palette -- a bare convert("P")
+                # does not, and measured 49/255 max (19.4 mean) round-trip
+                # error on a gradient against the writer's own 17/2.76. A
+                # palettising container must not come out worse than the
+                # plugin it took the job from.
+                #
+                # Gated on the source mode because ADAPTIVE routes through
+                # ``quantize()``, which accepts only RGB and L and raises
+                # ``ValueError: image has wrong mode`` on the LA / RGBA / I;16
+                # entries this same table maps to P. Those keep the plain
+                # convert, i.e. exactly their previous behaviour -- the
+                # measured regression is on the RGB path.
+                im = im.convert(effective, palette=Image.Palette.ADAPTIVE)
+            else:
+                im = im.convert(effective)
 
-        im.save(name, **kwargs)
+        if ext == "webp":
+            cls._assert_webp_dimensions(im, name)
+
+        if ext in cls.LOSSY_FORMATS:
+            kwargs = cls._apply_lossy_kwargs(ext, quality, kwargs)
+        elif quality is not None:
+            print(
+                f"# ImgUtils: '{ext}' is a lossless container; ignoring "
+                f"quality={quality} for {name}."
+            )
+
+        with cls._sized_encoder_buffer(im, ext, kwargs):
+            im.save(name, **kwargs)
+
+    @classmethod
+    @contextmanager
+    def _sized_encoder_buffer(cls, im: "Image.Image", ext: str, kwargs: dict):
+        """Widen Pillow's optimize buffer for the duration of one JPEG save.
+
+        In optimize/progressive mode libjpeg needs a single buffer big enough
+        for the WHOLE encoded image, and Pillow guesses its size from the pixel
+        count -- ``2*w*h`` at quality >= 95, ``w*h`` below. That guess assumes
+        4:2:0 chroma. :meth:`_apply_lossy_kwargs` writes **4:4:4**
+        (``subsampling=0``) so a normal map's X/Y vectors are not turned to
+        mush, and full-resolution chroma on a high-frequency map encodes past
+        the guess -- at which point Pillow raises ``OSError: broken data stream
+        when writing image file`` rather than growing the buffer.
+
+        Not hypothetical: ``MapOptimizer.optimize_map`` passes ``optimize=True``
+        on every save, so this is the .jpg path of the texture optimizer
+        failing on exactly the detailed maps it exists to process. Measured on
+        random-noise RGB at q95/4:4:4 -- 256^2 encoded to 159 KB against a
+        131 KB budget, 1024^2 to 2.48 MB against 2 MB.
+
+        ``ImageFile._save`` takes ``max(MAXBLOCK, bufsize)``, so raising that
+        module global is the lever Pillow offers. The bound is the raw pixel
+        size (channels * w * h) plus slack for headers: a JPEG that big would
+        mean the encoder expanded the image, which it does not do at any
+        quality. Restored in ``finally`` -- it is process-wide state and this
+        is a library, not an application.
+        """
+        optimizing = kwargs.get("optimize") or kwargs.get("progressive")
+        if ext not in ("jpg", "jpeg") or not optimizing or Image is None:
+            yield
+            return
+
+        from PIL import ImageFile
+
+        width, height = im.size
+        needed = len(im.getbands()) * width * height + 65536
+        previous = ImageFile.MAXBLOCK
+        ImageFile.MAXBLOCK = max(previous, needed)
+        try:
+            yield
+        finally:
+            ImageFile.MAXBLOCK = previous
+
+    @classmethod
+    def _assert_webp_dimensions(cls, im: "Image.Image", name: str) -> None:
+        """Raise a fix-shaped error when *im* exceeds WebP's encoder ceiling.
+
+        Pillow surfaces the libwebp error, which states the limit but not what to
+        do about it — and by then the caller has already paid for a full optimize
+        pass. Fail here with both.
+        """
+        width, height = im.size
+        if max(width, height) > cls.WEBP_MAX_DIMENSION:
+            raise ValueError(
+                f"Cannot write {name!r} as WebP: {width}x{height} exceeds the "
+                f"format's {cls.WEBP_MAX_DIMENSION}px limit. Resize first "
+                f"(e.g. max_size={cls.WEBP_MAX_DIMENSION}) or keep it as PNG."
+            )
+
+    @classmethod
+    def _apply_lossy_kwargs(
+        cls, ext: str, quality: Optional[int], kwargs: dict
+    ) -> dict:
+        """Resolve writer kwargs for a lossy container. Returns a new dict.
+
+        ``quality is None`` means *lossless wherever the container offers it*.
+        That default is the whole point: Pillow writes WebP at *lossy q80* unless
+        told otherwise, so a caller who merely picked ".webp" off a format menu
+        would silently ship a degraded normal map — the exact failure this
+        parameter exists to make impossible to reach by accident.
+
+        JPEG has no lossless mode, so None resolves to
+        :attr:`JPEG_DEFAULT_QUALITY` at 4:4:4 instead. Explicit kwargs always
+        win, so a caller who really wants ``subsampling=2`` can still say so.
+        """
+        kwargs = dict(kwargs)
+        if ext == "webp":
+            if quality is None:
+                # In lossless mode Pillow reads ``quality`` as compression EFFORT,
+                # not fidelity — 100 is the smallest file, not the best pixels.
+                kwargs.setdefault("lossless", True)
+                kwargs.setdefault("quality", 100)
+            else:
+                kwargs.setdefault("lossless", False)
+                kwargs.setdefault("quality", int(quality))
+        else:  # jpg / jpeg — lossy either way; only the amount is negotiable.
+            kwargs.setdefault(
+                "quality",
+                cls.JPEG_DEFAULT_QUALITY if quality is None else int(quality),
+            )
+            kwargs.setdefault("subsampling", 0)  # 4:4:4 — see JPEG_DEFAULT_QUALITY
+        return kwargs
 
     @classmethod
     def _save_dds_compressed(
