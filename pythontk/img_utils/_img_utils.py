@@ -666,7 +666,12 @@ class ImgUtils(HelpMixin):
         is a library, not an application.
         """
         optimizing = kwargs.get("optimize") or kwargs.get("progressive")
-        if ext not in ("jpg", "jpeg") or not optimizing or Image is None:
+        # ALWAYS_LOSSY_FORMATS is exactly the JPEG pair, and it is the set this
+        # buffer problem belongs to: a container with no lossless mode is the
+        # one whose writer takes the quality/subsampling that overflows the
+        # guess. Naming the pair a second time here would be two lists to keep
+        # in step.
+        if ext not in cls.ALWAYS_LOSSY_FORMATS or not optimizing or Image is None:
             yield
             return
 

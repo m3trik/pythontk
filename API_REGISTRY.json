@@ -9071,7 +9071,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath)",
               "summary": "Load an image and return a PIL copy, dispatching on the file extension.",
-              "line": 828,
+              "line": 833,
               "deprecated": false
             },
             {
@@ -9080,7 +9080,7 @@
               "kind": "classmethod",
               "signature": "(cls, directory, exts=None, full_paths=False)",
               "summary": "Sorted image file names in a directory (non-recursive).",
-              "line": 882,
+              "line": 887,
               "deprecated": false
             },
             {
@@ -9089,7 +9089,7 @@
               "kind": "staticmethod",
               "signature": "(dirs)",
               "summary": "Unique, order-preserving output stems for a set of directories.",
-              "line": 910,
+              "line": 915,
               "deprecated": false
             },
             {
@@ -9098,7 +9098,7 @@
               "kind": "classmethod",
               "signature": "(cls, directory, inc=None, exc='')",
               "summary": "Get bitmap images from a given directory as PIL images.",
-              "line": 945,
+              "line": 950,
               "deprecated": false
             },
             {
@@ -9107,7 +9107,7 @@
               "kind": "staticmethod",
               "signature": "(image_path: str) -> Optional[Tuple[int, int]]",
               "summary": "``(width, height)`` of an image, read as cheaply as possible.",
-              "line": 1028,
+              "line": 1033,
               "deprecated": false
             },
             {
@@ -9116,7 +9116,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]",
               "summary": "Get information about image files.",
-              "line": 1049,
+              "line": 1054,
               "deprecated": false
             },
             {
@@ -9125,7 +9125,7 @@
               "kind": "classmethod",
               "signature": "(cls, imageA, imageB)",
               "summary": "Check if two images are the same.",
-              "line": 1095,
+              "line": 1100,
               "deprecated": false
             },
             {
@@ -9134,7 +9134,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, x, y)",
               "summary": "Returns a resized copy of an image.",
-              "line": 1113,
+              "line": 1118,
               "deprecated": false
             },
             {
@@ -9143,7 +9143,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Resizes an image to the nearest Power of Two dimensions.",
-              "line": 1128,
+              "line": 1133,
               "deprecated": false
             },
             {
@@ -9152,7 +9152,7 @@
               "kind": "classmethod",
               "signature": "(cls, mode_or_image) -> str",
               "summary": "Format bit depth as e.g.",
-              "line": 1153,
+              "line": 1158,
               "deprecated": false
             },
             {
@@ -9161,7 +9161,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, map_type: str, allow_palette: bool = False) -> object",
               "summary": "Sets the bit depth and image mode of an image according to the map type.",
-              "line": 1165,
+              "line": 1170,
               "deprecated": false
             },
             {
@@ -9170,7 +9170,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Inverts a grayscale image.",
-              "line": 1222,
+              "line": 1227,
               "deprecated": false
             },
             {
@@ -9179,7 +9179,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, channels='RGBA')",
               "summary": "Invert specified channels in an image.",
-              "line": 1235,
+              "line": 1240,
               "deprecated": false
             },
             {
@@ -9188,7 +9188,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mapping)",
               "summary": "Reorder, duplicate, or constant-fill an image's channels.",
-              "line": 1275,
+              "line": 1280,
               "deprecated": false
             },
             {
@@ -9197,7 +9197,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))",
               "summary": "Create mask(s) from the given image(s).",
-              "line": 1341,
+              "line": 1346,
               "deprecated": false
             },
             {
@@ -9206,7 +9206,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color, mask)",
               "summary": "Parameters:",
-              "line": 1386,
+              "line": 1391,
               "deprecated": false
             },
             {
@@ -9215,7 +9215,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color=(0, 0, 0, 0))",
               "summary": "Parameters:",
-              "line": 1405,
+              "line": 1410,
               "deprecated": false
             },
             {
@@ -9224,7 +9224,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mode=None, average=False)",
               "summary": "Sample the pixel values of each corner of an image and if they are uniform, return the result.",
-              "line": 1422,
+              "line": 1427,
               "deprecated": false
             },
             {
@@ -9233,7 +9233,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None)",
               "summary": "Parameters:",
-              "line": 1456,
+              "line": 1461,
               "deprecated": false
             },
             {
@@ -9242,7 +9242,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, level=255)",
               "summary": "Parameters:",
-              "line": 1494,
+              "line": 1499,
               "deprecated": false
             },
             {
@@ -9251,7 +9251,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']",
               "summary": "Apply a Gaussian blur to an image or 2D/3D numpy array.",
-              "line": 1514,
+              "line": 1519,
               "deprecated": false
             },
             {
@@ -9260,7 +9260,7 @@
               "kind": "staticmethod",
               "signature": "(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8) -> 'np.ndarray'",
               "summary": "Extend valid pixels outward into empty (background) regions.",
-              "line": 1656,
+              "line": 1661,
               "deprecated": false
             },
             {
@@ -9269,7 +9269,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None) -> 'np.ndarray'",
               "summary": "Fill EVERY empty texel with its nearest valid texel's color.",
-              "line": 1753,
+              "line": 1758,
               "deprecated": false
             },
             {
@@ -9278,7 +9278,7 @@
               "kind": "staticmethod",
               "signature": "(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]",
               "summary": "Lay out N weighted items as non-overlapping rects tiling the unit square.",
-              "line": 1817,
+              "line": 1822,
               "deprecated": false
             },
             {
@@ -9287,7 +9287,7 @@
               "kind": "staticmethod",
               "signature": "(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]",
               "summary": "Convert normalized ``scaleOffset`` rects to integer pixel rects.",
-              "line": 1890,
+              "line": 1895,
               "deprecated": false
             },
             {
@@ -9296,7 +9296,7 @@
               "kind": "staticmethod",
               "signature": "(rect: Sequence[float]) -> List[float]",
               "summary": "A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.",
-              "line": 1925,
+              "line": 1930,
               "deprecated": false
             },
             {
@@ -9305,7 +9305,7 @@
               "kind": "staticmethod",
               "signature": "(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]",
               "summary": "Shrink each atlas rect by a pixel gutter on every side.",
-              "line": 1941,
+              "line": 1946,
               "deprecated": false
             },
             {
@@ -9314,7 +9314,7 @@
               "kind": "classmethod",
               "signature": "(cls, rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[float, float, float, float]]",
               "summary": "Snap normalized atlas rects onto the atlas's integer texel grid.",
-              "line": 1983,
+              "line": 1988,
               "deprecated": false
             },
             {
@@ -9323,7 +9323,7 @@
               "kind": "staticmethod",
               "signature": "(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], bboxes: Optional[Sequence[Optional[Tuple[float, float, float, float]]]] = None) -> List[Tuple[float, float, float, float]]",
               "summary": "Re-aim each rect so its content's edge UVs sample border-texel CENTERS.",
-              "line": 2027,
+              "line": 2032,
               "deprecated": false
             },
             {
@@ -9332,7 +9332,7 @@
               "kind": "classmethod",
               "signature": "(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'",
               "summary": "Composite per-item images into one atlas at normalized ``scaleOffset`` rects.",
-              "line": 2090,
+              "line": 2095,
               "deprecated": false
             },
             {
@@ -9341,7 +9341,7 @@
               "kind": "staticmethod",
               "signature": "(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'",
               "summary": "Generate a normalized radial gradient as a 2D numpy array.",
-              "line": 2169,
+              "line": 2174,
               "deprecated": false
             },
             {
@@ -9350,7 +9350,7 @@
               "kind": "classmethod",
               "signature": "(cls, triangles, size: int = 512, supersample: int = 4) -> 'np.ndarray'",
               "summary": "Rasterize filled UV-space triangles into a single-channel coverage image.",
-              "line": 2227,
+              "line": 2232,
               "deprecated": false
             },
             {
@@ -9359,7 +9359,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)",
               "summary": "Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.",
-              "line": 2364,
+              "line": 2369,
               "deprecated": false
             },
             {
@@ -9368,7 +9368,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Convert an RGB Image data array to grayscale (luma weights).",
-              "line": 2447,
+              "line": 2452,
               "deprecated": false
             },
             {
@@ -9377,7 +9377,7 @@
               "kind": "staticmethod",
               "signature": "(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]",
               "summary": "Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.",
-              "line": 2463,
+              "line": 2468,
               "deprecated": false
             },
             {
@@ -9386,7 +9386,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert an RGB image to HSV mode.",
-              "line": 2523,
+              "line": 2528,
               "deprecated": false
             },
             {
@@ -9395,7 +9395,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a high-bit-depth grayscale image to 8-bit 'L'.",
-              "line": 2538,
+              "line": 2543,
               "deprecated": false
             },
             {
@@ -9404,7 +9404,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 2561,
+              "line": 2566,
               "deprecated": false
             },
             {
@@ -9413,7 +9413,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 2657,
+              "line": 2662,
               "deprecated": false
             },
             {
@@ -9422,7 +9422,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 2810,
+              "line": 2815,
               "deprecated": false
             },
             {
@@ -9431,7 +9431,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 2822,
+              "line": 2827,
               "deprecated": false
             },
             {
@@ -9440,7 +9440,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, percentile=None)",
               "summary": "Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.",
-              "line": 2840,
+              "line": 2845,
               "deprecated": false
             },
             {
@@ -9449,7 +9449,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> List[Image.Image]",
               "summary": "Generate a mipmap chain for an image.",
-              "line": 2893,
+              "line": 2898,
               "deprecated": false
             },
             {
@@ -9458,7 +9458,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 2920,
+              "line": 2925,
               "deprecated": false
             },
             {
@@ -9467,7 +9467,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 2940,
+              "line": 2945,
               "deprecated": false
             },
             {
@@ -9476,7 +9476,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 2981,
+              "line": 2986,
               "deprecated": false
             },
             {
@@ -9485,7 +9485,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 3045,
+              "line": 3050,
               "deprecated": false
             }
           ]
