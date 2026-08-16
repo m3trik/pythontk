@@ -40,9 +40,65 @@ from pythontk.core_utils.engines.textures.output_template import (
 )
 
 
-# Map-type-driven mode coercion rules. Mirrors the tolerated-mode lists in
-# the original optimize_map body — defined once here so both plan() and
-# apply() reference the same source.
+# Modes that are a target mode's channel layout at HIGHER precision.
+# Coercing them down to the 8-bit target discards precision the file
+# deliberately carries — the profile writer itself authors 16-bit grayscale
+# for a SUBSET of L-target map types (OutputSpec bit_depth 16 for
+# Height/Displacement/Bump only — Roughness/AO/Metallic stay 8-bit), so the
+# dry-run twin flagging its own 16-bit output for an L-coercion made assess
+# disagree with optimize_map forever (probe-proven 2026-08-14: a staged
+# I;16 height map assessed "recommended" on every subsequent run — a paired
+# task/check built on the twins could then never converge).
+#
+# Tolerance is gated on the RESOLVED OutputSpec's bit_depth (see plan()'s
+# ``high_precision_ok``), not on the target mode alone — folding it
+# unconditionally into ``_MAP_TYPE_TOLERATED`` made every L-target map type
+# tolerate 16-bit input, so an I;16 Roughness source under an 8-bit spec
+# shipped as a 16-bit PNG with no warning (probe-proven 2026-08-14).
+_HIGH_PRECISION_EQUIV: Dict[str, Tuple[str, ...]] = {
+    "L": ("I", "I;16"),
+}
+
+# What each CONTAINER actually stores for a high-precision single-channel
+# source — measured (save + reopen), never derived from
+# ``ImgUtils._CONTAINER_MODE_FALLBACKS``. That table lists only the modes whose
+# stored form DIFFERS, so every container missing from it reads as "keeps
+# I;16", and gating the tolerance on the resolved bit depth alone therefore let
+# a 16-bit mode reach every container at once (probe-proven 2026-08-14):
+# ``optimize_map(<16-bit Height>, output_type="dds")`` raised
+# ``OSError: cannot write mode I;16 as DDS`` while ``assess`` of the same call
+# predicted a clean no-op, and the table's ``"tga": {"I;16": "RGB"}`` row —
+# right for an unknown image — widened a linear height map to 24-bit RGB
+# (+4434%) where "L" is the correct reduction for a single-channel map.
+#
+# A container ABSENT here gets no tolerance at all, so the plan coerces down to
+# the map type's own target mode before the container fallback can ever see the
+# 16-bit mode. Values are the mode the container writes, which makes PNG's
+# ``"I" -> "I;16"`` a NARROWING rather than a flatten: Pillow's PNG writer
+# stores mode "I" as 16-bit anyway (a path it deprecates for removal in Pillow
+# 13), so naming it keeps every bit the container can hold AND makes the dry
+# run predict the mode that actually lands on disk.
+_HIGH_PRECISION_CONTAINERS: Dict[str, Dict[str, str]] = {
+    "png": {"I": "I;16", "I;16": "I;16"},
+    "tif": {"I": "I", "I;16": "I;16"},
+    "tiff": {"I": "I", "I;16": "I;16"},
+    # Float containers (routed to the cv2 writer): they have no 8-bit form to
+    # truncate to, so the integer modes pass through at full range.
+    "exr": {"I": "I", "I;16": "I;16"},
+    "hdr": {"I": "I", "I;16": "I;16"},
+}
+
+# Accepted ``pot_mode`` values. Matched as ``== "down"`` or else round(), so
+# every unrecognized string — "downward", "Down", a typo — silently took the
+# nearest snap, which is the one behavior a budget caller passes pot_mode to
+# avoid (nearest GROWS everything in the upper half of a POT band).
+_POT_MODES: Tuple[str, ...] = ("nearest", "down")
+
+# Map-type-driven mode coercion rules — the BASE tolerance, without the
+# high-precision modes folded in. Mirrors the tolerated-mode lists in the
+# original optimize_map body — defined once here so both plan() and apply()
+# reference the same source. plan() adds ``_HIGH_PRECISION_EQUIV`` on top
+# only when the resolved spec's bit depth supports it.
 _MAP_TYPE_TOLERATED: Dict[str, Tuple[str, ...]] = {
     "RGB": ("RGB", "P", "L"),
     "RGBA": ("RGBA", "PA", "P"),
@@ -116,7 +172,19 @@ class MapOptimizer(HelpMixin):
         band. ``max_size`` is a separate, harder rule: a stated ceiling must
         survive the snap, so any edge that crossed it is halved back under.
         Nearest still wins wherever it stays legal.
+
+        Raises:
+            ValueError: *mode* is neither of :data:`_POT_MODES`. Validated at
+                the single point of use rather than at each public entry, so
+                every route in (``optimize_map`` / ``assess`` / ``plan``) is
+                covered by one check. None/omitted stays the documented
+                "nearest" default.
         """
+        if mode is not None and mode not in _POT_MODES:
+            raise ValueError(
+                f"Unknown pot_mode {mode!r}: expected one of {_POT_MODES} "
+                f"(None/omitted = 'nearest')."
+            )
         snap = math.floor if mode == "down" else round
 
         def _edge(value: int) -> int:
@@ -137,6 +205,8 @@ class MapOptimizer(HelpMixin):
         map_type_key: Optional[str] = None,
         allow_palette: bool = False,
         pot_mode: str = "nearest",
+        output_profile: Optional[str] = None,
+        output_type: Optional[str] = None,
     ) -> List[Op]:
         """Return the ordered list of operations :meth:`apply` would run.
 
@@ -161,6 +231,23 @@ class MapOptimizer(HelpMixin):
                 dimension in the upper half of a POT band grow (1536 -> 2048,
                 +78% pixels), so a delivery budget could inflate the very asset
                 it exists to shrink, and then report itself as satisfied.
+                Anything else raises ``ValueError`` (see :meth:`_snap_pot`) —
+                an unrecognized value used to fall through to "nearest", which
+                is the one snap a caller passing this is trying to avoid.
+            output_profile: Workflow profile (a ``WF`` key) used only to
+                resolve the map type's :class:`OutputSpec` bit depth, which
+                gates the high-precision (I/I;16) mode-coercion tolerance —
+                see ``stored_high_precision`` below. None (default) resolves
+                against :attr:`OutputTemplates.DEFAULT`, which already
+                distinguishes 16-bit Height/Displacement/Bump from every
+                other 8-bit L-target map type.
+            output_type: Container the run will actually write (extension, with
+                or without a dot) — the *other* half of that tolerance gate: a
+                16-bit spec is only worth honoring in a container that can
+                store the mode (see :data:`_HIGH_PRECISION_CONTAINERS`). Both
+                twins resolve it before calling; None (default) falls back to
+                the resolved spec's own container, the honest reading for a
+                direct caller who named neither.
 
         Returns:
             list[Op]: Ordered ops; empty when no changes would be applied.
@@ -168,6 +255,31 @@ class MapOptimizer(HelpMixin):
         ops: List[Op] = []
         width, height = image.size
         mode = image.mode
+
+        # The high-precision (I/I;16) tolerance below must track the
+        # RESOLVED spec's bit depth, not the target mode alone — Roughness/
+        # AO/Metallic share the "L" target with Height/Displacement/Bump but
+        # only the latter get a 16-bit OutputSpec. OutputTemplates.resolve
+        # always returns a spec (falls back to DEFAULT when output_profile
+        # is None/unknown), so this is safe even outside a profiled run.
+        spec = (
+            OutputTemplates.resolve(map_type_key, output_profile)
+            if map_type_key
+            else None
+        )
+        # ...and it must track the CONTAINER being written just as closely: a
+        # 16-bit spec buys nothing in a container that cannot store the mode,
+        # and honoring it there crashed the dds writer while the dry run
+        # predicted a clean no-op. Empty = no tolerance, so the coercion below
+        # falls back to the map type's own target mode.
+        stored_high_precision: Dict[str, str] = (
+            _HIGH_PRECISION_CONTAINERS.get(
+                (output_type or (spec.ext if spec else "") or "").lower().lstrip("."),
+                {},
+            )
+            if spec and spec.bit_depth and spec.bit_depth >= 16
+            else {}
+        )
 
         # --- Pre-compute resize and POT decisions (will_resize gates depalettize)
         # The resize caps the LONGEST edge and derives the other from the source
@@ -212,19 +324,34 @@ class MapOptimizer(HelpMixin):
         map_def = MapRegistry().get(map_type_key) if map_type_key else None
         if map_def and getattr(map_def, "mode", None):
             target_mode = map_def.mode
-            tolerated = _MAP_TYPE_TOLERATED.get(target_mode, (target_mode,))
+            equivalents = _HIGH_PRECISION_EQUIV.get(target_mode, ())
+            # Only the modes this container stores AS THEMSELVES are tolerated
+            # in place; the rest still need an op, just not necessarily one
+            # that lands on the 8-bit target (below).
+            tolerated = _MAP_TYPE_TOLERATED.get(target_mode, (target_mode,)) + tuple(
+                m for m in equivalents if stored_high_precision.get(m) == m
+            )
             if mode not in tolerated:
+                # A high-precision source the container stores at a DIFFERENT
+                # high-precision mode is narrowed to that one rather than
+                # flattened to the 8-bit target: PNG writes mode "I" as 16-bit
+                # regardless, so naming "I;16" keeps the precision the spec
+                # paid for and makes the dry run predict the mode that really
+                # lands on disk.
+                coerce_to = (
+                    stored_high_precision.get(mode) if mode in equivalents else None
+                ) or target_mode
                 ops.append(
                     Op(
                         kind="mode_coerce",
                         description=(
                             f"Mode (map_type={map_type_key}): "
-                            f"{mode} -> {target_mode}"
+                            f"{mode} -> {coerce_to}"
                         ),
-                        params={"target_mode": target_mode},
+                        params={"target_mode": coerce_to},
                     )
                 )
-                mode = target_mode
+                mode = coerce_to
         elif map_type_key:
             # Legacy fallback for keys not in the registry.
             for keys, (target, tolerated) in _LEGACY_MAP_KEY_RULES.items():
@@ -298,9 +425,25 @@ class MapOptimizer(HelpMixin):
             sb_target_mode: Optional[str] = None
             sb_reason: Optional[str] = None
 
-            if sb_target and mode != sb_target:
+            if (
+                sb_target
+                and mode != sb_target
+                and not (
+                    stored_high_precision.get(mode) == mode
+                    and mode in _HIGH_PRECISION_EQUIV.get(sb_target, ())
+                )
+            ):
                 # Catches the strict-palette upcast for tolerated-but-non-
                 # target inputs (e.g. P -> RGB when allow_palette is False).
+                # A high-precision same-layout mode (I;16 where the target is
+                # L) is NOT coerced only when the resolved spec is itself
+                # 16-bit AND the container stores that mode: strict mode
+                # exists to normalize channel layout, and flattening 16-bit
+                # data to 8 would silently discard the precision a 16-bit spec
+                # just paid for — but an 8-bit spec (Roughness/AO/Metallic)
+                # never asked for that precision, and a container that cannot
+                # hold it (dds/tga/jpg/webp/ktx2) makes honoring it a crash or
+                # a 24-bit widening rather than a saving.
                 sb_target_mode = sb_target
                 sb_reason = f"Strict mode (map_type={map_type_key})"
             elif mode in ("HSV", "LAB", "CMYK", "YCbCr"):
@@ -370,7 +513,7 @@ class MapOptimizer(HelpMixin):
             elif op.kind == "mode_coerce":
                 target = op.params["target_mode"]
                 if image.mode != target:
-                    image = image.convert(target)
+                    image = cls._coerce_mode(image, target)
             elif op.kind in ("resize", "force_pot"):
                 # Both resize to the size the PLAN chose. force_pot must not
                 # call ImgUtils.ensure_pot: that re-derives its own nearest-POT
@@ -380,6 +523,47 @@ class MapOptimizer(HelpMixin):
                 w, h = op.params["size"]
                 image = ImgUtils.resize_image(image, w, h)
         return image
+
+    @staticmethod
+    def _coerce_mode(image: "Image.Image", target: str) -> "Image.Image":
+        """Convert *image* to *target*, RESCALING a >8-bit integer source.
+
+        Pillow implements ``I;16``/``I`` -> ``L`` as a CLIP at 255, not a range
+        rescale: a smooth 0..65535 ramp comes back as two values, 99.6% of them
+        pure white (probe-proven 2026-08-14). The plan's fallback to a map
+        type's 8-bit target mode — what every container that cannot store the
+        16-bit mode now gets — is meant to be a precision *reduction*; without
+        this it is a destroyed map.
+
+        The reduction itself belongs to ``ImgUtils.convert_i_to_l``, which
+        already owns this rule package-wide. Rolling a private ``point``-based
+        rescale here instead cost a crash: ``point`` refuses byte-order-
+        qualified modes, so ``I;16B`` — what Pillow hands back for a
+        big-endian 16-bit TIFF — raised ``ValueError: point operation not
+        supported for this mode``. The shared helper goes through numpy and
+        reads every byte order.
+
+        Mode "F" is the same trap one dtype over, and the worst of the family:
+        a float map's data lives in 0..1, so Pillow's truncation sends every
+        texel below 1.0 to 0 — a 0..1 height ramp optimized to an essentially
+        black 84-byte PNG, reported as a successful -99% pass. It goes through
+        ``convert_f_to_l``, whose clamp-don't-normalize rule keeps the twins in
+        agreement (both still name "L") where refusing the mode outright would
+        make the writer raise on a prediction ``assess`` had called clean.
+
+        Narrowing to another high-precision mode ("I" -> "I;16" for PNG) stays
+        a plain convert — no range change is involved.
+        """
+        if target in ("I", "I;16") or not (
+            image.mode == "F" or image.mode == "I" or image.mode.startswith("I;")
+        ):
+            return image.convert(target)
+        reduced = (
+            ImgUtils.convert_f_to_l(image)
+            if image.mode == "F"
+            else ImgUtils.convert_i_to_l(image)
+        )
+        return reduced if target == "L" else reduced.convert(target)
 
     @classmethod
     def _resolve_profile(
@@ -483,6 +667,23 @@ class MapOptimizer(HelpMixin):
         )
         ext = (output_type or "").lower().lstrip(".")
 
+        if ext == "ktx2":
+            # Basis quality is a codec dial, not a container codec's: ETC1S
+            # carries it (mapped onto qlevel by the encoder); UASTC's tier is
+            # fixed. Gated by the same rule as the container codecs — ETC1S
+            # is exactly as unsafe for data maps as WebP/JPEG are, and those
+            # maps encode UASTC regardless (see :meth:`resolve_compression`).
+            if requested is None:
+                return None, None
+            if MapRegistry().is_lossy_safe(map_type_key):
+                return int(requested), None
+            return None, (
+                f"lossy quality {requested} refused for map type "
+                f"'{map_type_key or 'unknown'}': data maps encode UASTC at the "
+                f"encoder's fixed quality tier — the ETC1S quality dial only "
+                f"applies to unpacked sRGB maps"
+            )
+
         if requested is None:
             # Nobody named a quality -- but a container with no lossless mode
             # (JPEG) degrades the pixels anyway, so *choosing it* is the
@@ -520,6 +721,82 @@ class MapOptimizer(HelpMixin):
         return int(requested), None
 
     @classmethod
+    def resolve_compression(
+        cls,
+        map_type_key: Optional[str],
+        output_type: Optional[str],
+        spec: Optional[OutputSpec] = None,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Resolve the GPU compression (and its colorspace label) for one map.
+
+        For every container except ``ktx2`` this is a pass-through of the
+        profile's ``OutputSpec.compression`` (the DDS path). For ``ktx2`` it
+        owns the per-map Basis codec decision:
+
+        - **Nothing requested** → derived from the registry:
+          :meth:`MapRegistry.is_lossy_safe` maps (unpacked sRGB — base color,
+          emissive) take **ETC1S**, the low-bitrate palettised codec whose
+          error profile suits perceptual color; everything else — normals,
+          ORM/packed masks, linear data, and unknown map types — takes
+          **UASTC**, the high-quality codec. The registry gate exists for
+          exactly this distinction, so the codec choice and the lossy-container
+          gate can never disagree.
+        - **ETC1S requested on a non-lossy-safe map** → upgraded to UASTC and
+          *reported*, mirroring :meth:`resolve_quality`'s refusal semantics: a
+          preset must not band every normal map in a batch because one field
+          said ETC1S.
+        - **Unknown codec name** → ``ValueError`` — a template/config error,
+          raised identically in the real run and the dry run.
+
+        The colorspace label rides along because only this decision point has
+        the map type in hand: the registry's ``color_space`` becomes the KTX2
+        transfer-function label ("sRGB"/"Linear"; unknown map types label sRGB
+        — with UASTC derived above, a mislabel costs sampling correctness on a
+        map nothing recognises, and sRGB is the overwhelmingly common case).
+
+        Both :meth:`optimize_map` and :meth:`assess` route through here — same
+        rationale as :meth:`resolve_quality`: a dry run that predicted a codec
+        the real run would refuse is worse than no prediction.
+
+        Parameters:
+            map_type_key: Canonical map-type key driving the derivation.
+            output_type: Target container extension (with or without a dot).
+            spec: Active profile's :class:`OutputSpec`, when one is resolved.
+
+        Returns:
+            tuple: ``(compression, colorspace, note)``. ``compression`` /
+            ``colorspace`` are what :meth:`ImgUtils.save_image` should receive;
+            ``note`` is a human-readable sentence when a request was declined,
+            None otherwise.
+        """
+        ext = (output_type or "").lower().lstrip(".")
+        requested = spec.compression if spec else None
+        if ext != "ktx2":
+            return requested, None, None
+
+        registry = MapRegistry()
+        map_def = registry.get(map_type_key) if map_type_key else None
+        colorspace = (map_def.color_space if map_def else None) or "sRGB"
+        lossy_safe = registry.is_lossy_safe(map_type_key)
+
+        if requested is None:
+            return ("ETC1S" if lossy_safe else "UASTC"), colorspace, None
+
+        codec = str(requested).upper()
+        if codec not in ("ETC1S", "UASTC"):
+            raise ValueError(
+                f"Unknown ktx2 compression {requested!r}: expected 'ETC1S' or "
+                f"'UASTC' (DDS block formats do not apply to this container)."
+            )
+        if codec == "ETC1S" and not lossy_safe:
+            return "UASTC", colorspace, (
+                f"ETC1S refused for map type '{map_type_key or 'unknown'}': "
+                f"palettised encoding bands on normals / packed / linear data — "
+                f"encoded UASTC instead"
+            )
+        return codec, colorspace, None
+
+    @classmethod
     def optimize_map(
         cls,
         texture_path: str,
@@ -537,6 +814,7 @@ class MapOptimizer(HelpMixin):
         output_profile: str = None,
         enforce_budget: bool = False,
         lossy_quality: int = None,
+        pot_mode: Optional[str] = None,
     ) -> str:
         """Optimizes a texture by resizing, setting bit depth, and adjusting image type.
 
@@ -568,6 +846,14 @@ class MapOptimizer(HelpMixin):
                 :meth:`resolve_quality`; a request against a normal / packed /
                 linear map, or a lossless container, is reported and the map is
                 written lossless. None (default) = always lossless.
+            pot_mode (str, optional): How ``force_pot`` snaps — ``"nearest"``
+                or ``"down"`` (see :meth:`plan`). None (default) keeps the
+                derived behavior: "down" when the POT rule came from an
+                enforced profile budget, "nearest" otherwise. Callers that
+                resolve a :class:`DeliveryBudget` themselves (a DCC export
+                task enforcing a template's budget without adopting its
+                container) must pass ``"down"`` — a budget must never grow
+                an asset.
 
         Returns:
             str: Path to the optimized texture.
@@ -587,16 +873,20 @@ class MapOptimizer(HelpMixin):
 
         # An active profile drives the output format and, on opt-in, the size
         # budget — resolved by the same helper assess uses, so the two agree.
-        spec, budget, output_type, max_size, force_pot, pot_mode = cls._resolve_profile(
-            output_profile,
-            map_type_key,
-            output_type,
-            max_size,
-            force_pot,
-            enforce_budget,
+        # An explicit pot_mode from the caller outranks the derived one, same
+        # precedence rule as the other advisory-tier arguments.
+        spec, budget, output_type, max_size, force_pot, derived_pot_mode = (
+            cls._resolve_profile(
+                output_profile,
+                map_type_key,
+                output_type,
+                max_size,
+                force_pot,
+                enforce_budget,
+            )
         )
+        pot_mode = pot_mode if pot_mode is not None else derived_pot_mode
         target_bit_depth = spec.bit_depth if spec else None
-        target_compression = spec.compression if spec else None
 
         # Calculate output path early to check for existence
         temp_path = MapFactory.resolve_texture_filename(
@@ -606,6 +896,11 @@ class MapOptimizer(HelpMixin):
             ext=output_type,
         )
         final_output_path = os.path.join(output_dir, os.path.basename(temp_path))
+        # The container that will really receive the pixels, resolved before
+        # planning: with output_type=None the run keeps the source's extension,
+        # and the planner's high-precision tolerance is a property of the
+        # container written, not of the requested one.
+        out_ext = os.path.splitext(final_output_path)[1]
 
         if check_existing and os.path.exists(final_output_path):
             if os.path.getmtime(final_output_path) > os.path.getmtime(texture_path):
@@ -632,6 +927,8 @@ class MapOptimizer(HelpMixin):
             map_type_key=map_type_key,
             allow_palette=allow_palette,
             pot_mode=pot_mode,
+            output_profile=output_profile,
+            output_type=out_ext,
         )
 
         if any(op.kind == "resize" for op in plan):
@@ -668,7 +965,6 @@ class MapOptimizer(HelpMixin):
         # so an "L" roughness map is stored as RGB — reporting the in-memory
         # mode would claim 8-bit for a 24-bit file (and disagree with assess,
         # which applies the same step to its projection).
-        out_ext = os.path.splitext(final_output_path)[1]
         container_mode = ImgUtils.effective_mode(image.mode, out_ext)
         if container_mode != image.mode:
             lost = cls.channel_loss_warning(image, out_ext)
@@ -695,6 +991,16 @@ class MapOptimizer(HelpMixin):
                 f"# {os.path.basename(final_output_path)}: {quality_skipped}"
             )
 
+        # GPU compression (DDS block format / ktx2 Basis codec) resolves against
+        # the container actually being written, for the same reason quality
+        # does. The colorspace label travels with it — ktx2 is the container
+        # whose DFD records the transfer function.
+        target_compression, target_colorspace, compression_note = (
+            cls.resolve_compression(map_type_key, out_ext, spec)
+        )
+        if compression_note:
+            print(f"# {os.path.basename(final_output_path)}: {compression_note}")
+
         # Route through the capability-aware writer (single save SSoT) so the
         # correct backend handles each format (PIL for most, cv2 for EXR/HDR).
         # The extension on final_output_path drives format dispatch; the profile
@@ -706,6 +1012,7 @@ class MapOptimizer(HelpMixin):
             bit_depth=target_bit_depth,
             compression=target_compression,
             quality=quality,
+            colorspace=target_colorspace,
         )
 
         print(
@@ -831,6 +1138,7 @@ class MapOptimizer(HelpMixin):
         predict_size: bool = False,
         enforce_budget: bool = False,
         lossy_quality: int = None,
+        pot_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Predict whether :meth:`optimize_map` would change ``texture_path``.
 
@@ -865,6 +1173,9 @@ class MapOptimizer(HelpMixin):
                 safety gate declines surfaces in ``warnings`` and the predicted
                 size (when *predict_size*) is the lossless one the run would
                 actually write.
+            pot_mode: Same semantics as :meth:`optimize_map` — an explicit
+                "nearest"/"down" outranks the profile-derived behavior, so a
+                dry run predicts the same snap the caller's real run will make.
 
         Returns:
             dict with:
@@ -888,6 +1199,13 @@ class MapOptimizer(HelpMixin):
                 target_mode (str | None): Map-type-driven target mode, when
                     one exists.
                 error (str): Only present when the file could not be read.
+
+            An already-encoded ``.ktx2`` is reported from its header instead —
+            PIL cannot open a Basis payload, and this method's main consumer is
+            the exporters' optimize-textures gate assessing the output a task
+            just wrote. Such a report is always ``recommended: False`` (nothing
+            here can transcode one back to pixels) and carries ``mode`` /
+            ``bit_depth`` as None — see :meth:`_assess_delivered_ktx2`.
         """
         ImgUtils.assert_pathlike(texture_path, "texture_path")
 
@@ -908,6 +1226,21 @@ class MapOptimizer(HelpMixin):
         size_bytes = (
             os.path.getsize(texture_path) if os.path.exists(texture_path) else None
         )
+
+        # A Basis-encoded .ktx2 has no pure-Python decoder, so PIL cannot open
+        # the one file this method is most often pointed at: the scene
+        # exporters' optimize-textures gate assesses the staged output the task
+        # just wrote. Reporting "Failed to read image" there made the gate flag
+        # every ktx2 map it delivered, and handed a KeyError to anything
+        # reading predicted["width"]. The header answers the geometry question
+        # without a transcoder; see :meth:`_assess_delivered_ktx2`.
+        if (
+            image is None
+            and FileUtils.format_path(texture_path, "ext").lower().lstrip(".") == "ktx2"
+        ):
+            return cls._assess_delivered_ktx2(
+                texture_path, size_bytes, map_type, output_type, predict_size
+            )
 
         try:
             if image is None:
@@ -937,13 +1270,26 @@ class MapOptimizer(HelpMixin):
 
         # Resolved before planning (the budget can add ops), through the same
         # helper optimize_map uses — so the dry run plans what the real run would.
-        spec, budget, output_type, max_size, force_pot, pot_mode = cls._resolve_profile(
-            output_profile,
-            map_type_key,
-            output_type,
-            max_size,
-            force_pot,
-            enforce_budget,
+        spec, budget, output_type, max_size, force_pot, derived_pot_mode = (
+            cls._resolve_profile(
+                output_profile,
+                map_type_key,
+                output_type,
+                max_size,
+                force_pot,
+                enforce_budget,
+            )
+        )
+        pot_mode = pot_mode if pot_mode is not None else derived_pot_mode
+
+        # Resolved BEFORE planning, for the same reason optimize_map resolves
+        # it before planning: the high-precision tolerance is a property of the
+        # container the run writes, and with output_type=None that container is
+        # the source's own extension.
+        out_ext = (
+            (output_type or FileUtils.format_path(texture_path, "ext"))
+            .lower()
+            .lstrip(".")
         )
 
         ops = cls.plan(
@@ -954,6 +1300,8 @@ class MapOptimizer(HelpMixin):
             map_type_key=map_type_key,
             allow_palette=allow_palette,
             pot_mode=pot_mode,
+            output_profile=output_profile,
+            output_type=out_ext,
         )
 
         # Surface the target mode the planner picked (first mode_coerce op),
@@ -968,11 +1316,6 @@ class MapOptimizer(HelpMixin):
         # Replay the plan for the projected size/mode (cheap), then optionally
         # encode for the projected byte count (not cheap — hence opt-in).
         new_width, new_height, planned_mode = cls.project(ops, width, height, mode)
-        out_ext = (
-            (output_type or FileUtils.format_path(texture_path, "ext"))
-            .lower()
-            .lstrip(".")
-        )
         # The plan decides a mode; the container decides whether it survives.
         # Applied after project() rather than inside it so the replay stays a
         # pure function of the plan — this is a property of the output format,
@@ -1003,6 +1346,15 @@ class MapOptimizer(HelpMixin):
         )
         predicted["quality"] = quality
 
+        # Same resolution the real run applies (ktx2 Basis codec derivation /
+        # ETC1S refusal), so the prediction names the codec that will actually
+        # be encoded and a declined request surfaces before the batch runs.
+        compression, ktx2_colorspace, compression_note = cls.resolve_compression(
+            map_type_key, out_ext, spec
+        )
+        if compression:
+            predicted["compression"] = compression
+
         # Gated on the PLANNED mode, not the source's: a plan that already
         # coerces RGBA->RGB dropped the alpha itself and said so as an op, so
         # the container is not what loses it. Only the source image can answer
@@ -1020,8 +1372,9 @@ class MapOptimizer(HelpMixin):
                 ops,
                 out_ext,
                 bit_depth=spec.bit_depth if spec else None,
-                compression=spec.compression if spec else None,
+                compression=compression,
                 quality=quality,
+                colorspace=ktx2_colorspace,
             )
             predicted["size_bytes"] = predicted_bytes
             if size_error:
@@ -1035,6 +1388,7 @@ class MapOptimizer(HelpMixin):
             # whether the source did.
             "warnings": (budget.check(new_width, new_height) if budget else [])
             + ([quality_skipped] if quality_skipped else [])
+            + ([compression_note] if compression_note else [])
             + ([channel_loss] if channel_loss else []),
             "current": {
                 "path": texture_path,
@@ -1052,6 +1406,92 @@ class MapOptimizer(HelpMixin):
         }
 
     @classmethod
+    def _assess_delivered_ktx2(
+        cls,
+        texture_path: str,
+        size_bytes: Optional[int],
+        map_type: Optional[str],
+        output_type: Optional[str],
+        predict_size: bool,
+    ) -> Dict[str, Any]:
+        """:meth:`assess` for a file that is already Basis-encoded.
+
+        Nothing in this stack can transcode a ``.ktx2`` back to pixels, so a
+        delivered GPU texture has no plan to make — the honest report is "done,
+        and here is its geometry". :meth:`Ktx2Encoder.read_header` supplies the
+        geometry from the fixed-layout header, which is what the exporters'
+        optimize-textures gate actually reads back.
+
+        ``mode`` / ``bit_depth`` are reported as None rather than guessed: a
+        Basis payload's channel layout is a property of the transcode target
+        the *loader* picks (ASTC / BC7 / ETC2), not of the file.
+        """
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        current: Dict[str, Any] = {
+            "path": texture_path,
+            "name": os.path.basename(texture_path),
+            "size_bytes": size_bytes,
+        }
+        try:
+            header = Ktx2Encoder.read_header(texture_path)
+        except (OSError, ValueError) as e:
+            # Same shape (and same "Failed to read image" prefix) the PIL path
+            # returns: a corrupt delivery must still read as unreadable, not as
+            # a confident zero-size report.
+            return {
+                "recommended": False,
+                "reasons": [],
+                "warnings": [],
+                "error": f"Failed to read image: {e}",
+                "current": current,
+                "predicted": {},
+                "target_mode": None,
+            }
+
+        width, height = header["width"], header["height"]
+        requested = (output_type or "ktx2").lower().lstrip(".")
+        current.update(
+            {
+                "width": width,
+                "height": height,
+                "mode": None,
+                "format": "KTX2",
+                "bit_depth": None,
+                "map_type": map_type
+                or MapFactory.resolve_map_type(texture_path, key=True),
+            }
+        )
+        return {
+            "recommended": False,
+            "reasons": [],
+            "warnings": (
+                []
+                if requested == "ktx2"
+                else [
+                    f"'{os.path.basename(texture_path)}' is already Basis-encoded: "
+                    f"a .ktx2 cannot be re-planned into '{requested}' here (no "
+                    f"transcoder) — assessed as delivered"
+                ]
+            ),
+            "current": current,
+            "predicted": {
+                "width": width,
+                "height": height,
+                "mode": None,
+                "bit_depth": None,
+                "ext": "ktx2",
+                "path": texture_path,
+                # No re-encode happens, so the delivered file IS the predicted
+                # size — but only when the caller asked, keeping the opt-in
+                # contract the PIL path documents.
+                "size_bytes": size_bytes if predict_size else None,
+                "quality": None,
+            },
+            "target_mode": None,
+        }
+
+    @classmethod
     def _encoded_size(
         cls,
         image: "Image.Image",
@@ -1060,6 +1500,7 @@ class MapOptimizer(HelpMixin):
         bit_depth: Optional[int] = None,
         compression: Optional[str] = None,
         quality: Optional[int] = None,
+        colorspace: Optional[str] = None,
     ) -> Tuple[Optional[int], Optional[str]]:
         """Byte count ``plan`` would produce, measured by a throwaway encode.
 
@@ -1090,6 +1531,7 @@ class MapOptimizer(HelpMixin):
                 bit_depth=bit_depth,
                 compression=compression,
                 quality=quality,
+                colorspace=colorspace,
             )
             return os.path.getsize(probe), None
         except Exception as e:

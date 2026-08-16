@@ -92,6 +92,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -221,6 +222,18 @@ if (navigator.xr) {
 /* ---------------------------------------------------------------- model --- */
 
 const loader = new GLTFLoader();
+// KTX2/Basis support (KHR_texture_basisu) — what the deliverer's opt-in
+// texture_format="KTX2" mode emits, and REQUIRED by those GLBs (they carry no
+// fallback image). One transcoder serves both Basis codecs (ETC1S and UASTC);
+// detectSupport picks the GPU target per device — ASTC on a standalone
+// headset, BC7/DXT on desktop — which is the whole point: the texture stays
+// block-compressed in GPU memory instead of decoding to RGBA. The wasm rides
+// the same unpkg CDN as every import above, a dependency the boot watchdog
+// already owns. Inert for WebP/PNG deliverables.
+const ktx2Loader = new KTX2Loader()
+  .setTranscoderPath('https://unpkg.com/three@0.169.0/examples/jsm/libs/basis/')
+  .detectSupport(renderer);
+loader.setKTX2Loader(ktx2Loader);
 let current = null;
 let realScale = false;
 let modelBounds = null;

@@ -793,6 +793,50 @@ class ImgTest(BaseTestCase):
         self.assertEqual(result.mode, "L")
         self.assertEqual(result.getpixel((0, 0)), 255)
 
+    def test_convert_f_to_l_rescales_the_unit_range(self):
+        """A float map carries 0..1, so Pillow's ``F`` -> ``L`` (a straight
+        truncation) collapses it to two values -- everything below 1.0 to 0.
+        The unit range is the float convention's full scale, exactly as
+        0..65535 is the 16-bit one, so it must map onto the whole 0..255."""
+        ramp = np.linspace(0, 1, 256, dtype=np.float32).reshape(16, 16)
+        result = ImgUtils.convert_f_to_l(Image.fromarray(ramp, mode="F"))
+        self.assertEqual(result.mode, "L")
+        self.assertEqual(len(set(result.get_flattened_data())), 256)
+        self.assertEqual(min(result.get_flattened_data()), 0)
+        self.assertEqual(max(result.get_flattened_data()), 255)
+
+    def test_convert_f_to_l_clamps_out_of_range_hdr(self):
+        """Above-unit data is genuine HDR. Clamping it is the honest 8-bit
+        answer (and what an LDR delivery map wants); normalizing by the actual
+        max instead would be a silent tonemap, and letting it through would
+        wrap. Below-zero is clamped for the same reason."""
+        hdr = np.linspace(-2.0, 8.0, 256, dtype=np.float32).reshape(16, 16)
+        result = ImgUtils.convert_f_to_l(Image.fromarray(hdr, mode="F"))
+        data = list(result.get_flattened_data())
+        self.assertEqual(min(data), 0)
+        self.assertEqual(max(data), 255)
+
+    def test_the_reduction_twins_dispatch_on_dtype(self):
+        """Each twin destroys the other's input if it takes the name
+        literally: ``convert_f_to_l`` on 8-bit data clamps every value >= 1 to
+        white, and ``convert_i_to_l`` on 0..1 floats truncates them to 0/1 --
+        both collapsing to two values. They pick the rule from the actual
+        dtype, so either entry point is safe."""
+        integer = Image.fromarray(
+            np.linspace(0, 255, 256, dtype=np.uint8).reshape(16, 16), mode="L"
+        )
+        floating = Image.fromarray(
+            np.linspace(0, 1, 256, dtype=np.float32).reshape(16, 16), mode="F"
+        )
+        for name in ("convert_f_to_l", "convert_i_to_l"):
+            for label, source in (("integer", integer), ("float", floating)):
+                with self.subTest(entry_point=name, source=label):
+                    result = getattr(ImgUtils, name)(source)
+                    data = list(result.get_flattened_data())
+                    self.assertEqual(result.mode, "L")
+                    self.assertEqual(len(set(data)), 256)
+                    self.assertEqual((min(data), max(data)), (0, 255))
+
     def test_convert_rgb_to_hsv_high_hue(self):
         """Hues above 255 degrees (blues/violets) must not crash or wrap.
 
@@ -2121,6 +2165,11 @@ class EffectiveModeTest(unittest.TestCase):
     def test_table_matches_what_pillow_actually_writes(self):
         """The table is a measurement; this is the measurement."""
         for ext, fallbacks in ImgUtils._CONTAINER_MODE_FALLBACKS.items():
+            if ext in ImgUtils.DELIVERY_FORMATS:
+                # Not a Pillow writer: the ktx2 rows are measured against the
+                # encoder's staged PNG instead — test_ktx2_encoder.py,
+                # ``test_staged_modes_match_the_fallback_table``.
+                continue
             for mode in fallbacks:
                 path = os.path.join(
                     self.test_dir, f"m_{ext}_{mode.replace(';', '')}.{ext}"
@@ -2203,6 +2252,120 @@ class EffectiveModeTest(unittest.TestCase):
         img = Image.new("RGB", (64, 64), (128, 64, 32))
         ImgUtils.save_image(img, os.path.join(self.test_dir, "restore.jpg"), optimize=True)
         self.assertEqual(ImageFile.MAXBLOCK, before)
+
+
+class _FakeKtx2Encoder:
+    """Records encode calls and writes a KTX2-magic marker file."""
+
+    MAGIC = b"\xabKTX 20\xbb\r\n\x1a\n"
+
+    def __init__(self):
+        self.calls = []
+
+    def encode(self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None):
+        self.calls.append(
+            {
+                "codec": codec,
+                "srgb": srgb,
+                "mipmaps": mipmaps,
+                "quality": quality,
+                "size": getattr(source, "size", None),
+                "mode": getattr(source, "mode", None),
+            }
+        )
+        with open(output, "wb") as fh:
+            fh.write(self.MAGIC + codec.encode("ascii"))
+        return output
+
+
+class ImgKtx2RoutingTest(BaseTestCase):
+    """save_image's ktx2 delivery route and its capability surfaces."""
+
+    def setUp(self):
+        super().setUp()
+        self.out_dir = os.path.join(
+            os.path.dirname(__file__), "temp_tests", f"imgktx2_{self._testMethodName}"
+        )
+        os.makedirs(self.out_dir, exist_ok=True)
+        self.addCleanup(shutil.rmtree, self.out_dir, ignore_errors=True)
+        self.fake = _FakeKtx2Encoder()
+        ImgUtils.register_ktx2_encoder(self.fake)
+        self.addCleanup(ImgUtils.register_ktx2_encoder, None)
+
+    def test_delivery_formats_stay_out_of_writable(self):
+        """The index-persistence contract: ``writable`` must not grow."""
+        self.assertIn("ktx2", ImgUtils.DELIVERY_FORMATS)
+        self.assertNotIn("ktx2", ImgUtils.writable)
+        self.assertNotIn("ktx2", ImgUtils.image_formats)
+
+    def test_effective_mode_flattens_sixteen_bit(self):
+        self.assertEqual(ImgUtils.effective_mode("I;16", "ktx2"), "L")
+        self.assertEqual(ImgUtils.effective_mode("P", "ktx2"), "RGB")
+
+    def test_save_image_routes_to_registered_encoder(self):
+        path = os.path.join(self.out_dir, "wall.ktx2")
+        ImgUtils.save_image(
+            ImgUtils.create_image("RGB", (8, 8), (200, 30, 40)),
+            path,
+            compression="ETC1S",
+            quality=70,
+            colorspace="linear",
+        )
+        self.assertTrue(os.path.isfile(path))
+        self.assertEqual(len(self.fake.calls), 1)
+        call = self.fake.calls[0]
+        self.assertEqual(call["codec"], "ETC1S")
+        self.assertFalse(call["srgb"])
+        self.assertTrue(call["mipmaps"])
+        self.assertEqual(call["quality"], 70)
+
+    def test_save_image_ktx2_defaults_to_uastc_srgb(self):
+        """A bare save with no map-type context takes the quality-safe codec."""
+        ImgUtils.save_image(
+            ImgUtils.create_image("RGB", (8, 8)),
+            os.path.join(self.out_dir, "bare.ktx2"),
+        )
+        call = self.fake.calls[0]
+        self.assertEqual(call["codec"], "UASTC")
+        self.assertTrue(call["srgb"])
+
+    def test_ktx2_available_reflects_registration(self):
+        self.assertTrue(ImgUtils.ktx2_available())
+
+    def test_missing_encoder_raises_fix_shaped_error(self):
+        from unittest import mock
+
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        ImgUtils.register_ktx2_encoder(None)
+        with mock.patch.object(Ktx2Encoder, "available", return_value=False), mock.patch.object(
+            Ktx2Encoder, "resolve_toktx", side_effect=FileNotFoundError("no toktx")
+        ):
+            self.assertFalse(ImgUtils.ktx2_available())
+            with self.assertRaises(FileNotFoundError) as ctx:
+                ImgUtils.save_image(
+                    ImgUtils.create_image("RGB", (4, 4)),
+                    os.path.join(self.out_dir, "no_encoder.ktx2"),
+                )
+        self.assertIn("register_ktx2_encoder", str(ctx.exception))
+
+    def test_required_raises_even_if_resolve_toktx_disagrees_with_available(self):
+        """`resolve_ktx2_encoder(required=True)` must not fall through to
+        `return None` when `available()` is False but `resolve_toktx(required=True)`
+        unexpectedly succeeds (e.g. a race between the two discovery calls, or
+        a partially-mocked test elsewhere) -- required=True is a promise of a
+        usable encoder or a raise, never a silent None."""
+        from unittest import mock
+
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        ImgUtils.register_ktx2_encoder(None)
+        with mock.patch.object(Ktx2Encoder, "available", return_value=False), mock.patch.object(
+            Ktx2Encoder, "resolve_toktx", return_value=r"C:\fake\toktx.exe"
+        ):
+            with self.assertRaises(FileNotFoundError) as ctx:
+                ImgUtils.resolve_ktx2_encoder(required=True)
+        self.assertIn("register_ktx2_encoder", str(ctx.exception))
 
 
 if __name__ == "__main__":

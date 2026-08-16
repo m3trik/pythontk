@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-13_
+_Generated: 2026-08-15_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -59,6 +59,10 @@ _Generated: 2026-08-13_
   - methods: auto
 - `class Palette(dict)`
   - methods: alias, override, status, axes, channels, ui, diff
+
+### `core_utils/doc_audit.py` — Audit markdown code examples against the live package surface.
+- `class DocAudit(help_mixin.HelpMixin)`
+  - methods: default_roots, extract_code_blocks, audit_markdown, audit_code
 
 ### `core_utils/engines/instancing/assembly_sorter.py` — Sort separated mesh parts into repeated-assembly copies.
 - `class AssemblySorter`
@@ -175,7 +179,7 @@ _Generated: 2026-08-13_
 ### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
 - `class Op`
 - `class MapOptimizer(HelpMixin)`
-  - methods: plan, project, apply, resolve_quality, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, assess
+  - methods: plan, project, apply, resolve_quality, resolve_compression, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, assess
 
 ### `core_utils/engines/textures/map_registry.py`
 - `class WF`
@@ -365,13 +369,14 @@ _Generated: 2026-08-13_
 - `class FileUtils(HelpMixin)`
   - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, path_length_limit, exceeds_path_length, free_space, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
 
-### `file_utils/mesh_cleaner.py` — Mesh repair / cleanup via PyMeshLab (optional dependency).
-- `class MeshCleaner`
-  - methods: is_available, clean
-
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
   - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, without_locate_hints, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, set_glb_emissive, set_glb_base_color
+
+### `file_utils/mesh_ops.py` — File-level mesh processing via PyMeshLab (optional dependency).
+- `class OpSpec`
+- `class MeshOps(HelpMixin, _MeshOpsInternal)`
+  - methods: resolve, available, session, measure, compare, clean, remesh, decimate, bake_vertex_color, apply
 
 ### `file_utils/metadata.py`
 - `class MetadataInternal`
@@ -413,7 +418,7 @@ _Generated: 2026-08-13_
 
 ### `geo_utils/polyline.py` — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - `class Polyline`
-  - methods: make, from_point_cloud, order_points, length, point_at, resample, smooth, simplify, frames
+  - methods: make, from_point_cloud, order_points, length, point_at, cumulative_lengths, point_at_arc, resample, smooth, simplify, frames
 
 ### `geo_utils/rail_surface.py` — Rail-driven parametric surface — a general geometry primitive.
 - `class RailSurface`
@@ -426,7 +431,7 @@ _Generated: 2026-08-13_
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -435,6 +440,10 @@ _Generated: 2026-08-13_
 ### `img_utils/image_curator.py` — Perceptual-hash + sharpness curation for large image sets.
 - `class ImageCurator`
   - methods: is_available, dhash, hamming, sharpness, curate, preview
+
+### `img_utils/ktx2_encoder.py` — KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
+- `class Ktx2Encoder`
+  - methods: resolve_toktx, available, read_header, args_for, encode
 
 ### `img_utils/mask_generator.py` — Background mask generation via rembg (optional dependency).
 - `class MaskGenerator`

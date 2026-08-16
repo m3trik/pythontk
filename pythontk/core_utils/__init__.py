@@ -14,13 +14,14 @@ not re-nested for cosmetics. The clusters, for navigation:
   :mod:`.namespace_handler`.
 - **App/process orchestration** — :mod:`.app_launcher`, :mod:`.app_installer`,
   :mod:`.app_handoff`, :mod:`.script_run`, :mod:`.script_template`,
-  :mod:`.process_stream`, :mod:`.execution_monitor`.
+  :mod:`.process_stream`, :mod:`.execution_monitor`, :mod:`.cancel_scope`.
 - **Config & persistence** — :mod:`.user_config`, :mod:`.preset_store`,
   :mod:`.schema_spec`, :mod:`.template_set`.
 - **Package/dev infrastructure** — :mod:`.module_resolver`,
   :mod:`.module_reloader`, :mod:`.package_manager`, :mod:`.git`, :mod:`.cli`,
-  :mod:`.symbol_record`.
-- **Pipeline primitives** — :mod:`.task_factory`, :mod:`.qc_log`.
+  :mod:`.symbol_record`, :mod:`.status_badge`, :mod:`.doc_audit`.
+- **Pipeline primitives** — :mod:`.task_factory`, :mod:`.qc_log`,
+  :mod:`.step_toggle`.
 - **Data-structure utilities** — :mod:`.hierarchy_utils`.
 - **Homeless shared primitives** — :mod:`.color` (``Color``/``ColorPair``/
   ``Palette``). A single-module value primitive with no dedicated ``*_utils``
@@ -34,6 +35,9 @@ not re-nested for cosmetics. The clusters, for navigation:
 
 All classes are lazy-loaded via the pythontk root package.
 Import from pythontk directly: ``from pythontk import CoreUtils``.
+
+Human-facing module map with per-module summaries: ``README.md`` in this
+directory.
 """
 
 # Lazy-loaded via parent package - no explicit imports needed

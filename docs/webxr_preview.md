@@ -43,7 +43,8 @@ format: a third-party glTF tool opens it and gets a sane, if plainer, result.
         |
         |  apply_scene_sidecar        repair base colour / emissive / metallic-roughness
         |  apply_glb_lightmaps        bind baked maps + write the `lightmap_web` manifest
-        |  optimize_glb_textures      resize to 2048, re-encode WebP, repack the BIN chunk
+        |  optimize_glb_textures      resize to 2048, re-encode WebP (or KTX2/basis, opt-in),
+        |                             repack the BIN chunk
         v
   GLB   (deliverable)  --  PreviewServer.publish()  ->  version += 1
         |
@@ -390,13 +391,20 @@ the pipeline's own work is now a small fraction of the push.
 87.8 MB (93%) was uncompressed source PNG — a 24 MB normal map, a 20 MB character texture — against
 2.6 MB of geometry. Downsizing to 2048 and re-encoding WebP took that room to **~15 MB**.
 
-**The remaining constraint is GPU memory, not download.** Probed on a delivered preview GLB (a
-different, larger selection — 57 materials, 514 primitives): **9.5 MB on the wire, 5.97 MB of it
-images, which decode to ~555 MB of RGBA and ~740 MB with mipmaps.** Every one of its 38 images is
-2048², because `max_size` is a per-image ceiling and nothing budgets the total. On a headset that,
-not the download, is what limits how large a scene can be previewed. The real fix is KTX2/basis
-(`KHR_texture_basisu`), which stays block-compressed GPU-side; per-slot ceilings (a normal map needs
-2048 far more than a mask does) would help sooner.
+**The remaining constraint is GPU memory, not download — and KTX2 mode is the fix.** Probed on a
+delivered preview GLB (a different, larger selection — 57 materials, 514 primitives): **9.5 MB on
+the wire, 5.97 MB of it images, which decode to ~555 MB of RGBA and ~740 MB with mipmaps.** Every
+one of its 38 images is 2048², because `max_size` is a per-image ceiling and nothing budgets the
+total. On a headset that, not the download, is what limits how large a scene can be previewed.
+
+The fix is opt-in and request-scoped: `bridge.push(texture_format="KTX2")` re-encodes that delivery to
+KTX2/Basis (`KHR_texture_basisu`), which the GPU keeps block-compressed — the viewer's `KTX2Loader`
+transcodes it to ASTC on a standalone headset, BC7 on desktop. It needs KTX-Software's `toktx` on
+the authoring machine (the push raises with the install URL when it is missing, never silently
+ships WebP). Codecs are chosen per glTF slot — UASTC for normals and ORM/occlusion data, ETC1S for
+base color and emissive — and baked lightmaps deliberately stay on the lossless-WebP path; the
+details live on `MeshConvert.optimize_glb_textures`. Per-slot resolution ceilings (a normal map
+needs 2048 far more than a mask does) remain the cheaper complementary lever and are still open.
 
 ## Gotchas worth knowing
 

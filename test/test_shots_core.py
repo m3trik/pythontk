@@ -781,6 +781,109 @@ class TestStoreHooks(_ShotTest):
         self.assertEqual(s._scene_fps(), s.scene_fps)
 
 
+class _RecordingStore(ShotStore):
+    """Stand-in for a DCC subclass: records what the publish hook was handed.
+
+    The pure core's :meth:`publish_export_view` writes nothing and returns
+    ``None``, so overriding it is the only way to observe that the hook fired
+    at all — which is exactly what a real DCC subclass does to serialise the
+    view onto its carrier node.
+    """
+
+    def __init__(self, shots=None):
+        super().__init__(shots)
+        self.published = []
+
+    def publish_export_view(self, strategy=None):
+        self.published.append(self.to_export_view(strategy or "name"))
+        return "carrier"
+
+
+class TestExportViewRefresh(_ShotTest):
+    """``refresh_export_view`` -> ``publish_export_view`` — the pre-export path.
+
+    Note the active store is always driven through ``ShotStore`` (never through
+    ``_RecordingStore``): ``_active`` is a ``ShotStore`` class attribute, so
+    setting it on the subclass would shadow rather than share it.
+    """
+
+    def test_pure_publish_hook_is_a_noop_returning_none(self):
+        # No DCC carrier in the pure core — the hook resolves and does nothing,
+        # populated or empty, so refresh_export_view is safe to call anywhere.
+        populated = ShotStore([ShotBlock(1, "A", 0, 10, ["x"])])
+        self.assertIsNone(populated.publish_export_view())
+        self.assertIsNone(ShotStore([]).publish_export_view())
+
+    def test_refresh_without_active_store_creates_no_shots(self):
+        # ``active()`` materialises an empty in-memory store on first access;
+        # the refresh must ride that without inventing content to publish.
+        ShotStore.refresh_export_view()
+        self.assertEqual(ShotStore.active().shots, [])
+
+    def test_empty_store_export_view_is_the_clearing_payload(self):
+        # Pinned literally: this is what a DCC subclass writes onto its carrier
+        # for an empty store, and empty channels are what clear it.
+        self.assertEqual(
+            ShotStore([]).to_export_view(),
+            {"fbx_takes": [], "shot_metadata": {"version": 1, "shots": []}},
+        )
+
+    def test_empty_store_still_publishes(self):
+        # Contract: an empty store MUST reach the hook.  Guarding on
+        # ``store.shots`` skipped it, so deleting the last shot left the
+        # previous publish's takes riding into the next export.
+        store = _RecordingStore([])
+        ShotStore.set_active(store)
+
+        ShotStore.refresh_export_view()
+
+        self.assertEqual(len(store.published), 1)
+        self.assertEqual(
+            store.published[0],
+            {"fbx_takes": [], "shot_metadata": {"version": 1, "shots": []}},
+        )
+
+    def test_populated_store_publishes_its_takes(self):
+        store = _RecordingStore([])
+        store.snap_whole_frames = False
+        store.define_shot("Intro", 0, 10, objects=["|grp|hero"], description="d")
+        ShotStore.set_active(store)
+
+        ShotStore.refresh_export_view()
+
+        self.assertEqual(len(store.published), 1)
+        view = store.published[0]
+        self.assertEqual(view["fbx_takes"], [{"name": "Intro", "start": 0, "end": 10}])
+        self.assertEqual(
+            view["shot_metadata"],
+            {
+                "version": 1,
+                "shots": [
+                    {
+                        "clip": "Intro",
+                        "description": "d",
+                        "objects": ["hero"],
+                        "section": "",
+                    }
+                ],
+            },
+        )
+
+    def test_refresh_republishes_on_every_call(self):
+        # The refresh is the canonical *pre-export* step: it must reproject
+        # each time, not memoise, or a mutation between exports is lost.
+        store = _RecordingStore([])
+        ShotStore.set_active(store)
+
+        ShotStore.refresh_export_view()
+        store.define_shot("Intro", 0, 10, objects=["hero"])
+        ShotStore.refresh_export_view()
+
+        self.assertEqual(len(store.published), 2)
+        self.assertEqual(store.published[0]["fbx_takes"], [])
+        self.assertEqual(len(store.published[1]["fbx_takes"]), 1)
+
+
 # ===========================================================================
 # Pure detection math
 # ===========================================================================

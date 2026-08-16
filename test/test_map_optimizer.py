@@ -9,13 +9,21 @@ that drifts is worse than no projection at all.
 """
 import os
 import shutil
+import struct
 import tempfile
 import unittest
 
 import numpy as np
 from PIL import Image
 
-from pythontk import DeliveryBudget, FileUtils, ImgUtils, OutputSpec, OutputTemplates
+from pythontk import (
+    DeliveryBudget,
+    FileUtils,
+    ImgUtils,
+    OutputSpec,
+    OutputTemplate,
+    OutputTemplates,
+)
 from pythontk.core_utils.engines.textures.map_factory import MapFactory
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer, Op
 
@@ -144,6 +152,22 @@ class TestPotCeiling(unittest.TestCase):
         image = ImgUtils.create_image("RGB", (200, 200))
         plan = MapOptimizer.plan(image, max_size=2048, force_pot=True)
         self.assertEqual(MapOptimizer.project(plan, 200, 200, "RGB")[:2], (256, 256))
+
+    def test_unknown_pot_mode_is_rejected(self):
+        """``pot_mode`` is public on all three entry points but was matched as
+        ``"down"`` or else round() — so "downward", "Down" and every typo took
+        the nearest snap silently, growing the very asset a budget caller was
+        rounding down to shrink."""
+        image = ImgUtils.create_image("RGB", (96, 96))
+        for bogus in ("downward", "Down", "floor"):
+            with self.subTest(pot_mode=bogus):
+                with self.assertRaises(ValueError) as ctx:
+                    MapOptimizer.plan(image, force_pot=True, pot_mode=bogus)
+                self.assertIn("pot_mode", str(ctx.exception))
+        # The documented default survives: omitted/None still means nearest.
+        self.assertEqual(
+            MapOptimizer._snap_pot(96, 96, None), MapOptimizer._snap_pot(96, 96)
+        )
 
     def test_pot_without_a_ceiling_still_snaps_to_nearest(self):
         """No ceiling means no constraint to violate — a caller asking for POT
@@ -487,6 +511,97 @@ class TestDeliveryBudget(_TextureFixture):
         plan = MapOptimizer.plan(image, force_pot=True, pot_mode="down")
         self.assertEqual(MapOptimizer.apply(image, plan).size, (64, 64))
 
+    def test_explicit_pot_mode_reaches_both_twins_without_a_profile(self):
+        """A caller that resolves a DeliveryBudget itself (a DCC export task
+        enforcing a template's budget without adopting its container) passes
+        the budget as plain max_size/force_pot — so it must also be able to
+        pass the budget's never-grow snap, or 96 rounds UP to 128 and the
+        enforcement inflates the asset it exists to shrink."""
+        path = self.texture(size=(96, 96))
+
+        result = MapOptimizer.assess(path, force_pot=True, pot_mode="down")
+        self.assertEqual(
+            (result["predicted"]["width"], result["predicted"]["height"]), (64, 64)
+        )
+
+        written = MapOptimizer.optimize_map(path, force_pot=True, pot_mode="down")
+        with ImgUtils.ensure_image(written) as out:
+            self.assertEqual(out.size, (64, 64))
+
+    def test_explicit_pot_mode_outranks_the_profile_derived_snap(self):
+        """Same precedence as the other advisory-tier arguments: an explicit
+        value wins over what the profile derived (here, "nearest" overriding
+        the enforced budget's "down")."""
+        path = self.texture(size=(96, 96))
+
+        result = MapOptimizer.assess(
+            path,
+            output_profile=self.PROFILE,
+            enforce_budget=True,
+            pot_mode="nearest",
+        )
+        self.assertEqual(result["predicted"]["width"], 128)  # nearest, not floor
+
+    def test_sixteen_bit_grayscale_is_not_planned_down_to_L(self):
+        """A 16-bit grayscale mode is the L target's channel layout at higher
+        precision — planning it down to 8-bit L would discard the precision a
+        16-bit OutputSpec deliberately pays for. Both the map-type coercion
+        step and the strict-mode step must leave it alone.
+
+        "I" is narrowed rather than left alone: Height resolves to a PNG spec,
+        and Pillow's PNG writer stores mode "I" as 16-bit regardless (a path it
+        deprecates for removal in Pillow 13). Naming the narrowing keeps every
+        bit the container can hold AND makes assess predict the mode that
+        really lands on disk — leaving it implicit had the dry run promise "I"
+        for a file that reads back "I;16"."""
+        from PIL import Image as PILImage
+
+        expected = {"I": ["Mode (map_type=Height): I -> I;16"], "I;16": []}
+        for mode, descriptions in expected.items():
+            with self.subTest(mode=mode):
+                image = PILImage.new(mode, (64, 64))
+                plan = MapOptimizer.plan(image, map_type_key="Height")
+                self.assertEqual([op.description for op in plan], descriptions)
+
+    def test_eight_bit_spec_still_coerces_high_precision_source_to_L(self):
+        """The high-precision tolerance is spec-blind if it isn't gated on the
+        RESOLVED spec's bit depth: Roughness/AO/Metallic all target 'L' with an
+        8-bit OutputSpec (only Height/Displacement/Bump are 16-bit), so an
+        I;16 source under one of those map types must still plan a coercion
+        down to L, or an 8-bit spec silently ships a 16-bit file."""
+        from PIL import Image as PILImage
+
+        for mode in ("I", "I;16"):
+            with self.subTest(mode=mode):
+                image = PILImage.new(mode, (64, 64))
+                plan = MapOptimizer.plan(image, map_type_key="Roughness")
+                self.assertEqual(
+                    [op.description for op in plan],
+                    [f"Mode (map_type=Roughness): {mode} -> L"],
+                )
+
+    def test_the_writer_and_the_dry_run_agree_on_every_builtin_profile(self):
+        """optimize_map under a profile writes a file that assess (same
+        profile) must call DONE — for every shipped profile. Probe-proven
+        2026-08-14 before the high-precision rule: a 16-bit Height spec wrote
+        an I;16 file that assessed 'recommended: I;16 -> L' on every
+        subsequent run, so a task/check pair built on the twins could never
+        converge."""
+        out_dir = os.path.join(self.test_dir, "roundtrip")
+        for index, profile in enumerate(OutputTemplates.BUILTIN):
+            path = self.texture(
+                name=f"probe{index}_Height.png", mode="L", size=(64, 64)
+            )
+            written = MapOptimizer.optimize_map(
+                path, output_dir=out_dir, output_profile=profile
+            )
+            result = MapOptimizer.assess(written, output_profile=profile)
+            with self.subTest(profile=profile):
+                self.assertFalse(
+                    result["recommended"],
+                    f"{profile}: {result['reasons']}",
+                )
+
     def test_the_two_twins_resolve_a_profile_identically(self):
         """Both read the profile through one helper — pinned here because a
         second copy of the precedence rules is what makes a dry run start
@@ -644,6 +759,109 @@ class LossyQualityTest(_TextureFixture):
         self.assertEqual(predicted, os.path.getsize(written))
 
 
+class HighPrecisionContainerTest(_TextureFixture):
+    """The 16-bit tolerance has to name the CONTAINER, not just the spec.
+
+    Height/Displacement/Bump resolve to ``OutputSpec("png", 16)`` under every
+    built-in profile, so gating the I/I;16 tolerance on the resolved bit depth
+    alone let a 16-bit mode reach every container: dds raised
+    ``OSError: cannot write mode I;16 as DDS`` while assess predicted a clean
+    no-op, and tga widened a linear height map to 24-bit RGB (+4434%).
+    """
+
+    #: The containers the audit walked, and the on-disk mode each must end up
+    #: with for a single-channel 16-bit map: only png can hold the precision;
+    #: everything else reduces to the map type's own target mode, never RGB.
+    #: WebP is the one widening left, and it is the container's own (it has no
+    #: grayscale mode at all), applied to "L" rather than to "I;16".
+    CONTAINERS = {
+        "png": "I;16",
+        "dds": "L",
+        "tga": "L",
+        "jpg": "L",
+        "webp": "RGB",
+    }
+
+    def high_precision_texture(self, mode="I;16", name="rock_Height.png"):
+        """A full-scale 0..65535 height ramp — the range a clip destroys."""
+        path = os.path.join(self.test_dir, name)
+        image = Image.new(mode, (64, 64))
+        pixels = image.load()
+        for y in range(64):
+            for x in range(64):
+                pixels[x, y] = (x * 1024 + y * 16) % 65536
+        image.save(path)
+        return path
+
+    def test_the_twins_agree_on_every_container(self):
+        """assess(src, output_type=X) must predict what optimize_map(src,
+        output_type=X) then writes — for every container, on both
+        high-precision modes. This is the contract the whole plan/apply split
+        exists to hold, and the audited break was assess reporting
+        ``recommended=False, reasons=[], warnings=[]`` for a run that raised.
+        """
+        for source_mode, suffix in (("I;16", "png"), ("I", "tif")):
+            src = self.high_precision_texture(
+                source_mode, name=f"twin_{suffix}_Height.{suffix}"
+            )
+            for ext, expected in self.CONTAINERS.items():
+                with self.subTest(source_mode=source_mode, ext=ext):
+                    out_dir = os.path.join(self.test_dir, f"hp_{suffix}_{ext}")
+                    report = MapOptimizer.assess(src, output_type=ext)
+                    written = MapOptimizer.optimize_map(
+                        src, output_dir=out_dir, output_type=ext
+                    )
+                    with ImgUtils.ensure_image(written) as out:
+                        self.assertEqual(out.mode, expected)
+                        self.assertEqual(
+                            out.mode,
+                            report["predicted"]["mode"],
+                            "the dry run named a mode the writer did not produce",
+                        )
+                        self.assertEqual(
+                            out.size,
+                            (
+                                report["predicted"]["width"],
+                                report["predicted"]["height"],
+                            ),
+                        )
+                    # A run that coerces the mode is a change, and a dry run
+                    # calling it a no-op is exactly what let the dds crash
+                    # through unannounced.
+                    self.assertEqual(
+                        report["recommended"],
+                        expected != source_mode,
+                        report["reasons"],
+                    )
+
+    def test_the_fallback_is_the_map_targets_mode_not_rgb(self):
+        """``_CONTAINER_MODE_FALLBACKS`` widens I;16 to RGB for tga — right for
+        an unknown image, wrong for a single-channel map, whose own target mode
+        is "L". The plan must get there first so the container never sees the
+        16-bit mode."""
+        src = self.high_precision_texture(name="tga_Height.png")
+        written = MapOptimizer.optimize_map(
+            src, output_dir=os.path.join(self.test_dir, "tga"), output_type="tga"
+        )
+        with ImgUtils.ensure_image(written) as out:
+            self.assertEqual(out.mode, "L", "widened to RGB instead of reducing")
+
+    def test_the_reduction_rescales_instead_of_clipping(self):
+        """Pillow's I;16 -> L is a CLIP at 255, not a rescale, so the fallback
+        to the 8-bit target would hand back a 99.6%-white map. The reduction
+        has to keep the ramp."""
+        image = Image.new("I;16", (256, 1))
+        pixels = image.load()
+        for x in range(256):
+            pixels[x, 0] = x * 257
+        plan = MapOptimizer.plan(image, map_type_key="Roughness")
+        reduced = MapOptimizer.apply(image, plan)
+        self.assertEqual(reduced.mode, "L")
+        values = list(reduced.get_flattened_data())
+        self.assertEqual(len(set(values)), 256, "the ramp was clipped, not rescaled")
+        self.assertEqual((values[0], values[-1]), (0, 255))
+
+
 class ContainerModeAgreementTest(_TextureFixture):
     """assess must predict the mode the container will really store.
 
@@ -674,6 +892,45 @@ class ContainerModeAgreementTest(_TextureFixture):
             path, output_dir=self.test_dir, output_type="png"
         )
         self.assertEqual(ImgUtils.ensure_image(written).mode, "L")
+
+    def test_float_source_is_reduced_not_flattened_to_black(self):
+        """The same clip-vs-rescale trap one dtype over, and the worst of the
+        family: a float map's data lives in 0..1, so Pillow's ``F`` -> ``L``
+        truncation sends everything below 1.0 to 0. A 0..1 height ramp came
+        back as a 2-value, essentially black 84-byte PNG reported as a
+        successful -99% optimization, with ``assess`` predicting a clean L."""
+        ramp = np.linspace(0, 1, 64 * 64, dtype=np.float32).reshape(64, 64)
+        path = os.path.join(self.test_dir, "rock_Height.tif")
+        Image.fromarray(ramp, mode="F").save(path)
+
+        report = MapOptimizer.assess(path, output_type="png", map_type="Height")
+        written = MapOptimizer.optimize_map(
+            path, output_dir=self.test_dir, output_type="png", map_type="Height"
+        )
+        with Image.open(written) as out:
+            data = list(out.get_flattened_data())
+            self.assertEqual(out.mode, report["predicted"]["mode"])
+            self.assertGreater(len(set(data)), 200, "the float range was flattened")
+            self.assertEqual(max(data), 255)
+
+    def test_big_endian_source_reduces_instead_of_raising(self):
+        """``I;16B`` is Pillow's mode for a big-endian 16-bit TIFF, and
+        ``Image.point`` refuses byte-order-qualified modes -- so a rescale
+        gated on ``startswith("I;")`` and executed with ``point`` raised
+        ``ValueError: point operation not supported for this mode`` where the
+        old (clipping) convert had at least produced a file. The reduction
+        belongs to ``ImgUtils.convert_i_to_l``, which goes through numpy and
+        reads every byte order."""
+        ramp = np.array(
+            [(x * 65535) // 63 for x in range(64)] * 64, dtype=np.uint16
+        ).reshape(64, 64)
+        source = Image.frombytes("I;16B", (64, 64), ramp.astype(">u2").tobytes())
+
+        reduced = MapOptimizer._coerce_mode(source, "L")
+
+        self.assertEqual(reduced.mode, "L")
+        # Rescaled, not clipped: the full-scale ramp keeps its 64 steps.
+        self.assertEqual(len(set(reduced.get_flattened_data())), 64)
 
 
 class PackedMapIntegrityTest(_TextureFixture):
@@ -785,6 +1042,195 @@ class PackedMapIntegrityTest(_TextureFixture):
         self.assertEqual(ImgUtils.dropped_channels("L", "webp"), ())
         self.assertEqual(ImgUtils.dropped_channels("RGBA", "jpg"), ("A",))
         self.assertEqual(ImgUtils.dropped_channels("RGBA", "png"), ())
+
+
+class _FakeKtx2Encoder:
+    """Records encode calls and writes a KTX2-magic marker file."""
+
+    MAGIC = b"\xabKTX 20\xbb\r\n\x1a\n"
+
+    def __init__(self):
+        self.calls = []
+
+    def encode(self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None):
+        self.calls.append({"codec": codec, "srgb": srgb, "quality": quality})
+        width, height = source.size
+        with open(output, "wb") as fh:
+            # A real KTX 2.0 header, so assess() can introspect what a run
+            # wrote: vkFormat (UNDEFINED for Basis), typeSize, then geometry.
+            fh.write(self.MAGIC + struct.pack("<5I", 0, 1, width, height, 0))
+            fh.write(codec.encode("ascii"))
+        return output
+
+
+class TestKtx2Compression(_TextureFixture):
+    """The per-map Basis codec decision: derivation, refusal, and run parity."""
+
+    def setUp(self):
+        super().setUp()
+        self.fake = _FakeKtx2Encoder()
+        ImgUtils.register_ktx2_encoder(self.fake)
+        self.addCleanup(ImgUtils.register_ktx2_encoder, None)
+
+    # ------------------------------------------------------- resolution rules
+    def test_derivation_follows_the_lossy_gate(self):
+        # Perceptual sRGB color -> the low-bitrate codec; its safety condition
+        # is literally MapRegistry.is_lossy_safe.
+        codec, colorspace, note = MapOptimizer.resolve_compression(
+            "Base_Color", "ktx2"
+        )
+        self.assertEqual((codec, colorspace, note), ("ETC1S", "sRGB", None))
+        # Normals, packed masks, and unknown types are all UASTC.
+        for map_type in ("Normal_OpenGL", "ORM", None):
+            codec, _, note = MapOptimizer.resolve_compression(map_type, "ktx2")
+            self.assertEqual(codec, "UASTC", map_type)
+            self.assertIsNone(note)
+
+    def test_normal_colorspace_is_linear(self):
+        _, colorspace, _ = MapOptimizer.resolve_compression("Normal_OpenGL", "ktx2")
+        self.assertEqual(colorspace, "Linear")
+
+    def test_etc1s_on_a_data_map_is_upgraded_and_reported(self):
+        codec, _, note = MapOptimizer.resolve_compression(
+            "Normal_OpenGL", "ktx2", OutputSpec("ktx2", 8, compression="ETC1S")
+        )
+        self.assertEqual(codec, "UASTC")
+        self.assertIn("ETC1S refused", note)
+
+    def test_explicit_uastc_on_color_is_honored(self):
+        codec, _, note = MapOptimizer.resolve_compression(
+            "Base_Color", "ktx2", OutputSpec("ktx2", 8, compression="UASTC")
+        )
+        self.assertEqual((codec, note), ("UASTC", None))
+
+    def test_dds_vocabulary_is_rejected_for_ktx2(self):
+        with self.assertRaises(ValueError):
+            MapOptimizer.resolve_compression(
+                "Base_Color", "ktx2", OutputSpec("ktx2", 8, compression="DXT5")
+            )
+
+    def test_non_ktx2_targets_pass_through(self):
+        spec = OutputSpec("dds", 8, compression="DXT5")
+        self.assertEqual(
+            MapOptimizer.resolve_compression("Base_Color", "dds", spec),
+            ("DXT5", None, None),
+        )
+
+    def test_quality_gate_mirrors_the_codec_gate(self):
+        # ETC1S territory keeps its dial; UASTC territory refuses it aloud.
+        self.assertEqual(
+            MapOptimizer.resolve_quality(70, "Base_Color", "ktx2"), (70, None)
+        )
+        quality, skipped = MapOptimizer.resolve_quality(70, "Normal_OpenGL", "ktx2")
+        self.assertIsNone(quality)
+        self.assertIn("refused", skipped)
+        self.assertEqual(
+            MapOptimizer.resolve_quality(None, "Base_Color", "ktx2"), (None, None)
+        )
+
+    # ------------------------------------------------------------ run parity
+    def test_optimize_map_encodes_color_as_etc1s(self):
+        path = self.texture("wall_Base_Color.png")
+        out = MapOptimizer.optimize_map(path, output_type="ktx2")
+        self.assertTrue(out.endswith(".ktx2"), out)
+        self.assertTrue(os.path.isfile(out))
+        self.assertEqual(self.fake.calls[-1]["codec"], "ETC1S")
+        self.assertTrue(self.fake.calls[-1]["srgb"])
+
+    def test_optimize_map_encodes_normal_as_uastc_linear(self):
+        path = self.texture("wall_Normal_OpenGL.png")
+        MapOptimizer.optimize_map(path, output_type="ktx2")
+        self.assertEqual(self.fake.calls[-1]["codec"], "UASTC")
+        self.assertFalse(self.fake.calls[-1]["srgb"])
+
+    def test_assess_predicts_the_codec_the_run_uses(self):
+        path = self.texture("wall_Normal_OpenGL.png")
+        report = MapOptimizer.assess(path, output_type="ktx2")
+        self.assertEqual(report["predicted"]["ext"], "ktx2")
+        self.assertEqual(report["predicted"]["compression"], "UASTC")
+        MapOptimizer.optimize_map(path, output_type="ktx2")
+        self.assertEqual(
+            report["predicted"]["compression"], self.fake.calls[-1]["codec"]
+        )
+
+    def test_assess_surfaces_the_ktx2_quality_refusal(self):
+        """The end-to-end cover for ``resolve_quality``'s ktx2 branch: an
+        explicit dial on a UASTC map is refused, and the refusal reaches the
+        report. With no profile there is no OutputSpec, so nothing here can
+        exercise ``resolve_compression``'s note — that wiring is pinned
+        separately below.
+        """
+        path = self.texture("wall_Normal_OpenGL.png")
+        report = MapOptimizer.assess(
+            path,
+            output_type="ktx2",
+            lossy_quality=80,
+        )
+        self.assertTrue(
+            [w for w in report["warnings"] if "refused" in w], report["warnings"]
+        )
+
+    def test_assess_surfaces_the_profiles_etc1s_refusal(self):
+        """A template that names ETC1S for a map the codec bands has its
+        upgrade REPORTED, not applied in silence — the dry-run half of
+        ``resolve_compression``'s refusal. This needs a profile: the note only
+        exists when an OutputSpec carries a compression request, so a
+        profile-less assess never reaches the branch at all.
+        """
+        profile = "test-etc1s-profile"
+        OutputTemplates.BUILTIN[profile] = OutputTemplate(
+            default=OutputSpec("ktx2", 8, compression="ETC1S")
+        )
+        self.addCleanup(OutputTemplates.BUILTIN.pop, profile, None)
+
+        path = self.texture("wall_Normal_OpenGL.png")
+        report = MapOptimizer.assess(path, output_profile=profile)
+        self.assertEqual(report["predicted"]["compression"], "UASTC")
+        self.assertTrue(
+            [w for w in report["warnings"] if "ETC1S refused" in w],
+            report["warnings"],
+        )
+        # No quality was requested, so resolve_quality contributes nothing --
+        # the warning above can only have come from resolve_compression.
+        self.assertIsNone(report["predicted"]["quality"])
+
+    def test_assess_reads_back_the_ktx2_the_run_just_wrote(self):
+        """The consumer is the exporters' optimize-textures gate, which
+        assesses the staged output the task just wrote — and PIL cannot open a
+        Basis payload, so assess returned ``error="Failed to read image"`` with
+        ``predicted={}``: a read failure reported for every ktx2 map the gate
+        delivers, and a KeyError for anything reading predicted["width"].
+        """
+        path = self.texture("wall_Base_Color.png", size=(128, 64))
+        written = MapOptimizer.optimize_map(path, output_type="ktx2")
+
+        report = MapOptimizer.assess(written)
+        self.assertIsNone(report.get("error"))
+        self.assertEqual(report["current"]["format"], "KTX2")
+        self.assertEqual(
+            (report["predicted"]["width"], report["predicted"]["height"]), (128, 64)
+        )
+        # Nothing here can transcode a Basis payload back to pixels, so a
+        # delivered file is by definition done.
+        self.assertFalse(report["recommended"], report["reasons"])
+        self.assertEqual(report["predicted"]["ext"], "ktx2")
+
+    def test_assess_still_reports_a_corrupt_ktx2(self):
+        """The header reader must not turn a truncated/garbage file into a
+        confident report of its own."""
+        broken = os.path.join(self.test_dir, "broken_Base_Color.ktx2")
+        with open(broken, "wb") as fh:
+            fh.write(b"not a ktx2 file at all")
+        report = MapOptimizer.assess(broken)
+        self.assertIn("Failed to read image", report.get("error") or "")
+        self.assertEqual(report["predicted"], {})
+
+    def test_predict_size_encodes_through_the_fake(self):
+        path = self.texture("wall_Base_Color.png")
+        report = MapOptimizer.assess(path, output_type="ktx2", predict_size=True)
+        size = report["predicted"]["size_bytes"]
+        self.assertIsNotNone(size, report["predicted"].get("size_error"))
+        self.assertGreater(size, 0)
 
 
 if __name__ == "__main__":

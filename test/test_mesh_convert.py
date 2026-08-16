@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from pythontk import MeshConvert
+from pythontk import ImgUtils, MeshConvert
 
 
 class TestResolveBinary(unittest.TestCase):
@@ -2711,6 +2711,309 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertNotIn("extensionsUsed", gltf)
         self.assertEqual(len(gltf["materials"]), 2, "no clones")
         self.assertEqual(len(gltf["meshes"]), 1)
+
+
+class _FakeKtx2Encoder:
+    """Records encode calls and writes a KTX2-magic marker file."""
+
+    MAGIC = b"\xabKTX 20\xbb\r\n\x1a\n"
+
+    def __init__(self):
+        self.calls = []
+
+    def encode(self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None):
+        self.calls.append(
+            {
+                "codec": codec,
+                "srgb": srgb,
+                "quality": quality,
+                "size": getattr(source, "size", None),
+            }
+        )
+        with open(output, "wb") as fh:
+            fh.write(self.MAGIC + codec.encode("ascii"))
+        return output
+
+
+class TestOptimizeGlbKtx2(unittest.TestCase):
+    """KTX2 mode: per-slot codecs, basisu bindings, POT snap, lightmap carve-out."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_ktx2_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.fake = _FakeKtx2Encoder()
+        ImgUtils.register_ktx2_encoder(self.fake)
+        self.addCleanup(ImgUtils.register_ktx2_encoder, None)
+
+    # ------------------------------------------------------------------ helpers
+    def _png_uri(self, size=(128, 128), color=(200, 60, 40)):
+        import base64 as b64
+
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGB", size, color).save(buffer, format="PNG")
+        return "data:image/png;base64," + b64.b64encode(buffer.getvalue()).decode(
+            "ascii"
+        )
+
+    def _glb(self, gltf, name="scene.glb"):
+        json_bytes = json.dumps(gltf).encode("utf-8")
+        json_bytes += b" " * ((4 - len(json_bytes) % 4) % 4)
+        blob = (
+            struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(json_bytes))
+            + struct.pack("<I4s", len(json_bytes), b"JSON")
+            + json_bytes
+        )
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as f:
+            f.write(blob)
+        return path
+
+    def _payload(self, edit, image):
+        view = edit.gltf["bufferViews"][image["bufferView"]]
+        return bytes(
+            edit.bin_data[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+        )
+
+    # -------------------------------------------------------------------- tests
+    def test_per_slot_codecs_and_required_binding(self):
+        """Color -> ETC1S/sRGB, normal -> UASTC/linear; bindings replace source."""
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [
+                    {"name": "wall_color", "uri": self._png_uri(color=(200, 60, 40))},
+                    {"name": "wall_normal", "uri": self._png_uri(color=(127, 127, 255))},
+                ],
+                "textures": [{"source": 0}, {"source": 1}],
+                "materials": [
+                    {
+                        "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                        "normalTexture": {"index": 1},
+                    }
+                ],
+            }
+        )
+        summary = MeshConvert.optimize_glb_textures(
+            path, max_size=64, image_format="KTX2", quality=60
+        )
+        self.assertEqual(summary["images"], 2)
+
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        by_codec = {c["codec"]: c for c in self.fake.calls}
+        self.assertTrue(by_codec["ETC1S"]["srgb"])
+        self.assertEqual(by_codec["ETC1S"]["quality"], 60)
+        self.assertFalse(by_codec["UASTC"]["srgb"])
+        self.assertIsNone(by_codec["UASTC"]["quality"], "quality is the ETC1S dial")
+
+        for index, codec in ((0, b"ETC1S"), (1, b"UASTC")):
+            image = gltf["images"][index]
+            self.assertEqual(image["mimeType"], "image/ktx2")
+            payload = self._payload(edit, image)
+            self.assertEqual(payload[:12], _FakeKtx2Encoder.MAGIC)
+            self.assertEqual(payload[12:], codec)
+            texture = gltf["textures"][index]
+            self.assertEqual(
+                texture["extensions"]["KHR_texture_basisu"]["source"], index
+            )
+            self.assertNotIn("source", texture, "no fallback is kept")
+        self.assertIn("KHR_texture_basisu", gltf["extensionsUsed"])
+        self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"])
+
+    def test_shared_image_takes_the_stricter_semantic(self):
+        """Bytes sampled as both color and data must encode once, as UASTC."""
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [{"name": "shared", "uri": self._png_uri()}],
+                "textures": [{"source": 0}],
+                "materials": [
+                    {
+                        "pbrMetallicRoughness": {
+                            "baseColorTexture": {"index": 0},
+                            "metallicRoughnessTexture": {"index": 0},
+                        }
+                    }
+                ],
+            }
+        )
+        MeshConvert.optimize_glb_textures(path, max_size=64, image_format="KTX2")
+        self.assertEqual(len(self.fake.calls), 1)
+        self.assertEqual(self.fake.calls[0]["codec"], "UASTC")
+        self.assertFalse(self.fake.calls[0]["srgb"])
+
+    def test_dimensions_snap_down_to_pot(self):
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [{"name": "odd", "uri": self._png_uri(size=(96, 48))}],
+                "textures": [{"source": 0}],
+                "materials": [
+                    {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}
+                ],
+            }
+        )
+        MeshConvert.optimize_glb_textures(path, max_size=0, image_format="KTX2")
+        self.assertEqual(self.fake.calls[0]["size"], (64, 32))
+
+    def test_lightmap_stays_lossless_webp(self):
+        """The bake keeps its fidelity path even in KTX2 mode."""
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "extras": {
+                    "lightmap_web": {"materials": {"M": {"map": "room_Lightmap.png"}}}
+                },
+                "images": [
+                    {"name": "source.png", "uri": self._png_uri(color=(10, 200, 30))},
+                    {"name": "room_Lightmap.png", "uri": self._png_uri()},
+                ],
+                "textures": [{"source": 0}, {"source": 1}],
+                "materials": [
+                    {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}
+                ],
+            }
+        )
+        MeshConvert.optimize_glb_textures(path, max_size=64, image_format="KTX2")
+
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
+        lightmap = gltf["images"][1]
+        self.assertEqual(lightmap["mimeType"], "image/webp")
+        self.assertEqual(self._payload(edit, lightmap)[:4], b"RIFF")
+        # The carrier texture keeps the standard WebP binding WITH fallback.
+        self.assertEqual(
+            gltf["textures"][1]["extensions"]["EXT_texture_webp"]["source"], 1
+        )
+        self.assertEqual(gltf["textures"][1]["source"], 1)
+        self.assertIn("EXT_texture_webp", gltf["extensionsUsed"])
+        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsRequired", []))
+        # Only the encoder saw only the source image — never the lightmap.
+        self.assertEqual(len(self.fake.calls), 1)
+
+    def test_webp_then_ktx2_rerun_cleans_the_webp_declaration(self):
+        """Switching a deliverable from WebP to KTX2 must not leave a dangling
+        EXT_texture_webp binding or declaration behind — a declared extension
+        with no user is a validator warning shipped for nothing."""
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [{"name": "c", "uri": self._png_uri()}],
+                "textures": [{"source": 0}],
+                "materials": [
+                    {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}
+                ],
+            }
+        )
+        MeshConvert.optimize_glb_textures(path, max_size=64)  # WebP first
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertIn("EXT_texture_webp", gltf["extensionsUsed"])
+
+        MeshConvert.optimize_glb_textures(path, max_size=64, image_format="KTX2")
+        gltf = MeshConvert._read_glb(path).gltf
+        texture = gltf["textures"][0]
+        self.assertNotIn("EXT_texture_webp", texture["extensions"])
+        self.assertEqual(texture["extensions"]["KHR_texture_basisu"]["source"], 0)
+        self.assertNotIn("EXT_texture_webp", gltf["extensionsUsed"])
+        self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"])
+        self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
+
+    def test_unsampled_image_never_gets_a_non_core_mime_type(self):
+        """An image no texture samples cannot be rebound through
+        KHR_texture_basisu, so re-encoding it would strand ``image/ktx2`` in a
+        file that declares nothing to enable it — and glTF 2.0 core permits
+        only image/jpeg and image/png. Both ways a texture fails to resolve:
+        a ``source`` out of range, and no textures at all.
+        """
+        for label, extra in (
+            ("out-of-range source", {"textures": [{"source": 7}]}),
+            ("no textures", {}),
+        ):
+            with self.subTest(label):
+                path = self._glb(
+                    {
+                        "asset": {"version": "2.0"},
+                        "images": [{"name": "orphan", "uri": self._png_uri()}],
+                        **extra,
+                    },
+                    name=f"{label.replace(' ', '_')}.glb",
+                )
+                with open(path, "rb") as f:
+                    before = f.read()
+                MeshConvert.optimize_glb_textures(
+                    path, max_size=64, image_format="KTX2"
+                )
+                gltf = MeshConvert._read_glb(path).gltf
+                self.assertNotEqual(
+                    gltf["images"][0].get("mimeType"),
+                    "image/ktx2",
+                    "non-core mime with no extension declaring it",
+                )
+                self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsUsed", []))
+                with open(path, "rb") as f:
+                    self.assertEqual(f.read(), before, "nothing to do, nothing written")
+                self.assertEqual(self.fake.calls, [], "no encode worth paying for")
+
+    def test_only_a_sampled_image_takes_the_ktx2_path(self):
+        """A bound image still re-encodes; its unsampled sibling keeps its
+        core-mime bytes instead of riding the declaration the bound one earns.
+        """
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [
+                    {"name": "bound", "uri": self._png_uri()},
+                    {"name": "orphan", "uri": self._png_uri(color=(9, 9, 9))},
+                ],
+                "textures": [{"source": 0}],
+                "materials": [
+                    {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}
+                ],
+            }
+        )
+        summary = MeshConvert.optimize_glb_textures(
+            path, max_size=64, image_format="KTX2"
+        )
+        self.assertEqual(summary["images"], 1)
+        self.assertEqual(len(self.fake.calls), 1)
+
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
+        self.assertEqual(
+            self._payload(edit, gltf["images"][0])[:12], _FakeKtx2Encoder.MAGIC
+        )
+        self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"])
+        orphan = gltf["images"][1]
+        self.assertNotEqual(orphan.get("mimeType"), "image/ktx2")
+        self.assertTrue(orphan["uri"].startswith("data:image/png"))
+
+    def test_missing_encoder_fails_before_touching_the_file(self):
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [{"name": "c", "uri": self._png_uri()}],
+                "textures": [{"source": 0}],
+            }
+        )
+        with open(path, "rb") as f:
+            before = f.read()
+        ImgUtils.register_ktx2_encoder(None)
+        with patch.object(Ktx2Encoder, "available", return_value=False), patch.object(
+            Ktx2Encoder,
+            "resolve_toktx",
+            side_effect=FileNotFoundError("no toktx"),
+        ):
+            with self.assertRaises(FileNotFoundError):
+                MeshConvert.optimize_glb_textures(path, image_format="KTX2")
+        with open(path, "rb") as f:
+            after = f.read()
+        self.assertEqual(after, before, "no partial rewrite")
 
 
 if __name__ == "__main__":

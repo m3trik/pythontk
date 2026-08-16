@@ -184,6 +184,22 @@ class MeshConvert(HelpMixin):
     #: routinely runs inside a DCC already holding the exported scene.
     OPTIMIZE_WORKERS = 8
 
+    #: Slot semantic -> (Basis codec, sRGB transfer) for KTX2 mode. The glTF
+    #: structural twin of ``MapOptimizer.resolve_compression``'s registry rule:
+    #: ETC1S only where a lossy codec is safe (perceptual sRGB color), UASTC
+    #: for normals and linear data, and -- the ``None`` row -- UASTC + sRGB for
+    #: an image nothing samples, where a mislabel must at least not band it.
+    BASIS_BY_SEMANTIC: Dict[Optional[str], Tuple[str, bool]] = {
+        "color": ("ETC1S", True),
+        "data": ("UASTC", False),
+        "normal": ("UASTC", False),
+        None: ("UASTC", True),
+    }
+
+    #: Semantic precedence when one image is sampled by several slots: the
+    #: quality/correctness-critical use wins the encode.
+    _SEMANTIC_RANK: Dict[str, int] = {"color": 0, "data": 1, "normal": 2}
+
     #: Sidecar section -> the writer that applies it to a GLB, in application
     #: order. This is the applier column of the scene-data grid: a new kind of
     #: extended scene setup is one more section in the DCC-side reader
@@ -402,11 +418,13 @@ class MeshConvert(HelpMixin):
             """Image index a texture samples, or ``None``.
 
             The inverse of :meth:`texture_for_image`, and the one place that
-            knows an ``EXT_texture_webp`` binding shadows the plain ``source``:
-            after :meth:`optimize_glb_textures` a texture carries both, the
-            extension being the one a WebP-aware loader reads. Bounds-checked
-            like :meth:`base_color_image` -- a negative index is malformed, not
-            a reference to the last texture.
+            knows an extension binding shadows the plain ``source``: after
+            :meth:`optimize_glb_textures` a texture carries
+            ``EXT_texture_webp`` beside its fallback ``source``, or (KTX2
+            mode) ``KHR_texture_basisu`` with no fallback at all -- either
+            way the extension is what a capable loader reads. Bounds-checked
+            like :meth:`base_color_image` -- a negative index is malformed,
+            not a reference to the last texture.
             """
             textures = self.textures
             if not isinstance(texture_index, int):
@@ -414,9 +432,13 @@ class MeshConvert(HelpMixin):
             if not 0 <= texture_index < len(textures):
                 return None
             texture = textures[texture_index]
-            source = (
-                (texture.get("extensions") or {}).get("EXT_texture_webp") or {}
-            ).get("source", texture.get("source"))
+            extensions = texture.get("extensions") or {}
+            source = texture.get("source")
+            for binding in ("KHR_texture_basisu", "EXT_texture_webp"):
+                shadow = (extensions.get(binding) or {}).get("source")
+                if shadow is not None:
+                    source = shadow
+                    break
             if not isinstance(source, int) or not 0 <= source < len(self.images):
                 return None
             return source
@@ -1982,6 +2004,40 @@ class MeshConvert(HelpMixin):
         edit.json_len = len(new_json)
 
     @classmethod
+    def _image_semantics(cls, edit) -> Dict[int, str]:
+        """Map image index -> the strongest slot semantic sampling it.
+
+        The structural classification KTX2 mode encodes by: "color" (base
+        color / emissive), "data" (metallic-roughness / occlusion), "normal".
+        An image referenced from several slots takes the highest
+        :attr:`_SEMANTIC_RANK`; one referenced by nothing is absent (the
+        caller's lookup default handles it). Slot walks go through
+        ``image_for_texture`` so prior WebP/KTX2 bindings resolve to the same
+        image a loader would sample.
+        """
+        semantics: Dict[int, str] = {}
+        rank = cls._SEMANTIC_RANK
+
+        def note(ref: Optional[dict], semantic: str) -> None:
+            if not ref:
+                return
+            src = edit.image_for_texture(ref.get("index"))
+            if src is None:
+                return
+            current = semantics.get(src)
+            if current is None or rank[semantic] > rank[current]:
+                semantics[src] = semantic
+
+        for mat in edit.gltf.get("materials") or []:
+            pbr = mat.get("pbrMetallicRoughness") or {}
+            note(pbr.get("baseColorTexture"), "color")
+            note(mat.get("emissiveTexture"), "color")
+            note(pbr.get("metallicRoughnessTexture"), "data")
+            note(mat.get("occlusionTexture"), "data")
+            note(mat.get("normalTexture"), "normal")
+        return semantics
+
+    @classmethod
     def optimize_glb_textures(
         cls,
         glb: GlbTarget,
@@ -2021,15 +2077,48 @@ class MeshConvert(HelpMixin):
         binding while keeping their plain ``source`` as the fallback the
         extension spec describes.
 
-        KTX2/basis (GPU-resident compression, the real headset-memory win) is
-        a separate feature: it needs an external encoder and
-        ``KHR_texture_basisu``. This pass is the transport-size half.
+        ``image_format="KTX2"`` is the GPU-memory half: images are encoded to
+        KTX2/Basis Universal (requires the ``toktx`` encoder -- see
+        ``pythontk.Ktx2Encoder``; the pass raises upfront when it is missing
+        rather than silently shipping WebP) and textures rebind through
+        ``KHR_texture_basisu``. Where WebP only shrinks the wire, Basis stays
+        block-compressed in GPU memory -- measured on a delivered preview GLB,
+        6 MB of WebP decoded to ~740 MB of RGBA+mips, which is the actual
+        headset ceiling. Specifics of this mode, chosen deliberately:
+
+        * **Per-slot codecs** -- images sampled as normal / metallic-roughness /
+          occlusion encode UASTC + linear; base color / emissive encode ETC1S +
+          sRGB; an image shared across slots takes the stricter treatment, and
+          one bound to a texture but to no material slot gets UASTC + sRGB. An
+          image *no texture samples* is left as found -- nothing could rebind
+          it, and a non-core ``image/ktx2`` that no declaration enables is
+          invalid glTF. Same rule as ``MapOptimizer.resolve_compression``,
+          keyed structurally (by glTF slot) instead of by filename.
+        * **Lightmaps stay on the lossless-WebP path** even in KTX2 mode:
+          ETC1S would blotch them for the same reason lossy WebP does, UASTC
+          would re-quantise a deliberately-authored bake, and their carrier
+          slot's colorspace handling is viewer-rebound -- fidelity wins over
+          GPU residency for exactly these images.
+        * **No PNG fallback is kept** (double payload), so the extension lands
+          in ``extensionsRequired`` -- the deliverable needs a
+          ``KHR_texture_basisu``-capable viewer (three.js ``KTX2Loader``; the
+          bundled preview page wires it).
+        * **Dimensions snap down to power-of-two** -- ``KHR_texture_basisu``
+          requires multiple-of-4 dimensions and full mip pyramids (generated at
+          encode time; a GPU-compressed texture cannot mip itself), and POT is
+          what the WebGL/WebGPU backends want for that anyway. No-op for the
+          usual POT sources.
+        * **A larger encode is kept** (unlike the transport formats): UASTC can
+          exceed a source PNG on the wire and still be the right answer,
+          because the win being bought is GPU-resident format, not bytes.
 
         Parameters:
             glb: Path to a .glb, modified in place, or an open session.
             max_size: Longest edge kept after resize. 0/None skips resizing.
-            image_format: ``"WEBP"`` (default) or any PIL-writable format.
-            quality: Lossy quality for WEBP/JPEG.
+            image_format: ``"WEBP"`` (default), ``"KTX2"``, or any PIL-writable
+                format.
+            quality: Lossy quality for WEBP/JPEG, and the ETC1S quality dial in
+                KTX2 mode (UASTC's tier is fixed by the encoder).
             workers: Concurrent encode threads. Defaults to
                 :attr:`OPTIMIZE_WORKERS` capped by the core count; 1 forces the
                 serial path.
@@ -2045,7 +2134,18 @@ class MeshConvert(HelpMixin):
             logger.warning("optimize_glb_textures: Pillow unavailable; skipped.")
             return {}
 
+        image_format = image_format.upper()
+        is_ktx2 = image_format == "KTX2"
         mime = f"image/{image_format.lower()}"
+        encoder = None
+        if is_ktx2:
+            # Resolve before any work, and never fall back silently: a caller
+            # who asked for GPU-resident compression and silently got WebP
+            # would ship a deliverable that *looks* optimized while missing
+            # the entire point of the request.
+            from pythontk.img_utils._img_utils import ImgUtils
+
+            encoder = ImgUtils.resolve_ktx2_encoder(required=True)
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
             images = gltf.get("images") or []
@@ -2081,28 +2181,67 @@ class MeshConvert(HelpMixin):
                     if src is not None:
                         exempt_indices.add(src)
 
+            # KTX2 mode encodes per SLOT semantic (codec + colorspace), so the
+            # classification has to happen while the glTF structure is in hand.
+            semantic_by_image = cls._image_semantics(edit) if is_ktx2 else {}
+            # The images some texture actually samples -- resolved through the
+            # shadow-aware walk, so a re-run over an already-optimized GLB sees
+            # the EFFECTIVE binding rather than a stale plain ``source``. In
+            # KTX2 mode this gates the encode itself (below).
+            sampled: Set[Optional[int]] = (
+                {
+                    edit.image_for_texture(t_index)
+                    for t_index in range(len(gltf.get("textures") or []))
+                }
+                if is_ktx2
+                else set()
+            )
+
             # Pass 1, phase A (serial, cheap): classify every image and collect
-            # ONE job per distinct (payload, exemption) pair. The exemption is
-            # part of the key because the same bytes named both as a source
-            # texture and as a lightmap must not share the resized encoding.
+            # ONE job per distinct (payload, exemption, semantic) triple. The
+            # exemption is part of the key because the same bytes named both as
+            # a source texture and as a lightmap must not share the resized
+            # encoding; the semantic for the same reason -- bytes sampled as a
+            # normal map in one material and as base color in another need a
+            # UASTC and an ETC1S encode respectively. (Outside KTX2 mode the
+            # semantic is a constant None and the key degenerates to the pair.)
             before = after = 0
-            jobs: Dict[Tuple[str, bool], bytes] = {}
-            labels: Dict[Tuple[str, bool], Union[str, int]] = {}
-            key_by_index: Dict[int, Tuple[str, bool]] = {}
+            jobs: Dict[Tuple[str, bool, Optional[str]], bytes] = {}
+            labels: Dict[Tuple[str, bool, Optional[str]], Union[str, int]] = {}
+            key_by_index: Dict[int, Tuple[str, bool, Optional[str]]] = {}
             for index, image in enumerate(images):
                 payload = edit._image_payload(image)
                 if not payload:
                     continue
                 before += len(payload)
                 is_exempt = index in exempt_indices or (image.get("name") or "") in exempt
-                key = (hashlib.sha256(payload).hexdigest(), is_exempt)
+                if is_ktx2 and not is_exempt and index not in sampled:
+                    # No texture samples this image, so nothing can rebind it
+                    # through KHR_texture_basisu -- and that declaration is
+                    # gated on an actual rebind *deliberately*: it lands in
+                    # extensionsREQUIRED, which would hard-require a
+                    # basisu-capable viewer for a binding no texture has.
+                    # Encoding anyway left the other half of that pair
+                    # ungated: the mime rewrite below is driven by
+                    # ``replacements``, so a GLB whose textures resolve to
+                    # none of them shipped ``image/ktx2`` with no extension
+                    # enabling it -- and glTF 2.0 core permits image/jpeg and
+                    # image/png only. Keeping the bytes as found is valid
+                    # either way, and an image no texture reads is dead
+                    # payload whichever format it is in. (Exempt lightmaps
+                    # take the WebP path, whose declaration is unconditional,
+                    # so they are safe unsampled.)
+                    after += len(payload)
+                    continue
+                semantic = semantic_by_image.get(index) if is_ktx2 else None
+                key = (hashlib.sha256(payload).hexdigest(), is_exempt, semantic)
                 key_by_index[index] = key
                 jobs.setdefault(key, payload)
                 labels.setdefault(key, image.get("name") or index)
 
-            def _encode(key: Tuple[str, bool]) -> Optional[bytes]:
+            def _encode(key: Tuple[str, bool, Optional[str]]) -> Optional[bytes]:
                 """Decode, resize and re-encode one job; ``None`` keeps the original."""
-                payload, is_exempt = jobs[key], key[1]
+                payload, is_exempt, semantic = jobs[key], key[1], key[2]
                 try:
                     pil = Image.open(io.BytesIO(payload))
                     pil.load()
@@ -2113,18 +2252,62 @@ class MeshConvert(HelpMixin):
                         error,
                     )
                     return None
-                if max_size and max(pil.size) > max_size and not is_exempt:
-                    scale = max_size / float(max(pil.size))
-                    pil = pil.resize(
-                        (
-                            max(1, round(pil.size[0] * scale)),
-                            max(1, round(pil.size[1] * scale)),
-                        ),
-                        Image.LANCZOS,
+                target = pil.size
+                if max_size and max(target) > max_size and not is_exempt:
+                    scale = max_size / float(max(target))
+                    target = (
+                        max(1, round(target[0] * scale)),
+                        max(1, round(target[1] * scale)),
                     )
+                if is_ktx2 and not is_exempt:
+                    # KHR_texture_basisu requires multiple-of-4 dimensions and
+                    # a full mip pyramid (generated at encode time); POT
+                    # satisfies both at every level and is what the GL/WebGPU
+                    # backends want to mip. Snapped DOWN -- an optimize pass
+                    # must never grow an asset -- and folded into the max_size
+                    # target above so the pixels resample ONCE, not through a
+                    # resize-then-snap double pass. No-op for POT sources.
+                    target = tuple(
+                        max(4, 1 << (max(4, edge).bit_length() - 1))
+                        for edge in target
+                    )
+                if target != pil.size:
+                    pil = pil.resize(target, Image.LANCZOS)
+                if is_ktx2 and not is_exempt:
+                    codec, srgb = cls.BASIS_BY_SEMANTIC.get(
+                        semantic, cls.BASIS_BY_SEMANTIC[None]
+                    )
+                    from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+                    try:
+                        with TempArtifacts("glb_ktx2", policy="scoped") as tmp:
+                            out = tmp.path(extension=".ktx2")
+                            encoder.encode(
+                                pil,
+                                out,
+                                codec=codec,
+                                srgb=srgb,
+                                quality=quality if codec == "ETC1S" else None,
+                            )
+                            with open(out, "rb") as fh:
+                                encoded = fh.read()
+                    except Exception as error:  # noqa: BLE001 — keep the bytes
+                        logger.warning(
+                            "optimize_glb_textures: KTX2 encode failed for %r: %s",
+                            labels[key],
+                            error,
+                        )
+                        return None
+                    # Deliberately NO keep-the-original size rule here: the win
+                    # is the GPU-resident format, not the wire, and UASTC
+                    # exceeding a source PNG is expected rather than a failure.
+                    return encoded
+                # Exempt (lightmap) images in KTX2 mode take the lossless-WebP
+                # path -- the mode's docstring bullet says why.
+                pil_format = "WEBP" if (is_ktx2 and is_exempt) else image_format
                 if mime == "image/png":
                     save_kwargs = {}
-                elif is_exempt and image_format.upper() == "WEBP":
+                elif is_exempt and pil_format == "WEBP":
                     # Lightmaps must round-trip pixel-exact. Lossy WebP is
                     # YUV 4:2:0 -- chroma at half resolution, quantized --
                     # which on near-black lightmap texels shows as magenta/
@@ -2135,11 +2318,11 @@ class MeshConvert(HelpMixin):
                     save_kwargs = {"quality": quality}
                 buffer = io.BytesIO()
                 try:
-                    pil.save(buffer, format=image_format, **save_kwargs)
+                    pil.save(buffer, format=pil_format, **save_kwargs)
                 except Exception as error:  # noqa: BLE001
                     logger.warning(
                         "optimize_glb_textures: %s re-encode failed for %r: %s",
-                        image_format,
+                        pil_format,
                         labels[key],
                         error,
                     )
@@ -2267,24 +2450,72 @@ class MeshConvert(HelpMixin):
                 images[index]["bufferView"] = len(views) - 1
                 images[index].pop("uri", None)
 
+            # In KTX2 mode the exempt (lightmap) images took the WebP path, so
+            # the mime is per image rather than per run.
             for index in replacements:
-                images[index]["mimeType"] = mime
+                images[index]["mimeType"] = (
+                    "image/webp" if (is_ktx2 and key_by_index[index][1]) else mime
+                )
             gltf["bufferViews"] = views
             new_bin = b"".join(chunks)
             buffers = gltf.setdefault("buffers", [{}])
             buffers[0]["byteLength"] = len(new_bin)
 
-            if mime == "image/webp":
-                for texture in gltf.get("textures") or []:
-                    source = texture.get("source")
-                    if source in replacements:
+            webp_images = {
+                i for i in replacements if images[i].get("mimeType") == "image/webp"
+            }
+            ktx2_images = {
+                i for i in replacements if images[i].get("mimeType") == "image/ktx2"
+            }
+            bound_basisu = False
+            if webp_images or ktx2_images:
+                for t_index, texture in enumerate(gltf.get("textures") or []):
+                    # Resolved through the shadow-aware walk so a re-run of
+                    # this pass (or a WebP pass followed by a KTX2 one) rebinds
+                    # the texture's EFFECTIVE image, not a stale plain source.
+                    src = edit.image_for_texture(t_index)
+                    if src in ktx2_images:
+                        # KHR binding replaces the plain ``source`` outright --
+                        # keeping a PNG fallback would double the payload --
+                        # which is what puts the extension in
+                        # ``extensionsRequired`` below. A prior WebP binding
+                        # would now point at KTX2 bytes, so it goes too.
+                        extensions = texture.setdefault("extensions", {})
+                        extensions.pop("EXT_texture_webp", None)
+                        extensions["KHR_texture_basisu"] = {"source": src}
+                        texture.pop("source", None)
+                        bound_basisu = True
+                    elif src in webp_images:
                         # Standard binding; plain ``source`` stays as fallback.
                         texture.setdefault("extensions", {})["EXT_texture_webp"] = {
-                            "source": source
+                            "source": src
                         }
+                        texture.setdefault("source", src)
+            if webp_images:
                 used = gltf.setdefault("extensionsUsed", [])
                 if "EXT_texture_webp" not in used:
                     used.append("EXT_texture_webp")
+            elif bound_basisu:
+                # A KTX2 pass over a previously WebP-optimized GLB strips the
+                # EXT_texture_webp bindings it re-encodes past; a declaration
+                # with no remaining user is a validator warning shipped for
+                # nothing.
+                used = gltf.get("extensionsUsed") or []
+                if "EXT_texture_webp" in used and not any(
+                    "EXT_texture_webp" in (t.get("extensions") or {})
+                    for t in gltf.get("textures") or []
+                ):
+                    used.remove("EXT_texture_webp")
+            if bound_basisu:
+                # Equivalent to ``if ktx2_images`` by construction -- the encode
+                # gate above skips every image no texture samples -- so no
+                # ``image/ktx2`` can ship without this declaration.
+                used = gltf.setdefault("extensionsUsed", [])
+                if "KHR_texture_basisu" not in used:
+                    used.append("KHR_texture_basisu")
+                required = gltf.setdefault("extensionsRequired", [])
+                if "KHR_texture_basisu" not in required:
+                    required.append("KHR_texture_basisu")
 
             edit.replace_rest(new_bin)
             # Re-encoding invalidated every content address the sidecar
@@ -2626,7 +2857,7 @@ class MeshConvert(HelpMixin):
         one call -- a map assigned as both base colour and emissive used to be
         base64'd into the file twice.
         """
-        gltf, cache = edit.gltf, edit.embedded
+        cache = edit.embedded
         if path in cache:
             return cache[path]
         if not os.path.isfile(path):

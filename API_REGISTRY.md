@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-13_
+_Generated: 2026-08-15_
 
 ## Index
 
@@ -15,6 +15,7 @@ _Generated: 2026-08-13_
 - [`core_utils/class_property.py`](#core_utils--class_property)
 - [`core_utils/cli.py`](#core_utils--cli)
 - [`core_utils/color.py`](#core_utils--color) — Lightweight, DCC-agnostic color primitives.
+- [`core_utils/doc_audit.py`](#core_utils--doc_audit) — Audit markdown code examples against the live package surface.
 - [`core_utils/engines/instancing/assembly_sorter.py`](#core_utils--engines--instancing--assembly_sorter) — Sort separated mesh parts into repeated-assembly copies.
 - [`core_utils/engines/shots/manifest/behaviors/_behaviors.py`](#core_utils--engines--shots--manifest--behaviors--_behaviors) — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - [`core_utils/engines/shots/manifest/behaviors/_spec.py`](#core_utils--engines--shots--manifest--behaviors--_spec) — Schema for a *behavior* template file, defined as a dataclass.
@@ -68,8 +69,8 @@ _Generated: 2026-08-13_
 - [`core_utils/template_set.py`](#core_utils--template_set) — A discoverable, user-extensible collection of schema-validated template files.
 - [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
-- [`file_utils/mesh_cleaner.py`](#file_utils--mesh_cleaner) — Mesh repair / cleanup via PyMeshLab (optional dependency).
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
+- [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`file_utils/temp_artifacts.py`](#file_utils--temp_artifacts) — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - [`file_utils/usd.py`](#file_utils--usd) — Zero-dependency USD (OpenUSD) file utilities.
@@ -83,6 +84,7 @@ _Generated: 2026-08-13_
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
 - [`img_utils/exposure_equalizer.py`](#img_utils--exposure_equalizer) — Cross-set exposure / white-balance equalization.
 - [`img_utils/image_curator.py`](#img_utils--image_curator) — Perceptual-hash + sharpness curation for large image sets.
+- [`img_utils/ktx2_encoder.py`](#img_utils--ktx2_encoder) — KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 - [`img_utils/mask_generator.py`](#img_utils--mask_generator) — Background mask generation via rembg (optional dependency).
 - [`iter_utils/_iter_utils.py`](#iter_utils--_iter_utils)
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
@@ -283,6 +285,17 @@ Lightweight, DCC-agnostic color primitives.
   - `Palette.ui(cls) -> 'Palette'` *(class)* — Common UI element colours for dark themes.
   - `Palette.diff(cls) -> 'Palette'` *(class)* — Comparison / diff palette for dark-theme tree views.
 
+<a id="core_utils--doc_audit"></a>
+### `core_utils/doc_audit.py`
+
+Audit markdown code examples against the live package surface.
+
+- **[`class DocAudit(help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/doc_audit.py#L41)** — Validate markdown code examples against live objects.
+  - `DocAudit.default_roots(cls) -> dict` *(class)*
+  - `DocAudit.extract_code_blocks(cls, markdown: str, lang: str = 'python') -> List[str]` *(class)* — Return the contents of every fenced ``lang`` code block.
+  - `DocAudit.audit_markdown(cls, markdown: str, roots: Optional[Mapping[str, Any]] = None, lang: str = 'python') -> List[str]` *(class)* — Audit every fenced ``lang`` block;
+  - `DocAudit.audit_code(cls, code: str, roots: Optional[Mapping[str, Any]] = None) -> List[str]` *(class)* — Audit one code snippet;
+
 <a id="core_utils--engines--instancing--assembly_sorter"></a>
 ### `core_utils/engines/instancing/assembly_sorter.py`
 
@@ -456,7 +469,7 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.remove_object_from_shots(self, obj_name: str) -> None` — Remove *obj_name* from every shot's object list.
   - `ShotStore.to_dict(self) -> Dict[str, Any]` — Serialise shots and settings to a plain dict.
   - `ShotStore.to_export_view(self, strategy: str = 'name') -> Dict[str, Any]` — Build the FBX/Unity export view from the current shots.
-  - `ShotStore.refresh_export_view(cls) -> None` *(class)* — Republish the active store's export view when it has shots.
+  - `ShotStore.refresh_export_view(cls) -> None` *(class)* — Republish the active store's export view.
   - `ShotStore.enable_auto_export(cls) -> None` *(class)* — Opt every export this session into carrying the active store's shots.
   - `ShotStore.disable_auto_export(cls) -> None` *(class)* — Remove the before-export preparer for the rest of the session.
   - `ShotStore.from_dict(cls, data: Dict[str, Any]) -> 'ShotStore'` *(class)* — Restore from serialised data.
@@ -663,17 +676,18 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 Plan, assess, and apply map (texture) optimizations.
 
-- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L71)** — One operation in an optimization plan.
-- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L84)** — Plan, assess, and apply map (texture) optimizations.
-  - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest') -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
+- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L127)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L140)** — Plan, assess, and apply map (texture) optimizations.
+  - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest', output_profile: Optional[str] = None, output_type: Optional[str] = None) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
   - `MapOptimizer.project(plan: List[Op], width: int, height: int, mode: str) -> Tuple[int, int, str]` *(static)* — Replay ``plan``'s op params to get the post-apply size and mode.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
   - `MapOptimizer.resolve_quality(cls, lossy_quality: Optional[int], map_type_key: Optional[str], output_type: Optional[str], spec: Optional[OutputSpec] = None) -> Tuple[Optional[int], Optional[str]]` *(class)* — Decide the lossy quality a run may actually use, and why not.
-  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False, lossy_quality: int = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.resolve_compression(cls, map_type_key: Optional[str], output_type: Optional[str], spec: Optional[OutputSpec] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]` *(class)* — Resolve the GPU compression (and its colorspace label) for one map.
+  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
   - `MapOptimizer.channel_loss_warning(image: 'Image.Image', ext: str) -> Optional[str]` *(static)* — Warn when *ext* would discard a channel of *image* that holds data.
   - `MapOptimizer.format_result(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str` *(static)* — Render the one-line result summary for an optimized map.
   - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
-  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
+  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
 
 <a id="core_utils--engines--textures--map_registry"></a>
 ### `core_utils/engines/textures/map_registry.py`
@@ -729,15 +743,15 @@ Per-map output-format templates — the "export preset" layer.
 - **[`class OutputSpec`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L43)** — How a single map is written to disk.
   - `OutputSpec.to_dict(self) -> dict`
   - `OutputSpec.from_dict(cls, d: dict) -> 'OutputSpec'` *(class)*
-- **[`class DeliveryBudget`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L89)** — A profile's advisory delivery limits — reported by default, not enforced.
+- **[`class DeliveryBudget`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L100)** — A profile's advisory delivery limits — reported by default, not enforced.
   - `DeliveryBudget.check(self, width: int, height: int) -> List[str]` — Return one message per budget rule ``width`` x ``height`` violates.
   - `DeliveryBudget.to_dict(self) -> dict`
   - `DeliveryBudget.from_dict(cls, d: dict) -> 'DeliveryBudget'` *(class)*
-- **[`class OutputTemplate`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L153)** — A profile's per-map output formats: a default spec + per-map-type overrides.
+- **[`class OutputTemplate`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L164)** — A profile's per-map output formats: a default spec + per-map-type overrides.
   - `OutputTemplate.resolve(self, map_type: Optional[str]) -> OutputSpec` — Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).
   - `OutputTemplate.to_dict(self) -> dict`
   - `OutputTemplate.from_dict(cls, d: dict) -> 'OutputTemplate'` *(class)*
-- **[`class OutputTemplates`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L190)** — Registry of the built-in per-profile output templates and their resolution.
+- **[`class OutputTemplates`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L201)** — Registry of the built-in per-profile output templates and their resolution.
   - `OutputTemplates.get(cls, profile: Optional[str]) -> OutputTemplate` *(class)* — Return the built-in template for *profile* (a ``WF`` key), or the default.
   - `OutputTemplates.resolve(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec` *(class)* — Resolve the :class:`OutputSpec` for *map_type* under *profile*.
   - `OutputTemplates.budget(cls, profile: Optional[str]) -> DeliveryBudget` *(class)* — Return the advisory :class:`DeliveryBudget` for *profile*.
@@ -1274,15 +1288,6 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.set_json(cls, key, value, file=None)` *(class)* — Parameters:
   - `FileUtils.get_json(cls, key, file=None)` *(class)* — Parameters:
 
-<a id="file_utils--mesh_cleaner"></a>
-### `file_utils/mesh_cleaner.py`
-
-Mesh repair / cleanup via PyMeshLab (optional dependency).
-
-- **[`class MeshCleaner`](pythontk/pythontk/file_utils/mesh_cleaner.py#L32)** — Optional-dep mesh-repair pipeline.
-  - `MeshCleaner.is_available(self) -> bool`
-  - `MeshCleaner.clean(self, input_path: str, output_path: Optional[str] = None, merge_distance: float = 1e-05, remove_isolated_pieces_diameter_percent: float = 5.0, fill_holes_max_edge_count: int = 500, decimate_target_faces: int = 0) -> Optional[str]` — Repair / clean a mesh in place;
-
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
@@ -1303,6 +1308,24 @@ Mesh repair / cleanup via PyMeshLab (optional dependency).
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
   - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
+
+<a id="file_utils--mesh_ops"></a>
+### `file_utils/mesh_ops.py`
+
+File-level mesh processing via PyMeshLab (optional dependency).
+
+- **[`class OpSpec`](pythontk/pythontk/file_utils/mesh_ops.py#L58)** — One curated PyMeshLab filter: name, legal params, wrapped types.
+- **[`class MeshOps(HelpMixin, _MeshOpsInternal)`](pythontk/pythontk/file_utils/mesh_ops.py#L325)** — File-level mesh processing via PyMeshLab (path in → path out).
+  - `MeshOps.resolve(cls, required: bool = True)` *(class)* — Return the ``pymeshlab`` module, or explain how to install it.
+  - `MeshOps.available(cls) -> bool` *(class)* — True when the pymeshlab engine can be imported.
+  - `MeshOps.session(cls, input_path: str) -> _MeshSession` *(class)* — Open a :class:`_MeshSession` on ``input_path`` (context manager).
+  - `MeshOps.measure(cls, input_path: str) -> Dict[str, Any]` *(class)* — Geometry + topology metrics for a mesh file.
+  - `MeshOps.compare(cls, input_path: str, reference_path: str, sample_num: int = 10000) -> Dict[str, Any]` *(class)* — Hausdorff distance from ``input_path`` to ``reference_path``.
+  - `MeshOps.clean(cls, input_path: str, output_path: Optional[str] = None, merge_distance: float = 1e-05, remove_isolated_pieces_diameter_percent: float = 5.0, fill_holes_max_edge_count: int = 500, decimate_target_faces: int = 0) -> str` *(class)* — Repair / clean a mesh file;
+  - `MeshOps.remesh(cls, input_path: str, output_path: Optional[str] = None, target_edge_pct: float = 1.0, iterations: int = 10, adaptive: bool = False) -> str` *(class)* — Isotropic explicit remesh toward a uniform edge length.
+  - `MeshOps.decimate(cls, input_path: str, output_path: Optional[str] = None, target_faces: int = 0, target_pct: float = 0.0, curvature_weighted: bool = False, preserve_boundary: bool = True, preserve_normal: bool = True, preserve_topology: bool = False, quality_threshold: float = 0.3) -> str` *(class)* — Quadric edge-collapse decimation to a face target.
+  - `MeshOps.bake_vertex_color(cls, input_path: str, output_path: Optional[str] = None, texture_size: int = 1024, border: int = 2) -> Tuple[str, str]` *(class)* — Bake per-vertex color to a texture on auto-generated UVs.
+  - `MeshOps.apply(cls, input_path: str, filter_name: str, output_path: Optional[str] = None, **params) -> str` *(class)* — One filter on a file: curated (validated) when ``filter_name``
 
 <a id="file_utils--metadata"></a>
 ### `file_utils/metadata.py`
@@ -1415,16 +1438,18 @@ Point-cloud geometry — analyze and group unordered sets of points.
 
 Pure polyline / curve geometry — generate, measure, sample, reshape.
 
-- **[`class Polyline`](pythontk/pythontk/geo_utils/polyline.py#L28)** — Stateless polyline/curve geometry (the line other tools follow).
+- **[`class Polyline`](pythontk/pythontk/geo_utils/polyline.py#L29)** — Stateless polyline/curve geometry (the line other tools follow).
   - `Polyline.make(width: float = 6.0, curvature: float = 0.0, segments: int = 24, closed: bool = False, center: Vec = (0.0, 0.0, 0.0)) -> Tuple[List[Vec], bool]` *(static)* — Build a default polyline: a straight line of ``width`` (``curvature == 0``).
   - `Polyline.from_point_cloud(cls, points: Sequence, count: int, axis: Optional[int] = None, precision: Optional[int] = None) -> List[List[float]]` *(class)* — Extract an ordered centerline polyline from a tube-shaped **point cloud**.
   - `Polyline.order_points(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]` *(static)* — Order scattered points into a continuous path (greedy nearest-neighbour).
-  - `Polyline.length(points: Sequence[Vec], closed: bool = False) -> float` *(static)* — Total arc length of the polyline (wrapping last->first if closed).
+  - `Polyline.length(cls, points: Sequence[Vec], closed: bool = False) -> float` *(class)* — Total arc length of the polyline (wrapping last->first if closed).
   - `Polyline.point_at(points: Sequence[Sequence[float]], t: float) -> List[float]` *(static)* — Interpolated point at parameter ``t`` (0..1) along the polyline.
+  - `Polyline.cumulative_lengths(cls, points: Sequence[Vec]) -> List[float]` *(class)* — Arc length from the first point to each point, in input order.
+  - `Polyline.point_at_arc(cls, points: Sequence[Sequence[float]], t: float) -> List[float]` *(class)* — Interpolated point at ``t`` (0..1) in ARC-LENGTH space, clamped.
   - `Polyline.resample(cls, points: Sequence[Sequence[float]], count: int, reverse: bool = False, interpolation: Callable[[Sequence[Sequence[float]], float], List[float]] = None, start_offset: float = 0.0, end_offset: float = 0.0) -> List[List[float]]` *(class)* — Distribute ``count`` evenly-spaced points along the polyline.
   - `Polyline.smooth(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list` *(static)* — Moving-average smooth of a point sequence.
   - `Polyline.simplify(points: Sequence[Sequence[float]], tolerance: float) -> List[int]` *(static)* — Ramer-Douglas-Peucker indices: which points to keep to stay within
-  - `Polyline.frames(points: Sequence[Vec], segments: int, closed: bool, up: Vec = (0.0, 1.0, 0.0)) -> List[Tuple[Vec, Vec, Vec]]` *(static)* — Resample to ``segments + 1`` even points with a local frame at each.
+  - `Polyline.frames(cls, points: Sequence[Vec], segments: int, closed: bool, up: Vec = (0.0, 1.0, 0.0)) -> List[Tuple[Vec, Vec, Vec]]` *(class)* — Resample to ``segments + 1`` even points with a local frame at each.
 
 <a id="geo_utils--rail_surface"></a>
 ### `geo_utils/rail_surface.py`
@@ -1459,7 +1484,10 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
   - `ImgUtils.validate_image_integrity(filepath: str) -> Tuple[bool, str]` *(static)* — Cheaply check that an image file is complete and decodable.
   - `ImgUtils.create_image(mode, size=(4096, 4096), color=None)` *(static)* — Create a new image.
   - `ImgUtils.register_dds_codec(cls, codec) -> None` *(class)* — Register an external DDS codec for block formats Pillow can't write.
-  - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
+  - `ImgUtils.register_ktx2_encoder(cls, encoder) -> None` *(class)* — Register the KTX2/Basis encoder ``save_image`` uses for ``.ktx2``.
+  - `ImgUtils.resolve_ktx2_encoder(cls, required: bool = False)` *(class)* — The registered KTX2 encoder, or the built-in ``toktx`` wrapper.
+  - `ImgUtils.ktx2_available(cls) -> bool` *(class)* — True when ``.ktx2`` output is currently writable — the capability
+  - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
   - `ImgUtils.list_image_files(cls, directory, exts=None, full_paths=False)` *(class)* — Sorted image file names in a directory (non-recursive).
   - `ImgUtils.unique_dir_stems(dirs)` *(static)* — Unique, order-preserving output stems for a set of directories.
@@ -1497,6 +1525,7 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
   - `ImgUtils.kelvin_to_linear_rgb(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]` *(static)* — Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.
   - `ImgUtils.convert_rgb_to_hsv(cls, image)` *(class)* — Convert an RGB image to HSV mode.
   - `ImgUtils.convert_i_to_l(cls, image)` *(class)* — Convert a high-bit-depth grayscale image to 8-bit 'L'.
+  - `ImgUtils.convert_f_to_l(cls, image)` *(class)* — Convert a float grayscale image to 8-bit 'L', rescaling the unit range.
   - `ImgUtils.pack_channels(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image` *(class)* — Packs up to 4 grayscale images into R, G, B, A channels of a single image.
   - `ImgUtils.pack_channel_into_alpha(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image` *(class)* — Packs a channel from the alpha source image into the alpha channel of the base image.
   - `ImgUtils.srgb_to_linear(cls, data)` *(class)* — Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
@@ -1529,6 +1558,18 @@ Perceptual-hash + sharpness curation for large image sets.
   - `ImageCurator.sharpness(image) -> float` *(static)* — Variance-of-Laplacian sharpness.
   - `ImageCurator.curate(self, source_dirs: Sequence[str], output_root: str, hash_threshold: int = 0, sharpness_floor: float = 0.0, sharpness_floor_percentile: Optional[float] = None, min_sharpness_fraction_of_median: float = 0.0, keep_per_cluster: int = 1, suffix: str = '_curated', progress: Optional[callable] = None, overwrite_output: bool = True) -> List[str]` — Curate every image across ``source_dirs`` → write the kept set
   - `ImageCurator.preview(self, source_dirs, hash_thresholds=(5,), keep_per_cluster=1, sharpness_floor=0.0, sharpness_floor_percentile=None, min_sharpness_fraction_of_median=0.0, progress=None)` — Dry-run curation report — scan **once**, evaluate one or more
+
+<a id="img_utils--ktx2_encoder"></a>
+### `img_utils/ktx2_encoder.py`
+
+KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
+
+- **[`class Ktx2Encoder`](pythontk/pythontk/img_utils/ktx2_encoder.py#L49)** — Encode images to ``.ktx2`` (Basis Universal) by shelling out to ``toktx``.
+  - `Ktx2Encoder.resolve_toktx(cls, required: bool = False) -> Optional[str]` *(class)* — Resolve the ``toktx`` executable: PATH, conventional install
+  - `Ktx2Encoder.available(cls) -> bool` *(class)* — True when a ``toktx`` binary is discoverable.
+  - `Ktx2Encoder.read_header(cls, path: str) -> Dict[str, int]` *(class)* — Read the fixed-layout KTX 2.0 header of *path* — no transcoder needed.
+  - `Ktx2Encoder.args_for(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> List[str]` — Assemble the full ``toktx`` command for one encode.
+  - `Ktx2Encoder.encode(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> str` — Encode *source* to *output* (``.ktx2``).
 
 <a id="img_utils--mask_generator"></a>
 ### `img_utils/mask_generator.py`
@@ -1650,7 +1691,7 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 <a id="net_utils--_net_utils"></a>
 ### `net_utils/_net_utils.py`
 
-- **[`class NetUtils`](pythontk/pythontk/net_utils/_net_utils.py#L11)** — General purpose network utilities.
+- **[`class NetUtils`](pythontk/pythontk/net_utils/_net_utils.py#L10)** — General purpose network utilities.
   - `NetUtils.connect_rdp(host: str, username: str = None, password: str = None, width: int = None, height: int = None, fullscreen: bool = True, extra_settings: Dict[str, str] = None, save_credentials: bool = True)` *(static)* — Connect to a remote desktop using Windows RDP (mstsc.exe).
   - `NetUtils.is_port_open(host: str, port: int, timeout: float = 1.0) -> bool` *(static)* — Check if a TCP port is open on a host.
   - `NetUtils.is_port_bindable(port: int, host: str = '127.0.0.1') -> bool` *(static)* — Check whether a NEW server could bind a TCP port on this machine.
@@ -1683,10 +1724,10 @@ Localhost static-file server for live browser / WebXR previews.
 - **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L460)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L617)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L657)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
-  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
+  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port.
 

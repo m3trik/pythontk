@@ -9,6 +9,7 @@ mayatk/blendertk, drift-guarded by extapps' test_vendor_sync.py).
 
 import math
 import unittest
+from unittest import mock
 
 from pythontk.geo_utils.polyline import Polyline
 
@@ -61,6 +62,24 @@ class TestPolyline(unittest.TestCase):
             self.assertAlmostEqual(abs(normal[1]), 1.0, places=6)
             self.assertAlmostEqual(normal[2], 0.0, places=6)
 
+    def test_frames_builds_the_arc_table_once(self):
+        # frames() takes three samples per frame (position + two tangent
+        # probes). Sampling through the one-shot point_at_arc would rebuild
+        # the cumulative-length table on every one of them, making the cost
+        # O(segments * len(points)) distance ops -- measured 127ms for a
+        # 200-point rail at 200 segments. The table must be built once and
+        # shared, so this pins the call count rather than a wall-clock time.
+        pts = [(i * 0.37, (i % 7) * 0.11, (i % 13) * 0.05) for i in range(200)]
+        with mock.patch.object(
+            Polyline, "cumulative_lengths", wraps=Polyline.cumulative_lengths
+        ) as spy:
+            frames = Polyline.frames(pts, 64, False)
+
+        self.assertEqual(len(frames), 65)
+        self.assertEqual(
+            spy.call_count, 1, f"arc table rebuilt {spy.call_count}x; expected once"
+        )
+
     def test_point_at_interpolates_in_index_space(self):
         pts = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (2.0, 4.0, 0.0)]
         # t spans the two segments uniformly: 0.5 = end of the first segment.
@@ -70,6 +89,80 @@ class TestPolyline(unittest.TestCase):
         self.assertEqual(Polyline.point_at(pts, 1.0), [2.0, 4.0, 0.0])
         # t clamps to [0, 1]
         self.assertEqual(Polyline.point_at(pts, 2.0), [2.0, 4.0, 0.0])
+
+    def test_point_at_arc_interpolates_in_arc_space(self):
+        # Uneven segments: a short 2-unit leg then a long 4-unit leg (total 6).
+        # Index space puts t=0.5 at the corner; arc space puts it 3 units
+        # along, i.e. 1 unit UP the second leg.
+        pts = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (2.0, 4.0, 0.0)]
+        self.assertEqual(Polyline.point_at_arc(pts, 0.0), [0.0, 0.0, 0.0])
+        self.assertEqual(Polyline.point_at_arc(pts, 1.0), [2.0, 4.0, 0.0])
+        for t, expected in ((1 / 6, [1.0, 0.0, 0.0]), (0.5, [2.0, 1.0, 0.0])):
+            for got, want in zip(Polyline.point_at_arc(pts, t), expected):
+                self.assertAlmostEqual(got, want, places=9)
+        # ...and that is NOT where index space lands (the two must differ).
+        self.assertNotEqual(
+            Polyline.point_at_arc(pts, 0.5), Polyline.point_at(pts, 0.5)
+        )
+        # t clamps to [0, 1]
+        self.assertEqual(Polyline.point_at_arc(pts, 2.0), [2.0, 4.0, 0.0])
+        self.assertEqual(Polyline.point_at_arc(pts, -1.0), [0.0, 0.0, 0.0])
+
+    def test_point_at_arc_degenerate_inputs(self):
+        self.assertEqual(Polyline.point_at_arc([], 0.5), [])
+        self.assertEqual(Polyline.point_at_arc([(1.0, 2.0, 3.0)], 0.5), [1.0, 2.0, 3.0])
+        coincident = [(1.0, 2.0, 3.0)] * 4  # zero total length: no arc to walk
+        self.assertEqual(Polyline.point_at_arc(coincident, 0.7), [1.0, 2.0, 3.0])
+
+    def test_resample_with_arc_interpolation_is_evenly_spaced(self):
+        # Uneven input spacing: index-space resampling clusters where the
+        # source points cluster; arc-space resampling does not.
+        pts = [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0), (1.0, 0.0, 0.0), (9.0, 0.0, 0.0)]
+        arc = Polyline.resample(pts, 5, interpolation=Polyline.point_at_arc)
+        gaps = [math.dist(arc[i - 1], arc[i]) for i in range(1, len(arc))]
+        self.assertTrue(all(abs(g - gaps[0]) < 1e-9 for g in gaps))
+        index = Polyline.resample(pts, 5)
+        index_gaps = [math.dist(index[i - 1], index[i]) for i in range(1, len(index))]
+        self.assertGreater(max(index_gaps) - min(index_gaps), 1.0)
+
+    def test_cumulative_lengths_matches_length(self):
+        pts = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (2.0, 4.0, 0.0)]
+        self.assertEqual(Polyline.cumulative_lengths(pts), [0.0, 2.0, 6.0])
+        self.assertAlmostEqual(
+            Polyline.cumulative_lengths(pts)[-1], Polyline.length(pts), places=9
+        )
+        self.assertEqual(Polyline.cumulative_lengths([]), [0.0])
+        self.assertEqual(Polyline.length([]), 0.0)
+
+    def test_measurement_ignores_a_fourth_component(self):
+        # DCC point types (om.MPoint and friends) carry a w component; every
+        # measurement reads x/y/z by index, so w must not reach the distance.
+        # A 4-length tuple stands in for MPoint so this stays DCC-free.
+        flat = [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 4.0, 0.0)]
+        homogeneous = [p + (1.0,) for p in flat]
+        self.assertEqual(
+            Polyline.cumulative_lengths(homogeneous),
+            Polyline.cumulative_lengths(flat),
+        )
+        self.assertEqual(Polyline.length(homogeneous), Polyline.length(flat))
+        self.assertEqual(
+            Polyline.point_at_arc(homogeneous, 0.5), Polyline.point_at_arc(flat, 0.5)
+        )
+        # frames() is the DCC-facing entry (RailSurface -> curtain drape feeds
+        # it om.MPoint), and it is the one that used to sample through
+        # MathUtils.lerp -- which interpolates component-wise over the WHOLE
+        # sequence, so a 4-component input came back as a 4-component position
+        # carrying an interpolated w. Positions must be plain x/y/z.
+        homogeneous_frames = Polyline.frames(homogeneous, 4, False)
+        flat_frames = Polyline.frames(flat, 4, False)
+        self.assertEqual(len(homogeneous_frames), len(flat_frames))
+        for (h_pos, h_tan, h_nrm), (f_pos, f_tan, f_nrm) in zip(
+            homogeneous_frames, flat_frames
+        ):
+            self.assertEqual(len(h_pos), 3, "w must not ride along on a position")
+            self.assertEqual(list(h_pos), list(f_pos))
+            self.assertEqual(tuple(h_tan), tuple(f_tan))
+            self.assertEqual(tuple(h_nrm), tuple(f_nrm))
 
     def test_resample_reverse_and_offsets(self):
         pts, _ = Polyline.make(width=10.0)  # x from -5 to 5
