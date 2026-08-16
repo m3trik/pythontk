@@ -12,9 +12,10 @@ DEFAULT_INCLUDE = {
     "audio_utils._audio_utils": "AudioUtils",
     "img_utils._img_utils": "*",
     "img_utils.mask_generator": ["MaskGenerator"],
+    "img_utils.ktx2_encoder": ["Ktx2Encoder"],
     "img_utils.exposure_equalizer": ["ExposureEqualizer"],
     "img_utils.image_curator": ["ImageCurator"],
-    "file_utils.mesh_cleaner": ["MeshCleaner"],
+    "file_utils.mesh_ops": ["MeshOps"],
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
     "vid_utils.frame_extractor": ["FrameExtractor"],
@@ -125,6 +126,9 @@ DEFAULT_INCLUDE = {
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
     "core_utils.symbol_record": "SymbolRecord",
+    # Markdown-example rot gate — validates doc code blocks against the live
+    # surface (README gates here and downstream build on it).
+    "core_utils.doc_audit": "DocAudit",
     "core_utils.package_manager": "PackageManager",
     "core_utils.git": "Git",
     "core_utils.class_property": "ClassProperty",

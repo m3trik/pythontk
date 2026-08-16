@@ -487,6 +487,13 @@ class PreviewDeliverer(Deliverer):
             and steal focus from the DCC), and a push after the tab was closed
             opens one again. ``True`` always opens, ``False`` never does.
         title: Label shown in the viewer, when creating the server.
+        texture_format: Container the web-delivery pass re-encodes textures to
+            -- ``"WEBP"`` (default; transport size) or ``"KTX2"`` (GPU-resident
+            Basis compression, the headset-memory win; requires the ``toktx``
+            encoder -- see :meth:`MeshConvert.optimize_glb_textures`). This is
+            the *default*; a single push overrides it per request --
+            ``bridge.push(texture_format="KTX2")`` -- so one high-fidelity push
+            costs the next quick-iteration one nothing.
     """
 
     def __init__(
@@ -494,10 +501,12 @@ class PreviewDeliverer(Deliverer):
         server: Optional[PreviewServer] = None,
         open_browser: Union[bool, str] = "auto",
         title: str = "Preview",
+        texture_format: str = "WEBP",
     ):
         self.server = server
         self.open_browser = open_browser
         self.title = title
+        self.texture_format = texture_format
 
     def ensure_server(self) -> PreviewServer:
         """The bridge's server, started, creating it on first use."""
@@ -572,8 +581,39 @@ class PreviewDeliverer(Deliverer):
         # a full-size copy behind it. Guarded for the same reason as above --
         # measured on a production room this is 94.7 MB -> ~15 MB, but an
         # optimizer failure must cost quality, never the push.
+        #
+        # Request-scoped, exactly like `open_browser` below. A deliverer is
+        # bound once per bridge *class*, so a format written onto the instance
+        # for one high-fidelity push would stick process-wide for every bridge
+        # in the session: each later quick-iteration push would then require
+        # `toktx` and pay the Basis encode, with no way to opt back out for a
+        # single push. The instance attribute stays the default. Falsy falls
+        # back rather than overriding (unlike `open_browser`, where False is a
+        # meaningful value) -- an empty format is "unspecified", not a request
+        # to hand the optimizer nothing, and it lets the caller-facing knobs
+        # below pass their `None` default straight through.
+        # The trailing WEBP is load-bearing: making this request-scoped turned
+        # an absent kwarg into an explicit value, so a falsy INSTANCE default
+        # stopped inheriting `optimize_glb_textures`' own "WEBP" default and
+        # started handing it None -- which raises inside the optimizer and is
+        # swallowed by the broad `except` below, silently shipping a GLB that
+        # skipped the 94.7MB -> ~15MB pass.
+        texture_format = request.get("texture_format") or self.texture_format or "WEBP"
+
+        # KTX2 is the one exception: docs/webxr_preview.md promises the push
+        # raises with the install URL when `toktx` is missing, never silently
+        # ships WebP instead. `optimize_glb_textures` only reaches its own
+        # `resolve_ktx2_encoder(required=True)` call once it hits a KTX2 image
+        # -- a scene with no images (or an early failure elsewhere in the
+        # method) would let the broad `except Exception` below swallow it and
+        # ship the unoptimized GLB. Checked eagerly, before the try, so the
+        # fix-shaped FileNotFoundError always propagates for a KTX2 push.
+        if texture_format.upper() == "KTX2":
+            from pythontk.img_utils._img_utils import ImgUtils
+
+            ImgUtils.resolve_ktx2_encoder(required=True)
         try:
-            MeshConvert.optimize_glb_textures(glb)
+            MeshConvert.optimize_glb_textures(glb, image_format=texture_format)
         except Exception as error:  # noqa: BLE001
             bridge.logger.warning("GLB texture optimize skipped: %s", error)
         if not (sidecar or {}).get("sections"):
@@ -723,6 +763,7 @@ class PreviewBridge(HandoffBridge):
         objects: Optional[List[Any]] = None,
         whole_scene: bool = False,
         open_browser: Union[bool, str] = "auto",
+        texture_format: Optional[str] = None,
         **params: Any,
     ) -> Optional[Dict[str, Any]]:
         """Export and publish, returning the deliverer's result (``None`` on failure).
@@ -734,6 +775,11 @@ class PreviewBridge(HandoffBridge):
                 already watching -- so the first push and any push after the
                 tab was closed, but not one that an open page will pick up.
                 ``True`` every push, ``False`` never.
+            texture_format: Override the deliverer's texture container for
+                *this* push only (``"WEBP"`` / ``"KTX2"``); ``None`` keeps its
+                default. Named explicitly rather than left to ``**params``,
+                which is the *export* param bag -- swept up there it would be
+                handed to the exporter and never reach the deliverer.
             **params: Export param overrides (see :meth:`params_defaults`).
         """
         if whole_scene and objects is None:
@@ -741,7 +787,12 @@ class PreviewBridge(HandoffBridge):
             # skeleton defines as "fall back to the selection" -- so pass it
             # through rather than treating it as an empty scene.
             objects = self._scene_objects()
-        return self.send(objects, params=params, open_browser=open_browser)
+        return self.send(
+            objects,
+            params=params,
+            open_browser=open_browser,
+            texture_format=texture_format,
+        )
 
     @staticmethod
     def sidecar_summary(result: Optional[Dict[str, Any]]) -> str:

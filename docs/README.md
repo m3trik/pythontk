@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-3023%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-3173%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -26,12 +26,15 @@ Two rules shape it:
 pip install pythontk
 ```
 
-**Optional dependencies**, each gating a specific feature (guarded by `is_available()` checks — nothing else breaks without them):
+**Optional dependencies**, each gating a specific feature (guarded by `is_available()`-style checks — nothing else breaks without them):
 
 - `FFmpeg` (on PATH) — audio conversion / compositing, video compression
 - `OpenCV` — video frame extraction, image curation, exposure equalization, a few `ImgUtils` ops
 - `rembg` — background mask generation (`MaskGenerator`)
-- `PyMeshLab` — mesh repair (`MeshCleaner`)
+- `PyMeshLab` — file-level mesh measure/repair/remesh/decimate/bake (`MeshOps`; declared as the `pythontk[mesh]` extra)
+- `xatlas` — UV island packing (`UvPack`)
+- `toktx` (KTX-Software binary) — KTX2 / Basis Universal encoding (`Ktx2Encoder`)
+- `paramiko` — SSH client · `keyring` — credential storage (falls back to Windows Credential Manager, then environment variables)
 
 ## Packages
 
@@ -46,18 +49,18 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 
 | Package | What it covers |
 |---|---|
-| `audio_utils` | FFmpeg-backed conversion, composite WAV building, waveform envelopes |
-| `core_utils` | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap (`module_resolver`), hot-reload (`ModuleReloader`), app orchestration (`AppLauncher`, `HandoffBridge`), task pipeline (`TaskFactory`), process output streaming (`OutputStream`/`ProcessReader`/`LogTailer`), config/template stores (`PresetStore`, `TemplateSet`, `SchemaSpec`, `UserConfig`), QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives (`Color` / `ColorPair` / `Palette`) — plus the domain engines in `core_utils/engines/`: `shots` (timeline model/planner/manifest), `instancing` (`AssemblySorter`), `textures` (`MapFactory`, `MapCompositor`, map registry/optimizer) |
-| `file_utils` | Filtered directory traversal, atomic writes, JSON helpers, cloud-placeholder detection, mesh format conversion, embedded metadata |
-| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing) |
-| `img_utils` | Pillow-backed image ops, channel packing, exposure equalization, image curation, mask generation |
+| `audio_utils` | FFmpeg-backed conversion, composite WAV building, silence trimming, waveform envelopes |
+| [`core_utils`](../pythontk/core_utils/README.md) | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap, hot-reload, app orchestration (`AppLauncher`, `HandoffBridge`), cooperative cancellation (`CancelScope`), task pipeline, process output streaming, config/template stores, QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives — plus the shared domain engines (`shots`, `instancing`, `textures`) |
+| [`file_utils`](../pythontk/file_utils/README.md) | Filtered directory traversal, atomic writes, policy-scoped temp artifacts (`TempArtifacts`), cloud-placeholder detection, FBX→GLB conversion + glTF repair (`MeshConvert`), zero-dependency USD/USDZ authoring, UV unwrapping, project workspaces, embedded metadata |
+| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify, arc-length sampling), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing), `PlateEmitter`, UV island packing (`UvPack`) |
+| `img_utils` | Pillow-backed image ops, channel packing, atlas layout/assembly, KTX2 encoding (`Ktx2Encoder`), exposure equalization, image curation, mask generation |
 | `iter_utils` | Flatten, dedupe, wildcard filtering of lists/dicts, integer-sequence collapse |
-| `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, safe expression evaluation |
-| `net_utils` | SSH client, generic JSON-RPC client + DCC plugin installer, credentials, port/RDP helpers, [live WebXR preview server](webxr_preview.md) |
+| `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, morph-weight math (`Weights`), safe expression evaluation |
+| [`net_utils`](../pythontk/net_utils/README.md) | SSH client, both ends of the plugin-hosted JSON-RPC protocol + DCC plugin installer, credentials, port/RDP helpers, [live WebXR preview server](webxr_preview.md) |
 | `str_utils` | Sanitizing, batch rename, affix handling, `FuzzyMatcher`, hotkey-token parsing |
 | `vid_utils` | Frame rate probing, compression, sharpest-frame extraction |
 
-Full public surface (every class, method, signature — auto-generated): [`API_REGISTRY.md`](../API_REGISTRY.md); compact index: [`API_INDEX.md`](../API_INDEX.md).
+The three linked packages carry their own READMEs — a table row can't hold their surface. Full public surface (every class, method, signature — auto-generated): [`API_REGISTRY.md`](../API_REGISTRY.md); compact index: [`API_INDEX.md`](../API_INDEX.md).
 
 ---
 
@@ -141,7 +144,7 @@ ptk.MapFactory.resolve_map_type("character_Normal_DirectX.png")  # "Normal_Direc
 ptk.MapFactory.resolve_map_type("material_BC.tga")               # "Base_Color"
 ```
 
-The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — ship in the [extapps](https://github.com/m3trik/extapps) repo; pythontk itself stays UI-agnostic.
+All three surfaces are runtime-extensible — new map types, workflow handlers, and conversions register without touching the engine ([worked example](../examples/texture_factory_extensibility_example.py)). The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — ship in the [extapps](https://github.com/m3trik/extapps) repo; pythontk itself stays UI-agnostic.
 
 ### Capture ingest — sharpest-frame extraction & image curation
 
@@ -195,7 +198,7 @@ def batch_process():
     ...  # shows an abort dialog if it runs past 30s
 ```
 
-### Plugin discovery (AST-based — never executes plugin code)
+### Plugin discovery
 
 ```python
 plugins = ptk.get_classes_from_path(
@@ -203,19 +206,23 @@ plugins = ptk.get_classes_from_path(
 )
 ```
 
+AST enumerates the classes, then each module is imported to resolve the class objects (via the canonical package import where one exists, so identities match a normal import) — a module that fails to import is skipped, not fatal.
+
 ---
 
 ## Infrastructure the ecosystem is built on
 
-Beyond the data-type utilities, `core_utils` supplies the machinery the layers above are built on:
+Beyond the data-type utilities, `core_utils` supplies the machinery the layers above are built on — the full module map is [`core_utils/README.md`](../pythontk/core_utils/README.md). Highlights:
 
 - **`bootstrap_package`** (`module_resolver`) — the lazy-loading package root. Every ecosystem package (`uitk`, `mayatk`, `blendertk`, …) exposes its public surface through it.
 - **`PresetStore` / `TemplateSet` / `SchemaSpec` / `UserConfig`** — Qt-free named-preset and schema-validated-template stores with built-in + user tiers; uitk's `PresetManager` is a GUI over them.
-- **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges and of mayatk's `MayaConnection`. `HandoffBridge` owns one invariant flow — `resolve → preflight → produce → deliver → ingest` — with the delivery step a per-mode `Deliverer` strategy, so **three hand-off shapes come off one export pipeline**: `send()` (`SEND_TO`, detached launch), `save_as()` (`SAVE_AS`, blocking run that keeps a native file of the target's format), and `round_trip()` (`ROUND_TRIP`, blocking run whose artifact is an intermediate `_ingest` folds back onto the host's own objects, so what the caller gets is changed host state rather than a file — the target either edits the payload *in place*, as RizomUV does, or writes a new artifact, as mayatk's Blender lightmap bake does). The mode strings are declared once, in `core_utils/script_template.py`; every bridge imports them, because they are an on-disk contract (each template's `BRIDGE_MODES` tuple) and a local copy is a second dialect of a file format.
-- **`RpcClient` + `RpcPlugin`** — both ends of the plugin-hosted JSON-RPC protocol, shipped together so the wire format cannot drift. `net_utils.rpc.plugin_core` is the server that runs *inside* Toolbag / Painter; it is standard-library only so an installed plugin payload can carry a verbatim copy where `pythontk` is not importable (staged by `m3trik/scripts/sync_rpc_core.py`).
+- **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges. Three hand-off shapes — `send()`, `save_as()`, `round_trip()` — come off one export pipeline with a per-mode `Deliverer` strategy.
+- **`CancelScope` / `ExecutionMonitor`** — one cooperative cancellation object shared by every cancel affordance (push from any thread, pull at the operation's own checkpoints), plus threshold-escalated dialogs and watchdogs for long-running operations.
+- **`RpcClient` + `RpcPlugin`** — both ends of the plugin-hosted JSON-RPC protocol, shipped together so the wire format cannot drift; the in-app half is stdlib-only so installed plugin payloads can carry a verbatim copy ([`net_utils/README.md`](../pythontk/net_utils/README.md)).
 - **`QcLog` / `QcGate`** — structured run logs and threshold-based acceptance gates for batch pipelines.
-- **`HierarchyPath` / `HierarchyIndexer` / `HierarchyMatching` / `HierarchyAnalyzer` / `HierarchyDiff`** — delimited-path hierarchy toolkit: `HierarchyPath` is the single home for path-string primitives (namespace cleaning, split/join, leaf/parent/tail); indexing and exact / tail-path / fuzzy matching build on it; the analyzer detects *moved* items (deterministic best-pair assignment), and `HierarchyDiff.from_differences` turns analyzer records into a JSON-serializable diff.
-- **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in. Reachable from a shell (or an agent) without a REPL snippet via `python -m pythontk <dotted.path> [member] [--json|--source|--where|--signature|--brief]`; it reads the *live* object, so it answers what the static [`API_REGISTRY.md`](../API_REGISTRY.md) cannot.
+- **Hierarchy toolkit** — delimited-path indexing, exact / tail-path / fuzzy matching, moved-item detection, and JSON-serializable diffs.
+- **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in. Reachable from a shell (or an agent) without a REPL snippet via `python -m pythontk <dotted.path> [member] [--json|--source|--where|--signature|--brief|--members]`; it reads the *live* object, so it answers what the static [`API_REGISTRY.md`](../API_REGISTRY.md) cannot. `python -m pythontk --index` lists the whole resolved surface — both the `__all__` tier and the bare wildcard aliases — with each row a valid target to feed back in; it's the live twin of [`API_INDEX.md`](../API_INDEX.md), available wherever the wheel is installed.
+- **`DocAudit`** — the documentation rot gate: extracts fenced code blocks from markdown and validates every attribute chain and keyword argument against the live package. This README's own examples are gated by it (`test/test_doc_audit.py`), which also pins the literal outputs shown above — an API rename or a stale doc claim fails the suite, not a user's session.
 
 ## Guides
 

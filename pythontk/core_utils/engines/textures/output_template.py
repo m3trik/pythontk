@@ -44,11 +44,22 @@ class OutputSpec:
     """How a single map is written to disk.
 
     Attributes:
-        ext: Container/extension — "png", "tga", "tiff", "exr", "dds".
+        ext: Container/extension — "png", "tga", "tiff", "exr", "dds", or the
+            delivery container "ktx2" (encode-only; needs the ``toktx`` encoder
+            — see ``ImgUtils.DELIVERY_FORMATS``).
         bit_depth: Per-channel bit depth — 8, 16, or 32 (32 = float, EXR/HDR).
-        compression: None (uncompressed) or a DDS block format. "DXT1"/"DXT3"/
-            "DXT5"/"BC5" are written by Pillow directly; "BC7"/"BC6H" require an
-            external codec registered via ``ImgUtils.register_dds_codec``.
+            ``ktx2`` is 8-bit LDR regardless.
+        compression: None (uncompressed) or a GPU compression scheme for the
+            container. For "dds": a block format — "DXT1"/"DXT3"/"DXT5"/"BC5"
+            are written by Pillow directly; "BC7"/"BC6H" require an external
+            codec registered via ``ImgUtils.register_dds_codec``. For "ktx2": a
+            Basis codec — "UASTC" (high quality: normals, packed/linear data)
+            or "ETC1S" (low bitrate: unpacked sRGB color). None on a ktx2
+            target means *derive per map type* —
+            ``MapOptimizer.resolve_compression`` picks ETC1S exactly where
+            ``MapRegistry.is_lossy_safe`` allows a lossy codec and UASTC
+            everywhere else, and refuses (upgrades) an explicit ETC1S on a map
+            that cannot survive it.
         quality: None (lossless) or a 1-100 lossy quality for the container's
             codec. Distinct from ``compression``, which selects a *GPU block
             format*: this is CPU-side container compression (WebP/JPEG), it
@@ -382,6 +393,12 @@ class OutputTemplates:
 # web/XR saving is KTX2 + Basis supercompression (KHR_texture_basisu), not PNG->JPG, and
 # defaulting to a lossy container would look like that win while delivering a fraction
 # of it — with no way for a caller to opt back out per map.
+#
+# KTX2 delivery is therefore an explicit *step*, not a template default: pass
+# ``output_type="ktx2"`` to ``MapOptimizer.optimize_map`` (per-map Basis codecs are
+# derived — see ``OutputSpec.compression``) for loose files, or
+# ``MeshConvert.optimize_glb_textures(image_format="KTX2")`` for a packaged GLB. The
+# uncompressed template output remains the correct *source* for both.
 #
 # Lossy delivery is therefore opt-in, never a default: a caller asks for it explicitly
 # via ``MapOptimizer.optimize_map(lossy_quality=...)`` (or, later, a preset layer setting

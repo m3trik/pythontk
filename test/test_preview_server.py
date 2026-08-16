@@ -638,12 +638,23 @@ class PreviewDelivererTestCase(unittest.TestCase):
         return dst
 
     def _deliver(self, **kwargs):
+        """One push through a deliverer built from *kwargs* (its own defaults)."""
         kwargs.setdefault("server", self.server)
         kwargs.setdefault("open_browser", False)
         self.bridge.deliverer = PreviewDeliverer(**kwargs)
+        return self._push()
+
+    def _push(self, **extras):
+        """One push through the bridge's *existing* deliverer.
+
+        *extras* ride on `HandoffRequest.extras` -- the per-request knobs. Kept
+        separate from `_deliver` because the request-scoped tests need two
+        pushes over one deliverer, which is exactly where a knob held only as
+        instance state leaks from the first push into the second.
+        """
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
         with unittest.mock.patch(target, side_effect=self._fake_convert):
-            return self.bridge.send()
+            return self.bridge.send(**extras)
 
     def test_deliver_publishes_and_reports_the_url(self):
         result = self._deliver()
@@ -693,6 +704,108 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertIsNone(
             self.bridge.deliverer.deliver(self.bridge, Payload(primary=None), None)
         )
+
+    def test_ktx2_missing_encoder_raises_instead_of_shipping_unoptimized(self):
+        """docs/webxr_preview.md promises the push raises with the install URL
+        when toktx is missing under KTX2 mode -- it must not be swallowed by
+        the broad `except Exception` around the optimize step and silently
+        ship the unoptimized GLB."""
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        with (
+            unittest.mock.patch.object(Ktx2Encoder, "available", return_value=False),
+            unittest.mock.patch.object(
+                Ktx2Encoder,
+                "resolve_toktx",
+                side_effect=FileNotFoundError("KTX2 encoding requires 'toktx'"),
+            ),
+        ):
+            with self.assertRaises(FileNotFoundError) as ctx:
+                self._deliver(texture_format="KTX2")
+        self.assertIn("toktx", str(ctx.exception))
+        self.assertEqual(self.server.version, 0, "must not publish a partial push")
+
+    # `texture_format` is a per-push knob, so these assert the request-scoped
+    # half: a deliverer is bound once per bridge *class*, so a format written
+    # onto the instance for one high-fidelity push would otherwise stick for
+    # every bridge in the session -- silently requiring toktx and paying the
+    # Basis encode on every later quick-iteration push, with no way back out.
+
+    def _optimize_formats(self, *pushes):
+        """Run *pushes* (each a dict of request extras) and return the
+        `image_format` each one asked the optimizer for, plus the eager
+        KTX2-encoder resolves they triggered."""
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        with (
+            unittest.mock.patch.object(
+                MeshConvert, "optimize_glb_textures"
+            ) as optimize,
+            unittest.mock.patch.object(ImgUtils, "resolve_ktx2_encoder") as resolve,
+        ):
+            for extras in pushes:
+                self._push(**extras)
+        formats = [call.kwargs["image_format"] for call in optimize.call_args_list]
+        return formats, resolve.call_count
+
+    def test_a_per_request_texture_format_does_not_leak_into_the_next_push(self):
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        formats, resolves = self._optimize_formats({"texture_format": "KTX2"}, {})
+        self.assertEqual(formats, ["KTX2", "WEBP"])
+        # The eager `resolve_ktx2_encoder(required=True)` must lapse with the
+        # request that asked for KTX2: left inherited, the next push raises
+        # FileNotFoundError on a machine that never wanted the encoder.
+        self.assertEqual(resolves, 1)
+        # ...and the override never wrote through to the shared instance.
+        self.assertEqual(self.bridge.deliverer.texture_format, "WEBP")
+
+    def test_a_request_without_a_format_falls_back_to_the_instance_default(self):
+        self.bridge.deliverer = PreviewDeliverer(
+            server=self.server, open_browser=False, texture_format="KTX2"
+        )
+        formats, resolves = self._optimize_formats({})
+        self.assertEqual(formats, ["KTX2"])
+        self.assertEqual(resolves, 1)
+
+    def test_a_falsy_instance_default_still_optimizes(self):
+        """Making the format request-scoped moved it from "absent kwarg" to
+        "explicit value", so a falsy instance default stopped inheriting
+        ``optimize_glb_textures``' own ``WEBP`` default and started handing it
+        ``None`` -- which raises inside the optimizer and is swallowed by the
+        broad ``except``, silently shipping an UNOPTIMIZED GLB (the 94.7MB ->
+        ~15MB pass is the whole point of the step). Both falsy forms have to
+        land back on WEBP."""
+        for default in (None, ""):
+            with self.subTest(instance_default=default):
+                self.bridge.deliverer = PreviewDeliverer(
+                    server=self.server, open_browser=False, texture_format=default
+                )
+                formats, _ = self._optimize_formats({})
+                self.assertEqual(formats, ["WEBP"])
+
+    def test_push_forwards_the_format_as_a_request_knob_not_an_export_param(self):
+        """`push(**params)` sweeps unknown kwargs into the *export* params, so
+        without an explicit parameter a `push(texture_format=...)` would be
+        handed to the exporter and never reach the deliverer at all."""
+        bridge = _StubPreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        with (
+            unittest.mock.patch.object(
+                MeshConvert, "optimize_glb_textures"
+            ) as optimize,
+            unittest.mock.patch.object(ImgUtils, "resolve_ktx2_encoder"),
+            unittest.mock.patch.object(
+                MeshConvert, "fbx_to_glb", side_effect=self._fake_convert
+            ),
+        ):
+            bridge.push(texture_format="KTX2")
+            self.assertEqual(optimize.call_args.kwargs["image_format"], "KTX2")
+            bridge.push()
+        # Omitting it must leave the deliverer's own default in force rather
+        # than overriding it with the parameter's `None` sentinel.
+        self.assertEqual(optimize.call_args.kwargs["image_format"], "WEBP")
 
     # `webbrowser.open` is patched rather than `open_in_browser`, because the
     # method under test is what registers the launch as a viewer — stubbing it

@@ -281,10 +281,10 @@ class TestNetUtils(unittest.TestCase):
 
     @patch("pythontk.net_utils._net_utils.subprocess.Popen")
     @patch("pythontk.net_utils._net_utils.subprocess.run")
-    @patch("pythontk.net_utils._net_utils.tempfile.mkstemp")
+    @patch("pythontk.file_utils.temp_artifacts.TempArtifacts")
     @patch("pythontk.net_utils._net_utils.os.name", "nt")
     def test_connect_rdp_saves_credentials_at_termsrv_target(
-        self, mock_mkstemp, mock_run, mock_popen
+        self, mock_temp_artifacts, mock_run, mock_popen
     ):
         """Regression: connect_rdp(save_credentials=True) must write the RDP
         secret to the exact Windows target mstsc reads (TERMSRV/<host>) via
@@ -299,12 +299,14 @@ class TestNetUtils(unittest.TestCase):
         if not hasattr(_sp, "CREATE_NO_WINDOW"):
             self.skipTest("subprocess.CREATE_NO_WINDOW is Windows-only")
 
-        # Redirect the generated .rdp temp file so nothing leaks into system temp.
+        # Redirect the generated .rdp file so nothing leaks into the real temp
+        # artifacts dir. connect_rdp allocates through ptk.TempArtifacts, never a
+        # raw tempfile.mkstemp, so that is the only seam a redirect can bind to --
+        # patching tempfile here redirected nothing and silently wrote a live file.
         tmp_dir = _tf.mkdtemp(prefix="pythontk_rdp_test_")
         self.addCleanup(_sh.rmtree, tmp_dir, ignore_errors=True)
         rdp_path = os.path.join(tmp_dir, "test.rdp")
-        fd = os.open(rdp_path, os.O_RDWR | os.O_CREAT)
-        mock_mkstemp.return_value = (fd, rdp_path)
+        mock_temp_artifacts.return_value.path.return_value = rdp_path
 
         NetUtils.connect_rdp(
             "10.0.0.5", username="admin", password="p", save_credentials=True
@@ -318,8 +320,16 @@ class TestNetUtils(unittest.TestCase):
         self.assertEqual(cmd[1], "/generic:TERMSRV/10.0.0.5")
         self.assertIn("/user:admin", cmd)
         self.assertIn("/pass:p", cmd)
+        # The .rdp config is allocated through the age-swept TempArtifacts
+        # primitive (repo temp-artifact rule), and actually written there.
+        mock_temp_artifacts.assert_called_once_with("pythontk_rdp")
+        mock_temp_artifacts.return_value.path.assert_called_once_with(
+            extension=".rdp"
+        )
+        self.assertTrue(os.path.exists(rdp_path))
         # mstsc.exe is still launched with the generated .rdp config file.
         mock_popen.assert_called_once()
+        self.assertEqual(mock_popen.call_args.args[0], ["mstsc.exe", rdp_path])
 
 
 if __name__ == "__main__":

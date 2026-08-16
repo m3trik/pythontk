@@ -18,6 +18,14 @@ classifiers = [
 # Dependencies
 dependencies = ["numpy", "Pillow"]
 
+# PyMeshLab backs only MeshOps (mesh measure/repair/remesh/decimate/bake).
+# It is a heavy binary wheel, so it stays opt-in: everything else works
+# without it, and MeshOps degrades to MeshOps.available() == False.
+# Floor 2023.12: the AbsoluteValue -> PureValue rename this wrapper relies on.
+# Install with the extra when you want it:  pip install pythontk[mesh]
+[project.optional-dependencies]
+mesh = ["pymeshlab>=2023.12"]
+
 [project.urls]
 Homepage = "https://github.com/m3trik/pythontk"
 Repository = "https://github.com/m3trik/pythontk"

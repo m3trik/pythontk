@@ -1013,15 +1013,18 @@ class ShotStore(_ShotStoreInternal):
 
     @classmethod
     def refresh_export_view(cls) -> None:
-        """Republish the active store's export view when it has shots.
+        """Republish the active store's export view.
 
         The canonical, no-arg pre-export refresh for the Shots system.  A no-op
-        when no store is active or it has no shots (leaving no empty carrier
-        behind), and — via the :meth:`publish_export_view` hook — a no-op in the
-        pure core until a DCC subclass supplies a real projection.
+        when no store is active, and — via the :meth:`publish_export_view`
+        hook — a no-op in the pure core until a DCC subclass supplies a real
+        projection.  An *empty* store still publishes: the projection clears
+        any previously published channels (without ever creating a carrier),
+        so deleting the last shot can't leave stale takes riding into the
+        next export.
         """
         store = cls.active()
-        if store is not None and store.shots:
+        if store is not None:
             store.publish_export_view()
 
     #: Explicit user opt-out (``disable_auto_export``) — session-global; wins

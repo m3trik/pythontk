@@ -77,6 +77,16 @@ class ImgUtils(HelpMixin):
     # Backward-compatible alias for the historical flat list (discovery surfaces).
     texture_file_types = list(recognized)
 
+    # Encode-only delivery containers, written through an external encoder
+    # rather than PIL/cv2. Deliberately NOT folded into ``image_formats`` /
+    # ``writable``: nothing here can be read back into an Image, and panels
+    # persist their format combos by INDEX (``OutputTemplates.format_choices``
+    # documents that position is a compatibility contract), so growing
+    # ``writable`` would re-point every saved selection. A surface that wants
+    # to offer KTX2 appends this set explicitly, gated on
+    # :meth:`ktx2_available`.
+    DELIVERY_FORMATS = ("ktx2",)
+
     # Plain photographic raster formats (dotted, lowercase) — the directory-scan
     # set shared by the photogrammetry/SfM ingest cluster (ExposureEqualizer /
     # ImageCurator / MaskGenerator). A deliberate semantic subset of
@@ -129,6 +139,10 @@ class ImgUtils(HelpMixin):
         "tga": {"I;16": "RGB"},
         # Always palettised, whatever goes in.
         "gif": {"L": "P", "LA": "P", "RGB": "P", "RGBA": "P", "I;16": "P"},
+        # Basis Universal (KTX2) is 8-bit LDR: 16-bit grayscale flattens (a
+        # precision loss the optimizer announces), palettes unroll. The encoder
+        # stages exactly this stored mode to the PNG toktx reads.
+        "ktx2": {"1": "L", "P": "RGB", "PA": "RGBA", "I;16": "L"},
     }
 
     @classmethod
@@ -185,6 +199,10 @@ class ImgUtils(HelpMixin):
     # Optional external DDS codec for block formats Pillow can't write (BC7, BC6H).
     # Registered via :meth:`register_dds_codec`; ``None`` until an extension installs one.
     _dds_codec = None
+
+    # Optional KTX2/Basis encoder override. ``None`` = discover the built-in
+    # ``toktx`` wrapper on demand — see :meth:`resolve_ktx2_encoder`.
+    _ktx2_encoder = None
 
     bit_depth = {  # Get bit depth from mode.
         "1": 1,
@@ -539,6 +557,65 @@ class ImgUtils(HelpMixin):
         cls._dds_codec = codec
 
     @classmethod
+    def register_ktx2_encoder(cls, encoder) -> None:
+        """Register the KTX2/Basis encoder ``save_image`` uses for ``.ktx2``.
+
+        The same seam shape as :meth:`register_dds_codec`, with one difference:
+        pythontk ships a default implementation
+        (:class:`~pythontk.img_utils.ktx2_encoder.Ktx2Encoder`, a ``toktx`` CLI
+        wrapper) that is picked up automatically whenever the binary is
+        discoverable — so registration is only for substituting another
+        implementation (or a fake in tests).
+
+        Parameters:
+            encoder: Object exposing ``encode(source, output, codec=...,
+                srgb=..., mipmaps=..., quality=...)`` — the
+                ``Ktx2Encoder.encode`` contract. ``None`` restores built-in
+                discovery.
+        """
+        cls._ktx2_encoder = encoder
+
+    @classmethod
+    def resolve_ktx2_encoder(cls, required: bool = False):
+        """The registered KTX2 encoder, or the built-in ``toktx`` wrapper.
+
+        Parameters:
+            required: If True, raise ``FileNotFoundError`` (naming the install
+                source and the registration seam) instead of returning None.
+
+        Returns:
+            The encoder, or None when unavailable and *required* is False.
+        """
+        if cls._ktx2_encoder is not None:
+            return cls._ktx2_encoder
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        if Ktx2Encoder.available():
+            return Ktx2Encoder()
+        if required:
+            # `Ktx2Encoder.resolve_toktx(required=True)` is expected to raise
+            # this same FileNotFoundError -- but relying on the delegate to
+            # always raise falls through to `return None` (handing "no
+            # encoder" to a caller who explicitly asked for a guaranteed one)
+            # if `available()` says False while `resolve_toktx` unexpectedly
+            # succeeds. Raise unconditionally instead; the message matches
+            # `Ktx2Encoder.resolve_toktx`'s own fix-shaped error verbatim.
+            raise FileNotFoundError(
+                "KTX2 encoding requires 'toktx' (KTX-Software). Install it "
+                "from "
+                "https://github.com/KhronosGroup/KTX-Software/releases and "
+                "ensure it is on PATH, or register a custom encoder via "
+                "ImgUtils.register_ktx2_encoder()."
+            )
+        return None
+
+    @classmethod
+    def ktx2_available(cls) -> bool:
+        """True when ``.ktx2`` output is currently writable — the capability
+        gate a UI checks before offering :attr:`DELIVERY_FORMATS`."""
+        return cls.resolve_ktx2_encoder() is not None
+
+    @classmethod
     def save_image(
         cls,
         image: Union[str, Image.Image],
@@ -547,13 +624,16 @@ class ImgUtils(HelpMixin):
         bit_depth: int = None,
         compression: str = None,
         quality: int = None,
+        colorspace: str = None,
         **kwargs,
     ):
         """Save an image to ``name``, dispatching on the file extension.
 
         Routing follows :attr:`image_formats`: most formats use Pillow; float
-        formats (EXR, HDR) use OpenCV via :meth:`_save_via_cv2`. A recognized but
-        read-only format raises ``ValueError``.
+        formats (EXR, HDR) use OpenCV via :meth:`_save_via_cv2`; the
+        :attr:`DELIVERY_FORMATS` (``.ktx2``) route to the external encoder via
+        :meth:`_save_ktx2`. A recognized but read-only format raises
+        ``ValueError``.
 
         Parameters:
             image (str | PIL.Image.Image): Image object or file path.
@@ -562,18 +642,33 @@ class ImgUtils(HelpMixin):
             bit_depth (int, optional): Target per-channel bit depth. 16 writes a
                 16-bit PNG/TIFF (8-bit sources are promoted); other containers fall
                 back to 8-bit with a warning. 32-bit float is the EXR/HDR path.
-            compression (str, optional): DDS block format (e.g. "DXT5", "BC7").
-                Only honored for ``.dds`` — see :meth:`_save_dds_compressed`.
+            compression (str, optional): GPU compression scheme. For ``.dds`` a
+                block format (e.g. "DXT5", "BC7" — see
+                :meth:`_save_dds_compressed`); for ``.ktx2`` a Basis codec
+                ("UASTC" or "ETC1S" — see :meth:`_save_ktx2`). Ignored elsewhere.
             quality (int, optional): Lossy quality (1-100) for the
-                :attr:`LOSSY_FORMATS` containers. **None means lossless wherever
-                the container offers it** — see :meth:`_apply_lossy_kwargs`. A
-                value passed against a lossless container is reported and ignored.
+                :attr:`LOSSY_FORMATS` containers, and the ETC1S quality dial for
+                ``.ktx2``. **None means lossless wherever the container offers
+                it** — see :meth:`_apply_lossy_kwargs`. A value passed against a
+                lossless container is reported and ignored.
+            colorspace (str, optional): Transfer-function label for containers
+                that carry one — currently ``.ktx2`` ("sRGB"/"linear"; None =
+                sRGB). A label, not a conversion: the loader samples by it, so
+                linear data maps must say so. Ignored by the PIL/cv2 paths.
             **kwargs: Additional arguments forwarded to PIL.Image.save (e.g.,
                 optimize=True, compress_level=9). Ignored for OpenCV-backed formats.
         """
         im = cls.ensure_image(image, mode)  # Now allows optional mode conversion
 
         ext = os.path.splitext(name)[1].lstrip(".").lower()
+
+        # KTX2/Basis routes to the external encoder before every PIL concern:
+        # bit depth (Basis is 8-bit), lossy kwargs, and encoder buffers do not
+        # apply, and the mode fixup happens against the staged PNG instead.
+        if ext in cls.DELIVERY_FORMATS:
+            cls._save_ktx2(im, name, compression, quality, colorspace)
+            return
+
         fmt = cls.image_formats.get(ext)
 
         if fmt is not None and not fmt.write:
@@ -764,6 +859,30 @@ class ImgUtils(HelpMixin):
             f"{cls.PIL_DDS_PIXEL_FORMATS}; for BC7/BC6H install the DDS codec "
             f"extension and register it via ImgUtils.register_dds_codec()."
         )
+
+    @classmethod
+    def _save_ktx2(
+        cls,
+        im: "Image.Image",
+        name: str,
+        compression: Optional[str],
+        quality: Optional[int],
+        colorspace: Optional[str],
+    ) -> None:
+        """Write *im* to ``.ktx2`` through the registered / built-in encoder.
+
+        ``compression`` selects the Basis codec. The bare-call default is UASTC
+        — with no map-type context the quality-safe codec is the only safe one;
+        ``MapOptimizer.resolve_compression`` derives the right codec per map
+        type for the texture pipeline. ``colorspace`` labels the transfer
+        function (None = sRGB, the common case for a bare save); mip levels are
+        always generated — a GPU-compressed texture cannot make its own at
+        runtime.
+        """
+        encoder = cls.resolve_ktx2_encoder(required=True)
+        codec = (compression or "UASTC").upper()
+        srgb = (colorspace or "sRGB").lower() != "linear"
+        encoder.encode(im, name, codec=codec, srgb=srgb, mipmaps=True, quality=quality)
 
     @staticmethod
     def _save_high_bit_depth(im: "Image.Image", name: str, bit_depth: int) -> bool:
@@ -2544,7 +2663,8 @@ class ImgUtils(HelpMixin):
         """Convert a high-bit-depth grayscale image to 8-bit 'L'.
 
         Values above the 8-bit range are treated as 16-bit (0-65535) and
-        scaled down (÷257), not truncated.
+        scaled down (÷257), not truncated. A float source is handed to
+        :meth:`convert_f_to_l`, whose 0..1 full scale this rule would flatten.
 
         Parameters:
             image (str/obj): An image or path to an image.
@@ -2555,12 +2675,59 @@ class ImgUtils(HelpMixin):
         im = cls.ensure_image(image)
         data = np.asarray(im)
 
+        # Float data is the twin's job, and taking this name literally would
+        # destroy it: 0..1 never exceeds 255, so it would skip the rescale and
+        # round straight to 0/1. Dispatch on the dtype rather than trusting the
+        # caller to have picked the matching entry point.
+        if np.issubdtype(data.dtype, np.floating):
+            return cls.convert_f_to_l(im)
+
         if data.dtype != np.uint8:
             if data.max(initial=0) > 255:  # 16-bit range -> scale, don't truncate
                 data = np.clip(data, 0, 65535) / 257.0
             data = np.clip(np.round(data), 0, 255).astype(np.uint8)
 
         return Image.fromarray(data, mode="L")
+
+    @classmethod
+    def convert_f_to_l(cls, image):
+        """Convert a float grayscale image to 8-bit 'L', rescaling the unit range.
+
+        The float twin of :meth:`convert_i_to_l`, and the same trap: Pillow
+        implements "F" -> "L" as a truncation, so a map whose data lives in
+        0..1 -- the float convention, and what an EXR/float-TIFF height or
+        displacement map carries -- collapses to two values, everything below
+        1.0 becoming 0. 0..1 is that convention's full scale exactly as
+        0..65535 is the 16-bit one, so it maps onto the whole 0..255.
+
+        Out-of-range data is CLAMPED, not normalized: dividing by the actual
+        maximum would silently tonemap, changing every texel's meaning to make
+        one bright one fit. A genuine HDR image that needs its range preserved
+        wants :meth:`encode_hdr_for_web` (which keeps the scalar so a viewer
+        can multiply it back), not an 8-bit delivery map.
+
+        An integer source is handed to :meth:`convert_i_to_l`, whose full scale
+        the 0..1 clamp here would drive to white.
+
+        Parameters:
+            image (str/obj): An image or path to an image.
+
+        Returns:
+            (PIL.Image.Image) image in "L" mode.
+        """
+        im = cls.ensure_image(image)
+        data = np.asarray(im)
+
+        # Integer data is the twin's job, and taking this name literally would
+        # destroy it: the 0..1 clamp below sends every value >= 1 to white.
+        # Dispatch on the dtype rather than trusting the caller to have picked
+        # the matching entry point.
+        if not np.issubdtype(data.dtype, np.floating):
+            return cls.convert_i_to_l(im)
+
+        return Image.fromarray(
+            np.round(np.clip(data, 0.0, 1.0) * 255.0).astype(np.uint8), mode="L"
+        )
 
     @classmethod
     def pack_channels(
