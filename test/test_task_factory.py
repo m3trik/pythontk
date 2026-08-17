@@ -246,6 +246,56 @@ class TaskFactoryTest(unittest.TestCase):
         self.assertFalse(r._deferred_restores)
 
 
+    def test_deferred_context_enters_now_and_exits_at_restore_time(self):
+        """A context manager staged here is the SAME primitive a script would
+        `with`: entered immediately, exited LIFO from run_deferred_restores."""
+        import contextlib
+
+        r = _Recorder()
+
+        @contextlib.contextmanager
+        def scope(tag):
+            r.calls.append((f"enter_{tag}",))
+            try:
+                yield
+            finally:
+                r.calls.append((f"exit_{tag}",))
+
+        self.assertTrue(r.stage_deferred_context("a", scope("a")))
+        self.assertTrue(r.stage_deferred_context("b", scope("b")))
+        self.assertEqual([c[0] for c in r.calls], ["enter_a", "enter_b"])
+        r.run_deferred_restores()
+        self.assertEqual(
+            [c[0] for c in r.calls], ["enter_a", "enter_b", "exit_b", "exit_a"]
+        )
+
+    def test_deferred_context_first_wins_and_does_not_enter_a_loser(self):
+        import contextlib
+
+        r = _Recorder()
+
+        @contextlib.contextmanager
+        def scope(tag):
+            r.calls.append((f"enter_{tag}",))
+            yield
+
+        self.assertTrue(r.stage_deferred_context("k", scope("first")))
+        self.assertFalse(r.stage_deferred_context("k", scope("second")))
+        self.assertEqual([c[0] for c in r.calls], ["enter_first"])
+
+    def test_deferred_context_composes_via_exit_stack(self):
+        """Several scopes under ONE key (the exporter's snapshot + temp-dir pair)."""
+        import contextlib
+
+        r = _Recorder()
+        stack = contextlib.ExitStack()
+        stack.callback(lambda: r.calls.append(("cleanup_2",)))
+        stack.callback(lambda: r.calls.append(("cleanup_1",)))
+        r.stage_deferred_context("pair", stack)
+        r.run_deferred_restores()
+        self.assertEqual([c[0] for c in r.calls], ["cleanup_1", "cleanup_2"])
+
+
 class CheckCountTest(unittest.TestCase):
     """The counts the DCC exporters print as "Checks Passed: N/N"."""
 

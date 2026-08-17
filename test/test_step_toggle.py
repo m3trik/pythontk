@@ -75,6 +75,40 @@ class StepToggleTest(BaseTestCase):
         self.clock.tick(5.0)
         self.assertEqual(toggle.advance(), 1)
 
+    def test_restart_policy_acts_again_after_a_pause_instead_of_going_home(self):
+        """A frame key must re-frame after the user has worked for a while — never
+        teleport them back to the view they left. Home stays reachable only by
+        running the whole cycle inside the timeout."""
+        toggle = StepToggle(steps=2, timeout=2.0, stale="restart", clock=self.clock)
+        self.assertEqual(toggle.advance(), 1)
+        self.clock.tick(5.0)
+        self.assertEqual(toggle.advance(), 1)  # stale -> step 1 again, not home
+        self.assertTrue(toggle.began_cycle)  # ... and it is a new session
+        self.assertEqual(toggle.advance(), 2)  # rapid presses still step in ...
+        self.assertEqual(toggle.advance(), 0)  # ... and complete to home
+
+    def test_restart_policy_from_the_deepest_step(self):
+        toggle = StepToggle(steps=2, stale="restart", clock=self.clock)
+        toggle.advance()
+        toggle.advance()
+        self.assertEqual(toggle.state, 2)
+        self.clock.tick(5.0)
+        self.assertEqual(toggle.advance(), 1)
+
+    def test_stale_policy_can_be_overridden_per_press(self):
+        toggle = self._toggle(steps=2)  # constructed with the default "home"
+        toggle.advance()
+        self.clock.tick(5.0)
+        self.assertEqual(toggle.advance(stale="restart"), 1)
+        self.clock.tick(5.0)
+        self.assertEqual(toggle.advance(), 0)  # back on the instance policy
+
+    def test_unknown_stale_policy_is_rejected(self):
+        with self.assertRaises(ValueError):
+            StepToggle(stale="teleport")
+        with self.assertRaises(ValueError):
+            self._toggle().advance(stale="teleport")
+
     def test_press_inside_the_window_steps_deeper(self):
         toggle = self._toggle(steps=2, timeout=2.0)
         self.assertEqual(toggle.advance(), 1)
@@ -196,15 +230,22 @@ class StepToggleTest(BaseTestCase):
     def test_scales_single_step_is_unscaled(self):
         self.assertEqual(StepToggle.scales(1), [1.0])
 
-    def test_scales_ascend_and_start_gentler_as_steps_grow(self):
+    def test_scales_first_step_is_the_ideal_and_the_rest_ascend(self):
         two, three = StepToggle.scales(2), StepToggle.scales(3)
         self.assertEqual(len(two), 2)
         self.assertEqual(len(three), 3)
+        # The first press lands exactly on the caller's ideal however long the
+        # cycle is — a softened start read as the key undershooting.
+        self.assertEqual(two[0], 1.0)
+        self.assertEqual(three[0], 1.0)
         self.assertLess(two[0], two[1])
-        self.assertLess(three[0], three[1])
         self.assertLess(three[1], three[2])
-        self.assertLess(three[0], two[0])  # longer cycle -> wider first step
-        self.assertGreater(three[-1], two[-1])  # ... and steps in further
+        self.assertGreater(three[-1], two[-1])  # a longer cycle steps in further
+
+    def test_scales_spread_opts_into_a_softened_start(self):
+        two, three = StepToggle.scales(2, spread=0.15), StepToggle.scales(3, spread=0.15)
+        self.assertLess(two[0], 1.0)
+        self.assertLess(three[0], two[0])  # longer cycle -> gentler first step
 
     def test_scales_gain_is_per_step(self):
         scales = StepToggle.scales(3, spread=0.0, gain=2.0)

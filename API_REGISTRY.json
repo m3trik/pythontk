@@ -1,7 +1,7 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-08-15",
+  "generated_at": "2026-08-17",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -127,7 +127,7 @@
         {
           "name": "CoreUtils",
           "summary": "",
-          "line": 14,
+          "line": 16,
           "bases": [
             "HelpMixin"
           ],
@@ -138,7 +138,7 @@
               "kind": "staticmethod",
               "signature": "(func: Callable) -> Any",
               "summary": "Decorator that converts a method with a single self argument into a property",
-              "line": 18,
+              "line": 20,
               "deprecated": false
             },
             {
@@ -147,7 +147,7 @@
               "kind": "staticmethod",
               "signature": "(func=None, arg_name=None, threading=False)",
               "summary": "A decorator to make a function accept list-like arguments and return a list of results.",
-              "line": 44,
+              "line": 46,
               "deprecated": false
             },
             {
@@ -156,7 +156,7 @@
               "kind": "classmethod",
               "signature": "(cls, lst, orig=None)",
               "summary": "Return the list element if the given iterable only contains a single element.",
-              "line": 119,
+              "line": 121,
               "deprecated": false
             },
             {
@@ -165,7 +165,7 @@
               "kind": "staticmethod",
               "signature": "(obj, **attributes)",
               "summary": "Set attributes for a given object.",
-              "line": 143,
+              "line": 145,
               "deprecated": false
             },
             {
@@ -174,7 +174,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc=[], exc=[])",
               "summary": "Get attributes for a given object.",
-              "line": 157,
+              "line": 159,
               "deprecated": false
             },
             {
@@ -183,7 +183,7 @@
               "kind": "staticmethod",
               "signature": "(cls, attr)",
               "summary": "This function checks whether a class has a specific static attribute by using `inspect.getattr_stat…",
-              "line": 172,
+              "line": 174,
               "deprecated": false
             },
             {
@@ -192,7 +192,16 @@
               "kind": "staticmethod",
               "signature": "(obj, return_name=False, module=None, include=[], exclude=[], filter_by_base_type=False)",
               "summary": "Get the base class of a custom object.",
-              "line": 196,
+              "line": 198,
+              "deprecated": false
+            },
+            {
+              "name": "teardown_guard",
+              "qualname": "CoreUtils.teardown_guard",
+              "kind": "staticmethod",
+              "signature": "(logger=None, what: str = 'state')",
+              "summary": "Run a restore step so that a failure is LOGGED, never raised.",
+              "line": 266,
               "deprecated": false
             },
             {
@@ -201,7 +210,7 @@
               "kind": "classmethod",
               "signature": "(cls, sequence, name=None, query=False)",
               "summary": "Toggle between numbers in a given sequence.",
-              "line": 265,
+              "line": 294,
               "deprecated": false
             },
             {
@@ -210,7 +219,7 @@
               "kind": "classmethod",
               "signature": "(cls, a, b, tolerance=0.0)",
               "summary": "Check if the two numberical values are within a given tolerance.",
-              "line": 292,
+              "line": 321,
               "deprecated": false
             },
             {
@@ -219,7 +228,7 @@
               "kind": "staticmethod",
               "signature": "(lst, ratio=1.0)",
               "summary": "Random elements from the given list will be returned with a quantity determined by the given ratio.",
-              "line": 323,
+              "line": 352,
               "deprecated": false
             },
             {
@@ -228,7 +237,7 @@
               "kind": "staticmethod",
               "signature": "(args: Tuple) -> Tuple[Union[Any, None], Tuple]",
               "summary": "Parse method arguments to determine if the function is an instance method or static method.",
-              "line": 347,
+              "line": 376,
               "deprecated": false
             }
           ]
@@ -2601,7 +2610,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 114,
+              "line": 119,
               "deprecated": false
             },
             {
@@ -2610,7 +2619,7 @@
               "kind": "property",
               "signature": "(self) -> List[str]",
               "summary": "Files written by the most recent batch, in write order.",
-              "line": 122,
+              "line": 127,
               "deprecated": false
             },
             {
@@ -2619,7 +2628,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Clear per-session state (masks, progress counters).",
-              "line": 131,
+              "line": 136,
               "deprecated": false
             },
             {
@@ -2628,7 +2637,7 @@
               "kind": "method",
               "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> BatchResult",
               "summary": "Drive a full composite → retry-with-mask → re-composite cycle.",
-              "line": 143,
+              "line": 149,
               "deprecated": false
             },
             {
@@ -2637,7 +2646,7 @@
               "kind": "method",
               "signature": "(self, output_dir: str, files: Optional[List[str]] = None) -> List[str]",
               "summary": "Post-process composited output for a target workflow.",
-              "line": 171,
+              "line": 198,
               "deprecated": false
             },
             {
@@ -2646,7 +2655,7 @@
               "kind": "method",
               "signature": "(self, sorted_images: SortedImages, output_dir: str, name: str = '') -> SortedImages",
               "summary": "Composite each map type and write the result.",
-              "line": 280,
+              "line": 307,
               "deprecated": false
             },
             {
@@ -2655,7 +2664,7 @@
               "kind": "method",
               "signature": "(self, failed: SortedImages, name: str) -> SortedImages",
               "summary": "Fill the masked area of each failed layer with the map-type's",
-              "line": 297,
+              "line": 325,
               "deprecated": false
             }
           ]
@@ -7291,7 +7300,7 @@
         {
           "name": "StepToggle",
           "summary": "A press stepper: ``0`` (home) -> ``1`` -> ...",
-          "line": 25,
+          "line": 33,
           "bases": [],
           "members": [
             {
@@ -7300,7 +7309,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, **kwargs) -> 'StepToggle'",
               "summary": "The shared toggle registered under *name*, created on first call.",
-              "line": 73,
+              "line": 95,
               "deprecated": false
             },
             {
@@ -7309,7 +7318,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: Optional[str] = None) -> None",
               "summary": "Drop the shared toggle *name* (or every one when ``None``).",
-              "line": 87,
+              "line": 109,
               "deprecated": false
             },
             {
@@ -7318,7 +7327,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "The current step: ``0`` at home, else ``1..steps``.",
-              "line": 96,
+              "line": 118,
               "deprecated": false
             },
             {
@@ -7327,7 +7336,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "True while the toggle sits at its home (un-stepped) state.",
-              "line": 101,
+              "line": 123,
               "deprecated": false
             },
             {
@@ -7336,7 +7345,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "True when the last :meth:`advance` *started* a cycle — the moment to",
-              "line": 106,
+              "line": 128,
               "deprecated": false
             },
             {
@@ -7345,25 +7354,25 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Return to home without acting — state, timing, context and payload.",
-              "line": 118,
+              "line": 141,
               "deprecated": false
             },
             {
               "name": "advance",
               "qualname": "StepToggle.advance",
               "kind": "method",
-              "signature": "(self, steps: Optional[int] = None, context: Any = None, timeout: Optional[float] = None) -> int",
+              "signature": "(self, steps: Optional[int] = None, context: Any = None, timeout: Optional[float] = None, stale: Optional[str] = None) -> int",
               "summary": "Register a press and return the new state.",
-              "line": 126,
+              "line": 149,
               "deprecated": false
             },
             {
               "name": "scales",
               "qualname": "StepToggle.scales",
               "kind": "staticmethod",
-              "signature": "(steps: int, spread: float = 0.15, gain: float = 1.45) -> List[float]",
+              "signature": "(steps: int, spread: float = 0.0, gain: float = 1.45) -> List[float]",
               "summary": "Multiplier ramp for an ``N``-step toggle — one factor per step.",
-              "line": 173,
+              "line": 200,
               "deprecated": false
             }
           ]
@@ -7433,12 +7442,21 @@
               "deprecated": false
             },
             {
+              "name": "stage_deferred_context",
+              "qualname": "TaskFactory.stage_deferred_context",
+              "kind": "method",
+              "signature": "(self, key: str, cm) -> bool",
+              "summary": "Enter context manager *cm* now and stage its exit as the deferred restore.",
+              "line": 67,
+              "deprecated": false
+            },
+            {
               "name": "run_deferred_restores",
               "qualname": "TaskFactory.run_deferred_restores",
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Run + clear every restore staged by :meth:`stage_deferred_restore`.",
-              "line": 67,
+              "line": 91,
               "deprecated": false
             },
             {
@@ -7447,7 +7465,7 @@
               "kind": "method",
               "signature": "(self, tasks: Dict[str, Any]) -> bool",
               "summary": "Run tasks and checks, returning True if all checks pass, False if any fail.",
-              "line": 189,
+              "line": 213,
               "deprecated": false
             },
             {
@@ -7456,7 +7474,7 @@
               "kind": "method",
               "signature": "(self, task_definitions: Dict[str, Any], check_definitions: Dict[str, Any]) -> bool",
               "summary": "Alternative method to run tasks and checks separately with better organization.",
-              "line": 201,
+              "line": 225,
               "deprecated": false
             }
           ]

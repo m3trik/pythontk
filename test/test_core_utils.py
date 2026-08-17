@@ -84,5 +84,39 @@ class TestGetDerivedType(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestTeardownGuard(unittest.TestCase):
+    """The one teardown policy: log, never raise, never mask the body's error."""
+
+    def test_restore_failure_is_logged_not_raised(self):
+        import logging
+
+        log = logging.getLogger("teardown_guard_test")
+        with self.assertLogs(log, level="WARNING") as captured:
+            with CoreUtils.teardown_guard(log, "widget state"):
+                raise RuntimeError("cannot restore")
+        self.assertIn("widget state not fully restored", captured.output[0])
+
+    def test_body_error_survives_a_failing_restore(self):
+        import logging
+
+        log = logging.getLogger("teardown_guard_test")
+
+        def scope():
+            try:
+                raise ValueError("the real error")
+            finally:
+                with CoreUtils.teardown_guard(log, "x"):
+                    raise RuntimeError("restore also failed")
+
+        with self.assertLogs(log, level="WARNING"):
+            with self.assertRaises(ValueError):
+                scope()
+
+    def test_default_logger_when_none_given(self):
+        with self.assertLogs("pythontk.core_utils._core_utils", level="WARNING"):
+            with CoreUtils.teardown_guard(what="thing"):
+                raise RuntimeError("boom")
+
+
 if __name__ == "__main__":
     unittest.main()

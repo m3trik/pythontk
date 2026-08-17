@@ -98,6 +98,11 @@ class MapCompositor(ptk.LoggingMixin):
         # (e.g. "skip auto-invert because Normal_OpenGL is already on
         # disk") must reason about the original source set.
         self._batch_map_types: set = set()
+        # Background each retried type was filled with, keyed by map type.
+        # The second composite pass uses it instead of re-probing corners —
+        # a correctly-masked island that touches a corner would otherwise
+        # make the filled layer look non-uniform again and fail silently.
+        self._known_bg: Dict[str, Tuple[int, int, int, int]] = {}
         # Every file this batch wrote to disk, in write order. Scopes the
         # output-template post-pass to the batch's own output — without it
         # the post-pass would re-scan output_dir and sweep in unrelated
@@ -138,6 +143,7 @@ class MapCompositor(ptk.LoggingMixin):
         self.total_progress = 0
         self.total_len = 0
         self._batch_map_types = set()
+        self._known_bg = {}
         self._written_paths = []
 
     def process_batch(
@@ -148,6 +154,7 @@ class MapCompositor(ptk.LoggingMixin):
     ) -> BatchResult:
         """Drive a full composite → retry-with-mask → re-composite cycle."""
         self.reset()
+        sorted_images = self._normalize_bit_depth(sorted_images)
         self.total_len = sum(len(layers) for layers in sorted_images.values())
         self._batch_map_types = set(sorted_images.keys())
         failed = self.composite_images(sorted_images, output_dir, name)
@@ -161,10 +168,30 @@ class MapCompositor(ptk.LoggingMixin):
         self.logger.info(
             "Processing additional maps that require a mask ..", preset="italic"
         )
+        if not self.masks:
+            # Seeded lazily — a clean batch never pays for mask creation.
+            self.masks = self._seed_masks(sorted_images)
+        if not self.masks:
+            # Nothing to key a mask off: no type has a detectable background,
+            # i.e. the sources are dilated edge-to-edge (Painter's default
+            # infinite padding). One diagnosis beats a per-file error for
+            # each layer that was never going to succeed.
+            self.logger.error(
+                "No map type has a detectable background (checked "
+                + ", ".join(f"<b>{typ}</b>" for typ in sorted_images)
+                + ") — the sources are painted edge-to-edge, so nothing "
+                "marks where each object ends."
+            )
+            return BatchResult.MASK_FAILURE
         retried = self.retry_failed(failed, name)
         if not retried:
             return BatchResult.MASK_FAILURE
-        self.composite_images(retried, output_dir, name)
+        still_failed = self.composite_images(retried, output_dir, name)
+        for typ, layers in still_failed.items():
+            for filepath, _ in layers:
+                self.logger.error(f"Composite failed: <b>{name}_{typ}: {filepath}</b>")
+        if still_failed:
+            return BatchResult.MASK_FAILURE
         self.apply_output_template(output_dir)
         return BatchResult.RETRIED
 
@@ -288,6 +315,7 @@ class MapCompositor(ptk.LoggingMixin):
         Returns the subset of map types whose layers had non-uniform
         backgrounds — those defer to :meth:`retry_failed`.
         """
+        sorted_images = self._normalize_bit_depth(sorted_images)
         failed: SortedImages = {}
         for typ, layers in sorted_images.items():
             if not self._composite_type(typ, layers, sorted_images, output_dir, name):
@@ -298,10 +326,12 @@ class MapCompositor(ptk.LoggingMixin):
         """Fill the masked area of each failed layer with the map-type's
         known default background, so a second composite pass can succeed.
 
-        Masks were captured from a *different* map type's layers during the
-        first pass and are aligned positionally — ``self.masks[n]`` is
+        Masks come from :meth:`_seed_masks` (a union over every map type in
+        the batch) and are aligned positionally — ``self.masks[n]`` is
         assumed to apply to the n-th layer of any map type. This relies on
-        all map types having the same per-layer ordering.
+        all map types having the same per-layer ordering. The fill colour
+        is recorded per type in ``_known_bg`` so the second composite pass
+        uses it instead of re-probing corners.
         """
         registry = ptk.MapRegistry()
         map_backgrounds = registry.get_map_backgrounds()
@@ -309,6 +339,14 @@ class MapCompositor(ptk.LoggingMixin):
 
         out: SortedImages = {}
         for typ, layers in failed.items():
+            key = ptk.MapFactory.resolve_map_type(typ)
+            bg = map_backgrounds.get(key)
+            if bg is None:
+                # No registered default: average the first layer's corners
+                # once so every layer of the type shares ONE fill colour.
+                bg = ptk.get_background(layers[0][1], "RGBA", average=True)
+            bg = tuple(bg)
+            target_mode = map_modes.get(key)
             for n, (filepath, image) in enumerate(layers):
                 try:
                     mask = self.masks[n]
@@ -317,75 +355,161 @@ class MapCompositor(ptk.LoggingMixin):
                         f"Composite failed: <b>{name}_{typ}: {filepath}</b>"
                     )
                     continue
-
-                key = ptk.MapFactory.resolve_map_type(typ)
-                bg = map_backgrounds.get(key)
-                if bg is None:
-                    bg = ptk.get_background(image, "RGBA", average=True)
-                    im = ptk.fill_masked_area(image, bg, mask)
-                else:
-                    im = ptk.fill_masked_area(image, bg, mask)
-                    target_mode = map_modes.get(key)
-                    if target_mode is not None:
-                        im = im.convert(target_mode)
-
+                im = ptk.fill_masked_area(image, bg, mask)
+                if target_mode is not None:
+                    im = im.convert(target_mode)
                 out.setdefault(typ, []).append((filepath, im))
+            if typ in out:
+                self._known_bg[typ] = bg
         return out
 
-    def _seed_masks(
-        self,
-        sorted_images: SortedImages,
-        fallback_typ: str,
-        fallback_layers: Layers,
-        fallback_bg: Tuple[int, int, int, int],
-    ) -> List[Image.Image]:
-        """Build per-layer masks from every map type in the batch whose
-        layers carry an alpha channel over a transparent background.
+    @staticmethod
+    def _normalize_bit_depth(sorted_images: SortedImages) -> SortedImages:
+        """Reduce high-bit-depth grayscale layers (``I``, ``I;16*``, ``F``)
+        to 8-bit ``L`` up front, rescaling the full range.
 
-        Per-layer alpha masks are OR-combined across sources so an
-        antialiased / noisy boundary in one source is filled in by the
-        others — far more robust than the legacy single-source,
-        exact-color-match approach.
-
-        Falls back to :func:`ptk.create_mask` against ``fallback_typ`` if
-        no alpha-capable source qualifies.
+        The composite pipeline is 8-bit RGBA (``alpha_composite`` /
+        ``paste``), and Pillow implements ``I;16 -> L/RGBA`` as a CLIP at
+        255 — a Painter 16-bit Height map (mid-grey ~32767) converted
+        implicitly loaded as solid white: its corners looked uniform, the
+        composite came out white, and any mask seeded from it was empty.
+        Routing through :meth:`ptk.ImgUtils.convert_i_to_l` (÷257, dtype-
+        dispatched so float sources take the 0..1 rule) fixes every
+        downstream ``convert`` at once. Idempotent — 8-bit layers pass
+        through untouched.
         """
-        n_layers = len(fallback_layers)
-        sources: List[Tuple[str, Layers]] = []
+        out: SortedImages = {}
+        for typ, layers in sorted_images.items():
+            out[typ] = [
+                (
+                    (fp, ptk.ImgUtils.convert_i_to_l(im))
+                    if im.mode == "I" or im.mode.startswith(("I;", "F"))
+                    else (fp, im)
+                )
+                for fp, im in layers
+            ]
+        return out
+
+    # Share of a layer's pixels the candidate bg must occupy for a type to
+    # count as a mask source. Guards against a corner colour that is merely
+    # content: real padding-off exports run 40-70% bg (a tightly packed set
+    # still >10%), whereas an edge-to-edge (fully dilated) export's most
+    # common colour is a flat *content* value that rarely exceeds a few
+    # percent outside Height/Normal.
+    _BG_MIN_SHARE = 0.1
+
+    @classmethod
+    def _solid_background(
+        cls, arrays: List[np.ndarray]
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """Detect a type's background across its layers' RGBA arrays.
+
+        Four identical corners are the clean signal, but a padding-off
+        export routinely runs an island into a corner, so a majority (>= 2
+        of 4, pooled over every layer) is accepted when that colour also
+        holds :attr:`_BG_MIN_SHARE` of every layer. A transparent bg is
+        the same rule keyed on alpha alone — exporters write arbitrary RGB
+        under alpha 0. Returns the RGBA tuple, or None when nothing
+        qualifies.
+        """
+        counts: Dict[Tuple[int, int, int, int], int] = {}
+        for arr in arrays:
+            for px in (arr[0, 0], arr[0, -1], arr[-1, 0], arr[-1, -1]):
+                key = tuple(int(v) for v in px)
+                counts[key] = counts.get(key, 0) + 1
+        if not counts:
+            return None
+        # Rank the corner colours by the AREA they actually cover, not by how
+        # many corners they touch. A padding-off export runs content into the
+        # corners, so a large island can tie the true background on corner
+        # count -- and `max()` breaks a tie by scan order, which is arbitrary.
+        # Picking the loser there inverts every mask: the composite then fills
+        # the islands instead of the background, and because the wrong colour
+        # is recorded the second pass "succeeds" via `_known_bg`, so the batch
+        # reports RETRIED over silently destroyed maps. Coverage cannot tie
+        # that way, and the gates below are unchanged.
+        best_share, best = -1.0, None
+        for candidate, n in counts.items():
+            if n < 2 * len(arrays):
+                continue
+            share = min(
+                float(cls._background_pixels(arr, candidate).mean())
+                for arr in arrays
+            )
+            if share >= cls._BG_MIN_SHARE and share > best_share:
+                best_share, best = share, candidate
+        return best
+
+    @staticmethod
+    def _background_pixels(
+        arr: np.ndarray, bg: Tuple[int, int, int, int]
+    ) -> np.ndarray:
+        """Boolean map of pixels that are ``bg``: alpha == 0 for a
+        transparent bg, exact RGBA match for an opaque one."""
+        if bg[3] == 0:
+            return arr[:, :, 3] == 0
+        return np.all(arr == np.array(bg, dtype=arr.dtype), axis=-1)
+
+    def _seed_masks(self, sorted_images: SortedImages) -> List[Image.Image]:
+        """Build one content mask per layer index from EVERY map type in the
+        batch that has a detectable background (:meth:`_solid_background`,
+        transparent or opaque).
+
+        Per-layer masks are OR-combined across types: content that is flat
+        in one map (a Height map's mid-grey is both its bg AND its
+        undisplaced surface; a Normal map's ``(127,127,255)`` likewise) is
+        textured in another, so no single type is trusted to outline the
+        islands. Types whose layer count differs from the majority are
+        skipped so positional alignment holds.
+
+        Returns ``[]`` when no type qualifies — the caller reports that.
+        """
+        if not sorted_images:
+            return []
+        n_layers = max(len(layers) for layers in sorted_images.values())
+        combined: List[Optional[np.ndarray]] = [None] * n_layers
+        used: List[str] = []
         for typ, layers in sorted_images.items():
             if len(layers) != n_layers:
                 continue
-            first_image = layers[0][1]
-            if "A" not in first_image.getbands():
+            arrays = [np.asarray(im.convert("RGBA")) for _, im in layers]
+            bg = self._solid_background(arrays)
+            if bg is None:
                 continue
-            bg = ptk.get_background(first_image, "RGBA")
-            if not bg or bg[3] != 0:
-                continue
-            sources.append((typ, layers))
+            used.append(typ)
+            for i, arr in enumerate(arrays):
+                content = ~self._background_pixels(arr, bg)
+                combined[i] = content if combined[i] is None else (combined[i] | content)
 
-        if not sources:
-            self.logger.info(
-                f"Attempting to create masks using source <b>{fallback_typ}</b> ..",
-                preset="italic",
-            )
-            return ptk.create_mask([img for _, img in fallback_layers], fallback_bg)
-
+        if not used:
+            return []
         self.logger.info(
-            f"Creating masks from <b>{len(sources)}</b> alpha source(s): "
-            f"{', '.join(typ for typ, _ in sources)}",
+            f"Creating masks from <b>{len(used)}</b> source type(s): {', '.join(used)}",
             preset="italic",
         )
-
-        masks: List[Image.Image] = []
-        for i in range(n_layers):
-            combined: Optional[np.ndarray] = None
-            for _, layers in sources:
-                im = layers[i][1].convert("RGBA")
-                content = np.array(im)[:, :, 3] > 0
-                combined = content if combined is None else (combined | content)
-            mask_arr = combined.astype(np.uint8) * 255
-            masks.append(Image.fromarray(mask_arr, mode="L"))
+        masks = [Image.fromarray(c.astype(np.uint8) * 255, mode="L") for c in combined]
+        self._warn_on_mask_overlap(masks)
         return masks
+
+    def _warn_on_mask_overlap(self, masks: List[Image.Image]) -> None:
+        """Layers that combine into one map should occupy disjoint UV
+        regions; heavy overlap means the sets share UV space or the
+        detected background is really content — the composite there
+        resolves last-layer-wins."""
+        arrs = [np.array(m) > 0 for m in masks]
+        for i in range(len(arrs)):
+            for j in range(i + 1, len(arrs)):
+                union = (arrs[i] | arrs[j]).sum()
+                if not union:
+                    continue
+                overlap = (arrs[i] & arrs[j]).sum() / union
+                if overlap > 0.05:
+                    self.logger.warning(
+                        f"Layer masks {i} and {j} overlap by {overlap:.0%} of "
+                        "their union — an object baked into both sets, shared "
+                        "UV space, or a 'background' that is really content; "
+                        "overlapping regions resolve last-layer-wins."
+                    )
 
     def _composite_type(
         self,
@@ -412,17 +536,12 @@ class MapCompositor(ptk.LoggingMixin):
         target_mode = map_modes.get(key, mode)
         bit_depth = ptk.ImgUtils.format_bit_depth(target_mode)
 
-        # PIL mode "I" (32bit int) cannot be created directly; route via RGB.
-        if mode == "I":
-            first_image = first_image.convert("RGB")
-
-        bg = ptk.get_background(first_image, "RGBA")
-        bg2 = ptk.get_background(second_image, "RGBA")
-        if not (bg and bg == bg2):
-            return False  # non-uniform / mismatched bg → mask retry path
-
-        if not self.masks and bg[3] == 0:
-            self.masks = self._seed_masks(sorted_images, typ, layers, bg)
+        bg = self._known_bg.get(typ)
+        if bg is None:
+            bg = ptk.get_background(first_image, "RGBA")
+            bg2 = ptk.get_background(second_image, "RGBA")
+            if not (bg and bg == bg2):
+                return False  # non-uniform / mismatched bg → mask retry path
 
         title = (
             f"{typ.rstrip('_')} {target_mode} {bit_depth} "
@@ -440,7 +559,7 @@ class MapCompositor(ptk.LoggingMixin):
             fill_bg = bg
 
         composited = self._alpha_composite_layers(
-            first_image, remaining, bg, mode, filepath0, fill_bg=fill_bg
+            first_image, remaining, bg, filepath0, fill_bg=fill_bg
         )
 
         # Replace src RGB with fill_bg at partial-alpha pixels so the paste
@@ -526,7 +645,6 @@ class MapCompositor(ptk.LoggingMixin):
         first_image: Image.Image,
         remaining: Layers,
         bg: Tuple[int, int, int, int],
-        mode: str,
         first_filepath: str,
         fill_bg: Optional[Tuple[int, int, int, int]] = None,
     ) -> Image.Image:
@@ -536,8 +654,6 @@ class MapCompositor(ptk.LoggingMixin):
         self._tick(first_filepath)
         for filepath, im in remaining:
             self._tick(filepath)
-            if mode == "I":
-                im = im.convert("RGB")
             im = ptk.replace_color(im, from_color=bg, mode="RGBA")
             if fill_bg is not None:
                 im = self._fill_transparent_rgb(im, fill_bg)

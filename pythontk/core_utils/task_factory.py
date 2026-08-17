@@ -64,6 +64,30 @@ class TaskFactory:
         self._deferred_restores[key] = restore
         return True
 
+    def stage_deferred_context(self, key: str, cm) -> bool:
+        """Enter context manager *cm* now and stage its exit as the deferred restore.
+
+        The bridge between scope-shaped cleanup and the deferred lifetime: a
+        ``snapshot -> mutate -> restore`` primitive is written ONCE as a
+        context manager (usable as a plain ``with`` by a script), and a task
+        whose mutation the real work must still see hands the same object
+        here — its ``__exit__`` then runs LIFO, isolated, from
+        :meth:`run_deferred_restores` exactly like a hand-rolled restore.
+        A ``contextlib.ExitStack`` composes several such scopes under one key.
+
+        Same first-wins keying as :meth:`stage_deferred_restore`; when the key
+        is already staged *cm* is NOT entered (nothing to undo).
+
+        Returns:
+            True when *cm* was entered and its exit staged.
+        """
+        if key in self._deferred_restores:
+            return False
+        cm.__enter__()
+        return self.stage_deferred_restore(
+            key, lambda: cm.__exit__(None, None, None)
+        )
+
     def run_deferred_restores(self) -> None:
         """Run + clear every restore staged by :meth:`stage_deferred_restore`.
 

@@ -184,6 +184,68 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
         Image.new("RGBA", (4, 4), color).save(path)
         return path
 
+    @staticmethod
+    def _edge_island(cols, size=16, fg=255, bg=0, mode="L"):
+        """A flat island running to the UV edge -- a padding-off export."""
+        im = Image.new(mode, (size, size), bg)
+        for y in range(size):
+            for x in cols:
+                im.putpixel((x, y), fg)
+        return im
+
+    def test_flat_edge_islands_survive_the_retry_pass(self):
+        """End-to-end guard for the corner-tie background pick.
+
+        Roughness/Metallic/AO/Opacity are routinely FLAT, and a padding-off
+        export runs their islands to the UV edge -- so two layers can put an
+        island in two corners each and tie the true background on corner
+        count. When the tie resolved to the island colour the mask inverted,
+        the retry filled the ISLANDS, and process_batch still returned RETRIED:
+        destroyed maps reported as a successful recovery. (Worse than the older
+        behaviour, which failed loudly with MASK_FAILURE.)
+        """
+        a = self._edge_island(range(0, 6))
+        b = self._edge_island(range(10, 16))
+
+        MapCompositor().process_batch(
+            {"Roughness": [("a.png", a), ("b.png", b)]}, self.tmp, name="AB"
+        )
+
+        out = Image.open(os.path.join(self.tmp, "AB_Roughness.png")).convert("L")
+        self.assertEqual(out.getpixel((2, 8)), 255, "layer A's island was erased")
+        self.assertEqual(out.getpixel((12, 8)), 255, "layer B's island was erased")
+
+    def test_a_corner_tie_does_not_contaminate_other_types(self):
+        """`_seed_masks` ORs masks across types, so one type resolving its
+        background to the island colour used to drive the union to full
+        coverage and degrade every OTHER type to last-layer-wins -- silently.
+        """
+        rough_a = self._edge_island(range(0, 6))
+        rough_b = self._edge_island(range(10, 16))
+
+        def rgb(cols, colour):
+            im = Image.new("RGB", (16, 16), (0, 0, 0))
+            for y in range(16):
+                for x in cols:
+                    im.putpixel((x, y), colour)
+            return im
+
+        MapCompositor().process_batch(
+            {
+                "Roughness": [("a.png", rough_a), ("b.png", rough_b)],
+                "Base_Color": [
+                    ("a.png", rgb(range(0, 6), (255, 6, 40))),
+                    ("b.png", rgb(range(10, 16), (12, 200, 80))),
+                ],
+            },
+            self.tmp,
+            name="AB",
+        )
+
+        out = Image.open(os.path.join(self.tmp, "AB_Base_Color.png")).convert("RGB")
+        self.assertEqual(out.getpixel((2, 8)), (255, 6, 40))
+        self.assertEqual(out.getpixel((12, 8)), (12, 200, 80))
+
     def test_clean_batch_reports_success(self):
         p = self._write("a_Base_Color.png", (127, 127, 127, 255))
         engine = MapCompositor()
@@ -194,12 +256,15 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
 
     def test_process_batch_resets_state_between_runs(self):
         engine = MapCompositor()
-        engine.masks = [Image.new("L", (4, 4), 128)]
+        stale = Image.new("L", (4, 4), 128)
+        engine.masks = [stale]
         engine.total_progress = 999
 
         p = self._write("a_Base_Color.png", (127, 127, 127, 255))
         engine.process_batch({"Base_Color": [(p, _load(p))]}, self.tmp, name="test")
 
+        self.assertNotIn(stale, engine.masks)
+        # A clean batch (no retry) never pays for mask creation.
         self.assertEqual(engine.masks, [])
         self.assertEqual(engine.total_progress, 1)
 
@@ -213,6 +278,154 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
             name="test",
         )
         self.assertEqual(engine.total_len, 2)
+
+    def test_opaque_uniform_bg_type_seeds_masks_for_retry(self):
+        """Regression: an opaque single-colour bg (e.g. an ``L`` Height map)
+        must seed masks for the retry pass. Previously masks were only
+        seeded from transparent bgs, so a batch whose only clean set was
+        opaque failed every masked type with "Unable to create masks"
+        despite the message promising a single-colour bg is enough."""
+        size = (8, 8)
+        # Height: uniform opaque bg with a 2x2 content block per layer.
+        h_a = Image.new("L", size, 128)
+        h_b = Image.new("L", size, 128)
+        for x, y in [(2, 2), (3, 2), (2, 3), (3, 3)]:
+            h_a.putpixel((x, y), 200)
+        for x, y in [(5, 5), (6, 5), (5, 6), (6, 6)]:
+            h_b.putpixel((x, y), 60)
+        # Base_Color: non-uniform (dilated / no padding) bg per layer.
+        c_a = Image.new("RGB", size, (255, 0, 0))
+        c_a.putpixel((0, 0), (1, 2, 3))
+        c_b = Image.new("RGB", size, (0, 0, 255))
+        c_b.putpixel((7, 7), (4, 5, 6))
+        paths = {}
+        for stem, im in [("A_Height", h_a), ("B_Height", h_b),
+                         ("A_Base_Color", c_a), ("B_Base_Color", c_b)]:
+            paths[stem] = os.path.join(self.tmp, f"{stem}.png")
+            im.save(paths[stem])
+        sorted_images = {
+            "Height": [(paths["A_Height"], h_a), (paths["B_Height"], h_b)],
+            "Base_Color": [(paths["A_Base_Color"], c_a), (paths["B_Base_Color"], c_b)],
+        }
+        engine = MapCompositor()
+        cap = self.attach_capture(engine)
+        result = engine.process_batch(sorted_images, self.tmp, name="AB")
+
+        self.assertIs(result, BatchResult.RETRIED, cap.messages())
+        self.assertEqual(len(engine.masks), 2)
+        self.assertNotIn("ERROR", cap.levels(), cap.messages())
+        out = _load(os.path.join(self.tmp, "AB_Base_Color.png")).convert("RGB")
+        self.assertEqual(out.getpixel((2, 2)), (255, 0, 0))
+        self.assertEqual(out.getpixel((5, 5)), (0, 0, 255))
+
+    def test_16bit_height_is_rescaled_not_clipped(self):
+        """Regression: Painter exports Height as ``I;16``. Pillow's I;16 ->
+        L/RGBA convert CLIPS at 255, so a mid-grey (~32767) height map
+        loaded as solid white, its bg looked uniform, the composite came
+        out white and the mask seeded from it was empty — every masked
+        type then filled solid with its default bg."""
+        size = (8, 8)
+        h_a = Image.new("I;16", size, 32767)
+        h_b = Image.new("I;16", size, 32767)
+        for x, y in [(2, 2), (3, 2), (2, 3), (3, 3)]:
+            h_a.putpixel((x, y), 50000)
+        for x, y in [(5, 5), (6, 5), (5, 6), (6, 6)]:
+            h_b.putpixel((x, y), 10000)
+        c_a = Image.new("RGB", size, (255, 0, 0))
+        c_a.putpixel((0, 0), (1, 2, 3))
+        c_b = Image.new("RGB", size, (0, 0, 255))
+        c_b.putpixel((7, 7), (4, 5, 6))
+        paths = {}
+        for stem, im in [("A_Height", h_a), ("B_Height", h_b),
+                         ("A_Base_Color", c_a), ("B_Base_Color", c_b)]:
+            paths[stem] = os.path.join(self.tmp, f"{stem}.png")
+            im.save(paths[stem])
+        sorted_images = {
+            "Height": [(paths["A_Height"], _load(paths["A_Height"])),
+                       (paths["B_Height"], _load(paths["B_Height"]))],
+            "Base_Color": [(paths["A_Base_Color"], c_a), (paths["B_Base_Color"], c_b)],
+        }
+        self.assertEqual(sorted_images["Height"][0][1].mode, "I;16")
+        engine = MapCompositor()
+        cap = self.attach_capture(engine)
+        result = engine.process_batch(sorted_images, self.tmp, name="AB")
+
+        self.assertIs(result, BatchResult.RETRIED, cap.messages())
+        height = _load(os.path.join(self.tmp, "AB_Height.png"))
+        self.assertEqual(height.mode, "L")
+        self.assertEqual(height.getpixel((0, 0)), 127)  # 32767/257, not clipped white
+        self.assertEqual(height.getpixel((2, 2)), 195)  # 50000/257
+        self.assertEqual(height.getpixel((5, 5)), 39)  # 10000/257
+        out = _load(os.path.join(self.tmp, "AB_Base_Color.png")).convert("RGB")
+        self.assertEqual(out.getpixel((2, 2)), (255, 0, 0))
+        self.assertEqual(out.getpixel((5, 5)), (0, 0, 255))
+
+    def test_masks_union_all_types_and_tolerate_content_in_corners(self):
+        """Regression (Painter export, padding off): Height's flat content
+        equals its grey bg, so a mask keyed off Height alone covered ~5% of
+        the islands and every map came out ~85% default bg. Base_Color has
+        a real black bg but islands touch two corners, so its bg was never
+        detected. Masks must be the UNION over every type of
+        'pixel != that type's bg', with the bg detected by majority-corner
+        + dominance rather than four identical corners."""
+        size = (16, 16)
+        # Two disjoint islands: A = cols 0-6, B = cols 9-15, all rows.
+        # Height: everything mid-grey (flat), one bump per island.
+        h_a = Image.new("L", size, 127); h_a.putpixel((2, 2), 200)
+        h_b = Image.new("L", size, 127); h_b.putpixel((12, 12), 60)
+        # Base_Color: black bg, island painted; islands run into the
+        # bottom corners so corners are NOT uniform.
+        c_a = Image.new("RGB", size, (0, 0, 0))
+        c_b = Image.new("RGB", size, (0, 0, 0))
+        for y in range(16):
+            for x in range(0, 7):
+                c_a.putpixel((x, y), (255, 0, 0))
+            for x in range(9, 16):
+                c_b.putpixel((x, y), (0, 0, 255))
+        sorted_images = {
+            "Height": [("A_Height.png", h_a), ("B_Height.png", h_b)],
+            "Base_Color": [("A_Base_Color.png", c_a), ("B_Base_Color.png", c_b)],
+        }
+        engine = MapCompositor()
+        cap = self.attach_capture(engine)
+        result = engine.process_batch(sorted_images, self.tmp, name="AB")
+        self.assertIs(result, BatchResult.RETRIED, cap.messages())
+        self.assertEqual(len(engine.masks), 2)
+        cov = [(np.array(m) > 0).mean() for m in engine.masks]
+        self.assertAlmostEqual(cov[0], 7 / 16, places=2)
+        self.assertAlmostEqual(cov[1], 7 / 16, places=2)
+        out = _load(os.path.join(self.tmp, "AB_Base_Color.png")).convert("RGB")
+        self.assertEqual(out.getpixel((3, 8)), (255, 0, 0))
+        self.assertEqual(out.getpixel((12, 8)), (0, 0, 255))
+        self.assertEqual(out.getpixel((0, 15)), (255, 0, 0))  # corner content kept
+        self.assertEqual(out.getpixel((15, 15)), (0, 0, 255))
+        height = _load(os.path.join(self.tmp, "AB_Height.png"))
+        self.assertEqual(height.getpixel((2, 2)), 200)
+        self.assertEqual(height.getpixel((12, 12)), 60)
+
+    def test_no_uniform_bg_anywhere_is_one_diagnosis(self):
+        """Edge-to-edge (fully dilated) sources: no type can seed a mask.
+        Expect MASK_FAILURE with ONE explanatory error, not a per-file
+        'Composite failed' for every layer."""
+        size = (8, 8)
+        layers = {}
+        for stem, color in [("A_Base_Color", (255, 0, 0)), ("B_Base_Color", (0, 0, 255)),
+                            ("A_Height", 100), ("B_Height", 150)]:
+            im = Image.new("RGB" if "Base" in stem else "L", size, color)
+            im.putpixel((0, 0), (9, 9, 9) if "Base" in stem else 9)  # break uniformity
+            layers[stem] = (os.path.join(self.tmp, f"{stem}.png"), im)
+        sorted_images = {
+            "Base_Color": [layers["A_Base_Color"], layers["B_Base_Color"]],
+            "Height": [layers["A_Height"], layers["B_Height"]],
+        }
+        engine = MapCompositor()
+        cap = self.attach_capture(engine)
+        result = engine.process_batch(sorted_images, self.tmp, name="AB")
+        self.assertIs(result, BatchResult.MASK_FAILURE)
+        errors = [m for m, lvl in zip(cap.messages(), cap.levels()) if lvl == "ERROR"]
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("detectable background", errors[0])
+        self.assertNotIn("Composite failed", errors[0])
 
 
 class TestOutputTemplate(unittest.TestCase, _LoggerCaptureMixin):
@@ -494,9 +707,10 @@ class TestRetryFailed(unittest.TestCase, _LoggerCaptureMixin):
 
 
 class TestSeedMasks(unittest.TestCase, _LoggerCaptureMixin):
-    """`_seed_masks` should combine alpha across every eligible map type
-    so an antialiased / eroded boundary in one source is recovered from
-    another."""
+    """`_seed_masks` builds per-layer content masks as the UNION over every
+    map type with a detectable background — transparent alpha or an opaque
+    solid colour — so a boundary that is flat/eroded in one source is
+    recovered from another."""
 
     def _rgba_with_alpha_pixels(self, size, alpha_pixels):
         """size=(w,h); alpha_pixels: iterable of (x,y) to set to alpha=255."""
@@ -517,12 +731,7 @@ class TestSeedMasks(unittest.TestCase, _LoggerCaptureMixin):
         }
 
         engine = MapCompositor()
-        masks = engine._seed_masks(
-            sorted_images,
-            fallback_typ="Base_Color",
-            fallback_layers=sorted_images["Base_Color"],
-            fallback_bg=(200, 200, 200, 0),
-        )
+        masks = engine._seed_masks(sorted_images)
         self.assertEqual(len(masks), 1)
         mask = masks[0]
         self.assertEqual(mask.mode, "L")
@@ -531,80 +740,120 @@ class TestSeedMasks(unittest.TestCase, _LoggerCaptureMixin):
         # A corner pixel that was alpha=0 in BOTH sources must remain bg.
         self.assertEqual(mask.getpixel((0, 0)), 0)
 
-    def test_falls_back_to_create_mask_when_no_alpha_source(self):
-        # RGB-only sources (no alpha band) — must hit the legacy path.
+    def test_opaque_solid_bg_source_contributes(self):
+        # RGB-only source (no alpha band) with a solid bg — content is
+        # every pixel that differs from that bg.
         a = Image.new("RGB", (4, 4), (10, 20, 30))
         a.putpixel((1, 1), (200, 200, 200))
         sorted_images = {"Base_Color": [("a.png", a)]}
 
         engine = MapCompositor()
         cap = self.attach_capture(engine)
-        masks = engine._seed_masks(
-            sorted_images,
-            fallback_typ="Base_Color",
-            fallback_layers=sorted_images["Base_Color"],
-            fallback_bg=(10, 20, 30, 255),
-        )
+        masks = engine._seed_masks(sorted_images)
         self.assertEqual(len(masks), 1)
         self.assertEqual(masks[0].mode, "L")
-        self.assertTrue(
-            any("Attempting to create masks" in m for m in cap.messages()),
-            "expected fallback log line",
-        )
-
-    def test_skips_sources_with_mismatched_layer_count(self):
-        # 2 layers in the triggering type, 1 in a mismatched alpha source —
-        # the mismatched source must be ignored so positional alignment holds.
-        # Content kept off the corners so get_background() still detects a
-        # uniform alpha=0 bg.
-        size = (6, 6)
-        triggering = [
-            ("a0.png", self._rgba_with_alpha_pixels(size, [(1, 1)])),
-            ("a1.png", self._rgba_with_alpha_pixels(size, [(2, 2)])),
-        ]
-        mismatched = [
-            ("b0.png", self._rgba_with_alpha_pixels(size, [(3, 3), (4, 4)])),
-        ]
-        sorted_images = {"Base_Color": triggering, "Roughness": mismatched}
-
-        engine = MapCompositor()
-        masks = engine._seed_masks(
-            sorted_images,
-            fallback_typ="Base_Color",
-            fallback_layers=triggering,
-            fallback_bg=(200, 200, 200, 0),
-        )
-        self.assertEqual(len(masks), 2)
-        # Layer-0 mask carries only the (1,1) content — the mismatched
-        # source's (3,3)/(4,4) pixels must not bleed in.
         self.assertEqual(masks[0].getpixel((1, 1)), 255)
-        self.assertEqual(masks[0].getpixel((3, 3)), 0)
-        self.assertEqual(masks[0].getpixel((4, 4)), 0)
+        self.assertEqual(masks[0].getpixel((0, 0)), 0)
+        self.assertTrue(
+            any("Creating masks from" in m for m in cap.messages()),
+            "expected source log line",
+        )
 
-    def test_skips_alpha_source_with_opaque_background(self):
-        # Source has alpha band but bg alpha is 255 → not the transparent-bg
-        # path the seeder is meant for; must be skipped.
+    def test_alpha_and_opaque_sources_union(self):
+        # Opaque solid-bg Roughness marks (1,1); transparent Base_Color
+        # marks (2,2). Both count.
         size = (4, 4)
         opaque_bg = Image.new("RGBA", size, (50, 50, 50, 255))
         opaque_bg.putpixel((1, 1), (200, 200, 200, 255))
-
         transparent_bg = self._rgba_with_alpha_pixels(size, [(2, 2)])
-
         sorted_images = {
             "Roughness": [("opaque.png", opaque_bg)],
             "Base_Color": [("trans.png", transparent_bg)],
         }
+        engine = MapCompositor()
+        masks = engine._seed_masks(sorted_images)
+        self.assertEqual(masks[0].getpixel((2, 2)), 255)
+        self.assertEqual(masks[0].getpixel((1, 1)), 255)
+        self.assertEqual(masks[0].getpixel((0, 0)), 0)
+
+    def test_skips_sources_with_mismatched_layer_count(self):
+        # 2 layers in the majority, 1 in a mismatched alpha source — the
+        # mismatched source must be ignored so positional alignment holds.
+        size = (6, 6)
+        triggering = [
+            ("t0.png", self._rgba_with_alpha_pixels(size, [(1, 1)])),
+            ("t1.png", self._rgba_with_alpha_pixels(size, [(2, 2)])),
+        ]
+        mismatched = [("m0.png", self._rgba_with_alpha_pixels(size, [(3, 3), (4, 4)]))]
+        sorted_images = {"Base_Color": triggering, "Roughness": mismatched}
 
         engine = MapCompositor()
-        masks = engine._seed_masks(
-            sorted_images,
-            fallback_typ="Base_Color",
-            fallback_layers=sorted_images["Base_Color"],
-            fallback_bg=(200, 200, 200, 0),
+        masks = engine._seed_masks(sorted_images)
+        self.assertEqual(len(masks), 2)
+        self.assertEqual(masks[0].getpixel((1, 1)), 255)
+        self.assertEqual(masks[0].getpixel((3, 3)), 0)
+        self.assertEqual(masks[0].getpixel((4, 4)), 0)
+
+    def test_no_detectable_bg_returns_empty(self):
+        # Every corner distinct and no dominant colour: no source qualifies.
+        a = Image.new("RGB", (4, 4), (0, 0, 0))
+        for i, xy in enumerate([(0, 0), (3, 0), (0, 3), (3, 3)]):
+            a.putpixel(xy, (i + 1, 0, 0))
+        engine = MapCompositor()
+        self.assertEqual(engine._seed_masks({"Base_Color": [("a.png", a)]}), [])
+
+    def test_solid_bg_tolerates_content_in_corners(self):
+        # Two of four corners are content; the other two plus 60% of the
+        # image are the bg → still detected.
+        a = Image.new("RGB", (10, 10), (0, 0, 0))
+        for y in range(10):
+            for x in range(6, 10):
+                a.putpixel((x, y), (255, 0, 0))  # right strip incl. 2 corners
+        self.assertEqual(
+            MapCompositor._solid_background([np.asarray(a.convert("RGBA"))]),
+            (0, 0, 0, 255),
         )
-        # Only the transparent-bg source counts → content at (2,2) only.
-        self.assertEqual(masks[0].getpixel((2, 2)), 255)
-        self.assertEqual(masks[0].getpixel((1, 1)), 0)
+
+    def test_solid_bg_prefers_the_larger_area_when_corners_tie(self):
+        """Mirror of test_solid_bg_tolerates_content_in_corners, with the
+        content strip on the LEFT so it is the first corner scanned.
+
+        Both colours hold exactly two corners, so corner count ties. The old
+        tie-break was ``max()``, which returns the FIRST maximum -- i.e. scan
+        order -- so the 40% content strip won and the mask came out inverted:
+        the composite fills the islands instead of the background, and because
+        the wrong colour is then recorded, the retry pass "succeeds" via the
+        known-bg shortcut and the batch reports success over destroyed maps.
+        Coverage is the tie-break now: 60% bg beats 40% content.
+        """
+        a = Image.new("RGB", (10, 10), (0, 0, 0))  # bg = black, 60%
+        for y in range(10):
+            for x in range(0, 4):
+                a.putpixel((x, y), (255, 0, 0))  # left strip incl. 2 corners
+
+        self.assertEqual(
+            MapCompositor._solid_background([np.asarray(a.convert("RGBA"))]),
+            (0, 0, 0, 255),
+        )
+
+    def test_solid_bg_rejects_minor_corner_colour(self):
+        # 3 corners share a colour that covers only 3 pixels — content, not bg.
+        a = Image.new("RGB", (10, 10), (0, 0, 0))
+        for xy in [(0, 0), (9, 0), (0, 9)]:
+            a.putpixel(xy, (7, 7, 7))
+        self.assertIsNone(MapCompositor._solid_background([np.asarray(a.convert("RGBA"))]))
+
+    def test_overlap_warning(self):
+        # Two layers whose masks coincide → warn (shared UV space).
+        a = Image.new("RGB", (8, 8), (0, 0, 0))
+        for y in range(8):
+            for x in range(4):
+                a.putpixel((x, y), (255, 0, 0))
+        b = a.copy()
+        engine = MapCompositor()
+        cap = self.attach_capture(engine)
+        engine._seed_masks({"Base_Color": [("a.png", a), ("b.png", b)]})
+        self.assertTrue(any("overlap" in m for m in cap.messages()), cap.messages())
 
 
 class TestMapInfoBundle(unittest.TestCase):
