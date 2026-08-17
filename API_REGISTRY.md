@@ -1309,6 +1309,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
+  - `MeshConvert.prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop textures no material samples, and the images/bufferViews only they used.
   - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
 
 <a id="file_utils--mesh_ops"></a>

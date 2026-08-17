@@ -200,6 +200,12 @@ class MeshConvert(HelpMixin):
     #: quality/correctness-critical use wins the encode.
     _SEMANTIC_RANK: Dict[str, int] = {"color": 0, "data": 1, "normal": 2}
 
+    #: Extensions that reference ``images`` from outside the material tree
+    #: (root-level ``specularImages`` here). :meth:`prune_glb_unreferenced_textures`
+    #: only follows material -> texture -> image, so a file declaring one of
+    #: these is left alone rather than renumbered under it.
+    _IMAGE_REFERRING_EXTENSIONS = frozenset({"EXT_lights_image_based"})
+
     #: Sidecar section -> the writer that applies it to a GLB, in application
     #: order. This is the applier column of the scene-data grid: a new kind of
     #: extended scene setup is one more section in the DCC-side reader
@@ -935,6 +941,10 @@ class MeshConvert(HelpMixin):
                         continue
                     logger.info("Sidecar %r applied to %s.", section, len(applied))
                     summary[section] = f"{len(applied)} of {len(data)}"
+                # Sweep what the writers above unbound (FBX2glTF's converted
+                # ORM after the repack, most often) BEFORE the texture map
+                # below records image indices -- pruning renumbers them.
+                cls.prune_glb_unreferenced_textures(edit)
                 extras = edit.gltf.setdefault("extras", {})
                 # A COPY, with the resolution keys added: the caller's envelope
                 # is theirs (the bridges keep it, and write a `.scene.json`
@@ -2829,6 +2839,242 @@ class MeshConvert(HelpMixin):
             edit.dirty = True
 
         return records
+
+    @classmethod
+    def prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]:
+        """Drop textures no material samples, and the images/bufferViews only they used.
+
+        The applier-tail sweep. Every channel writer here REBINDS a slot to the
+        image it embeds and leaves whatever that slot named before in place --
+        which for the ORM repack is FBX2glTF's own ``ao_met_rough_<mat>``
+        packing, a full-size PNG in the BIN chunk. Measured on a production
+        delivery (HOOKS_PINS.glb): 4 images, 1 unreferenced, 2 MB of dead
+        payload the reviewer flagged as an orphaned texture -- one per repacked
+        material, every export. Writers cannot prune for themselves: a texture
+        is only provably dead once EVERY writer on the session has run, and
+        dropping an image renumbers everything after it.
+
+        Referenced means sampled by a material: any ``textureInfo`` in the
+        material tree (a dict under a key ending in ``Texture`` with an integer
+        ``index`` -- the spec's own naming for the core slots and every
+        ``KHR_materials_*`` extension). Images are kept when a surviving
+        texture reads them through ``source`` or an extension source
+        (``KHR_texture_basisu``, ``EXT_texture_webp``). A bufferView is dropped
+        only when the pruned images were its ONLY readers -- FBX2glTF does point
+        two images at one view, and a view could in principle be shared with an
+        accessor. Every surviving index is remapped in place: texture indices
+        across the material tree and the session's embed cache, image indices
+        in ``textures``, and ``bufferView`` keys anywhere in the document (the
+        key is spec-uniform, so a generic walk covers accessors, sparse
+        indices/values, images and compression extensions alike). The BIN is
+        rebuilt from the surviving views only, 4-byte padded like every
+        repack here.
+
+        Runs at the tail of :meth:`apply_scene_sidecar`, BEFORE the embedded
+        texture map is built, so the indices that map records describe the
+        delivered file. Safe to run standalone on any GLB; a file with nothing
+        to drop is not rewritten.
+
+        Returns:
+            ``{"textures": n, "images": n, "bytes": n}`` -- what was dropped;
+            ``bytes`` is BIN payload reclaimed (a data-URI image counts 0 here,
+            its saving shows up in the JSON chunk).
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            textures = gltf.get("textures") or []
+            images = gltf.get("images") or []
+            if not textures and not images:
+                return {"textures": 0, "images": 0, "bytes": 0}
+            # Image references the material walk cannot see. Every core and
+            # KHR_materials_* binding goes through a texture, but this
+            # extension names images DIRECTLY from the root -- pruning under
+            # it would renumber indices it holds. Bail whole rather than
+            # guess: dead payload beats a broken file.
+            foreign = cls._IMAGE_REFERRING_EXTENSIONS & set(
+                gltf.get("extensionsUsed") or []
+            )
+            if foreign:
+                logger.info(
+                    "prune_glb_unreferenced_textures: skipped, %s references "
+                    "images outside the material tree.",
+                    ", ".join(sorted(foreign)),
+                )
+                return {"textures": 0, "images": 0, "bytes": 0}
+            # The BIN rebuild below re-slices every kept view out of the single
+            # GLB-embedded buffer (0). A view on any other buffer (external
+            # URI) would keep its ``buffer`` but get a byteOffset into the
+            # rebuilt BIN -- garbage reads. Same single-buffer assumption as
+            # optimize_glb_textures; bail rather than guess.
+            if any(v.get("buffer", 0) != 0 for v in gltf.get("bufferViews") or []):
+                logger.info(
+                    "prune_glb_unreferenced_textures: skipped, the file has "
+                    "bufferViews outside the embedded BIN (buffer 0)."
+                )
+                return {"textures": 0, "images": 0, "bytes": 0}
+
+            # --- what the materials actually sample --------------------------
+            def _texture_refs(node, out):
+                """Yield every textureInfo dict under *node* (materials tree)."""
+                if isinstance(node, dict):
+                    for key, value in node.items():
+                        if (
+                            key.endswith("Texture")
+                            and isinstance(value, dict)
+                            and isinstance(value.get("index"), int)
+                        ):
+                            out.append(value)
+                        _texture_refs(value, out)
+                elif isinstance(node, list):
+                    for item in node:
+                        _texture_refs(item, out)
+                return out
+
+            refs = _texture_refs(gltf.get("materials") or [], [])
+            live_textures = {r["index"] for r in refs if 0 <= r["index"] < len(textures)}
+            texture_map = {}
+            for old in range(len(textures)):
+                if old in live_textures:
+                    texture_map[old] = len(texture_map)
+
+            def _image_sources(texture):
+                yield texture.get("source")
+                for ext in (texture.get("extensions") or {}).values():
+                    if isinstance(ext, dict):
+                        yield ext.get("source")
+
+            live_images = {
+                src
+                for old in texture_map
+                for src in _image_sources(textures[old])
+                if isinstance(src, int) and 0 <= src < len(images)
+            }
+            image_map = {}
+            for old in range(len(images)):
+                if old in live_images:
+                    image_map[old] = len(image_map)
+
+            dropped_textures = len(textures) - len(texture_map)
+            dropped_images = len(images) - len(image_map)
+            if not dropped_textures and not dropped_images:
+                return {"textures": 0, "images": 0, "bytes": 0}
+
+            # --- views only the dropped images read --------------------------
+            views = gltf.get("bufferViews") or []
+            dead_views = {
+                img.get("bufferView")
+                for old, img in enumerate(images)
+                if old not in image_map and isinstance(img.get("bufferView"), int)
+            }
+
+            def _view_refs(node, out, skip):
+                """Every ``bufferView`` index referenced outside *skip*."""
+                if node is skip:
+                    return out
+                if isinstance(node, dict):
+                    for key, value in node.items():
+                        if key == "bufferView" and isinstance(value, int):
+                            out.add(value)
+                        else:
+                            _view_refs(value, out, skip)
+                elif isinstance(node, list):
+                    for item in node:
+                        _view_refs(item, out, skip)
+                return out
+
+            still_read = set()
+            for old, img in enumerate(images):
+                if old in image_map:
+                    _view_refs(img, still_read, None)
+            _view_refs(gltf, still_read, images)  # everything but the images
+            dead_views -= still_read
+            dead_views = {v for v in dead_views if 0 <= v < len(views)}
+
+            reclaimed = 0
+            if dead_views:
+                blob = edit.bin_data
+                view_map = {}
+                chunks: List[bytes] = []
+                offset = 0
+                kept_views = []
+                for old, view in enumerate(views):
+                    if old in dead_views:
+                        reclaimed += view.get("byteLength", 0)
+                        continue
+                    start = view.get("byteOffset", 0)
+                    data = (
+                        bytes(blob[start : start + view["byteLength"]]) if blob else b""
+                    )
+                    view = dict(view)
+                    view["byteOffset"] = offset
+                    padded = data + b"\x00" * ((4 - (len(data) % 4)) % 4)
+                    chunks.append(padded)
+                    offset += len(padded)
+                    view_map[old] = len(kept_views)
+                    kept_views.append(view)
+
+                def _remap_views(node):
+                    if isinstance(node, dict):
+                        for key, value in list(node.items()):
+                            if key == "bufferView" and isinstance(value, int):
+                                if value in view_map:
+                                    node[key] = view_map[value]
+                            else:
+                                _remap_views(value)
+                    elif isinstance(node, list):
+                        for item in node:
+                            _remap_views(item)
+
+                gltf["bufferViews"] = kept_views
+                # Images are rebuilt below from the survivors; remap those now
+                # so the dropped ones (which name dead views) are never walked.
+                surviving_images = [images[old] for old in image_map]
+                _remap_views(surviving_images)
+                gltf["images"] = surviving_images
+                images = surviving_images
+                _remap_views({k: v for k, v in gltf.items() if k != "images"})
+                new_bin = b"".join(chunks)
+                buffers = gltf.setdefault("buffers", [{}])
+                buffers[0]["byteLength"] = len(new_bin)
+                edit.replace_rest(new_bin)
+            else:
+                gltf["images"] = [images[old] for old in image_map]
+
+            # --- renumber what survives ---------------------------------------
+            kept_textures = []
+            for old in texture_map:
+                texture = textures[old]
+                if isinstance(texture.get("source"), int):
+                    texture["source"] = image_map.get(texture["source"], texture["source"])
+                for ext in (texture.get("extensions") or {}).values():
+                    if isinstance(ext, dict) and isinstance(ext.get("source"), int):
+                        ext["source"] = image_map.get(ext["source"], ext["source"])
+                kept_textures.append(texture)
+            gltf["textures"] = kept_textures
+            for ref in refs:
+                if ref["index"] in texture_map:
+                    ref["index"] = texture_map[ref["index"]]
+            edit.embedded = {
+                key: texture_map[index]
+                for key, index in edit.embedded.items()
+                if index in texture_map
+            }
+            edit._image_digests = None
+            cls._prune_empty_containers(gltf)
+            edit.dirty = True
+
+        logger.info(
+            "prune_glb_unreferenced_textures: dropped %d texture(s), %d image(s), "
+            "%.1f MB of BIN payload.",
+            dropped_textures,
+            dropped_images,
+            reclaimed / 1e6,
+        )
+        return {
+            "textures": dropped_textures,
+            "images": dropped_images,
+            "bytes": reclaimed,
+        }
 
     @staticmethod
     def _prune_empty_containers(gltf: dict) -> None:

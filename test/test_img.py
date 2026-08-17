@@ -1061,6 +1061,27 @@ class TestImgUtilsMemory(unittest.TestCase):
         self.assertEqual(roughness, 155)  # 255 - smoothness(100), not the 0 fill
         self.assertEqual(metallic, 200)  # MSAO's R, not its luminance
 
+    def test_pack_orm_texture_same_packed_map_in_every_slot_as_distinct_strings(self):
+        """The SAME packed map named in all three slots must fill all three.
+
+        Regression: a StingrayPBS material wiring one ORM file node into its
+        AO, roughness AND metallic inputs reaches the exporter's sidecar as
+        three EQUAL path strings that are three DISTINCT objects (the sidecar
+        is a JSON round trip). The resolver matched slots to the packed source
+        by identity, so only the first slot was recognised: the other two
+        stayed a packed path, were cleared as "carries no channel", and took
+        their black fills. Measured on a production delivery: AO intact,
+        roughness 0 and metallic 0 at every sampled texel.
+        """
+        path = os.path.join(self.test_dir, "probe_ORM.png")
+        Image.new("RGB", self.size, (50, 100, 150)).save(path)
+        # Three equal strings that are NOT the same object, as after JSON.
+        ao, rough, metal = (str(path[:1]) + path[1:] for _ in range(3))
+        self.assertFalse(ao is rough or ao is metal)
+
+        orm = TextureMapFactory.pack_orm_texture(ao, rough, metal, save=False)
+        self.assertEqual(orm.getpixel((0, 0)), (50, 100, 150))
+
     def test_pack_orm_texture_prefers_a_loose_map_over_the_packed_one(self):
         """Naming both means "use the packed map for what the loose ones don't"."""
         rough = Image.new("L", self.size, 111)
