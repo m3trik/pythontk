@@ -450,9 +450,16 @@ class MapCompositor(ptk.LoggingMixin):
             return arr[:, :, 3] == 0
         return np.all(arr == np.array(bg, dtype=arr.dtype), axis=-1)
 
+    # Share of two layer masks' union they may have in common before a
+    # source is considered unreliable (per source) or the batch is warned
+    # (final union). Sets composited into one map occupy disjoint UV space,
+    # so anything past a few percent is dilation padding, a mis-detected
+    # background, or content genuinely baked into both sets.
+    _MASK_OVERLAP_MAX = 0.05
+
     def _seed_masks(self, sorted_images: SortedImages) -> List[Image.Image]:
-        """Build one content mask per layer index from EVERY map type in the
-        batch that has a detectable background (:meth:`_solid_background`,
+        """Build one content mask per layer index from the map types in the
+        batch that have a detectable background (:meth:`_solid_background`,
         transparent or opaque).
 
         Per-layer masks are OR-combined across types: content that is flat
@@ -462,13 +469,19 @@ class MapCompositor(ptk.LoggingMixin):
         islands. Types whose layer count differs from the majority are
         skipped so positional alignment holds.
 
+        Sources are also vetted for reliability: a type whose own layer
+        masks overlap past :attr:`_MASK_OVERLAP_MAX` (dilated islands, or a
+        "background" that is really content) is dropped whenever at least
+        one clean type exists, so one bad export cannot bleed a neighbour's
+        padding into the union. Only when every source agrees the layers
+        overlap is the batch warned — that is a genuine data issue.
+
         Returns ``[]`` when no type qualifies — the caller reports that.
         """
         if not sorted_images:
             return []
         n_layers = max(len(layers) for layers in sorted_images.values())
-        combined: List[Optional[np.ndarray]] = [None] * n_layers
-        used: List[str] = []
+        per_type: Dict[str, List[np.ndarray]] = {}
         for typ, layers in sorted_images.items():
             if len(layers) != n_layers:
                 continue
@@ -476,20 +489,43 @@ class MapCompositor(ptk.LoggingMixin):
             bg = self._solid_background(arrays)
             if bg is None:
                 continue
-            used.append(typ)
-            for i, arr in enumerate(arrays):
-                content = ~self._background_pixels(arr, bg)
-                combined[i] = content if combined[i] is None else (combined[i] | content)
+            per_type[typ] = [~self._background_pixels(arr, bg) for arr in arrays]
 
-        if not used:
+        if not per_type:
             return []
+        overlaps = {typ: self._max_pairwise_overlap(m) for typ, m in per_type.items()}
+        clean = [t for t, o in overlaps.items() if o <= self._MASK_OVERLAP_MAX]
+        used = clean or list(per_type)
+        for typ in per_type:
+            if typ not in used:
+                self.logger.info(
+                    f"Skipping <b>{typ}</b> as a mask source — its layers overlap "
+                    f"by {overlaps[typ]:.0%} (dilated islands or a background that "
+                    "is really content); a cleaner source is available.",
+                    preset="italic",
+                )
         self.logger.info(
             f"Creating masks from <b>{len(used)}</b> source type(s): {', '.join(used)}",
             preset="italic",
         )
+        combined: List[Optional[np.ndarray]] = [None] * n_layers
+        for typ in used:
+            for i, content in enumerate(per_type[typ]):
+                combined[i] = content if combined[i] is None else (combined[i] | content)
         masks = [Image.fromarray(c.astype(np.uint8) * 255, mode="L") for c in combined]
         self._warn_on_mask_overlap(masks)
         return masks
+
+    @staticmethod
+    def _max_pairwise_overlap(masks: List[np.ndarray]) -> float:
+        """Largest share of any two masks' union that both cover (0..1)."""
+        worst = 0.0
+        for i in range(len(masks)):
+            for j in range(i + 1, len(masks)):
+                union = (masks[i] | masks[j]).sum()
+                if union:
+                    worst = max(worst, (masks[i] & masks[j]).sum() / union)
+        return worst
 
     def _warn_on_mask_overlap(self, masks: List[Image.Image]) -> None:
         """Layers that combine into one map should occupy disjoint UV
@@ -503,12 +539,12 @@ class MapCompositor(ptk.LoggingMixin):
                 if not union:
                     continue
                 overlap = (arrs[i] & arrs[j]).sum() / union
-                if overlap > 0.05:
+                if overlap > self._MASK_OVERLAP_MAX:
                     self.logger.warning(
                         f"Layer masks {i} and {j} overlap by {overlap:.0%} of "
-                        "their union — an object baked into both sets, shared "
-                        "UV space, or a 'background' that is really content; "
-                        "overlapping regions resolve last-layer-wins."
+                        "their union in every mask source — an object baked "
+                        "into both sets, or shared UV space; overlapping "
+                        "regions resolve last-layer-wins."
                     )
 
     def _composite_type(

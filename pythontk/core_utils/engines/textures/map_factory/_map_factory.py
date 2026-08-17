@@ -3387,7 +3387,13 @@ class MapFactory(LoggingMixin):
             for name, image in carried.items():
                 if name not in slots:
                     continue  # a channel ORM has no slot for (Detail, Opacity)
-                if slots[name] is src or not slots[name]:
+                # Equality, not identity: the same packed map named in
+                # several slots arrives as EQUAL strings that are DISTINCT
+                # objects whenever the caller's spec crossed a JSON boundary
+                # (the export sidecar). Identity recognised only the first
+                # slot; the others were then cleared below and took their
+                # black fills -- roughness 0, metallic 0, AO intact.
+                if slots[name] == src or not slots[name]:
                     slots[name] = image
         # A slot still holding a packed path is one that map carries no channel
         # for; leaving the path would flatten the whole packed image into it.

@@ -785,6 +785,111 @@ class TestBaseColorRecordHonesty(unittest.TestCase):
         )
 
 
+
+def _write_glb_file(path, gltf, bin_chunk=b""):
+    """Pack *gltf* (+ optional BIN payload) into a GLB at *path*."""
+    payload = json.dumps(gltf).encode("utf-8")
+    payload += b" " * ((4 - (len(payload) % 4)) % 4)
+    rest = b""
+    if bin_chunk:
+        bin_chunk += b"\x00" * ((4 - (len(bin_chunk) % 4)) % 4)
+        rest = struct.pack("<I4s", len(bin_chunk), b"BIN\x00") + bin_chunk
+    with open(path, "wb") as f:
+        f.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(payload) + len(rest)))
+        f.write(struct.pack("<I4s", len(payload), b"JSON") + payload)
+        f.write(rest)
+    return path
+
+
+def _converted_orm_glb(tmp, name="converted.glb"):
+    """A GLB the way FBX2glTF hands one over: the material samples its
+    converted ORM (image 0, bufferView 0 in the BIN) and the geometry
+    (accessor -> bufferView 1) sits BEHIND it in the same BIN, so dropping
+    the image must move the geometry's view without moving its bytes.
+
+    Returns ``(path, geometry_bytes)``.
+    """
+    import io as iolib
+
+    from PIL import Image
+
+    buf = iolib.BytesIO()
+    Image.new("RGB", (4, 4), (255, 255, 255)).save(buf, format="PNG")
+    orm_bytes = buf.getvalue()
+    orm_padded = orm_bytes + b"\x00" * ((4 - (len(orm_bytes) % 4)) % 4)
+    geometry = struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0)
+    gltf = {
+        "asset": {"version": "2.0"},
+        "buffers": [{"byteLength": len(orm_padded) + len(geometry)}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": len(orm_bytes)},
+            {
+                "buffer": 0,
+                "byteOffset": len(orm_padded),
+                "byteLength": len(geometry),
+                "target": 34962,
+            },
+        ],
+        "accessors": [
+            {
+                "bufferView": 1,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [0, 0, 0],
+                "max": [1, 1, 0],
+            }
+        ],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "material": 0}]}],
+        "materials": [
+            {
+                "name": "Room",
+                "pbrMetallicRoughness": {
+                    "metallicRoughnessTexture": {"index": 0},
+                    "metallicFactor": 1.0,
+                },
+                "occlusionTexture": {"index": 0},
+            }
+        ],
+        "textures": [{"source": 0, "sampler": 0}],
+        "samplers": [{}],
+        "images": [
+            {"name": "ao_met_rough_Room", "bufferView": 0, "mimeType": "image/png"}
+        ],
+    }
+    path = _write_glb_file(os.path.join(tmp, name), gltf, orm_padded + geometry)
+    return path, geometry
+
+
+def _assert_no_dead_payload(tc, path, geometry):
+    """*path* ships no unreferenced image, the converted ORM is gone, and the
+    geometry survived the BIN rewrite (view moved, bytes did not)."""
+    edit = MeshConvert._read_glb(path)
+    gltf = edit.gltf
+    referenced = {
+        gltf["textures"][t["index"]]["source"]
+        for m in gltf["materials"]
+        for t in (
+            m["pbrMetallicRoughness"]["metallicRoughnessTexture"],
+            m["occlusionTexture"],
+        )
+    }
+    tc.assertEqual(
+        referenced, set(range(len(gltf["images"]))), "unreferenced image shipped"
+    )
+    tc.assertNotIn("ao_met_rough_Room", [i.get("name") for i in gltf["images"]])
+    view = gltf["bufferViews"][gltf["accessors"][0]["bufferView"]]
+    blob = edit.bin_data
+    tc.assertEqual(
+        bytes(blob[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]),
+        geometry,
+    )
+    tc.assertEqual(view.get("target"), 34962, "view attributes must survive")
+    tc.assertEqual(len(gltf["bufferViews"]), 1, "the converted ORM's view must be dropped")
+    tc.assertEqual(gltf["buffers"][0]["byteLength"], len(blob))
+    return gltf
+
+
 class TestGlbEditSession(unittest.TestCase):
     """One open GLB shared by several repairs: read once, write once.
 
@@ -1700,6 +1805,118 @@ class TestGlbEditSession(unittest.TestCase):
             "an authored separate AO map must never be displaced",
         )
 
+    def test_prune_unreferenced_textures_drops_the_displaced_converted_orm(self):
+        """The image the ORM repack displaces must not ship as dead payload.
+
+        Measured on a production delivery (HOOKS_PINS.glb): after
+        ``set_glb_metallic_roughness`` rebound both slots to its packed image,
+        FBX2glTF's ``ao_met_rough_<mat>`` stayed in ``images``/``textures`` and
+        its full-size PNG in the BIN -- 2 MB the reviewer flagged as an
+        orphaned texture, per material, per export.
+        """
+        from PIL import Image
+
+        rough = os.path.join(self.tmp, "rough.png")
+        Image.new("L", (4, 4), 128).save(rough)
+        path, geometry = _converted_orm_glb(self.tmp)
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_metallic_roughness(
+                session, {"Room": {"roughness": rough}}
+            )
+            dropped = MeshConvert.prune_glb_unreferenced_textures(session)
+        self.assertEqual(dropped["images"], 1)
+        gltf = _assert_no_dead_payload(self, path, geometry)
+        # And the repacked ORM is still what both slots sample.
+        mat = gltf["materials"][0]
+        self.assertEqual(
+            mat["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"],
+            mat["occlusionTexture"]["index"],
+        )
+
+    def test_prune_unreferenced_textures_is_a_no_op_on_a_clean_file(self):
+        path, geometry = _converted_orm_glb(self.tmp)
+        with open(path, "rb") as f:
+            before = f.read()
+        with MeshConvert.open_glb(path) as session:
+            dropped = MeshConvert.prune_glb_unreferenced_textures(session)
+        self.assertEqual(dropped, {"textures": 0, "images": 0, "bytes": 0})
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), before, "clean file must not be rewritten")
+
+    def test_prune_unreferenced_textures_keeps_a_view_another_owner_reads(self):
+        """A bufferView shared with a live image (FBX2glTF does emit two images
+        on one view) or with an accessor stays; only its exclusive owner goes."""
+        path, geometry = _converted_orm_glb(self.tmp)
+        with MeshConvert.open_glb(path) as session:
+            gltf = session.gltf
+            # A second, LIVE image on the same view, sampled as base colour.
+            gltf["images"].append(
+                {"name": "twin", "bufferView": 0, "mimeType": "image/png"}
+            )
+            gltf["textures"].append({"source": 1, "sampler": 0})
+            mat = gltf["materials"][0]
+            mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": 1}
+            # Unbind the converted ORM from both slots.
+            del mat["pbrMetallicRoughness"]["metallicRoughnessTexture"]
+            del mat["occlusionTexture"]
+            session.dirty = True
+            dropped = MeshConvert.prune_glb_unreferenced_textures(session)
+        self.assertEqual((dropped["textures"], dropped["images"]), (1, 1))
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        self.assertEqual([i["name"] for i in gltf["images"]], ["twin"])
+        self.assertEqual(len(gltf["bufferViews"]), 2, "the shared view must stay")
+        self.assertEqual(
+            gltf["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"],
+            0,
+        )
+        view = gltf["bufferViews"][gltf["accessors"][0]["bufferView"]]
+        self.assertEqual(
+            bytes(
+                edit.bin_data[
+                    view["byteOffset"] : view["byteOffset"] + view["byteLength"]
+                ]
+            ),
+            geometry,
+        )
+
+    def test_prune_unreferenced_textures_bails_under_an_image_referring_extension(self):
+        """EXT_lights_image_based names images from the root; pruning under it
+        would renumber indices the walk cannot see. Left alone, loudly."""
+        path, geometry = _converted_orm_glb(self.tmp)
+        with MeshConvert.open_glb(path) as session:
+            gltf = session.gltf
+            gltf["extensionsUsed"] = ["EXT_lights_image_based"]
+            gltf["extensions"] = {
+                "EXT_lights_image_based": {"lights": [{"specularImages": [[0]]}]}
+            }
+            del gltf["materials"][0]["pbrMetallicRoughness"]["metallicRoughnessTexture"]
+            del gltf["materials"][0]["occlusionTexture"]
+            session.dirty = True
+            dropped = MeshConvert.prune_glb_unreferenced_textures(session)
+        self.assertEqual(dropped, {"textures": 0, "images": 0, "bytes": 0})
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual(len(gltf["images"]), 1)
+        self.assertEqual(len(gltf["bufferViews"]), 2)
+
+    def test_prune_unreferenced_textures_bails_when_a_view_lives_outside_buffer_0(self):
+        """The BIN rebuild re-slices every kept view out of the embedded
+        buffer; a view on an external buffer would keep ``buffer`` but get a
+        byteOffset into the rebuilt BIN. Bail whole, like the extension case."""
+        path, geometry = _converted_orm_glb(self.tmp)
+        with MeshConvert.open_glb(path) as session:
+            gltf = session.gltf
+            gltf.setdefault("buffers", []).append({"uri": "ext.bin", "byteLength": 4})
+            gltf["bufferViews"].append({"buffer": 1, "byteOffset": 0, "byteLength": 4})
+            del gltf["materials"][0]["pbrMetallicRoughness"]["metallicRoughnessTexture"]
+            del gltf["materials"][0]["occlusionTexture"]
+            session.dirty = True
+            dropped = MeshConvert.prune_glb_unreferenced_textures(session)
+        self.assertEqual(dropped, {"textures": 0, "images": 0, "bytes": 0})
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual(len(gltf["images"]), 1)
+        self.assertEqual(len(gltf["bufferViews"]), 3)
+
     def test_metallic_roughness_shared_sources_pack_once(self):
         """N materials naming the same maps must cost one pack + one embed."""
         from PIL import Image
@@ -1821,6 +2038,27 @@ class TestSceneSidecar(unittest.TestCase):
         )
         self.assertNotIn("textures", envelope, "caller's envelope was mutated")
         return embedded
+
+    def test_apply_scene_sidecar_prunes_what_its_appliers_displace(self):
+        """The applier tail sweeps the images the section writers unbound, and
+        the embedded texture map is built AFTER the sweep so its image indices
+        describe the delivered file."""
+        from PIL import Image
+
+        rough = os.path.join(self.tmp, "rough.png")
+        Image.new("L", (4, 4), 128).save(rough)
+        path, geometry = _converted_orm_glb(self.tmp)
+        envelope = self._envelope(
+            {"metallic_roughness": {"Room": {"roughness": rough}}}
+        )
+        MeshConvert.apply_scene_sidecar(path, envelope)
+        gltf = _assert_no_dead_payload(self, path, geometry)
+        embedded = MeshConvert.read_scene_sidecar(path)
+        mat = gltf["materials"][0]
+        bound = gltf["textures"][
+            mat["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"]
+        ]["source"]
+        self.assertEqual(embedded["textures"][rough]["image"], bound)
 
     def test_build_scene_sidecar_owns_the_frozen_top_level(self):
         """Standalone readers parse against exactly these keys."""

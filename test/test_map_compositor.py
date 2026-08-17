@@ -855,6 +855,58 @@ class TestSeedMasks(unittest.TestCase, _LoggerCaptureMixin):
         engine._seed_masks({"Base_Color": [("a.png", a), ("b.png", b)]})
         self.assertTrue(any("overlap" in m for m in cap.messages()), cap.messages())
 
+    def _two_layer_strips(self, size=(8, 8), pad=0):
+        """Layer 0 = left half, layer 1 = right half, each island dilated
+        by ``pad`` px into the other's half (Painter edge padding)."""
+        w, h = size
+        a = Image.new("RGBA", size, (0, 0, 0, 0))
+        b = Image.new("RGBA", size, (0, 0, 0, 0))
+        for y in range(h):
+            for x in range(w):
+                if x < w // 2 + pad:
+                    a.putpixel((x, y), (255, 0, 0, 255))
+                if x >= w // 2 - pad:
+                    b.putpixel((x, y), (0, 0, 255, 255))
+        return a, b
+
+    def test_noisy_source_dropped_when_a_clean_one_exists(self):
+        """A source whose own layers overlap (dilated islands) must not
+        inflate the union when another source outlines them cleanly: the
+        clean source wins, the noisy one is reported dropped, and no
+        overlap WARNING is emitted."""
+        ta, tb = self._two_layer_strips(pad=0)  # tight
+        da, db = self._two_layer_strips(pad=2)  # dilated -> 4/8 cols overlap
+        engine = MapCompositor()
+        cap = self.attach_capture(engine)
+        masks = engine._seed_masks(
+            {
+                "Roughness": [("da.png", da), ("db.png", db)],
+                "Base_Color": [("ta.png", ta), ("tb.png", tb)],
+            }
+        )
+        self.assertEqual(len(masks), 2)
+        m0 = np.array(masks[0]) > 0
+        m1 = np.array(masks[1]) > 0
+        self.assertFalse((m0 & m1).any(), "union still carries the dilation")
+        self.assertNotIn("WARNING", cap.levels(), cap.messages())
+        msgs = " ".join(cap.messages())
+        self.assertIn("Roughness", msgs)
+        self.assertIn("Base_Color", msgs)
+
+    def test_overlap_in_every_source_still_warns(self):
+        """When no source disagrees, the overlap is real (shared UV space /
+        object in both sets) and the user must hear about it."""
+        da, db = self._two_layer_strips(pad=2)
+        engine = MapCompositor()
+        cap = self.attach_capture(engine)
+        engine._seed_masks(
+            {
+                "Roughness": [("da.png", da), ("db.png", db)],
+                "Base_Color": [("da2.png", da.copy()), ("db2.png", db.copy())],
+            }
+        )
+        self.assertIn("WARNING", cap.levels(), cap.messages())
+
 
 class TestMapInfoBundle(unittest.TestCase):
     def test_mapinfo_is_frozen(self):
