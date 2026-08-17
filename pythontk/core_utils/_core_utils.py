@@ -1,7 +1,9 @@
 # !/usr/bin/python
 # coding=utf-8
+import contextlib
 import functools
 import inspect
+import logging
 import collections.abc
 from typing import Any, Callable, Tuple, Union
 from concurrent.futures import ThreadPoolExecutor
@@ -258,6 +260,33 @@ class CoreUtils(HelpMixin):
                     result = derived_type
                 cache[cache_key] = result
                 return result
+
+    @staticmethod
+    @contextlib.contextmanager
+    def teardown_guard(logger=None, what: str = "state"):
+        """Run a restore step so that a failure is LOGGED, never raised.
+
+        The one teardown policy for ``snapshot -> mutate -> restore`` scopes:
+        a restore that raises inside a ``finally`` would mask the body's real
+        error, but silently swallowing it (``except: pass``) hides a scene
+        left half-restored. Wrap the restore call::
+
+            try:
+                yield
+            finally:
+                with CoreUtils.teardown_guard(logger, "shading network"):
+                    restore()
+
+        Parameters:
+            logger: Where the warning goes (default: this module's logger).
+            what: Named in the warning ("<what> not fully restored: ...").
+        """
+        try:
+            yield
+        except Exception as e:  # noqa: BLE001 — by contract, never re-raise
+            (logger or logging.getLogger(__name__)).warning(
+                f"{what} not fully restored: {e}"
+            )
 
     CYCLEDICT = {}
 

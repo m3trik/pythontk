@@ -5,14 +5,21 @@
 The stateful half of a "press the same key again to go further" hotkey. Where
 :meth:`pythontk.CoreUtils.cycle` rotates a fixed sequence forever, a
 :class:`StepToggle` models a *home* state plus ``N`` steps away from it, and —
-crucially — forgets the deeper cycle once the user pauses:
+crucially — forgets the deeper cycle once the user pauses. What a stale press
+does instead is the toggle's ``stale`` policy:
 
-    press, press, press   (rapid)  ->  step 1, step 2, home
-    press ... pause ... press      ->  step 1, home
+    press, press, press   (rapid)             ->  step 1, step 2, home
+    press ... pause ... press  (``"home"``)    ->  step 1, home
+    press ... pause ... press  (``"restart"``) ->  step 1, step 1
 
-so a multi-step toggle degrades to a plain on/off toggle whenever the user
-framed once and that was all they needed. Zero-dep and DCC-agnostic; the clock
-is injected so the timing is testable without sleeping.
+``"home"`` suits an on/off toggle (isolate, a display mode): a multi-step
+toggle degrades to a plain there-and-back one whenever the user acted once
+and that was all they needed. ``"restart"`` suits an *action* whose home is
+only an undo (framing a selection): after a pause the key must simply act
+again — Maya's ``F`` re-frames after you've tumbled around, it never
+teleports you back to a view you left minutes ago — so home stays reachable
+only by running the whole cycle within the timeout. Zero-dep and
+DCC-agnostic; the clock is injected so the timing is testable without sleeping.
 """
 from __future__ import annotations
 
@@ -20,6 +27,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 DEFAULT_TIMEOUT = 2.0  # seconds a deeper step stays reachable
+STALE_POLICIES = ("home", "restart")
 
 
 class StepToggle:
@@ -29,8 +37,14 @@ class StepToggle:
         steps (int): Number of states away from home. ``1`` gives a bi-state
             toggle (act / undo), ``2`` a tri-state (act / act harder / undo).
         timeout (float): Seconds after which the cycle goes stale. A stale press
-            never steps deeper — it returns *home* if the toggle is away from it,
-            otherwise starts a fresh cycle at step 1. ``None`` disables the timer.
+            never steps deeper; what it does instead is ``stale``. ``None``
+            disables the timer.
+        stale (str): What a stale press does when the toggle is away from home:
+            ``"home"`` (default) returns home — the toggle collapses to a plain
+            on/off; ``"restart"`` begins a fresh cycle at step 1 instead, so the
+            key always *acts* after a pause and home is reachable only by
+            completing the cycle within the timeout. A stale press at home
+            starts a fresh cycle under either policy.
         clock (callable): Monotonic seconds source (injected for testing).
         name (str): Optional identifier, set by :meth:`get`.
 
@@ -55,11 +69,13 @@ class StepToggle:
         self,
         steps: int = 2,
         timeout: Optional[float] = DEFAULT_TIMEOUT,
+        stale: str = "home",
         clock: Callable[[], float] = time.monotonic,
         name: Optional[str] = None,
     ):
         self.steps = max(1, int(steps))
         self.timeout = timeout
+        self.stale = self._check_stale(stale)
         self.name = name
         self.payload: Any = None
         self._clock = clock
@@ -67,6 +83,12 @@ class StepToggle:
         self._last: Optional[float] = None
         self._context: Any = None
         self._began_cycle = False
+
+    @staticmethod
+    def _check_stale(policy: str) -> str:
+        if policy not in STALE_POLICIES:
+            raise ValueError(f"stale must be one of {STALE_POLICIES}, got {policy!r}")
+        return policy
 
     # ------------------------------------------------------------------ shared instances
     @classmethod
@@ -107,11 +129,12 @@ class StepToggle:
         """True when the last :meth:`advance` *started* a cycle — the moment to
         capture whatever :attr:`payload` must restore on the way home.
 
-        A cycle begins from home, and also when a stale press targets a new
-        ``context``: after a pause, acting on something else is a new session,
-        so its home is the view you are leaving now — not the one from the
-        cycle you abandoned. Retargeting *within* the timeout keeps the
-        original home, so a quick re-aim still unwinds to where you began.
+        A cycle begins from home, and also on any stale press that lands on
+        step 1 — a retarget after a pause, or every stale press under the
+        ``"restart"`` policy: after a pause, acting again is a new session, so
+        its home is the view you are leaving now — not the one from the cycle
+        you abandoned. Retargeting *within* the timeout keeps the original
+        home, so a quick re-aim still unwinds to where you began.
         """
         return self._began_cycle
 
@@ -128,6 +151,7 @@ class StepToggle:
         steps: Optional[int] = None,
         context: Any = None,
         timeout: Optional[float] = None,
+        stale: Optional[str] = None,
     ) -> int:
         """Register a press and return the new state.
 
@@ -139,15 +163,17 @@ class StepToggle:
                 restarts at step 1 rather than stepping deeper or going home —
                 acting on something new is never an "undo". ``None`` opts out.
             timeout (float): Override :attr:`timeout` for this press.
+            stale (str): Override :attr:`stale` for this press.
 
         Returns:
             int: ``0`` (home) or the step reached, ``1..steps``.
         """
         steps = self.steps if steps is None else max(1, int(steps))
         timeout = self.timeout if timeout is None else timeout
+        stale_policy = self.stale if stale is None else self._check_stale(stale)
 
         now = self._clock()
-        stale = self._last is None or (
+        lapsed = self._last is None or (
             timeout is not None and (now - self._last) > timeout
         )
         self._last = now
@@ -157,35 +183,40 @@ class StepToggle:
         if retargeted:
             self._context = context
             self._state = 1
-        elif stale:  # a paused cycle collapses to a plain on/off toggle
-            self._state = 0 if self._state else 1
+        elif lapsed:  # a paused cycle never steps deeper: it collapses or restarts
+            self._state = 0 if (self._state and stale_policy == "home") else 1
         elif self._state >= steps:
             self._state = 0
         else:
             self._state += 1
 
-        # A cycle begins from home, or when a stale press retargets (see began_cycle).
-        self._began_cycle = self._state == 1 and (was_home or (retargeted and stale))
+        # A cycle begins from home, or on any stale press that lands on step 1
+        # (a stale retarget, or a "restart" press) — see began_cycle.
+        self._began_cycle = self._state == 1 and (was_home or lapsed)
         return self._state
 
     # ------------------------------------------------------------------ step magnitudes
     @staticmethod
-    def scales(steps: int, spread: float = 0.15, gain: float = 1.45) -> List[float]:
+    def scales(steps: int, spread: float = 0.0, gain: float = 1.45) -> List[float]:
         """Multiplier ramp for an ``N``-step toggle — one factor per step.
 
-        Each step is *gain* times stronger than the last, and the whole ramp is
-        pulled back as ``steps`` grows so a longer cycle starts *gentler* rather
-        than overshooting at the end. A single step is always exactly ``1.0``,
-        i.e. the caller's unscaled ideal.
+        The first step is the caller's unscaled ideal (``1.0``) and each further
+        step is *gain* times stronger than the last, so the first press always
+        lands exactly where the caller wants it and the extra presses go
+        *beyond* it. ``spread > 0`` opts into pulling the whole ramp back as
+        ``steps`` grows (a longer cycle starting gentler than the ideal) — off
+        by default, because a first press that undershoots reads as the key not
+        doing its job.
 
         Parameters:
             steps (int): Number of steps in the cycle.
-            spread (float): How much each extra step softens the starting factor.
+            spread (float): How much each extra step softens the starting factor
+                (``0.0``: the first step is always exactly the ideal).
             gain (float): Per-step multiplier.
 
         Returns:
             list: ``steps`` floats, ascending. e.g. ``scales(2) ->
-            [0.870, 1.261]``, ``scales(3) -> [0.769, 1.115, 1.617]``.
+            [1.0, 1.45]``, ``scales(3) -> [1.0, 1.45, 2.1025]``.
         """
         n = max(1, int(steps))
         start = 1.0 / (1.0 + spread * (n - 1))

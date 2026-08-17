@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-16_
+_Generated: 2026-08-17_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -10,7 +10,7 @@ _Generated: 2026-08-16_
 
 ### `core_utils/_core_utils.py`
 - `class CoreUtils(HelpMixin)`
-  - methods: cached_property, listify, format_return, set_attributes, get_attributes, has_attribute, get_derived_type, cycle, are_similar, randomize, parse_method_args
+  - methods: cached_property, listify, format_return, set_attributes, get_attributes, has_attribute, get_derived_type, teardown_guard, cycle, are_similar, randomize, parse_method_args
 
 ### `core_utils/app_handoff.py` — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 - `class AppSpec`
@@ -355,7 +355,7 @@ _Generated: 2026-08-16_
 
 ### `core_utils/task_factory.py` — Generic task/check pipeline primitive -- host- and Qt-free.
 - `class TaskFactory`
-  - methods: stage_deferred_restore, run_deferred_restores, run_tasks, run_tasks_by_category
+  - methods: stage_deferred_restore, stage_deferred_context, run_deferred_restores, run_tasks, run_tasks_by_category
 
 ### `core_utils/template_set.py` — A discoverable, user-extensible collection of schema-validated template files.
 - `class TemplateSet`

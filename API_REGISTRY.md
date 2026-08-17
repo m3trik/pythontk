@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-16_
+_Generated: 2026-08-17_
 
 ## Index
 
@@ -126,7 +126,7 @@ _Generated: 2026-08-16_
 <a id="core_utils--_core_utils"></a>
 ### `core_utils/_core_utils.py`
 
-- **[`class CoreUtils(HelpMixin)`](pythontk/pythontk/core_utils/_core_utils.py#L14)**
+- **[`class CoreUtils(HelpMixin)`](pythontk/pythontk/core_utils/_core_utils.py#L16)**
   - `CoreUtils.cached_property(func: Callable) -> Any` *(static)* — Decorator that converts a method with a single self argument into a property
   - `CoreUtils.listify(func=None, arg_name=None, threading=False)` *(static)* — A decorator to make a function accept list-like arguments and return a list of results.
   - `CoreUtils.format_return(cls, lst, orig=None)` *(class)* — Return the list element if the given iterable only contains a single element.
@@ -134,6 +134,7 @@ _Generated: 2026-08-16_
   - `CoreUtils.get_attributes(obj, inc=[], exc=[])` *(static)* — Get attributes for a given object.
   - `CoreUtils.has_attribute(cls, attr)` *(static)* — This function checks whether a class has a specific static attribute by using `inspect.getattr_stat…
   - `CoreUtils.get_derived_type(obj, return_name=False, module=None, include=[], exclude=[], filter_by_base_type=False)` *(static)* — Get the base class of a custom object.
+  - `CoreUtils.teardown_guard(logger=None, what: str = 'state')` *(static)* — Run a restore step so that a failure is LOGGED, never raised.
   - `CoreUtils.cycle(cls, sequence, name=None, query=False)` *(class)* — Toggle between numbers in a given sequence.
   - `CoreUtils.are_similar(cls, a, b, tolerance=0.0)` *(class)* — Check if the two numberical values are within a given tolerance.
   - `CoreUtils.randomize(lst, ratio=1.0)` *(static)* — Random elements from the given list will be returned with a quantity determined by the given ratio.
@@ -1185,15 +1186,15 @@ Shields.io status badges embedded in a markdown file.
 
 Timed multi-step press toggles.
 
-- **[`class StepToggle`](pythontk/pythontk/core_utils/step_toggle.py#L25)** — A press stepper: ``0`` (home) -> ``1`` -> ...
+- **[`class StepToggle`](pythontk/pythontk/core_utils/step_toggle.py#L33)** — A press stepper: ``0`` (home) -> ``1`` -> ...
   - `StepToggle.get(cls, name: str, **kwargs) -> 'StepToggle'` *(class)* — The shared toggle registered under *name*, created on first call.
   - `StepToggle.clear(cls, name: Optional[str] = None) -> None` *(class)* — Drop the shared toggle *name* (or every one when ``None``).
   - `StepToggle.state(self) -> int` *(property)* — The current step: ``0`` at home, else ``1..steps``.
   - `StepToggle.at_home(self) -> bool` *(property)* — True while the toggle sits at its home (un-stepped) state.
   - `StepToggle.began_cycle(self) -> bool` *(property)* — True when the last :meth:`advance` *started* a cycle — the moment to
   - `StepToggle.reset(self) -> None` — Return to home without acting — state, timing, context and payload.
-  - `StepToggle.advance(self, steps: Optional[int] = None, context: Any = None, timeout: Optional[float] = None) -> int` — Register a press and return the new state.
-  - `StepToggle.scales(steps: int, spread: float = 0.15, gain: float = 1.45) -> List[float]` *(static)* — Multiplier ramp for an ``N``-step toggle — one factor per step.
+  - `StepToggle.advance(self, steps: Optional[int] = None, context: Any = None, timeout: Optional[float] = None, stale: Optional[str] = None) -> int` — Register a press and return the new state.
+  - `StepToggle.scales(steps: int, spread: float = 0.0, gain: float = 1.45) -> List[float]` *(static)* — Multiplier ramp for an ``N``-step toggle — one factor per step.
 
 <a id="core_utils--symbol_record"></a>
 ### `core_utils/symbol_record.py`
@@ -1212,6 +1213,7 @@ Generic task/check pipeline primitive -- host- and Qt-free.
 
 - **[`class TaskFactory`](pythontk/pythontk/core_utils/task_factory.py#L23)** — A factory class for managing and executing tasks in a scene export pipeline.
   - `TaskFactory.stage_deferred_restore(self, key: str, restore: Callable) -> bool` — Register *restore* to run **after** the caller's real work — once per *key*.
+  - `TaskFactory.stage_deferred_context(self, key: str, cm) -> bool` — Enter context manager *cm* now and stage its exit as the deferred restore.
   - `TaskFactory.run_deferred_restores(self) -> None` — Run + clear every restore staged by :meth:`stage_deferred_restore`.
   - `TaskFactory.run_tasks(self, tasks: Dict[str, Any]) -> bool` — Run tasks and checks, returning True if all checks pass, False if any fail.
   - `TaskFactory.run_tasks_by_category(self, task_definitions: Dict[str, Any], check_definitions: Dict[str, Any]) -> bool` — Alternative method to run tasks and checks separately with better organization.
