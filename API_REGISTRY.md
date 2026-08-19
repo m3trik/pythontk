@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-17_
+_Generated: 2026-08-19_
 
 ## Index
 
@@ -81,6 +81,7 @@ _Generated: 2026-08-17_
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
 - [`geo_utils/uv_pack.py`](#geo_utils--uv_pack) — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
+- [`geo_utils/uv_transfer.py`](#geo_utils--uv_transfer) — Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
 - [`img_utils/exposure_equalizer.py`](#img_utils--exposure_equalizer) — Cross-set exposure / white-balance equalization.
 - [`img_utils/image_curator.py`](#img_utils--image_curator) — Perceptual-hash + sharpness curation for large image sets.
@@ -145,33 +146,36 @@ _Generated: 2026-08-17_
 
 Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
-- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L56)** — Declarative target-application executable-discovery config (data, not code).
+- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L68)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
+  - `AppSpec.path(self) -> Optional[str]` *(property)* — :meth:`resolve`, memoized for this spec instance.
+  - `AppSpec.available(self) -> bool` *(property)* — Whether the target app is installed (cached -- see :attr:`path`).
+  - `AppSpec.refresh(self) -> Optional[str]` — Discard the memoized :attr:`path` and re-probe.
   - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
-- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L87)** — The unit of work threaded through the skeleton.
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L149)** — The unit of work threaded through the skeleton.
   - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
-- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L107)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
-- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L122)** — Strategy: hand a produced :class:`Payload` to the target app.
+- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L169)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L184)** — Strategy: hand a produced :class:`Payload` to the target app.
   - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
-- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L143)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L205)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
   - `HandoffBridge.headless_app_path(self) -> Optional[str]` *(property)* — Executable for a BLOCKING/headless run;
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
   - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L402)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L427)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L585)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L610)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L568)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L751)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L718)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L901)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L798)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L981)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -251,9 +255,9 @@ Cooperative cancellation — one scope shared by every cancel affordance.
 <a id="core_utils--cli"></a>
 ### `core_utils/cli.py`
 
-- **[`class CLI`](pythontk/pythontk/core_utils/cli.py#L10)** — Utilities for standardizing Command Line Interfaces across scripts.
+- **[`class CLI(_CLIInternal)`](pythontk/pythontk/core_utils/cli.py#L51)** — Utilities for standardizing Command Line Interfaces across scripts.
   - `CLI.get_parser(description: str = None) -> argparse.ArgumentParser` *(static)* — Create a standard ArgumentParser.
-  - `CLI.add_connection_args(parser: argparse.ArgumentParser, default_host: str = DEFAULT_HOST, default_user: str = DEFAULT_USER, default_target: str = DEFAULT_CRED_TARGET) -> argparse.ArgumentParser` *(static)* — Add standard SSH connection arguments (host, user, password, cred-target).
+  - `CLI.add_connection_args(parser: argparse.ArgumentParser, default_host: Optional[str] = None, default_user: Optional[str] = None, default_target: Optional[str] = None) -> argparse.ArgumentParser` *(static)* — Add standard SSH connection arguments (host, user, password, cred-target).
   - `CLI.get_connection_kwargs(args: argparse.Namespace) -> Dict[str, Any]` *(static)* — Convert parsed arguments into a dictionary suitable for SSHClient.__init__.
 
 <a id="core_utils--color"></a>
@@ -602,23 +606,23 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L351)** — Handles packed Metallic+Smoothness.
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L373)** — Handles packed Metallic+Smoothness.
   - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L424)** — Handles separate metallic and roughness maps.
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L446)** — Handles separate metallic and roughness maps.
   - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
   - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L461)** — Handles base color / albedo with optional packing.
+- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L483)** — Handles base color / albedo with optional packing.
   - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L613)** — Handles normal map format conversion.
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L635)** — Handles normal map format conversion.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L791)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L813)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -677,8 +681,10 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 Plan, assess, and apply map (texture) optimizations.
 
-- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L127)** — One operation in an optimization plan.
-- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L140)** — Plan, assess, and apply map (texture) optimizations.
+- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L134)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L147)** — Plan, assess, and apply map (texture) optimizations.
+  - `MapOptimizer.resolve_size_clamp(cls, max_size: Any, template: Optional[str] = None, logger: Optional[Any] = None) -> Dict[str, Any]` *(class)* — Turn a user-facing "max size" mode into :meth:`assess` / :meth:`optimize_map` kwargs.
+  - `MapOptimizer.describe_size_clamp(cls, max_size: Any, template: Optional[str] = None, logger: Optional[Any] = None) -> str` *(class)* — Human-readable form of :meth:`resolve_size_clamp`, for log lines.
   - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest', output_profile: Optional[str] = None, output_type: Optional[str] = None) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
   - `MapOptimizer.project(plan: List[Op], width: int, height: int, mode: str) -> Tuple[int, int, str]` *(static)* — Replay ``plan``'s op params to get the post-apply size and mode.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
@@ -704,6 +710,7 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapRegistry.select_normal_type(cls, available) -> Optional[str]` *(class)* — The single normal map type a shader should wire, out of those present.
   - `MapRegistry.resolve_type_from_channel(cls, channel: str) -> Optional[str]` *(class)* — Canonical map type for a logical shader channel, or None if unmapped.
   - `MapRegistry.split_tile_token(cls, name_only: str) -> Tuple[str, str]` *(class)* — Split a trailing UDIM / UV-tile token off an extension-less filename.
+  - `MapRegistry.split_duplicate_token(cls, name_only: str) -> Tuple[str, str]` *(class)* — Split a trailing duplicate marker off an extension-less filename.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
   - `MapRegistry.get_suffix_strip_pattern(self) -> Optional[str]` — Regex matching one trailing map-type suffix (any registered alias).
   - `MapRegistry.shares_workflow(self, name: str, other: str) -> Optional[bool]` — Whether two map types declare any target workflow in common.
@@ -765,10 +772,10 @@ Per-map output-format templates — the "export preset" layer.
 
 Region-mask engine — named face-group masks that gate texture regions at runtime.
 
-- **[`class RegionGroup`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L66)** — One named region group.
+- **[`class RegionGroup`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L67)** — One named region group.
   - `RegionGroup.to_dict(self) -> dict`
   - `RegionGroup.coerce(cls, group: Union['RegionGroup', dict]) -> 'RegionGroup'` *(class)* — Accept a ``RegionGroup`` or its plain-dict form.
-- **[`class RegionMaskManifest`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L109)** — The wire schema joining DCC-authored groups to their game-engine consumer.
+- **[`class RegionMaskManifest`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L110)** — The wire schema joining DCC-authored groups to their game-engine consumer.
   - `RegionMaskManifest.vertex_color(cls, groups: Sequence[Union[RegionGroup, dict]], color_set: str = 'emissiveGroups') -> 'RegionMaskManifest'` *(class)* — Manifest for membership riding in a mesh color set.
   - `RegionMaskManifest.channels(cls, groups: Sequence[Union[RegionGroup, dict]], mask: str, resolution: int, uv_channel: int = 0) -> 'RegionMaskManifest'` *(class)* — Manifest for membership rasterized into an RGBA mask texture.
   - `RegionMaskManifest.to_dict(self) -> dict` — Wire form: encoding-irrelevant fields are omitted, not null.
@@ -777,7 +784,7 @@ Region-mask engine — named face-group masks that gate texture regions at runti
   - `RegionMaskManifest.from_json(cls, text: str) -> 'RegionMaskManifest'` *(class)*
   - `RegionMaskManifest.save(self, path: str) -> str`
   - `RegionMaskManifest.load(cls, path: str) -> 'RegionMaskManifest'` *(class)*
-- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L225)** — Slot-assignment model for region groups — persistence injected.
+- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L226)** — Slot-assignment model for region groups — persistence injected.
   - `RegionGroupRegistry.empty(self) -> dict`
   - `RegionGroupRegistry.read(self) -> dict` — The stored registry, or a fresh empty one (never raises).
   - `RegionGroupRegistry.write(self, registry: dict) -> None` — Persist *registry*, or clear the channel when it holds nothing.
@@ -791,7 +798,7 @@ Region-mask engine — named face-group masks that gate texture regions at runti
   - `RegionGroupRegistry.compact(self) -> List[int]` — Reclaim retired slots.
   - `RegionGroupRegistry.set_encoding(self, encoding: str, **info) -> None` — Record the encoding the last bake produced (plus mask info).
   - `RegionGroupRegistry.manifest(self, color_set: Optional[str] = None) -> Optional[RegionMaskManifest]` — The manifest for the current registry, or None when it has no groups.
-- **[`class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L494)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
+- **[`class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L495)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
   - `RegionMaskPacker.groups(self) -> List[RegionGroup]` *(property)*
   - `RegionMaskPacker.add_group(self, name: str, uv_triangles, *, slot: Optional[int] = None, default: float = 1.0, attr: Optional[str] = None) -> RegionGroup` — Register a group and its UV coverage.
   - `RegionMaskPacker.validate(self) -> List[str]` — Non-fatal authoring warnings (hard errors raise in ``add_group``).
@@ -1097,9 +1104,9 @@ App-agnostic line-stream primitives for launched processes and log files.
   - `OutputStream.wait_for(self, pattern: Union[str, Pattern], timeout: Optional[float] = None, source: Optional[str] = None, include_history: bool = True) -> Optional[Tuple[str, str]]` — Block until a line matches *pattern*, or *timeout* expires.
   - `OutputStream.close(self) -> None` — Mark the stream closed.
   - `OutputStream.closed(self) -> bool` *(property)*
-- **[`class ProcessReader(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L195)** — Reads a subprocess pipe line-by-line into an :class:`OutputStream`.
+- **[`class ProcessReader(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L200)** — Reads a subprocess pipe line-by-line into an :class:`OutputStream`.
   - `ProcessReader.run(self) -> None`
-- **[`class LogTailer(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L223)** — Tails a log file from its current size forward.
+- **[`class LogTailer(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L228)** — Tails a log file from its current size forward.
   - `LogTailer.stop(self) -> None`
   - `LogTailer.run(self) -> None`
 
@@ -1174,7 +1181,11 @@ Generic on-disk script-template discovery + ``__KEY__`` rendering.
 
 Shields.io status badges embedded in a markdown file.
 
-- **[`class StatusBadge(_StatusBadgeInternal)`](pythontk/pythontk/core_utils/status_badge.py#L80)** — Render a shields.io badge and keep it up to date in a markdown file.
+- **[`class StatusBadge(_StatusBadgeInternal)`](pythontk/pythontk/core_utils/status_badge.py#L116)** — Render a shields.io badge and keep it up to date in a markdown file.
+  - `StatusBadge.discover_module_names(test_dir: PathLike) -> set` *(static)* — Return the module names ``TestLoader.discover`` will import.
+  - `StatusBadge.module_of(cls, test) -> str` *(class)* — Return the ``test_*`` module *test* came from ('' if unknown).
+  - `StatusBadge.is_import_standin(cls, test) -> bool` *(class)* — True when *test* stands in for a module that never imported.
+  - `StatusBadge.gate(cls, expected, ran, passed: int, failed: int) -> Tuple[bool, str]` *(class)* — Return ``(allowed, reason)`` for stamping the test badge.
   - `StatusBadge.url(cls, message: str, color: str, label: str = LABEL, style: Optional[str] = None) -> str` *(class)* — Build the shields.io image URL.
   - `StatusBadge.render(cls, message: str, color: str, label: str = LABEL, link: str = '', style: Optional[str] = None) -> str` *(class)* — Return the badge as a markdown image, linked when ``link`` is given.
   - `StatusBadge.test_status(cls, passed: int, failed: int) -> Tuple[str, str]` *(class)* — Map a test run to ``(message, color)``.
@@ -1263,6 +1274,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.is_under(path: str, directory: str, inclusive: bool = True) -> bool` *(static)* — Is *path* inside *directory*?
   - `FileUtils.is_rooted_path(text: str) -> bool` *(static)* — Does *text* name a full path rather than a subdirectory?
   - `FileUtils.resolve_output_dir(cls, entry: str, base: Optional[str]) -> Optional[str]` *(class)* — Resolve a user-typed output-directory *entry* against *base*.
+  - `FileUtils.relativize_output_dir(cls, path: str, base: Optional[str]) -> str` *(class)* — The portable spelling of *path* for a :meth:`resolve_output_dir` field.
   - `FileUtils.path_length_limit() -> int` *(static)* — The longest path this OS will accept, in characters.
   - `FileUtils.exceeds_path_length(path: str, limit: Optional[int] = None) -> bool` *(static)* — Is *path* longer than the OS path-length limit?
   - `FileUtils.free_space(path: str) -> Optional[int]` *(static)* — Return free space (bytes) on the volume that holds *path*.
@@ -1300,6 +1312,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* — Apply a scene-sidecar envelope to a GLB and embed it in its extras.
   - `MeshConvert.sidecar_foreign_packings(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* — ``{path: map type}`` for envelope textures authored for another engine.
   - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The scene-sidecar envelope embedded in a GLB, or ``None``.
+  - `MeshConvert.verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]` *(class)* — Check a delivered GLB against the envelope it carries.
   - `MeshConvert.without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]` *(class)* — Copy of a ``data_export`` snapshot with build-time locate hints removed.
   - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.
   - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
@@ -1308,6 +1321,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
   - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
+  - `MeshConvert.suspect_orm_materials(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]` *(class)* — Materials whose delivered ORM binding this pipeline never validated.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
   - `MeshConvert.prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop textures no material samples, and the images/bufferViews only they used.
   - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
@@ -1418,7 +1432,7 @@ Shared project-workspace model + ``workspace.mel`` codec.
 
 Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 
-- **[`class PlateEmitter(NamedTuple)`](pythontk/pythontk/geo_utils/plate_emitter.py#L28)** — The area light a flat plate implies.
+- **[`class PlateEmitter(NamedTuple)`](pythontk/pythontk/geo_utils/plate_emitter.py#L30)** — The area light a flat plate implies.
   - `PlateEmitter.from_bounds(cls, minimum: Sequence[float], maximum: Sequence[float], toward: Optional[Sequence[float]] = None, offset: float = 0.01, up_axis: int = 2) -> 'PlateEmitter'` *(class)* — Solve the emitter for the plate bounded by *minimum* / *maximum*.
   - `PlateEmitter.from_points(cls, points: Sequence[Sequence[float]], normal: Optional[Sequence[float]] = None, toward: Optional[Sequence[float]] = None, offset: float = 0.0, up_axis: int = 2) -> 'PlateEmitter'` *(class)* — Solve an ORIENTED emitter for an arbitrary flat patch of geometry.
 
@@ -1473,10 +1487,33 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
   - `UvPack.available(cls) -> bool` *(class)* — True when the xatlas engine can be imported.
   - `UvPack.pack_islands(cls, meshes: Sequence[Tuple[Any, Any]], padding: int = 4, rotate: bool = True, brute_force: bool = False, resolution: int = 0, pages: int = 1, align_to_axis: Optional[bool] = None) -> PackIslandsResult` *(class)* — Pack every mesh's UV islands together.
 
+<a id="geo_utils--uv_transfer"></a>
+### `geo_utils/uv_transfer.py`
+
+Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
+
+- **[`class TransferTable`](pythontk/pythontk/geo_utils/uv_transfer.py#L76)** — The per-texel correspondence from a target layout back to its source.
+  - `TransferTable.passes(self) -> int` *(property)*
+  - `TransferTable.nbytes(self) -> int` *(property)*
+  - `TransferTable.coverage(self) -> 'np.ndarray'` *(property)* — Fraction of sub-samples covered per texel, ``float32`` in [0, 1].
+  - `TransferTable.mask(self) -> 'np.ndarray'` *(property)* — Bool: texels touched by any sub-sample (what the output owns).
+  - `TransferTable.frames(self) -> 'np.ndarray'` *(property)* — ``(N, 2, 2)`` tangent-frame rotations, source -> target, per triangle.
+- **[`class UvTransfer(HelpMixin)`](pythontk/pythontk/geo_utils/uv_transfer.py#L129)** — Remap textures between two UV layouts of the same triangles (see module doc).
+  - `UvTransfer.build(cls, src_tris, dst_tris, size: Union[int, Tuple[int, int]], *, supersample: int = 2, source_ids=None) -> TransferTable` *(class)* — Rasterize *dst_tris* and record, per texel, the source UV it maps to.
+  - `UvTransfer.transfer(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Remap *sources* through *table*.
+  - `UvTransfer.transfer_normals(cls, table: TransferTable, sources, *, convention: str = 'opengl', source_masks=None, bilinear: bool = True, value_range: Tuple[float, float] = (0.0, 255.0)) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Remap tangent-space normal maps, re-expressing XY in the target frame.
+  - `UvTransfer.pad(cls, image, coverage, width: int = -1) -> 'np.ndarray'` *(class)* — Fill the gutter around covered texels (edge padding / dilation).
+  - `UvTransfer.merge_layouts(cls, jobs: Dict[str, Dict[str, Any]], name: str, *, probe_size: int = 256) -> Dict[str, Dict[str, Any]]` *(class)* — Merge per-material *jobs* that share one UV layout into one job.
+  - `UvTransfer.transfer_materials(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, log=None) -> Dict[str, Dict[str, str]]` *(class)* — Transfer every channel of every target material and write the maps.
+  - `UvTransfer.normal_convention(cls, path: str, override: Optional[str] = None) -> str` *(class)* — The tangent-space convention *path*'s filename declares.
+  - `UvTransfer.load_map(path: str) -> Tuple['np.ndarray', float]` *(static)* — ``(HxWxC float32, value max)`` -- 255 for 8-bit, 65535 for 16-bit.
+  - `UvTransfer.save_map(path: str, arr: 'np.ndarray', value_max: float = 255.0) -> str` *(static)* — Write *arr* (in ``0..value_max``) as PNG -- 16-bit grey, else 8-bit.
+  - `UvTransfer.triangle_frames(cls, src_tris, dst_tris) -> 'np.ndarray'` *(class)* — ``(N, 2, 2)`` rotation (+reflection) taking each source triangle's
+
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L46)** — Helper methods for working with image file formats.
+- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L47)** — Helper methods for working with image file formats.
   - `ImgUtils.effective_mode(cls, mode: str, ext: str) -> str` *(class)* — The mode *ext* will actually store for an image in *mode*.
   - `ImgUtils.dropped_channels(cls, mode: str, ext: str) -> Tuple[str, ...]` *(class)* — Band names *ext* cannot keep from an image in *mode*.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
@@ -1713,24 +1750,31 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview_server.py#L240)** — Serve a directory of preview assets on loopback, with a live manifest.
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview_server.py#L302)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
   - `PreviewServer.is_running(self) -> bool` *(property)*
   - `PreviewServer.has_viewer(self) -> bool` — Whether a page is currently watching this server.
+  - `PreviewServer.scripts(self) -> tuple` *(property)* — Registered names of the viewer scripts currently active, in load order.
+  - `PreviewServer.add_script(self, name: str, path: Optional[Union[str, Path]] = None) -> 'PreviewServer'` — Activate a viewer script, on disk and in the manifest at once.
+  - `PreviewServer.remove_script(self, name: str) -> 'PreviewServer'` — Deactivate a viewer script (unknown names are ignored), and sweep it.
+  - `PreviewServer.set_scripts(self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]) -> 'PreviewServer'` — Replace the whole active set (``None`` or empty clears it).
   - `PreviewServer.manifest(self) -> Dict[str, Any]` — The payload served at ``/manifest.json``.
   - `PreviewServer.start(self) -> 'PreviewServer'` — Bind the port and serve on a daemon thread.
   - `PreviewServer.stop(self) -> None` — Stop serving and release the port.
   - `PreviewServer.publish(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int` — Place an asset in the serve root and bump the manifest version.
   - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer in the default browser.
-- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L460)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
+- **[`class PreviewPassContext`](pythontk/pythontk/net_utils/preview_server.py#L668)** — What a post-conversion preview pass reads, and reports into.
+  - `PreviewPassContext.logger(self)` *(property)* — The bridge's logger -- every pass reports through the push's own sink.
+  - `PreviewPassContext.sidecar(self) -> Optional[Dict[str, Any]]` *(property)* — The scene-sidecar envelope the producer attached, if any.
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L701)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L657)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L1023)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
-  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
+  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port.
 

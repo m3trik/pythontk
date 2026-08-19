@@ -180,6 +180,36 @@ class FileUtils(HelpMixin):
         text = os.path.splitdrive(text)[1]
         return os.path.normpath(os.path.join(base, text.strip("/\\").strip()))
 
+    @classmethod
+    def relativize_output_dir(cls, path: str, base: Optional[str]) -> str:
+        """The portable spelling of *path* for a :meth:`resolve_output_dir` field.
+
+        Its exact inverse, and the one place a browse dialog's answer becomes
+        field text: a dialog can only hand back an absolute path, but the
+        spelling that survives the project being moved (or a teammate opening
+        their copy) is the one relative to *base*. So *path* under *base*
+        becomes that relative subdirectory, *path* == *base* becomes ``""``
+        (which the field reads as "the default"), and anything outside is
+        returned absolute -- that is what the user picked, and there is no
+        shorter honest way to write it.
+
+        Parameters:
+            path (str): The absolute directory the dialog returned.
+            base (str): Directory the field's entries are relative to.
+
+        Returns:
+            str: The text to put in the field (``""`` for *base* itself).
+        """
+        if not path:
+            return ""
+        if not base or not cls.is_under(path, base):
+            # VERBATIM, not normalized: this is the value the dialog already
+            # wrote into the field, and re-spelling its separators would show
+            # the user an edit they did not make.
+            return path
+        relative = cls.convert_to_relative_path(path, base, prepend_base=False)
+        return "" if relative in (".", "") else relative
+
     @staticmethod
     @functools.lru_cache(maxsize=1)
     def path_length_limit() -> int:
@@ -326,7 +356,9 @@ class FileUtils(HelpMixin):
             str: e.g. "12.00 MB -> 3.00 MB (-75%)". The percentage is omitted
                 when either side is missing or *before* is zero.
         """
-        rendered = f"{cls.format_bytes(before, unknown)} -> {cls.format_bytes(after, unknown)}"
+        rendered = (
+            f"{cls.format_bytes(before, unknown)} -> {cls.format_bytes(after, unknown)}"
+        )
         try:
             pct = (float(after) - float(before)) / float(before) * 100
         except (TypeError, ValueError, ZeroDivisionError):
@@ -580,9 +612,7 @@ class FileUtils(HelpMixin):
                         dirs[:] = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
                         if inc_dirs:
                             for d in dirs:
-                                inc_roots.add(
-                                    os.path.normcase(os.path.join(root, d))
-                                )
+                                inc_roots.add(os.path.normcase(os.path.join(root, d)))
                 yield root, dirs, files
 
         if num_threads == -1 or num_threads > 1:
@@ -1408,9 +1438,7 @@ class FileUtils(HelpMixin):
                 except Exception as e:
                     import logging
 
-                    logging.getLogger(__name__).debug(
-                        "Skipping %s: %s", filepath, e
-                    )
+                    logging.getLogger(__name__).debug("Skipping %s: %s", filepath, e)
                     load_failed = True
                 finally:
                     # Always clean up the synthetic name — it exists to
@@ -1484,15 +1512,15 @@ class FileUtils(HelpMixin):
         if not file:
             file = cls.get_json_file()
 
-        assert (
-            file
-        ), "{} in set_json\n\t# Error: Operation requires a json file to be specified. #".format(
-            __file__
+        assert file, (
+            "{} in set_json\n\t# Error: Operation requires a json file to be specified. #".format(
+                __file__
+            )
         )
-        assert isinstance(
-            file, str
-        ), "{} in set_json\n\t# Error:   Incorrect datatype: {} #".format(
-            __file__, type(file).__name__
+        assert isinstance(file, str), (
+            "{} in set_json\n\t# Error:   Incorrect datatype: {} #".format(
+                __file__, type(file).__name__
+            )
         )
 
         try:
@@ -1524,15 +1552,15 @@ class FileUtils(HelpMixin):
         if not file:
             file = cls.get_json_file()
 
-        assert (
-            file
-        ), "{} in set_json\n\t# Error: Operation requires a json file to be specified. #".format(
-            __file__
+        assert file, (
+            "{} in set_json\n\t# Error: Operation requires a json file to be specified. #".format(
+                __file__
+            )
         )
-        assert isinstance(
-            file, str
-        ), "{} in set_json\n\t# Error:   Incorrect datatype: {} #".format(
-            __file__, type(file).__name__
+        assert isinstance(file, str), (
+            "{} in set_json\n\t# Error:   Incorrect datatype: {} #".format(
+                __file__, type(file).__name__
+            )
         )
 
         try:

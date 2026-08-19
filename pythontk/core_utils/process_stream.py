@@ -151,9 +151,14 @@ class OutputStream:
             ``(source, line)`` tuple, or ``None`` on timeout / stream closure.
         """
         if isinstance(pattern, str):
-            matches = lambda s: pattern in s
+
+            def matches(line: str) -> bool:
+                return pattern in line
+
         else:
-            matches = lambda s: bool(pattern.search(s))
+
+            def matches(line: str) -> bool:
+                return bool(pattern.search(line))
 
         q: "queue.Queue[Tuple[str, str]]" = queue.Queue()
         unsubscribe = self.subscribe(

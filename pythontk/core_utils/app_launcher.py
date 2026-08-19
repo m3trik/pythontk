@@ -295,7 +295,9 @@ class AppLauncher:
         keeping PsExec a runtime-optional tool rather than a dependency.
 
         Search order: *explicit* → ``$PSEXEC`` env → PATH (``PsExec64.exe`` /
-        ``PsExec.exe``) → common tool dirs. Returns the path or ``None``.
+        ``PsExec.exe``) → ``$PSTOOLS_HOME`` → conventional tool dirs. Returns the
+        path or ``None``. Site-specific locations belong in ``$PSEXEC`` (full
+        path) or ``$PSTOOLS_HOME`` (containing directory) rather than here.
         """
         candidates = []
         if explicit:
@@ -306,7 +308,14 @@ class AppLauncher:
             w = shutil.which(name)
             if w:
                 candidates.append(w)
-        for d in (r"M:\tools", r"C:\tools", os.environ.get("ProgramFiles", "")):
+        program_files = os.environ.get("ProgramFiles", "")
+        for d in (
+            os.environ.get("PSTOOLS_HOME", ""),
+            os.path.join(program_files, "PSTools") if program_files else "",
+            program_files,
+            r"C:\tools",
+            r"M:\tools",  # legacy site location; last resort
+        ):
             if d:
                 candidates += [os.path.join(d, n) for n in ("PsExec64.exe", "PsExec.exe")]
         for c in candidates:

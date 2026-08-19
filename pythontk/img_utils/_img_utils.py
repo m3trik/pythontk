@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import math
 import struct
+import logging
 
 # OpenCV reads this once, when its EXR codec first initializes (often at the
 # first cv2 import). Set it here — pythontk is the ecosystem's EXR/HDR IO entry
@@ -22,12 +23,12 @@ if TYPE_CHECKING:
 try:
     import numpy as np
 except ImportError as e:
-    print(f"# ImportError: {__file__}\n\t{e}")
+    logging.getLogger(__name__).debug(f"# ImportError: {__file__}\n\t{e}")
     np = None  # type: ignore
 try:
     from PIL import Image, ImageOps, ImageFilter, ImageChops, ImageDraw, ImageMode
 except ImportError as e:
-    print(f"# ImportError: {__file__}\n\t{e}")
+    logging.getLogger(__name__).debug(f"# ImportError: {__file__}\n\t{e}")
     Image = None  # type: ignore
 
 # From this package:

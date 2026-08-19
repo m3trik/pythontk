@@ -13,6 +13,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 from dataclasses import replace
 from pathlib import Path
 
@@ -283,6 +284,72 @@ class AppScanTest(unittest.TestCase):
         self.assertEqual(spec.resolve(), str(exe))
         self.assertEqual(spec.not_found_message, "App executable not found.")
 
+    def test_app_spec_path_is_cached(self):
+        """``path`` resolves once; the discovery scan is not repeated.
+
+        The visibility gate asks every panel build whether an app is installed,
+        so an uncached probe would re-glob Program Files on each panel show
+        (12-155ms measured per app). ``resolve()`` stays uncached for callers
+        that genuinely want a fresh look.
+        """
+        exe = self.tmp / "cached.exe"
+        exe.write_text("", encoding="utf-8")
+        os.environ["BRIDGE_CACHE_EXE"] = str(exe)
+        spec = AppSpec(name="Cached", env_vars=("BRIDGE_CACHE_EXE",))
+
+        calls = []
+        real = AppLauncher.resolve_app_path
+
+        def counting(**kwargs):
+            calls.append(kwargs)
+            return real(**kwargs)
+
+        with mock.patch.object(AppLauncher, "resolve_app_path", counting):
+            self.assertEqual(spec.path, str(exe))
+            self.assertEqual(spec.path, str(exe))
+            self.assertTrue(spec.available)
+        self.assertEqual(len(calls), 1, "path must resolve exactly once")
+
+    def test_app_spec_available_is_false_when_missing(self):
+        """A spec that resolves to nothing reads as unavailable (and caches that)."""
+        spec = AppSpec(
+            name="Ghost", scan_globs=(str(self.tmp / "nope" / "*.exe"),)
+        )
+        self.assertFalse(spec.available)
+        self.assertIsNone(spec.path)
+
+    def test_app_spec_refresh_clears_the_cache(self):
+        """``refresh()`` re-probes -- an app installed mid-session becomes visible."""
+        target = self.tmp / "late.exe"
+        os.environ["BRIDGE_LATE_EXE"] = str(target)
+        spec = AppSpec(name="Late", env_vars=("BRIDGE_LATE_EXE",))
+        self.assertFalse(spec.available)
+
+        target.write_text("", encoding="utf-8")
+        self.assertFalse(spec.available, "cached miss must persist until refresh")
+        spec.refresh()
+        self.assertTrue(spec.available)
+        self.assertEqual(spec.path, str(target))
+
+    def test_app_spec_cache_is_per_instance_not_shared(self):
+        """Two specs cache independently (they are separate module singletons)."""
+        exe = self.tmp / "one.exe"
+        exe.write_text("", encoding="utf-8")
+        os.environ["BRIDGE_ONE_EXE"] = str(exe)
+        found = AppSpec(name="One", env_vars=("BRIDGE_ONE_EXE",))
+        missing = AppSpec(name="Two", scan_globs=(str(self.tmp / "x" / "*.exe"),))
+        self.assertTrue(found.available)
+        self.assertFalse(missing.available)
+        self.assertTrue(found.available)
+
+    def test_app_spec_stays_hashable_and_frozen(self):
+        """Caching must not break the frozen-dataclass contract."""
+        spec = AppSpec(name="Frozen", app_names=("nothing-here",))
+        self.assertFalse(spec.available)  # populate the cache
+        hash(spec)  # must not raise
+        with self.assertRaises(Exception):
+            spec.name = "mutated"
+
 
 class _StubScriptBridge(ScriptLaunchBridge):
     """A ScriptLaunchBridge wired to fakes so send() runs with no DCC/launch."""
@@ -450,6 +517,143 @@ class HandoffContractTest(unittest.TestCase):
     def test_scene_objects_defaults_to_unsupported(self):
         """``None`` = "this host can't enumerate itself" -> save_as uses the selection."""
         self.assertIsNone(HandoffBridge()._scene_objects())
+
+
+class RunScratchTest(unittest.TestCase):
+    """The run-scratch lifetime: who is allowed to delete what a run staged.
+
+    A hand-off the target app reads AFTER we return has no safe delete
+    (``detached``); a blocking run that CONSUMES what it staged does
+    (``scoped``), and takes it away in ``_ingest``.  Added: 2026-08-18
+    """
+
+    def _bridge(self, policy="detached", delivered=()):
+        class _B(HandoffBridge):
+            payload_prefix = "ptk_scratch_test"
+
+            def _scratch_policy(self, request):
+                return policy
+
+            def _delivered_paths(self, result):
+                return list(delivered)
+
+        b = _B()
+        b.logger.setLevel("CRITICAL")  # keep the suite output clean
+        return b
+
+    def test_detached_run_reuses_one_named_folder_and_never_deletes(self):
+        br, req = self._bridge("detached"), HandoffRequest()
+        first = br._scratch_dir(req, "handoff")
+        self.assertTrue(os.path.isdir(first))
+        self.addCleanup(shutil.rmtree, first, True)
+        # A fixed name is what keeps a never-deleted folder from growing a
+        # generation per send.
+        self.assertEqual(br._scratch_dir(HandoffRequest(), "handoff"), first)
+        br._discard_scratch(req, {})
+        self.assertTrue(os.path.isdir(first), "a detached hand-off must outlive us")
+
+    def test_scoped_run_shares_one_root_and_ingest_removes_it(self):
+        br, req = self._bridge("scoped"), HandoffRequest()
+        work = br._scratch_dir(req, "handoff")
+        stage = br._scratch_dir(req, "staging")
+        root = os.path.dirname(work)
+        self.addCleanup(shutil.rmtree, root, True)
+        self.assertEqual(os.path.dirname(stage), root, "one root per run")
+        # Unique per run, so two hosts cannot share -- or delete -- one dir.
+        other = br._scratch_dir(HandoffRequest(), "handoff")
+        self.addCleanup(shutil.rmtree, os.path.dirname(other), True)
+        self.assertNotEqual(os.path.dirname(other), root)
+
+        br._discard_scratch(req, {"ok": True})
+        self.assertFalse(os.path.exists(root), "a clean scoped run removes its scratch")
+
+    def test_scoped_scratch_holding_the_output_is_kept(self):
+        req = HandoffRequest()
+        br = self._bridge("scoped")
+        work = br._scratch_dir(req, "handoff")
+        root = os.path.dirname(work)
+        self.addCleanup(shutil.rmtree, root, True)
+        # The guard: the run's real output landed inside the scratch, so the
+        # scratch holds the only copy.
+        br._delivered_paths = lambda result: [os.path.join(work, "map.png")]
+        br._discard_scratch(req, {})
+        self.assertTrue(os.path.isdir(root))
+
+    def test_a_failed_run_keeps_its_scratch(self):
+        """``_ingest`` is never reached, so the scratch stays inspectable."""
+        br, req = self._bridge("scoped"), HandoffRequest()
+        work = br._scratch_dir(req, "handoff")
+        root = os.path.dirname(work)
+        self.addCleanup(shutil.rmtree, root, True)
+        self.assertTrue(os.path.isdir(root))
+
+    def test_discard_is_idempotent(self):
+        br, req = self._bridge("scoped"), HandoffRequest()
+        root = os.path.dirname(br._scratch_dir(req, "handoff"))
+        self.addCleanup(shutil.rmtree, root, True)
+        br._discard_scratch(req, {})
+        br._discard_scratch(req, {})  # must not raise on the second pass
+        self.assertFalse(os.path.exists(root))
+
+    def test_default_policy_is_detached(self):
+        """The safe default: nothing deletes a payload another app may be reading."""
+        self.assertEqual(HandoffBridge()._scratch_policy(HandoffRequest()), "detached")
+
+    def test_policy_reads_the_declared_modes(self):
+        """The ordinary opt-in is one line of DATA, not an overridden method."""
+
+        class _B(HandoffBridge):
+            scoped_scratch_modes = (ROUND_TRIP,)
+
+        br = _B()
+        self.assertEqual(br._scratch_policy(HandoffRequest(mode=ROUND_TRIP)), "scoped")
+        self.assertEqual(br._scratch_policy(HandoffRequest(mode=SEND_TO)), "detached")
+
+    def _staging_bridge(self, ingest=None):
+        """A minimal end-to-end bridge that stages a scoped scratch in ``_produce``."""
+        seen = {}
+
+        class _B(HandoffBridge):
+            payload_prefix = "ptk_scratch_run"
+            requires_objects = False
+
+            def _scratch_policy(self, request):
+                return "scoped"
+
+            def _resolve_objects(self, objects):
+                return list(objects or ["x"])
+
+            def _produce(self, objects, request):
+                seen["root"] = os.path.dirname(self._scratch_dir(request, "handoff"))
+                return Payload(primary="p")
+
+            def _deliver(self, payload, request):
+                return {"ok": True}
+
+        if ingest is not None:
+            _B._ingest = ingest
+        b = _B()
+        b.logger.setLevel("CRITICAL")
+        return b, seen
+
+    def test_the_skeleton_discards_even_when_ingest_is_overridden(self):
+        """The invariant is in ``_run``, so a return leg that skips ``super()``
+        cannot leak the scratch -- ``blender_bridge`` is exactly such a leg."""
+        br, seen = self._staging_bridge(
+            ingest=lambda self, result, objects, payload, request: result
+        )
+        self.assertIsNotNone(br.send())
+        self.addCleanup(shutil.rmtree, seen["root"], True)
+        self.assertFalse(os.path.exists(seen["root"]))
+
+    def test_a_return_leg_reporting_failure_keeps_the_scratch(self):
+        """``_ingest`` -> ``None`` is a handled failure; leave it inspectable."""
+        br, seen = self._staging_bridge(
+            ingest=lambda self, result, objects, payload, request: None
+        )
+        self.assertIsNone(br.send())
+        self.addCleanup(shutil.rmtree, seen["root"], True)
+        self.assertTrue(os.path.isdir(seen["root"]))
 
 
 class _StubSaveBridge(_StubScriptBridge):

@@ -465,7 +465,15 @@ class TestMapFactoryRefactored(unittest.TestCase):
     def test_mask_map_alpha_defaults_white_without_smoothness(self):
         """Regression: with no smoothness/roughness source, the Mask Map's
         alpha channel must be the neutral white fill — not a copy of the
-        metallic channel."""
+        metallic channel.
+
+        Needs an explicit Pack Anyway now. This set (metallic + AO, no
+        smoothness) is the one 2-of-3 combination whose missing channel fills
+        NON-neutrally, so the default rule refuses it — a white alpha is a
+        mirror-smooth surface. The leak this guards against is a different
+        failure (metallic data reaching the alpha), and it stays pinned here
+        by asking for the pack the caller would have to ask for.
+        """
         from PIL import Image
 
         src_dir = os.path.join(self.test_dir, "mask_alpha_src")
@@ -481,10 +489,13 @@ class TestMapFactoryRefactored(unittest.TestCase):
                 output_dir=self.output_dir,
                 mask_map=True,
                 rename=True,
+                missing_map_rule="force",
             )
             msao_path = next(
-                p for p in results if "MSAO" in os.path.basename(p)
+                (p for p in results if "MSAO" in os.path.basename(p)),
+                None,
             )
+            self.assertIsNotNone(msao_path, "Pack Anyway did not write a Mask Map")
             with Image.open(msao_path) as img:
                 self.assertEqual(img.mode, "RGBA")
                 alpha_min, alpha_max = img.getextrema()[3]

@@ -30,8 +30,9 @@ Example (publish a GLB and open it):
 
 Served surface:
     ``GET /``                -> the viewer page (materialized into the serve root)
-    ``GET /manifest.json``   -> ``{"version", "asset", "updated", "title"}``;
+    ``GET /manifest.json``   -> ``{"version", "asset", "updated", "title", "scripts"}``;
                                 also the heartbeat behind :meth:`PreviewServer.has_viewer`
+    ``GET /scripts/<name>.js`` -> an active viewer script (see :attr:`PreviewServer.SCRIPTS`)
     ``GET /<name>``          -> any published asset, by name
     ``POST /viewer-closed``  -> the viewer's unload beacon, so a closed tab is
                                 known at once rather than after a timeout
@@ -44,6 +45,7 @@ import shutil
 import threading
 import time
 import webbrowser
+from dataclasses import dataclass, field
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -64,6 +66,18 @@ from pythontk.net_utils._net_utils import NetUtils
 #: rather than after :attr:`PreviewServer.VIEWER_TIMEOUT`. Shared by the
 #: handler and the served page (which is checked against it by test).
 VIEWER_CLOSED_PATH = "viewer-closed"
+
+
+def _mesh_convert():
+    """The GLB converter, imported on use rather than at module scope.
+
+    Every consumer here is deferred for one reason -- the converter module
+    pulls in the managed-binary installer, which no other ``PreviewServer``
+    user needs -- and the note was previously repeated at each call site.
+    """
+    from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+    return MeshConvert
 
 
 class _PreviewHTTPServer(ThreadingHTTPServer):
@@ -209,16 +223,64 @@ class _PreviewServerInternal:
         """
         if not self._viewer:
             return
-        dst = self.root / "index.html"
-        if dst.exists() and self._temp is None:
-            return  # caller's working copy; never clobber it
         src = Path(__file__).with_name("preview_viewer.html")
         if not src.is_file():  # pragma: no cover - packaging failure
             self.logger.warning("Viewer page missing from the package: %s", src)
             return
-        if dst.exists() and dst.read_bytes() == src.read_bytes():
-            return  # already current
-        shutil.copyfile(src, dst)
+        self._sync_file(src, self.root / "index.html")
+
+    def _sync_file(self, src: Path, dst: Path) -> None:
+        """Place *src* at *dst* unless the caller owns it or it is already current.
+
+        The one materialization policy, shared by the viewer page and every
+        viewer script because both answer the same two questions the same way:
+        a **caller-supplied** root is a working directory, so a file already
+        there is never overwritten (edits made in place survive a restart); a
+        **managed** root is ours, so it is compared by content -- making the
+        common case a read and no write -- and rewritten when it differs.
+
+        The write is atomic (via :meth:`_write_asset`) rather than a plain
+        copy: this runs on every publish, against a directory a browser is
+        actively fetching from, and a reader landing mid-copy gets a truncated
+        file. For a script that is terminal -- the page claims a script URL
+        before awaiting its import, so a parse failure retires it for the life
+        of the page.
+        """
+        if dst.exists() and (self._temp is None or dst.read_bytes() == src.read_bytes()):
+            return
+        self._write_asset(src, dst, move=False)
+
+    def _ensure_scripts(self) -> None:
+        """Materialize the active viewer scripts into ``<root>/scripts/``.
+
+        The extension seam's disk half: :attr:`PreviewServer.SCRIPTS` (and any
+        caller-registered module) is copied under the serve root so the page
+        can ``import()`` what :meth:`PreviewServer.manifest` names. Each module
+        is written as ``<registered name>.js`` rather than under its source
+        filename, so the served URL is a function of the *name* alone -- two
+        callers registering different files under one name is a collision the
+        registry resolves, not one the URL space has to.
+
+        Per-file placement is :meth:`_sync_file`'s policy, shared with the
+        viewer page. What is specific here is the **sweep**: in a managed root
+        the directory is entirely ours, so a module no longer active is removed
+        -- otherwise a script switched off for this push stays on disk and the
+        next reader of the serve root sees one the manifest does not name. A
+        caller-supplied root is never deleted from.
+        """
+        directory = self.root / self.SCRIPTS_ROUTE
+        active = self._active_scripts()
+        if not active and not directory.is_dir():
+            return  # nothing active and nothing to sweep
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, src in active.items():
+            self._sync_file(src, directory / f"{name}.js")
+        if self._temp is None:
+            return  # never sweep a directory the caller owns
+        keep = {f"{name}.js" for name in active}
+        for stale in directory.glob("*.js"):
+            if stale.name not in keep:
+                stale.unlink()
 
     def _write_asset(self, src: Path, dst: Path, move: bool) -> None:
         """Place ``src`` at ``dst`` so a concurrent poll never sees a partial file.
@@ -255,6 +317,24 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
 
     DEFAULT_PORT = 8118
 
+    #: Directory holding the packaged optional viewer scripts.
+    SCRIPTS_DIR = Path(__file__).with_name("preview_scripts")
+
+    #: Serve-root subdirectory (and URL prefix) the active scripts live under.
+    SCRIPTS_ROUTE = "scripts"
+
+    #: Built-in viewer scripts, registered name -> filename in
+    #: :attr:`SCRIPTS_DIR`. This is the *extension registry*: the viewer page
+    #: itself stays the stable path and gains behaviour by a module being
+    #: activated, never by being edited (OCP). A script is an ES module whose
+    #: default export is called once with the page's viewer API -- see
+    #: ``docs/webxr_preview.md`` for that surface and
+    #: :meth:`add_script` for registering one from outside this package.
+    SCRIPTS: Dict[str, str] = {
+        "turntable": "turntable.js",
+        "inspect": "inspect.js",
+    }
+
     #: Seconds a manifest poll counts as proof that a viewer is still open.
     #:
     #: It has to clear 60s, and by a margin. Chrome and Edge throttle
@@ -287,6 +367,9 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         self._thread: Optional[threading.Thread] = None
         self._port: Optional[int] = None
         self._viewer_seen: Optional[float] = None
+        #: Active viewer scripts, registered name -> source file. Ordered, and
+        #: the page imports them in this order.
+        self._scripts: Dict[str, Path] = {}
 
         if root is None:
             # "session": a detached consumer (the browser) reads these while
@@ -345,6 +428,120 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         with self._lock:
             self._viewer_seen = None
 
+    @property
+    def scripts(self) -> tuple:
+        """Registered names of the viewer scripts currently active, in load order."""
+        with self._lock:
+            return tuple(self._scripts)
+
+    def add_script(
+        self, name: str, path: Optional[Union[str, Path]] = None
+    ) -> "PreviewServer":
+        """Activate a viewer script, on disk and in the manifest at once.
+
+        Every mutator here materializes immediately rather than deferring to
+        the next publish, and that is a correctness requirement rather than a
+        convenience: the manifest starts naming a script the moment it is
+        registered, and the page claims a script URL *before* awaiting its
+        import, so a single 404 in the gap would retire that module for the
+        life of the page.
+
+        Parameters:
+            name: A key of :attr:`SCRIPTS` (a packaged script), or any name at
+                all when *path* is given. It is also the served basename, so
+                ``add_script("turntable")`` is imported from
+                ``scripts/turntable.js``.
+            path: An ES module outside this package to serve under *name* --
+                the seam a consumer extends through without vendoring anything
+                into pythontk.
+
+        Re-registering a name replaces its source and keeps its position, so a
+        caller can override a packaged script with its own file.
+        """
+        source = self._resolve_script(name, path)
+        with self._lock:
+            self._scripts[name] = source
+        self._ensure_scripts()
+        return self
+
+    def remove_script(self, name: str) -> "PreviewServer":
+        """Deactivate a viewer script (unknown names are ignored), and sweep it.
+
+        Materialized at once, for the reason on :meth:`add_script`.
+        """
+        with self._lock:
+            self._scripts.pop(name, None)
+        self._ensure_scripts()
+        return self
+
+    def set_scripts(
+        self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]
+    ) -> "PreviewServer":
+        """Replace the whole active set (``None`` or empty clears it).
+
+        Accepts an iterable of names (packaged scripts) or a ``{name: path}``
+        mapping (external modules). Replacing rather than merging is what makes
+        a per-push script set possible -- see :meth:`PreviewBridge.push`.
+
+        Materialized at once, for the reason on :meth:`add_script`.
+        """
+        if isinstance(scripts, str):
+            # A str is iterable, so this would otherwise walk its CHARACTERS and
+            # fail with KeyError('t') -- a message that names nothing the caller
+            # wrote. The singular form has its own method.
+            raise TypeError(
+                f"set_scripts expects a list or mapping, not a string: {scripts!r}. "
+                f"Use add_script({scripts!r}) or set_scripts([{scripts!r}])."
+            )
+        items = scripts.items() if isinstance(scripts, dict) else [
+            (name, None) for name in (scripts or ())
+        ]
+        # Resolved BEFORE the swap so a bad name leaves the active set intact
+        # rather than half-applied -- the page is already running against it.
+        resolved = {name: self._resolve_script(name, path) for name, path in items}
+        with self._lock:
+            self._scripts = resolved
+        self._ensure_scripts()
+        return self
+
+    def _resolve_script(
+        self, name: str, path: Optional[Union[str, Path]] = None
+    ) -> Path:
+        """The file backing *name*, raising rather than serving a 404 later.
+
+        An unknown packaged name is a *caller* error that is otherwise silent:
+        the manifest would name a module, the page's import would 404, and the
+        only trace is a console warning nobody is watching inside a headset.
+        """
+        if path is not None:
+            source = Path(path)
+            if not source.is_file():
+                raise FileNotFoundError(f"Viewer script {name!r}: no such file: {source}")
+            return source
+        filename = self.SCRIPTS.get(name)
+        if filename is None:
+            raise KeyError(
+                f"Unknown viewer script {name!r}. Packaged: "
+                f"{', '.join(sorted(self.SCRIPTS)) or 'none'}; "
+                f"pass path= to register one of your own."
+            )
+        source = self.SCRIPTS_DIR / filename
+        if not source.is_file():
+            # A broken install rather than a caller error, but left unchecked it
+            # surfaces the same way the unknown name would: `_ensure_scripts`
+            # raises out of a copy deep inside `deliver()`, AFTER the active set
+            # was swapped and after the conversion passes have already run.
+            raise FileNotFoundError(
+                f"Packaged viewer script {name!r} is missing from "
+                f"{self.SCRIPTS_DIR} -- the install did not carry its package data."
+            )
+        return source
+
+    def _active_scripts(self) -> Dict[str, Path]:
+        """Snapshot of the active name -> source map."""
+        with self._lock:
+            return dict(self._scripts)
+
     def manifest(self) -> Dict[str, Any]:
         """The payload served at ``/manifest.json``."""
         with self._lock:
@@ -353,6 +550,11 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
                 "asset": self._asset,
                 "updated": self._updated,
                 "title": self.title,
+                # URLs rather than names: the page imports these directly, and
+                # the route is this module's business, not the viewer's.
+                "scripts": [
+                    f"{self.SCRIPTS_ROUTE}/{name}.js" for name in self._scripts
+                ],
             }
 
     def start(self) -> "PreviewServer":
@@ -360,6 +562,7 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         if self._httpd is not None:
             return self
         self._ensure_viewer()
+        self._ensure_scripts()
         handler = partial(_PreviewHandler, directory=str(self.root), owner=self)
         try:
             self._httpd = _PreviewHTTPServer((self.host, self._resolve_port()), handler)
@@ -423,6 +626,10 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         # outlives every individual push, so this is the only hook an edited
         # page has to reach a session that is already running.
         self._ensure_viewer()
+        # Same reasoning for the scripts: the active set is per *push* (a
+        # bridge can name one for a single delivery), so it has to be
+        # materialized here, not only at start.
+        self._ensure_scripts()
         name = name or f"scene{src.suffix}"
         self._write_asset(src, self.root / name, move)
         with self._lock:
@@ -455,6 +662,40 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
 
     def __exit__(self, *_exc) -> None:
         self.stop()
+
+
+@dataclass
+class PreviewPassContext:
+    """What a post-conversion preview pass reads, and reports into.
+
+    One object rather than a widening parameter list, because the passes are a
+    *registry* (:attr:`PreviewDeliverer.EDIT_PASSES` /
+    :attr:`PreviewDeliverer.FILE_PASSES`) and a registry's entries have to share
+    one signature -- a pass added later cannot make the runner grow an argument.
+
+    :attr:`edit` is the open GLB edit session, and is only set while the edit
+    passes run: the file passes operate on the closed file, and holding a stale
+    handle there is the mistake the ``None`` makes loud instead of silent.
+    """
+
+    bridge: Any
+    glb: Path
+    payload: Payload
+    request: HandoffRequest
+    texture_format: str
+    edit: Any = None
+    #: Anything a pass wants the deliverer's result dict to carry.
+    results: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def logger(self):
+        """The bridge's logger -- every pass reports through the push's own sink."""
+        return self.bridge.logger
+
+    @property
+    def sidecar(self) -> Optional[Dict[str, Any]]:
+        """The scene-sidecar envelope the producer attached, if any."""
+        return (self.payload.extras or {}).get("scene_sidecar")
 
 
 class PreviewDeliverer(Deliverer):
@@ -494,7 +735,36 @@ class PreviewDeliverer(Deliverer):
             the *default*; a single push overrides it per request --
             ``bridge.push(texture_format="KTX2")`` -- so one high-fidelity push
             costs the next quick-iteration one nothing.
+        scripts: Viewer scripts to activate on every push (see
+            :attr:`PreviewServer.SCRIPTS`). ``None`` -- the default -- leaves
+            whatever the server already has alone, so a script registered
+            directly on a long-lived server survives; a list replaces the set.
     """
+
+    #: Post-conversion passes run against **one** open GLB edit session, in
+    #: order, ``name -> method on this class``.
+    #:
+    #: The order is load-bearing and each entry says why in its own docstring;
+    #: what the registry buys is that a new pass (a channel repair, a geometry
+    #: rewrite) is an *entry plus a method* rather than another limb grafted
+    #: onto one long procedure -- the same shape as
+    #: ``MeshConvert.SIDECAR_APPLIERS``, which is the pass column one level
+    #: down. Subclasses reorder or extend by overriding the dict.
+    EDIT_PASSES: Dict[str, str] = {
+        "scene_sidecar": "_pass_scene_sidecar",
+        "prune_textures": "_pass_prune_textures",
+        "lightmaps": "_pass_lightmaps",
+    }
+
+    #: Passes run on the **closed** file, after the edit session, in order.
+    #:
+    #: Separate from :attr:`EDIT_PASSES` because the distinction is real rather
+    #: than stylistic: these rewrite the container itself (repacking the BIN
+    #: chunk, re-encoding payloads), which is exactly what an open edit session
+    #: cannot have happening underneath it.
+    FILE_PASSES: Dict[str, str] = {
+        "optimize_textures": "_pass_optimize_textures",
+    }
 
     def __init__(
         self,
@@ -502,11 +772,13 @@ class PreviewDeliverer(Deliverer):
         open_browser: Union[bool, str] = "auto",
         title: str = "Preview",
         texture_format: str = "WEBP",
+        scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
     ):
         self.server = server
         self.open_browser = open_browser
         self.title = title
         self.texture_format = texture_format
+        self.scripts = scripts
 
     def ensure_server(self) -> PreviewServer:
         """The bridge's server, started, creating it on first use."""
@@ -514,12 +786,99 @@ class PreviewDeliverer(Deliverer):
             self.server = PreviewServer(title=self.title)
         return self.server.start()
 
+    def _run_passes(self, passes: Dict[str, str], context: "PreviewPassContext") -> None:
+        """Run *passes* in order, guarding each one separately.
+
+        The guard is per pass, not per chain: a deliverable missing one repair
+        still beats no deliverable -- the same rule
+        ``MeshConvert.apply_scene_sidecar`` applies one level down -- and the
+        alternative failed silently in the worst direction, since an early
+        pass raising would take the lightmap wiring down with it and the model
+        would simply arrive unlit.
+        """
+        for name, method in passes.items():
+            try:
+                getattr(self, method)(context)
+            except Exception as error:  # noqa: BLE001 — a pass must not cost the push
+                context.logger.warning("GLB %s pass skipped: %s", name, error)
+
+    # -- passes ---------------------------------------------------------
+    # Each is one entry of EDIT_PASSES / FILE_PASSES above. They take the
+    # context and return nothing; anything the caller needs back goes into
+    # `context.results`.
+
+    def _pass_scene_sidecar(self, context: "PreviewPassContext") -> None:
+        """Apply the producer's scene-sidecar envelope, if it attached one.
+
+        The apply itself lives on the converter (``MeshConvert`` owns the
+        applier registry, the embed, and the outcome summary); this pass only
+        threads the envelope through and records what happened. Called here
+        rather than inside ``fbx_to_glb`` because the panel wants the
+        per-section summary back -- the exporters, which don't, pass
+        ``sidecar=`` into the conversion instead.
+        """
+        if not context.sidecar:
+            return
+        context.results["sidecar"] = _mesh_convert().apply_scene_sidecar(
+            context.edit, context.sidecar
+        )
+
+    def _pass_prune_textures(self, context: "PreviewPassContext") -> None:
+        """Sweep images no material samples, before anything pays to re-encode them.
+
+        ``EMBED_TEXTURES`` carries every wired file texture into the FBX, which
+        for a StingrayPBS scene includes Autodesk's own environment maps
+        (``diffuse_cube``, ``specular_cube``, ``ibl_brdf_lut`` -- ~2.6 MB a
+        push); FBX2glTF re-embeds them, and glTF has no global environment slot
+        for them to land in, so no material ever references them.
+        ``apply_scene_sidecar`` already sweeps at its tail, so this is the
+        OTHER half: a push whose producer offered no envelope (``SCENE_SIDECAR``
+        off, the deliberate probe) published that dead payload and paid the
+        texture pass to compress it first.
+
+        Ordered *after* the sidecar for a second reason: pruning renumbers
+        image indices, and the envelope's own ``extras.textures`` map is
+        recorded at the end of that pass -- running the sweep any earlier would
+        stale it.
+        """
+        _mesh_convert().prune_glb_unreferenced_textures(context.edit)
+
+    def _pass_lightmaps(self, context: "PreviewPassContext") -> None:
+        """Bind the baked lightmaps the in-band manifest names.
+
+        Runs after the sidecar, and that order is measured rather than
+        stylistic: this pass's per-instance material clones copy each material
+        AS IT STANDS, so every repair made afterwards would land only on a base
+        material no primitive references anymore. On a production room the 46
+        clones the walls actually wear missed the emissive and
+        metallic-roughness repairs, and the room rendered black in its own
+        preview. (The conversion's own lightmap pass is switched off for the
+        same reason -- see ``lightmaps=False`` in :meth:`deliver`.)
+        """
+        bound = _mesh_convert().apply_glb_lightmaps(context.edit)
+        if bound:
+            context.logger.info(
+                "Lightmaps wired into %d material binding(s).", len(bound)
+            )
+
+    def _pass_optimize_textures(self, context: "PreviewPassContext") -> None:
+        """Re-encode and repack the textures for web delivery.
+
+        Last, and on the closed file, so nothing wired above re-embeds a
+        full-size copy behind it. Measured on a production room this is
+        94.7 MB -> ~15 MB, and its failure must cost quality, never the push --
+        which is what the runner's per-pass guard buys.
+        """
+        _mesh_convert().optimize_glb_textures(
+            context.glb, image_format=context.texture_format
+        )
+
     def deliver(
         self, bridge, payload: Payload, request: HandoffRequest
     ) -> Optional[Dict[str, Any]]:
         # Imported here rather than at module scope: the converter pulls in the
         # managed-binary installer, which no other PreviewServer user needs.
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+        MeshConvert = _mesh_convert()
 
         if not payload.primary:
             bridge.logger.error("Preview delivery got no exported file to convert.")
@@ -551,38 +910,7 @@ class PreviewDeliverer(Deliverer):
             bridge.logger.error("Preview conversion to GLB failed: %s", error)
             return None
 
-        extras = payload.extras or {}
-        sidecar = extras.get("scene_sidecar")
-        # The apply itself lives on the converter (`MeshConvert` owns the
-        # applier registry, the embed, and the outcome summary); this deliverer
-        # only threads the envelope through and reports what happened. Called
-        # separately from `fbx_to_glb` because the panel wants the per-section
-        # summary back -- the exporters, which don't, pass `sidecar=` into the
-        # conversion instead. One session for both passes: repairs first, then
-        # the lightmap wiring that clones the repaired materials.
-        applied = {}
-        try:
-            with MeshConvert.open_glb(glb) as edit:
-                if sidecar:
-                    applied = MeshConvert.apply_scene_sidecar(edit, sidecar)
-                try:
-                    bound = MeshConvert.apply_glb_lightmaps(edit)
-                except Exception as error:  # noqa: BLE001 — mirror fbx_to_glb's guard
-                    bridge.logger.warning("GLB lightmaps skipped: %s", error)
-                else:
-                    if bound:
-                        bridge.logger.info(
-                            "Lightmaps wired into %d material binding(s).", len(bound)
-                        )
-        except Exception as error:  # noqa: BLE001 — post-process must not cost the push
-            bridge.logger.warning("GLB post-process skipped: %s", error)
-
-        # Web delivery pass, after every channel is wired so nothing re-embeds
-        # a full-size copy behind it. Guarded for the same reason as above --
-        # measured on a production room this is 94.7 MB -> ~15 MB, but an
-        # optimizer failure must cost quality, never the push.
-        #
-        # Request-scoped, exactly like `open_browser` below. A deliverer is
+        # Request-scoped exactly like `open_browser` below. A deliverer is
         # bound once per bridge *class*, so a format written onto the instance
         # for one high-fidelity push would stick process-wide for every bridge
         # in the session: each later quick-iteration push would then require
@@ -591,13 +919,13 @@ class PreviewDeliverer(Deliverer):
         # back rather than overriding (unlike `open_browser`, where False is a
         # meaningful value) -- an empty format is "unspecified", not a request
         # to hand the optimizer nothing, and it lets the caller-facing knobs
-        # below pass their `None` default straight through.
+        # pass their `None` default straight through.
         # The trailing WEBP is load-bearing: making this request-scoped turned
         # an absent kwarg into an explicit value, so a falsy INSTANCE default
         # stopped inheriting `optimize_glb_textures`' own "WEBP" default and
         # started handing it None -- which raises inside the optimizer and is
-        # swallowed by the broad `except` below, silently shipping a GLB that
-        # skipped the 94.7MB -> ~15MB pass.
+        # swallowed by the pass guard, silently shipping a GLB that skipped the
+        # 94.7MB -> ~15MB pass.
         texture_format = request.get("texture_format") or self.texture_format or "WEBP"
 
         # KTX2 is the one exception: docs/webxr_preview.md promises the push
@@ -605,18 +933,41 @@ class PreviewDeliverer(Deliverer):
         # ships WebP instead. `optimize_glb_textures` only reaches its own
         # `resolve_ktx2_encoder(required=True)` call once it hits a KTX2 image
         # -- a scene with no images (or an early failure elsewhere in the
-        # method) would let the broad `except Exception` below swallow it and
-        # ship the unoptimized GLB. Checked eagerly, before the try, so the
-        # fix-shaped FileNotFoundError always propagates for a KTX2 push.
+        # method) would let the pass guard swallow it and ship the unoptimized
+        # GLB. Checked eagerly, and BEFORE the passes rather than beside the
+        # optimize call, so the fix-shaped FileNotFoundError arrives before the
+        # session pays for a sidecar and lightmap pass it is going to abandon.
         if texture_format.upper() == "KTX2":
             from pythontk.img_utils._img_utils import ImgUtils
 
             ImgUtils.resolve_ktx2_encoder(required=True)
+
+        context = PreviewPassContext(
+            bridge=bridge,
+            glb=Path(glb),
+            payload=payload,
+            request=request,
+            texture_format=texture_format,
+        )
+        # One session for every edit pass: repairs first, then the lightmap
+        # wiring that clones the repaired materials. The container guard is for
+        # what `open_glb` itself can fail with (an unparseable GLB) -- each
+        # individual pass carries its own, so one failing does not cancel the
+        # rest of the chain.
         try:
-            MeshConvert.optimize_glb_textures(glb, image_format=texture_format)
-        except Exception as error:  # noqa: BLE001
-            bridge.logger.warning("GLB texture optimize skipped: %s", error)
-        if not (sidecar or {}).get("sections"):
+            with _mesh_convert().open_glb(glb) as edit:
+                context.edit = edit
+                self._run_passes(self.EDIT_PASSES, context)
+        except Exception as error:  # noqa: BLE001 — post-process must not cost the push
+            bridge.logger.warning("GLB post-process skipped: %s", error)
+        finally:
+            context.edit = None
+
+        self._run_passes(self.FILE_PASSES, context)
+
+        applied = context.results.get("sidecar", {})
+        extras = payload.extras or {}
+        if not (context.sidecar or {}).get("sections"):
             # Distinguish "switched off" from "on, but the scene had nothing":
             # both produce a bare-FBX preview, and only one is a surprise.
             # Key present means the producer ran and found nothing; absent
@@ -628,6 +979,21 @@ class PreviewDeliverer(Deliverer):
                 if "scene_sidecar" in extras
                 else "requested",
             )
+
+        # Request-scoped like `texture_format`, but `None` means "leave the
+        # server's own set alone" rather than "use the default": a caller who
+        # registered a script directly on the server (or a long-lived session
+        # that set one up once) must not have it silently dropped by the next
+        # push that says nothing about scripts. An explicit empty list is still
+        # a real instruction -- it clears them for this push.
+        # `.get`'s default is not enough: `push()` names the knob explicitly,
+        # so the key is PRESENT and None whenever the caller said nothing --
+        # read with a default the deliverer's own setting could never apply.
+        scripts = request.get("scripts")
+        if scripts is None:
+            scripts = self.scripts
+        if scripts is not None:
+            server.set_scripts(scripts)
 
         version = server.publish(glb, move=True)
 
@@ -720,8 +1086,10 @@ class PreviewBridge(HandoffBridge):
         The envelope itself is built by the schema owner,
         :meth:`MeshConvert.build_scene_sidecar` -- this method adds only what
         is bridge workflow: riding it on ``Payload.extras`` for the deliverer,
-        and writing the ``.scene.json`` inspection copy beside the payload
-        (the panel's toggle promises being able to look at what travelled).
+        which embeds it in the GLB's own ``extras``. That embedded copy is the
+        handoff, and the only one: a `.scene.json` written beside the payload
+        was a second carrier of the same envelope that nothing ever read back,
+        and a copy no reader consults is a copy free to disagree.
 
         Empty *sections* still attach (and write) an envelope whose
         ``sections`` is ``{}``. The producer only calls this when the sidecar
@@ -731,24 +1099,15 @@ class PreviewBridge(HandoffBridge):
         *switched off*, and the panel told a user whose checkbox was on that
         the sidecar was off.
         """
-        # Deferred like every MeshConvert import here: the converter module
-        # pulls in the managed-binary installer, which no other user needs.
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        envelope = MeshConvert.build_scene_sidecar(
+        envelope = _mesh_convert().build_scene_sidecar(
             sections,
             source=source,
             asset=os.path.basename(payload.primary) if payload.primary else None,
         )
         payload.extras["scene_sidecar"] = envelope
-        path = self._make_payload_path(extension=".scene.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(envelope, f, indent=2)
-        payload.extras["scene_sidecar_path"] = path
         self.logger.info(
-            "Scene sidecar (%s) -> %s",
+            "Scene sidecar (%s) -> the GLB's extras",
             ", ".join(sorted(sections)) or "no sections",
-            path,
         )
         return payload
 
@@ -764,6 +1123,7 @@ class PreviewBridge(HandoffBridge):
         whole_scene: bool = False,
         open_browser: Union[bool, str] = "auto",
         texture_format: Optional[str] = None,
+        scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
         **params: Any,
     ) -> Optional[Dict[str, Any]]:
         """Export and publish, returning the deliverer's result (``None`` on failure).
@@ -780,6 +1140,14 @@ class PreviewBridge(HandoffBridge):
                 default. Named explicitly rather than left to ``**params``,
                 which is the *export* param bag -- swept up there it would be
                 handed to the exporter and never reach the deliverer.
+            scripts: Viewer scripts to run for this push -- a list of
+                :attr:`PreviewServer.SCRIPTS` names, or a ``{name: path}``
+                mapping for modules of your own. ``None`` (the default) leaves
+                whatever the server already has active alone; ``[]`` clears
+                them. Named explicitly for the same reason as
+                *texture_format*: ``**params`` is the *export* bag, and swept
+                up there it would be handed to the exporter and never reach the
+                deliverer.
             **params: Export param overrides (see :meth:`params_defaults`).
         """
         if whole_scene and objects is None:
@@ -792,6 +1160,7 @@ class PreviewBridge(HandoffBridge):
             params=params,
             open_browser=open_browser,
             texture_format=texture_format,
+            scripts=scripts,
         )
 
     @staticmethod

@@ -312,5 +312,59 @@ class TestMissingMapRule(unittest.TestCase):
                     )
 
 
+    def test_mask_map_requires_smoothness_not_just_two_of_three(self):
+        """Counting resolved channels hides the ONE unsafe 2-of-3 combination.
+
+        Exactly one of the three pairs is dangerous, which is why a count
+        cannot express the rule: absent smoothness fills WHITE (every surface
+        mirror-smooth), while absent AO fills white (no occlusion) and absent
+        metallic fills black (dielectric) are both neutral. So the gate has to
+        name the channel, exactly as ORM/MRAO name theirs, rather than counting
+        how many happened to resolve.
+
+        A flat smoothness channel is what a legitimate mirror material looks
+        like, so this ships undetected on review -- the reason it is asserted
+        here rather than left to inspection.
+        """
+        metallic = self._map("Metallic", 30)
+        ao = self._map("Ambient_Occlusion", 100)
+        smoothness = self._map("Smoothness", 200)
+
+        # The unsafe pair: two channels resolve, but the one that fills
+        # non-neutrally is the missing one. Only the DEFAULT rule refuses it.
+        unsafe = {"Metallic": metallic, "Ambient_Occlusion": ao}
+        self.assertIsNone(
+            self._result(
+                MaskMapHandler,
+                dict(unsafe),
+                missing_map_rule=MapRegistry.MISSING_SKIP,
+            ),
+            "the default rule packed a Mask Map whose smoothness is a white "
+            "fill -- a mirror-smooth surface the rule exists to prevent",
+        )
+        # multi/force are opt-ins, not oversights: allow_incomplete_pack is a
+        # MINIMUM measured against what resolved, so 'multi' (minimum 2) is the
+        # caller saying two channels is enough. Pinned so a later tightening of
+        # the smoothness gate cannot quietly swallow the rule vocabulary.
+        for rule in (MapRegistry.MISSING_MULTI, MapRegistry.MISSING_FORCE):
+            with self.subTest(rule=rule):
+                self.assertIsNotNone(
+                    self._result(MaskMapHandler, dict(unsafe), missing_map_rule=rule),
+                    f"'{rule}' is an explicit opt-in and must still ship it",
+                )
+
+        # ...and the fix must not over-tighten: the other two pairs are benign
+        # (white AO = unoccluded, black metallic = dielectric) and still pack
+        # under the DEFAULT rule.
+        for label, inventory in (
+            ("no AO", {"Metallic": metallic, "Smoothness": smoothness}),
+            ("no metallic", {"Ambient_Occlusion": ao, "Smoothness": smoothness}),
+        ):
+            with self.subTest(missing=label):
+                self.assertIsNotNone(
+                    self._result(MaskMapHandler, dict(inventory)),
+                    f"the default rule refused a benign pair ({label})",
+                )
+
 if __name__ == "__main__":
     unittest.main()

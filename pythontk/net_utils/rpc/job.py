@@ -2,16 +2,16 @@
 # coding=utf-8
 """One-shot batch pipeline over :class:`RpcClient`.
 
-Build a list of :class:`Call`\\ s, hand them to :func:`run_batch`, get
-back a list of :class:`Result`\\ s. The common case for scripted
+Build a list of :class:`Call`\\ s, hand them to :meth:`RpcJob.run_batch`,
+get back a list of :class:`Result`\\ s. The common case for scripted
 pipelines that don't want to manage the connection lifecycle themselves.
 
 Example::
 
     from pythontk.net_utils.rpc.client import RpcClient
-    from pythontk.net_utils.rpc.job import Call, run_batch
+    from pythontk.net_utils.rpc.job import Call, RpcJob
 
-    results = run_batch(
+    results = RpcJob.run_batch(
         [Call("system.version"), Call("scene.list_materials")],
         client=RpcClient(port=8765, app_label="Marmoset"),
     )

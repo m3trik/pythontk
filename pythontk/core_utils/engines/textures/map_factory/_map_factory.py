@@ -505,6 +505,17 @@ class MapFactory(LoggingMixin):
                 (``MapRegistry.SEPARATORS``) or full filename equality, to avoid
                 mid-word matches like "diffuse_cube" matching the single-letter
                 alias "E".
+
+                The two forms deliberately DISAGREE about a trailing duplicate
+                marker: ``key=True`` retries past it (see
+                ``MapRegistry.split_duplicate_token``) because classifying is
+                what a caller wants there, while ``key=False`` stays strict
+                because its answer is spliced back into a FILENAME. Making it
+                tolerant would have ``resolve_texture_filename`` append rather
+                than replace -- ``X_Base_Color_1.png`` + ``"Base_Color"`` is
+                ``X_Base_Color_1_Base_Color.png``, and the strict ``None``
+                yields the empty suffix that leaves the name untouched. Do not
+                "harmonize" them without changing that splice first.
             validate (str, optional): If provided, validate the resolved map
                 type against this expected key. Comparison is case-insensitive
                 so non-canonical filename casing does not falsely fail.

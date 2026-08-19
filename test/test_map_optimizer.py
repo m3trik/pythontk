@@ -177,6 +177,164 @@ class TestPotCeiling(unittest.TestCase):
         self.assertEqual(MapOptimizer.project(plan, 200, 200, "RGB")[:2], (256, 256))
 
 
+class TestPotAspectRatio(_TextureFixture):
+    """A POT snap must not reshape the map.
+
+    ``_snap_pot`` rounded each axis on its own, so a 4:3 source came out 2:1:
+    1024x768 under a profile whose budget carries the POT rule (glTF) was
+    rewritten 1024x512 — well under that profile's 2048 ceiling, and
+    ``budget.check`` runs post-snap, so nothing warned about the reshape
+    either. POT is a statement about how BIG a texture is, not what shape it
+    is.
+    """
+
+    PROFILE = "_test_pot_aspect"
+
+    def setUp(self):
+        super().setUp()
+        # Mirrors the shipped glTF budget (2048 + POT) without pinning these
+        # assertions to a built-in that is free to be re-tuned.
+        OutputTemplates.BUILTIN[self.PROFILE] = OutputTemplates._build(
+            "png", budget=DeliveryBudget(max_size=2048, force_pot=True)
+        )
+
+    def tearDown(self):
+        OutputTemplates.BUILTIN.pop(self.PROFILE, None)
+        super().tearDown()
+
+    def test_pot_leaves_a_4x3_map_4x3(self):
+        """The reported repro: the long edge is already POT and already inside
+        the ceiling, so the only correct snap is no snap at all."""
+        image = ImgUtils.create_image("RGB", (1024, 768))
+        plan = MapOptimizer.plan(
+            image, max_size=2048, force_pot=True, pot_mode="down"
+        )
+        self.assertEqual(
+            MapOptimizer.project(plan, 1024, 768, "RGB")[:2], (1024, 768)
+        )
+
+    def test_short_edge_is_derived_from_the_source_aspect(self):
+        """When the long edge really does move, the other one follows it."""
+        self.assertEqual(MapOptimizer._snap_pot(1500, 1000, "down"), (1024, 683))
+        self.assertEqual(MapOptimizer._snap_pot(1000, 1500, "down"), (683, 1024))
+
+    def test_a_ceiling_clamp_keeps_the_aspect_too(self):
+        """``max_size`` halves the snapped long edge back under the limit, so
+        the derived edge has to ride the same factor rather than be snapped."""
+        self.assertEqual(MapOptimizer._snap_pot(3000, 1000, "down", 1024), (1024, 341))
+
+    def test_square_sources_are_unchanged(self):
+        """The long-edge form must reduce to the old behavior for a square."""
+        self.assertEqual(MapOptimizer._snap_pot(96, 96, "down"), (64, 64))
+        self.assertEqual(MapOptimizer._snap_pot(96, 96), (128, 128))
+
+    def test_enforced_budget_run_keeps_the_aspect(self):
+        """End to end through the profile shape the Map Converter's
+        'Clamp: Target' uses: assess predicts what optimize_map writes, and
+        neither reshapes the map. The edge POT could NOT reach is still
+        reported — the budget's check is the honest place for that, and a
+        silent reshape is what this replaced."""
+        path = self.texture(size=(96, 72))  # 4:3, same shape as 1024x768
+
+        result = MapOptimizer.assess(
+            path, output_profile=self.PROFILE, enforce_budget=True
+        )
+        self.assertEqual(
+            (result["predicted"]["width"], result["predicted"]["height"]), (64, 48)
+        )
+        self.assertTrue(
+            any("power-of-two" in w.lower() for w in result["warnings"]),
+            f"the residual non-POT edge must be reported: {result['warnings']}",
+        )
+
+        written = MapOptimizer.optimize_map(
+            path, output_profile=self.PROFILE, enforce_budget=True
+        )
+        with ImgUtils.ensure_image(written) as out:
+            self.assertEqual(out.size, (64, 48))
+
+    def test_a_reshaping_snap_warns(self):
+        """The min-1 floor under the derived edge can still change an extreme
+        ratio's shape — the surprising half of a POT rule, so it says so."""
+        path = self.texture(size=(96, 1))
+
+        result = MapOptimizer.assess(path, force_pot=True)
+
+        self.assertTrue(
+            any("aspect ratio" in w.lower() for w in result["warnings"]),
+            f"a reshaping snap must warn: {result['warnings']}",
+        )
+
+    def test_a_faithful_snap_does_not_warn(self):
+        """Integer rounding on the derived edge is dust, not a reshape —
+        warning about it would train the reader past the line that matters."""
+        path = self.texture(size=(96, 72))
+
+        result = MapOptimizer.assess(path, force_pot=True, pot_mode="down")
+
+        self.assertEqual(
+            [w for w in result["warnings"] if "aspect ratio" in w.lower()], []
+        )
+
+    def test_optimize_map_prints_the_aspect_warning(self):
+        """The twins must say the same thing — a dry run that warns and a real
+        run that stays quiet is the drift the plan/apply split exists to stop."""
+        import io
+        from contextlib import redirect_stdout
+
+        path = self.texture(size=(96, 1))
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            MapOptimizer.optimize_map(path, force_pot=True)
+
+        self.assertIn("aspect ratio", buffer.getvalue().lower())
+
+    # -- The common case, and the one a future "fix" is most likely to break --
+    #
+    # A POT rule bounds SIZE, not shape, so a map whose LONG edge is already a
+    # power of two passes through untouched and keeps a non-POT short edge.
+    # That is deliberate: snapping the short edge too is what destroyed the
+    # aspect ratio in the first place (1024x768 -> 1024x512). These pin the
+    # trade so that "make force_pot force POT on both axes" cannot be
+    # reintroduced without a failing test.
+
+    def test_long_edge_already_pot_is_left_alone(self):
+        """1024x768 is already legal on its long edge -- do not touch it."""
+        for mode in ("nearest", "down"):
+            with self.subTest(mode=mode):
+                self.assertEqual(
+                    MapOptimizer._snap_pot(1024, 768, mode), (1024, 768)
+                )
+
+    def test_short_edge_is_deliberately_left_non_pot(self):
+        """The residual non-POT short edge is the aspect ratio not being paid for."""
+        _, short = MapOptimizer._snap_pot(2048, 1080, "down")
+        self.assertEqual(short, 1080)
+        self.assertNotEqual(
+            short & (short - 1), 0, "short edge must NOT have been snapped to POT"
+        )
+
+    def test_portrait_is_handled_on_its_own_long_edge(self):
+        """Orientation must not change the rule -- the LONG edge is the height here."""
+        self.assertEqual(MapOptimizer._snap_pot(768, 1024, "nearest"), (768, 1024))
+        self.assertEqual(MapOptimizer._snap_pot(600, 1000, "down"), (307, 512))
+
+    def test_assess_predicts_the_untouched_size(self):
+        """The dry run must agree that nothing happens, and must not warn."""
+        path = self.texture(size=(1024, 768))
+        result = MapOptimizer.assess(path, force_pot=True)
+
+        self.assertEqual(
+            (result["predicted"]["width"], result["predicted"]["height"]),
+            (1024, 768),
+        )
+        self.assertFalse(result["recommended"], "nothing to do on an already-legal map")
+        self.assertEqual(
+            [w for w in result.get("warnings", []) if "aspect" in w.lower()], []
+        )
+
+
 class TestAssessPrediction(_TextureFixture):
     def test_predicted_matches_the_real_run(self):
         """Every predicted field must equal what optimize_map then writes."""
@@ -1231,6 +1389,106 @@ class TestKtx2Compression(_TextureFixture):
         size = report["predicted"]["size_bytes"]
         self.assertIsNotNone(size, report["predicted"].get("size_error"))
         self.assertGreater(size, 0)
+
+
+class TestResolveSizeClamp(_TextureFixture):
+    """``resolve_size_clamp`` — the one interpretation of a "max size" dial.
+
+    Extracted 2026-08-17 from byte-identical private copies in the mayatk and
+    blendertk scene exporters (BACKLOG "settings-definition row builder
+    duplicated verbatim in blendertk"), so both DCCs and any future caller
+    answer the dial identically instead of each restating the rule.
+    """
+
+    def test_off_modes_never_clamp(self):
+        """Falsy and the literal OFF token leave a template's budget ADVISORY.
+
+        ``True`` is rejected explicitly: ``int(True)`` is 1, which would
+        silently clamp every map to a single pixel.
+        """
+        for off in (0, None, "", "OFF", "off", False, True):
+            self.assertEqual(
+                MapOptimizer.resolve_size_clamp(off, "glTF 2.0"), {}, repr(off)
+            )
+
+    def test_positive_value_is_a_hard_ceiling(self):
+        """Ints and their string form (a hand-edited preset sends strings)."""
+        self.assertEqual(MapOptimizer.resolve_size_clamp(1024), {"max_size": 1024})
+        self.assertEqual(
+            MapOptimizer.resolve_size_clamp("2048", "glTF 2.0"), {"max_size": 2048}
+        )
+
+    def test_sentinel_enforces_the_template_budget_without_pot(self):
+        """The budget's POT rule is deliberately not adopted — snapping each
+        axis independently would reshape a non-square map, and a ceiling only
+        ever shrinks and keeps aspect. With no template there is no budget."""
+        self.assertEqual(
+            MapOptimizer.resolve_size_clamp(
+                MapOptimizer.SIZE_CLAMP_TEMPLATE, "glTF 2.0"
+            ),
+            {"enforce_budget": True, "force_pot": False},
+        )
+        self.assertEqual(
+            MapOptimizer.resolve_size_clamp(MapOptimizer.SIZE_CLAMP_TEMPLATE, None), {}
+        )
+
+    def test_sentinel_stays_truthy_and_out_of_pixel_range(self):
+        """0/None already mean "no clamp", so the sentinel must be truthy, and
+        it must never collide with a real pixel dimension."""
+        self.assertTrue(MapOptimizer.SIZE_CLAMP_TEMPLATE)
+        self.assertLess(MapOptimizer.SIZE_CLAMP_TEMPLATE, 0)
+
+    def test_unparseable_value_warns_and_declines_rather_than_guessing(self):
+        warnings = []
+
+        class _Logger:
+            def warning(self, message):
+                warnings.append(message)
+
+        self.assertEqual(
+            MapOptimizer.resolve_size_clamp("wide", "glTF 2.0", logger=_Logger()), {}
+        )
+        self.assertEqual(len(warnings), 1, warnings)
+        # A logger is optional — an omitted one must not raise.
+        self.assertEqual(MapOptimizer.resolve_size_clamp("wide"), {})
+
+    def test_describe_matches_what_resolve_returns(self):
+        """Empty when nothing is clamped, so a caller can splice it into a
+        sentence without branching."""
+        self.assertEqual(MapOptimizer.describe_size_clamp(0), "")
+        self.assertEqual(MapOptimizer.describe_size_clamp(1024), "clamped to 1024 px")
+        budget_size = getattr(OutputTemplates.budget("glTF 2.0"), "max_size", None)
+        self.assertEqual(
+            MapOptimizer.describe_size_clamp(
+                MapOptimizer.SIZE_CLAMP_TEMPLATE, "glTF 2.0"
+            ),
+            f"clamped to the template's budget ({budget_size} px)",
+        )
+
+    def test_result_is_accepted_by_assess(self):
+        """The returned dict is kwargs for the pass it describes — pinned so a
+        renamed optimizer parameter cannot leave this resolver behind."""
+        path = os.path.join(self.test_dir, "rock_BaseColor.png")
+        Image.new("RGB", (4096, 2048), (120, 120, 120)).save(path)
+
+        report = MapOptimizer.assess(
+            path, **MapOptimizer.resolve_size_clamp(2048, "glTF 2.0")
+        )
+        self.assertEqual(
+            (report["predicted"]["width"], report["predicted"]["height"]),
+            (2048, 1024),
+        )
+        report = MapOptimizer.assess(
+            path,
+            output_profile="glTF 2.0",
+            **MapOptimizer.resolve_size_clamp(
+                MapOptimizer.SIZE_CLAMP_TEMPLATE, "glTF 2.0"
+            ),
+        )
+        self.assertEqual(
+            max(report["predicted"]["width"], report["predicted"]["height"]),
+            getattr(OutputTemplates.budget("glTF 2.0"), "max_size", None),
+        )
 
 
 if __name__ == "__main__":

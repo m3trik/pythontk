@@ -16,7 +16,23 @@ classifiers = [
 ]
 
 # Dependencies
-dependencies = ["numpy", "Pillow"]
+#
+# numpy carries a FLOOR and deliberately no ceiling.
+#
+# The floor is the oldest release any supported host ships (measured 2026-08-06:
+# Maya 2025 = 1.24.4 on py3.11, Blender 5.1 = 2.3.4 on py3.13), so it can never
+# force an upgrade *inside* a DCC -- which is the one thing a bound here must
+# not do, since the host's interpreter is not ours to re-resolve.
+#
+# A ceiling cannot be expressed at all. Environment markers see the interpreter,
+# never the host application, and the two hosts want OPPOSITE bounds: `numpy<2`
+# would force a DOWNGRADE inside Blender. Where a host ships no numpy of its own
+# -- a `--target` install into an empty directory -- pip resolves 2.x, and
+# extensions compiled against 1.x then refuse to load ("module compiled using
+# NumPy 1.x cannot be run in NumPy 2.x"). That case is handled at install time
+# with `--no-deps`, documented under Install in docs/README.md; it is not
+# something this file can decide for every host at once.
+dependencies = ["numpy>=1.24", "Pillow>=9.1"]
 
 # PyMeshLab backs only MeshOps (mesh measure/repair/remesh/decimate/bake).
 # It is a heavy binary wheel, so it stays opt-in: everything else works
@@ -39,9 +55,21 @@ where = ["."]
 include = ["pythontk*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.ui", "*.json", "*.txt", "*.md", "*.gif", "*.html"]
+"*" = ["*.ui", "*.json", "*.txt", "*.md", "*.gif", "*.html", "*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
 pythonpath = [".", "test"]
 addopts = "--ignore=test/temp_tests"
+
+[tool.ruff]
+# House formatter/linter - rule set, exemptions and gate status: m3trik/docs/CODE_STANDARD.md section 1.
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E402"]  # house pattern: try-guarded DCC imports precede the other imports
+
+[tool.ruff.lint.per-file-ignores]
+"**/templates/**" = ["F821"]  # exec-templates carry __PLACEHOLDER__ tokens substituted at run time

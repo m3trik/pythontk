@@ -22,6 +22,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from pythontk.core_utils.status_badge import StatusBadge
+
 # cp1252 consoles can't encode characters test docstrings legitimately use
 # ("→"); unittest's printErrors then dies MID-REPORT, eating the failure list
 # and the summary (bitten in uitk's runner). Degrade gracefully instead.
@@ -37,6 +39,45 @@ if "QT_API" not in os.environ:
     os.environ["QT_API"] = "pyside6"
 
 
+class _TestRunnerInternal:
+    """Internal helpers for :class:`TestRunner` -- module coverage + badge gating.
+
+    A partial run must not stamp the README badge, whether it was scoped by
+    argument or by environment (numpy/Pillow/Qt missing, so those modules never
+    import). See m3trik/docs/TEST_BADGE_STANDARD.md.
+
+    The expected module set is *derived* from the ``test_*.py`` files on disk
+    rather than recorded anywhere, so it can never go stale, and a refused stamp
+    always prints its reason -- mirroring mayatk's runner, which prints
+    ``[INFO] Badge not updated (some modules did not run).``
+    """
+
+    # discover_module_names / module_of / is_import_standin / gate live on
+    # ptk.StatusBadge -- the documented single writer for this badge
+    # (m3trik/docs/TEST_BADGE_STANDARD.md). Six runners stamp badges; the
+    # completeness rule has to be one implementation, not one per runner.
+
+    @classmethod
+    def stamp_badge(cls, test_dir, readme_path, result) -> bool:
+        """Update the README badge for *result*, unless the run fell short.
+
+        Returns True when the badge was written; otherwise prints the reason it
+        was not (mirroring mayatk's runner) and returns False.
+        """
+        allowed, reason = StatusBadge.gate(
+            StatusBadge.discover_module_names(test_dir),
+            result.modules_ran,
+            result.passed,
+            result.failures + result.errors,
+        )
+        if not allowed:
+            print(f"[INFO] Badge not updated ({reason}).")
+            return False
+        return update_readme_badge(
+            result.passed, result.failures + result.errors, readme_path
+        )
+
+
 class TestResult:
     """Container for test result statistics."""
 
@@ -47,6 +88,9 @@ class TestResult:
         self.skipped = len(result.skipped)
         self.passed = self.tests_run - self.failures - self.errors - self.skipped
         self.duration = duration
+        # Module coverage, for the badge guard (see _TestRunnerInternal).
+        self.modules_ran = set(getattr(result, "modules_ran", ()))
+        self.modules_executed = set(getattr(result, "modules_executed", ()))
         self.failure_details = result.failures
         self.error_details = result.errors
         self.success = self.failures == 0 and self.errors == 0
@@ -65,7 +109,7 @@ class TestResult:
         )
 
 
-class TestRunner:
+class TestRunner(_TestRunnerInternal):
     """Discovers and runs all test modules."""
 
     def __init__(self, test_dir: Path, verbosity: int = 1):
@@ -184,10 +228,31 @@ class TeeStream:
 
 
 class DetailedTestResult(unittest.TextTestResult):
-    """Extended test result with better output formatting."""
+    """Extended test result with better output formatting.
+
+    Also records which test modules actually ran, so a run the environment
+    scoped down can be refused the README badge (see :class:`_TestRunnerInternal`).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.modules_ran = set()  # imported, and its cases were run
+        self.modules_executed = set()  # produced at least one non-skipped case
+
+    def _note_module(self, test, executed: bool):
+        """Credit *test*'s module; a loader stand-in means it never ran."""
+        if StatusBadge.is_import_standin(test):
+            return
+        name = StatusBadge.module_of(test)
+        if not name:
+            return
+        self.modules_ran.add(name)
+        if executed:
+            self.modules_executed.add(name)
 
     def addSuccess(self, test):
         super().addSuccess(test)
+        self._note_module(test, True)
         if self.showAll:
             self.stream.write(" ok\n")
         elif self.dots:
@@ -196,6 +261,7 @@ class DetailedTestResult(unittest.TextTestResult):
 
     def addError(self, test, err):
         super().addError(test, err)
+        self._note_module(test, True)
         if self.showAll:
             self.stream.write(" ERROR\n")
         elif self.dots:
@@ -204,14 +270,24 @@ class DetailedTestResult(unittest.TextTestResult):
 
     def addFailure(self, test, err):
         super().addFailure(test, err)
+        self._note_module(test, True)
         if self.showAll:
             self.stream.write(" FAIL\n")
         elif self.dots:
             self.stream.write("F")
             self.stream.flush()
 
+    def addExpectedFailure(self, test, err):
+        super().addExpectedFailure(test, err)
+        self._note_module(test, True)
+
+    def addUnexpectedSuccess(self, test):
+        super().addUnexpectedSuccess(test)
+        self._note_module(test, True)
+
     def addSkip(self, test, reason):
         super().addSkip(test, reason)
+        self._note_module(test, False)
         if self.showAll:
             self.stream.write(f" skipped ({reason})\n")
         elif self.dots:
@@ -287,10 +363,19 @@ def main():
     runner = TestRunner(test_dir, verbosity=verbosity)
     result = runner.run(log_to_file=args.log)
 
-    # Update README badge unless --no-badge is specified
+    # A module that imported but produced only skips still counts as run (the
+    # standard keeps environment-gated skips green), but say so out loud.
+    skipped_only = sorted(result.modules_ran - result.modules_executed)
+    if skipped_only:
+        print(
+            f"[WARNING] {len(skipped_only)} module(s) contributed only skips: "
+            + ", ".join(skipped_only)
+        )
+
+    # Update README badge unless --no-badge is specified -- and never on a run
+    # the environment scoped down (see StatusBadge.gate).
     if not args.no_badge:
-        readme_path = root_dir / "docs" / "README.md"
-        update_readme_badge(result.passed, result.failures + result.errors, readme_path)
+        TestRunner.stamp_badge(test_dir, root_dir / "docs" / "README.md", result)
 
     # Exit with appropriate code
     sys.exit(0 if result.success else 1)

@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-17_
+_Generated: 2026-08-19_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -14,7 +14,7 @@ _Generated: 2026-08-17_
 
 ### `core_utils/app_handoff.py` — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 - `class AppSpec`
-  - methods: resolve, not_found_message
+  - methods: resolve, path, available, refresh, not_found_message
 - `class HandoffRequest`
   - methods: get
 - `class Payload`
@@ -49,7 +49,7 @@ _Generated: 2026-08-17_
 - `class ClassProperty`
 
 ### `core_utils/cli.py`
-- `class CLI`
+- `class CLI(_CLIInternal)`
   - methods: get_parser, add_connection_args, get_connection_kwargs
 
 ### `core_utils/color.py` — Lightweight, DCC-agnostic color primitives.
@@ -179,14 +179,14 @@ _Generated: 2026-08-17_
 ### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
 - `class Op`
 - `class MapOptimizer(HelpMixin)`
-  - methods: plan, project, apply, resolve_quality, resolve_compression, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, assess
+  - methods: resolve_size_clamp, describe_size_clamp, plan, project, apply, resolve_quality, resolve_compression, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, assess
 
 ### `core_utils/engines/textures/map_registry.py`
 - `class WF`
 - `class MapType`
   - methods: compose_aliases, carried_types
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, resolve_type_from_path, get_suffix_strip_pattern, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
+  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, split_duplicate_token, resolve_type_from_path, get_suffix_strip_pattern, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`
@@ -343,7 +343,7 @@ _Generated: 2026-08-17_
 
 ### `core_utils/status_badge.py` — Shields.io status badges embedded in a markdown file.
 - `class StatusBadge(_StatusBadgeInternal)`
-  - methods: url, render, test_status, update, update_test_badge
+  - methods: discover_module_names, module_of, is_import_standin, gate, url, render, test_status, update, update_test_badge
 
 ### `core_utils/step_toggle.py` — Timed multi-step press toggles.
 - `class StepToggle`
@@ -367,11 +367,11 @@ _Generated: 2026-08-17_
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, path_length_limit, exceeds_path_length, free_space, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
+  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, relativize_output_dir, path_length_limit, exceeds_path_length, free_space, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, without_locate_hints, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, set_glb_emissive, prune_glb_unreferenced_textures, set_glb_base_color
+  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, without_locate_hints, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, prune_glb_unreferenced_textures, set_glb_base_color
 
 ### `file_utils/mesh_ops.py` — File-level mesh processing via PyMeshLab (optional dependency).
 - `class OpSpec`
@@ -429,6 +429,12 @@ _Generated: 2026-08-17_
 - `class UvPack(HelpMixin)`
   - methods: resolve, available, pack_islands
 
+### `geo_utils/uv_transfer.py` — Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
+- `class TransferTable`
+  - methods: passes, nbytes, coverage, mask, frames
+- `class UvTransfer(HelpMixin)`
+  - methods: build, transfer, transfer_normals, pad, merge_layouts, transfer_materials, normal_convention, load_map, save_map, triangle_frames
+
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
   - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
@@ -479,7 +485,9 @@ _Generated: 2026-08-17_
 
 ### `net_utils/preview_server.py` — Localhost static-file server for live browser / WebXR previews.
 - `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
-  - methods: port, url, version, is_running, has_viewer, manifest, start, stop, publish, open_in_browser
+  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, open_in_browser
+- `class PreviewPassContext`
+  - methods: logger, sidecar
 - `class PreviewDeliverer(Deliverer)`
   - methods: ensure_server, deliver
 - `class PreviewBridge(HandoffBridge)`

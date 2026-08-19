@@ -1091,6 +1091,53 @@ class MapRegistry(SingletonMixin):
             return name_only, ""
         return name_only[: match.start()], match.group(0)
 
+    # A trailing DUPLICATE marker, with its leading separator: the ``_1`` /
+    # ``_2`` a tool appends when it will not overwrite a same-named file
+    # (``MatUtils.stage_textures_relative``'s collision fallback, Substance
+    # Painter re-exports, a plain file-manager copy). Bounded to 1-2 digits and
+    # only ever applied as a FALLBACK (see :meth:`resolve_type_from_path`), so
+    # the everyday resolution tag it resembles -- ``_1024``, ``_2048``, and the
+    # ``_512`` end of it -- is out of range AND could not change a name that
+    # already classifies.
+    _DUPLICATE_TOKEN_PATTERN = re.compile(r"[_-](\d{1,2})$")
+
+    # Two-digit tails that are a TECHNICAL tag rather than a copy index: bit
+    # depth and the channel/format counts that land in the same position.
+    # "im_Height_16" is a 16-BIT height map, not the sixteenth copy of one, and
+    # collapsing it onto its 8-bit sibling would hand a network builder two
+    # Height maps for one material. The resolution tags (_512, _1024, _2048)
+    # need no entry -- they are already past the two-digit bound, which is why
+    # the pattern stops there.
+    _TECHNICAL_TAIL_VALUES = frozenset({8, 16, 24, 32, 48, 64})
+
+    @classmethod
+    def split_duplicate_token(cls, name_only: str) -> Tuple[str, str]:
+        """Split a trailing duplicate marker off an extension-less filename.
+
+        A suffix appended AFTER the map-type token hides that token from every
+        consumer of the taxonomy: ``rock_Base_Color_1`` ends in ``_1``, not in
+        any alias, so it classifies as nothing and is silently left unwired.
+        Our own tools put such a marker on the BASE name for exactly that
+        reason (``rock_1_Base_Color``); this is the safety net for the files
+        that arrive from everything else.
+
+        Parameters:
+            name_only: A filename with its extension already removed.
+
+        Consumed by :meth:`resolve_type_from_path` alone -- deliberately NOT
+        by ``MapFactory.resolve_map_type(key=False)``, whose answer is spliced
+        back into a filename (see the note on that parameter).
+
+        Returns:
+            tuple[str, str]: ``(stem_without_token, token)``, the token keeping
+            its leading separator so ``stem + token`` is the input verbatim.
+            The token is ``""`` when the name carries none.
+        """
+        match = cls._DUPLICATE_TOKEN_PATTERN.search(name_only)
+        if not match or int(match.group(1)) in cls._TECHNICAL_TAIL_VALUES:
+            return name_only, ""
+        return name_only[: match.start()], match.group(0)
+
     @staticmethod
     def _short_alias_boundary(name_only: str, index: int) -> Optional[str]:
         """What kind of word boundary a short alias starting at *index* sits on.
@@ -1124,7 +1171,8 @@ class MapRegistry(SingletonMixin):
 
         A trailing UDIM / UV-tile token is stripped first (see
         :meth:`split_tile_token`) so a tiled map classifies exactly like its
-        untiled twin.
+        untiled twin; a trailing duplicate marker is retried the same way (see
+        :meth:`split_duplicate_token`) when nothing matched without it.
         """
         filename = os.path.basename(path)
         name_only, _ = os.path.splitext(filename)
@@ -1134,6 +1182,39 @@ class MapRegistry(SingletonMixin):
         if self._resolve_cache is not None and name_only in self._resolve_cache:
             return self._resolve_cache[name_only]
 
+        result = self._match_alias(name_only)
+
+        if result is None:
+            # Last resort: a duplicate marker appended after the map-type token
+            # ("rock_Base_Color_1") leaves the name ending in no alias at all.
+            # Retried only on a MISS, so a name that already classifies keeps
+            # its answer and this can add matches but never change one. The
+            # duplicate token comes off before the tile token, because the
+            # marker is appended last ("rock_Normal.1001_1").
+            #
+            # Matched through _match_alias rather than by re-entering this
+            # method: `base` is already a STEM, and splitext on a stem eats any
+            # dotted tail ("rock.v2_Base_Color" -> "rock"), which silently lost
+            # every dotted version / LOD name.
+            base, token = self.split_duplicate_token(name_only)
+            if token:
+                base, _dup_tile = self.split_tile_token(base)
+                if base:
+                    result = self._match_alias(base)
+
+        # Cache the result (including None for misses)
+        if self._resolve_cache is not None:
+            self._resolve_cache[name_only] = result
+        return result
+
+    def _match_alias(self, name_only: str) -> Optional[str]:
+        """The map-type key *name_only* ends in, or None.
+
+        The alias-matching half of :meth:`resolve_type_from_path`, split out so
+        that method can retry it against a reduced stem without re-entering its
+        path handling. Takes an extension-less, tile-token-less name and does no
+        caching of its own -- the caller owns the cache key.
+        """
         all_candidates = self._get_sorted_candidates()
         result = None
 
@@ -1174,9 +1255,6 @@ class MapRegistry(SingletonMixin):
                     result = map_name
                     break
 
-        # Cache the result (including None for misses)
-        if self._resolve_cache is not None:
-            self._resolve_cache[name_only] = result
         return result
 
     def get_suffix_strip_pattern(self) -> Optional[str]:

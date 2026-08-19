@@ -188,5 +188,96 @@ class StatusBadgeTest(BaseTestCase):
             Path.write_text = real_write
 
 
+class RunCompletenessGateTest(BaseTestCase):
+    """The gate that decides whether a run may stamp the badge.
+
+    Regression cover for the idiom-dependence defect: unittest reports a
+    class/module-level ``SkipTest`` through ``unittest.suite._ErrorHolder``,
+    whose ``__module__`` is ``unittest.suite``. Treating that like a
+    ``unittest.loader`` stand-in (a module that never imported) meant the badge
+    was refused forever for any module whose cases are all setUpClass-gated,
+    while the same skip written as ``@unittest.skipUnless`` on the class stayed
+    green. Whether a run reads green must not depend on which skip idiom the
+    test author reached for -- this module promises that an all-green run with
+    environment-gated skips still reads green.
+    """
+
+    SETUPCLASS_PROBE = """
+import unittest
+
+
+class TestGated(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        raise unittest.SkipTest('env gate')
+
+    def test_a(self):
+        pass
+"""
+
+    SETUPMODULE_PROBE = """
+import unittest
+
+
+def setUpModule():
+    raise unittest.SkipTest('env gate')
+
+
+class TestGated(unittest.TestCase):
+    def test_a(self):
+        pass
+"""
+
+    def _modules_seen(self, name, source):
+        """Run *source* as a module through unittest; return credited names."""
+        import os
+        import sys
+        import types
+
+        module = types.ModuleType(name)
+        exec(compile(source, name + '.py', 'exec'), module.__dict__)
+        sys.modules[name] = module
+        self.addCleanup(sys.modules.pop, name, None)
+
+        suite = unittest.TestLoader().loadTestsFromModule(module)
+        with open(os.devnull, 'w') as sink:
+            result = unittest.TextTestRunner(stream=sink, verbosity=0).run(suite)
+
+        cases = list(result.skipped) + list(result.errors) + list(result.failures)
+        return {
+            StatusBadge.module_of(case)
+            for case, _ in cases
+            if not StatusBadge.is_import_standin(case)
+        }
+
+    def test_setupclass_skip_credits_its_module(self):
+        seen = self._modules_seen('test_gate_probe_setupclass', self.SETUPCLASS_PROBE)
+        self.assertEqual(seen, {'test_gate_probe_setupclass'})
+
+    def test_setupmodule_skip_credits_its_module(self):
+        seen = self._modules_seen('test_gate_probe_setupmodule', self.SETUPMODULE_PROBE)
+        self.assertEqual(seen, {'test_gate_probe_setupmodule'})
+
+    def test_an_environment_gated_module_does_not_block_the_badge(self):
+        """The whole point: a green run carrying such skips still stamps."""
+        seen = self._modules_seen('test_gate_probe_allowed', self.SETUPCLASS_PROBE)
+        allowed, reason = StatusBadge.gate(
+            {'test_gate_probe_allowed'}, seen, passed=12, failed=0
+        )
+        self.assertTrue(allowed, reason)
+
+    def test_a_module_that_never_imported_still_blocks_the_badge(self):
+        """The case the gate exists for must keep working."""
+        allowed, reason = StatusBadge.gate(
+            {'test_a', 'test_b'}, {'test_a'}, passed=9, failed=0
+        )
+        self.assertFalse(allowed)
+        self.assertIn('test_b', reason)
+
+    def test_a_run_with_no_cases_at_all_blocks_the_badge(self):
+        allowed, reason = StatusBadge.gate(set(), set(), passed=0, failed=0)
+        self.assertFalse(allowed)
+        self.assertIn('no test cases ran', reason)
+
 if __name__ == "__main__":
     unittest.main(exit=False)

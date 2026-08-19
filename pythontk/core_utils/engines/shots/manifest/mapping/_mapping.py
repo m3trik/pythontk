@@ -330,7 +330,7 @@ class Mapping(_MappingInternal):
         caller can surface a precise message instead of a stack trace.
 
         Parameters:
-            name: Mapping stem (e.g. ``"c5m_training"``) or a full ``.json`` path.
+            name: Mapping stem (e.g. ``"speedrun"``) or a full ``.json`` path.
             directory: Optional folder override.
 
         Raises:
