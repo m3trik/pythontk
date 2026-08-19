@@ -32,6 +32,7 @@ the engine only validates them.
 """
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -44,12 +45,12 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 try:
     import numpy as np
 except ImportError as error:
-    print(f"# ImportError: {__file__}\n\t{error}")
+    logging.getLogger(__name__).debug(f"# ImportError: {__file__}\n\t{error}")
     np = None  # type: ignore
 try:
     from PIL import Image
 except ImportError as error:
-    print(f"# ImportError: {__file__}\n\t{error}")
+    logging.getLogger(__name__).debug(f"# ImportError: {__file__}\n\t{error}")
     Image = None  # type: ignore
 import pythontk as ptk
 

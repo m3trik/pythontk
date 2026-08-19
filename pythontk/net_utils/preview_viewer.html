@@ -178,6 +178,66 @@ const DEFAULT_KEY_INTENSITY = 0.9;
 // baked geometry, for a reason invisible from the model, and scenes are routinely partly
 // baked (measured on a production room: 51 of 57 materials).
 const LIGHTMAP_ENV_INTENSITY = 0.25;
+// The environment level everything NOT lightmapped is lit at, and the exposure
+// the look was approved through. Declared as named constants for the same
+// reason as the two above: they are the FALLBACKS the published policy is read
+// against (see readRenderingPolicy), and a fallback that only exists inline is
+// one a test cannot compare with what the deliverable actually ships.
+const DEFAULT_ENV_INTENSITY = 1;
+const DEFAULT_TONE_EXPOSURE = 1;
+
+// The rig this page renders with. The values above are what it FALLS BACK to;
+// the live ones come from the deliverable itself, which publishes the whole
+// recipe as `handoff.rendering` inside its own scene sidecar. That direction
+// matters: the asset carries no lights, so the policy is part of the hand-off,
+// and while the viewer defined its own numbers the published recipe could only
+// be kept honest by a test pinning the two spellings together. Now the file is
+// the source and this page is one of its readers.
+const POLICY_FALLBACK = Object.freeze({
+  keyIntensity: DEFAULT_KEY_INTENSITY,
+  lightmapEnvIntensity: LIGHTMAP_ENV_INTENSITY,
+  environmentIntensity: DEFAULT_ENV_INTENSITY,
+  toneMappingExposure: DEFAULT_TONE_EXPOSURE,
+});
+let policy = { ...POLICY_FALLBACK };
+
+// Reads `extras.scene_sidecar.handoff.rendering`, written by
+// MeshConvert.apply_scene_sidecar. Every field is taken only if it is a finite
+// NUMBER: the published policy is documentation as much as data, so some of its
+// entries are deliberately prose (`lightMapIntensity` says "per material, from
+// extras.lightmap_web"), and a viewer that assigned a string to an intensity
+// would render black with nothing in the file looking wrong. An older GLB, or
+// one from another producer, simply keeps the fallbacks.
+function readRenderingPolicy(gltf) {
+  let published = null;
+  for (const holder of [gltf.parser?.json?.extras, gltf.scene?.userData]) {
+    const raw = holder && holder.scene_sidecar;
+    if (!raw) continue;
+    let envelope = raw;
+    if (typeof raw === 'string') {
+      try { envelope = JSON.parse(raw); } catch { continue; }
+    }
+    published = envelope?.handoff?.rendering;
+    if (published) break;
+  }
+  const num = (value, fallback) =>
+    (typeof value === 'number' && isFinite(value) ? value : fallback);
+  // Falling back through POLICY_FALLBACK rather than through the constants
+  // again: one table names what this page does without a published policy, and
+  // it is the same table the initial value is taken from.
+  policy = {
+    keyIntensity: num(published?.keyLight?.intensity, POLICY_FALLBACK.keyIntensity),
+    lightmapEnvIntensity: num(
+      published?.lightmappedMaterials?.envMapIntensity,
+      POLICY_FALLBACK.lightmapEnvIntensity),
+    environmentIntensity: num(
+      published?.environment?.intensity, POLICY_FALLBACK.environmentIntensity),
+    toneMappingExposure: num(
+      published?.renderer?.toneMappingExposure, POLICY_FALLBACK.toneMappingExposure),
+  };
+  renderer.toneMappingExposure = policy.toneMappingExposure;
+}
+
 const keyLight = new THREE.DirectionalLight(0xffffff, DEFAULT_KEY_INTENSITY);
 keyLight.position.set(3, 6, 4);
 scene.add(keyLight);
@@ -274,13 +334,22 @@ function layout() {
   const scale = realScale ? 1 : FIT_HEIGHT_M / height;
 
   current.scale.setScalar(scale);
-  // Center on the floor plane, pushed out in front of the default standing
-  // position so an immersive session opens with the model in view.
+  // Center on the floor plane. The model is centred on the PIVOT's origin in X
+  // and Z and stood on its floor plane in Y, and the "push it out in front of
+  // the standing position" offset is carried by the pivot itself rather than
+  // folded in here. The composed world transform is identical -- the pivot has
+  // no rotation of its own -- but the split is what makes `pivot.rotation.y` a
+  // spin instead of an orbit: with the offset baked into the model, rotating
+  // the pivot swung the model around the viewer at FIT_DISTANCE_M radius,
+  // which is wrong on a desk and sickening in a headset. `viewer.pivot` is
+  // handed to every viewer script (the packaged `turntable` is exactly this
+  // rotation), so the group they are given has to spin about the model.
   current.position.set(
     -center.x * scale,
     -(center.y - size.y / 2) * scale,
-    -center.z * scale - (realScale ? 0 : FIT_DISTANCE_M),
+    -center.z * scale,
   );
+  pivot.position.set(0, 0, realScale ? 0 : -FIT_DISTANCE_M);
 
   el.scaleToggle.textContent = `Scale: ${realScale ? 'real' : 'fit'}`;
   frameCamera();
@@ -407,9 +476,9 @@ function applyLighting() {
   // Left at 1 for everything the manifest did not name; the baked materials
   // opt out of this via their own envMap (see applyLightmaps) and are dimmed
   // individually just below.
-  scene.environmentIntensity = 1;
+  scene.environmentIntensity = policy.environmentIntensity;
   for (const material of lightmappedMaterials) {
-    material.envMapIntensity = bakeOnly ? 0 : LIGHTMAP_ENV_INTENSITY;
+    material.envMapIntensity = bakeOnly ? 0 : policy.lightmapEnvIntensity;
   }
   // The key light cannot go per material without render layers, so it stays
   // scene-wide and goes off the moment ANYTHING is baked. Gating it on the
@@ -438,7 +507,7 @@ function applyLighting() {
   // sub-cameras and the failure shows up in a headset rather than at the desk.
   // Layers are also per OBJECT while a bake is per MATERIAL, so a mesh with
   // mixed materials would need a conservative rule regardless.
-  keyLight.intensity = lightmapped ? 0 : DEFAULT_KEY_INTENSITY;
+  keyLight.intensity = lightmapped ? 0 : policy.keyIntensity;
   el.lightToggle.hidden = !lightmapped;
   el.lightToggle.textContent = `Light: ${bakeOnly ? 'bake only' : 'bake + env'}`;
 }
@@ -522,6 +591,10 @@ async function load(url, version) {
   // being driven by the toggle.
   lightmappedMaterials = [];
   materialCount = countMaterials(gltf.scene);
+  // Read before applying: the deliverable's own policy is what applyLighting
+  // then spends, so a load that read nothing must fall back BEFORE the lights
+  // are set rather than after.
+  readRenderingPolicy(gltf);
   lightmapped = applyLightmaps(gltf);
   applyLighting();
 
@@ -537,6 +610,7 @@ async function load(url, version) {
   // until the difference is blamed on the baker.
   el.stats.textContent = describe(current)
     + (lightmapped ? ` · ${lightmapped}/${materialCount} lightmapped materials` : '');
+  emit('load', { model: current, gltf, lightmapped, materialCount });
   setStatus(`v${version} · updated ${new Date().toLocaleTimeString()}`, 'live');
   layout();
   return true;
@@ -545,6 +619,86 @@ async function load(url, version) {
 function setStatus(text, cls = '') {
   el.status.textContent = text;
   el.status.className = cls;
+}
+
+/* -------------------------------------------------------------- scripts --- */
+
+// The extension seam. `PreviewServer` names a set of ES modules in the
+// manifest; each is imported once and its default export called with the API
+// object below. That is deliberately the ONLY way the page grows behaviour:
+// this file stays the stable path, and a new capability (a turntable, a cost
+// report, a debug overlay) is a module plus a registry entry rather than
+// another branch in here.
+//
+// A script's failure is contained and, above all, quiet in the status line: an
+// optional module that throws must not make a perfectly good preview LOOK
+// broken, because the one place this is read is a headset where the console is
+// not visible. It is logged, and the model keeps rendering.
+const loadedScripts = new Set();
+const scriptHooks = { load: [], frame: [], key: [] };
+
+const viewer = {
+  THREE,
+  scene,
+  renderer,
+  camera,
+  controls,
+  pivot,
+  setStatus,
+  /** The model currently on screen, or null between loads. */
+  get model() { return current; },
+  /** `{size, center}` of the current model, in source units. */
+  get bounds() { return modelBounds; },
+  /** The live rendering policy, as read from the deliverable. */
+  get policy() { return policy; },
+  /**
+   * Subscribe to a page event.
+   *  'load'  ({model, gltf, lightmapped, materialCount}) after each model swap
+   *  'frame' ({delta, time}) once per rendered frame
+   *  'key'   (KeyboardEvent) for keydown, after the page's own shortcuts
+   */
+  on(event, fn) { (scriptHooks[event] || (scriptHooks[event] = [])).push(fn); },
+  /**
+   * Add a button to the control bar, styled like the page's own. Scripts get
+   * this rather than reaching for document.createElement so a module cannot
+   * drift from the page's look — and so the bar stays the one place buttons
+   * live when the layout changes.
+   */
+  addButton(label, onClick) {
+    const button = document.createElement('button');
+    button.className = 'ui';
+    button.textContent = label;
+    button.addEventListener('click', onClick);
+    document.getElementById('controls').appendChild(button);
+    return button;
+  },
+};
+
+function emit(event, detail) {
+  for (const fn of scriptHooks[event] || []) {
+    try {
+      fn(detail, viewer);
+    } catch (error) {
+      console.warn(`viewer script threw on '${event}':`, error);
+    }
+  }
+}
+
+async function loadScripts(urls) {
+  for (const url of urls || []) {
+    if (loadedScripts.has(url)) continue;
+    // Claimed BEFORE the await: poll() fires once a second and the import is
+    // async, so a second poll landing mid-import would otherwise load and
+    // initialise the same module twice — two turntables fighting over one
+    // rotation, and two buttons for it.
+    loadedScripts.add(url);
+    try {
+      const module = await import(`./${url}`);
+      await module.default?.(viewer);
+    } catch (error) {
+      console.warn(`viewer script failed to load: ${url}`, error);
+    }
+  }
 }
 
 /* ----------------------------------------------------------------- poll --- */
@@ -557,6 +711,11 @@ async function poll() {
   try {
     const manifest = await (await fetch('manifest.json', { cache: 'no-store' })).json();
     if (manifest.title) el.title.textContent = manifest.title;
+    // Ahead of the version check: the active set is decided per push, and the
+    // FIRST poll happens before anything is published at all — gated behind
+    // the early return, a script named on a server that has yet to publish
+    // would never load. Already-loaded URLs are skipped inside.
+    loadScripts(manifest.scripts);
     if (manifest.version === seenVersion) return;
     // A version that has failed its budget is abandoned until a new publish
     // supersedes it — otherwise a genuinely corrupt GLB re-parses every second.
@@ -610,6 +769,8 @@ addEventListener('keydown', (event) => {
   if (event.key === 'r') { realScale = !realScale; layout(); }
   if (event.key === 'f') frameCamera();
   if (event.key === 'l') toggleBakeOnly();
+  // Last, so the page's own shortcuts can never be shadowed by a script.
+  emit('key', event);
 });
 
 addEventListener('resize', () => {
@@ -618,8 +779,14 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-renderer.setAnimationLoop(() => {
+// `delta` rather than a raw timestamp: a script animating anything has to be
+// framerate-independent, and a headset runs this loop at 72-120 Hz against a
+// desktop's 60.
+const frameClock = new THREE.Clock();
+
+renderer.setAnimationLoop((time) => {
   controls.update();
+  emit('frame', { delta: frameClock.getDelta(), time });
   renderer.render(scene, camera);
 });
 </script>

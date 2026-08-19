@@ -15,7 +15,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -75,6 +75,13 @@ class MeshConvert(HelpMixin):
     #: and integrity counts, written by :meth:`apply_scene_sidecar`).
     SIDECAR_VERSION = 2
 
+    #: Separates the converter's own ``asset.generator`` claim from ours in the
+    #: stamped string (:meth:`_stamp_asset_generator`), and is what makes a
+    #: prior stamp findable so a re-apply refreshes it instead of stacking.
+    #: Distinctive on purpose -- a bare word would risk splitting a converter
+    #: string that happened to contain it.
+    _GENERATOR_SEP = " via "
+
     #: The standalone-reader contract embedded in every envelope's ``handoff``
     #: section. It exists because the deliverable is routinely handed on ALONE —
     #: to a dev, to a viewer that is not ours, to an agent given one ``.glb`` and
@@ -87,10 +94,10 @@ class MeshConvert(HelpMixin):
     #: Kept to plain declarative sentences about THIS file's own structure — no
     #: instructions to the reader about what to do next, which is what makes it
     #: safe for an agent to read as untrusted content.
-    #: Phrased to read correctly from either place this envelope lives --
-    #: embedded in the GLB's ``extras``, and in the ``.scene.json`` inspection
-    #: copy the bridges write beside the payload -- so it refers to the asset
-    #: through the envelope's own ``asset`` key rather than saying "this file".
+    #: Phrased to read correctly wherever this envelope lives -- embedded in
+    #: the GLB's ``extras``, and held unscrubbed by the caller that built it --
+    #: so it refers to the asset through the envelope's own ``asset`` key
+    #: rather than saying "this file".
     HANDOFF_INSTRUCTIONS = (
         "The glTF 2.0 asset named by 'asset' is self-contained: every texture it "
         "references is embedded, so it loads and inspects with no external files "
@@ -98,8 +105,12 @@ class MeshConvert(HelpMixin):
         "scene's material state for the channels an FBX interchange step cannot "
         "carry; 'extras.scene_sidecar_applied' reports, per section, how many of "
         "those entries matched a material in this file. Section entries name "
-        "each texture by its authoring-time path. That path is PROVENANCE ONLY "
-        "and is not expected to exist on any other machine: resolve it by "
+        "each texture by its authoring-time FILE NAME. That name is PROVENANCE "
+        "ONLY -- the directory it sat in is deliberately not carried, so it "
+        "is a join token and is not expected to resolve as a path on any "
+        "machine, including the authoring one -- two textures that shared a file "
+        "name carry a '#2'-style suffix so the map stays one-to-one: resolve "
+        "it by "
         "looking it up in the top-level 'textures' map, which gives the glTF "
         "'images' index that actually carries those bytes here, their sha256, "
         "and their size -- several section entries can resolve to one image, "
@@ -286,7 +297,12 @@ class MeshConvert(HelpMixin):
             self.rest_dirty = False
             self._rest: Optional[bytes] = None
             self._bin: Optional[memoryview] = None
-            self._alpha_extrema: Dict[int, Optional[Tuple[int, int]]] = {}
+            #: ``(image index, channel)`` -> that channel's ``(min, max)``.
+            #: Keyed by channel so the alpha probes and the ORM probe share one
+            #: decode of an atlas rather than one cache each.
+            self._channel_extrema: Dict[
+                Tuple[int, str], Optional[Tuple[int, int]]
+            ] = {}
             #: Texture path -> texture index, shared by every channel writer on
             #: this session so a map used as both base colour and emissive is
             #: embedded once rather than once per channel.
@@ -316,7 +332,7 @@ class MeshConvert(HelpMixin):
             self._rest = struct.pack("<I4s", len(new_bin), b"BIN\x00") + new_bin
             self._bin = None
             self._image_digests = None
-            self._alpha_extrema = {}
+            self._channel_extrema = {}
             self.rest_dirty = True
             self.dirty = True
 
@@ -523,17 +539,30 @@ class MeshConvert(HelpMixin):
             the file, and an image with no alpha channel at all -- they are
             deliberately not distinguished, because the answer to each is the
             same "leave this material alone".
+            """
+            return self.channel_extrema(img_idx, "A")
 
-            Cached on the session, so an atlas shared by twenty materials is
-            decoded once -- and now once across *both* alpha repairs rather
-            than once inside each, which is what the two private caches this
-            replaced could not do.
+        def channel_extrema(
+            self, img_idx: int, channel: str = "A"
+        ) -> Optional[Tuple[int, int]]:
+            """``(min, max)`` of one ``R``/``G``/``B``/``A`` channel, or ``None``.
+
+            ``None`` is every case a caller must not act on: an index out of
+            range, bytes that could not be resolved, a decoder that refused the
+            file, and -- for ``A`` alone -- an image with no alpha channel at
+            all. Deliberately not distinguished: the answer to each is the same
+            "leave this material alone".
+
+            Cached on the session per ``(image, channel)``, so an atlas shared
+            by twenty materials is decoded once across *every* probe here (both
+            alpha repairs and the ORM check) rather than once inside each.
 
             Pillow is imported here rather than at module scope; the public
             entry points check for it up front and raise something actionable.
             """
-            if img_idx in self._alpha_extrema:
-                return self._alpha_extrema[img_idx]
+            key = (img_idx, channel)
+            if key in self._channel_extrema:
+                return self._channel_extrema[key]
 
             from io import BytesIO
 
@@ -547,18 +576,30 @@ class MeshConvert(HelpMixin):
                     try:
                         with Image.open(BytesIO(raw)) as im:
                             im.load()
-                            has_alpha = im.mode in ("RGBA", "LA", "PA") or (
-                                im.mode == "P" and "transparency" in im.info
-                            )
-                            if has_alpha:
+                            if channel == "A":
+                                # An image with no alpha is not "alpha 255
+                                # everywhere" -- the callers repair BLEND
+                                # materials, and treating opaque-by-absence as
+                                # a finding would flag every RGB texture.
+                                has_alpha = im.mode in ("RGBA", "LA", "PA") or (
+                                    im.mode == "P" and "transparency" in im.info
+                                )
+                                if has_alpha:
+                                    result = (
+                                        im.convert("RGBA").getchannel("A").getextrema()
+                                    )
+                            else:
                                 result = (
-                                    im.convert("RGBA").getchannel("A").getextrema()
+                                    im.convert("RGB").getchannel(channel).getextrema()
                                 )
                     except Exception as exc:  # noqa: BLE001 — varied decoder errors
                         logger.debug(
-                            "GLB alpha probe: skipped image %s (%s)", img_idx, exc
+                            "GLB channel probe: skipped image %s (%s) [%s]",
+                            img_idx,
+                            exc,
+                            channel,
                         )
-            self._alpha_extrema[img_idx] = result
+            self._channel_extrema[key] = result
             return result
 
     @classmethod
@@ -947,9 +988,9 @@ class MeshConvert(HelpMixin):
                 cls.prune_glb_unreferenced_textures(edit)
                 extras = edit.gltf.setdefault("extras", {})
                 # A COPY, with the resolution keys added: the caller's envelope
-                # is theirs (the bridges keep it, and write a `.scene.json`
-                # inspection copy from it), and only this pass can know which
-                # glTF image each authoring path became.
+                # is theirs to keep (unscrubbed, useful on the authoring machine),
+                # and only this pass can know which glTF image each authoring
+                # path became.
                 embedded = dict(sidecar)
                 embedded["textures"] = cls._sidecar_texture_map(edit)
                 # Deliberately NOT the file's total image/texture counts. Later
@@ -960,6 +1001,10 @@ class MeshConvert(HelpMixin):
                 # this envelope itself claims: how many entries each section
                 # carries and how many texture references resolve. Those, plus
                 # the per-reference digests, are the check worth making.
+                # Ship file names, not the authoring machine's directory tree.
+                # Runs BEFORE `validate` is sized and before the digests are
+                # stamped, so both describe the envelope as delivered.
+                cls._scrub_sidecar_paths(embedded)
                 embedded["validate"] = {
                     "sections": {
                         name: len(entries)
@@ -975,6 +1020,38 @@ class MeshConvert(HelpMixin):
                 }
                 extras["scene_sidecar"] = embedded
                 extras["scene_sidecar_applied"] = dict(summary)
+                cls._stamp_asset_generator(edit, sidecar)
+                # The materials this envelope did NOT cover still carry the
+                # converter's own packing, which is the one measured to arrive
+                # solid white. Checked here because the session is already open
+                # and the covered names are in hand; a fully-covered export
+                # decodes nothing.
+                #
+                # Only the DESTRUCTIVE finding is raised at export time. The
+                # `unvalidated` half is real coverage information but it is not
+                # a defect on its own, and an export-time warning an artist
+                # cannot act on is how the actionable ones stop being read --
+                # it is reported to the recipient instead, by `verify_glb`.
+                suspect = cls.suspect_orm_materials(
+                    edit, described=sections.get("metallic_roughness") or ()
+                )
+                harmful = sorted(
+                    name
+                    for name, found in suspect.items()
+                    if found["finding"] == cls.ORM_FINDING_METALLIC_FULL
+                )
+                if harmful:
+                    logger.warning(
+                        "Metallic=1 everywhere on %s material(s) not covered by "
+                        "the sidecar: %s. glTF reads metallic from the ORM's blue "
+                        "channel, so these render with no diffuse response (black "
+                        "under a lightmap) -- name them in the scene sidecar's "
+                        "metallic_roughness section, or re-export their source "
+                        "maps as RGB.",
+                        len(harmful),
+                        ", ".join(harmful),
+                        extra={"preset": "highlight"},
+                    )
                 # Every reference is meant to carry a content address; one that
                 # cannot be digested is an entry a verifying reader has no way
                 # to check, so a shortfall is said out loud rather than shipped
@@ -996,6 +1073,131 @@ class MeshConvert(HelpMixin):
                 if sections.get(section)
             }
         return summary
+
+    @classmethod
+    def _stamp_asset_generator(
+        cls, edit: "MeshConvert.GlbEdit", sidecar: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Name this pipeline in the glTF's own ``asset.generator``; return it.
+
+        The one provenance field glTF itself defines, and every viewer and
+        inspector already displays -- so it reaches a recipient who opens the
+        file in a tool that is not ours and reads nothing else we write. The
+        converter's own string is kept and ours appended: FBX2glTF really did
+        produce the geometry, and replacing that claim would lose the fact that
+        matters most when a mesh arrives wrong.
+
+        Deliberately coarse -- the authoring app + version the envelope already
+        names, and this package's version. No host, no user, no paths: a
+        generator string travels to whoever gets the file (see
+        :meth:`_scrub_sidecar_paths` for the same rule applied to the envelope).
+
+        Idempotent: re-applying an envelope to an already-stamped GLB refreshes
+        the stamp rather than appending a second one.
+        """
+        parts = []
+        source = (sidecar or {}).get("source") or {}
+        # Joined from what is actually present: an f-string over a missing
+        # version interpolates the literal "None" into the MIDDLE of the string,
+        # where .strip() cannot reach it ("maya None + pythontk 0.9.24"), and a
+        # version naming no application used to be dropped outright.
+        named = " ".join(
+            str(v) for v in (source.get("application"), source.get("version")) if v
+        )
+        if named:
+            parts.append(named)
+        try:  # Deferred: the root package imports this module.
+            from pythontk import __version__ as ptk_version
+
+            parts.append(f"pythontk {ptk_version}")
+        except ImportError:  # pragma: no cover - a broken install, not a case
+            pass
+        ours = " + ".join(parts)
+        asset = edit.gltf.setdefault("asset", {})
+        # Drop a stamp from an earlier run before appending this one, so the
+        # string stays "<converter> via <ours>" however many passes touch it.
+        prior = (asset.get("generator") or "").split(cls._GENERATOR_SEP)[0].strip()
+        # A file whose ONLY generator claim is a previous stamp of ours has no
+        # separator to split on, so the whole string would come back as "prior"
+        # and the next pass would append ours to itself. Our stamp always names
+        # this package, which is what makes it recognisable across versions.
+        if "pythontk " in prior:
+            prior = ""
+        asset["generator"] = f"{prior}{cls._GENERATOR_SEP}{ours}" if prior else ours
+        edit.dirty = True
+        return asset["generator"]
+
+    @classmethod
+    def _scrub_sidecar_paths(cls, embedded: Dict[str, Any]) -> int:
+        """Strip authoring directories out of *embedded* in place; return the count.
+
+        The envelope names every texture by the absolute path it had on the
+        authoring machine -- in both the ``textures`` map's keys and the section
+        entries that resolve through them. That is fine locally and is a
+        disclosure in a hand-off: a GLB sent to an external developer spells out
+        the client folder tree it was built from.
+
+        The directory is what leaks; the file name is not, and the join does not
+        need either. Both sides of the join are the SAME string, so rewriting
+        both consistently keeps a plain string lookup working -- no schema
+        version bump, and every existing reader keeps resolving. (The content
+        address stamped by :meth:`_stamp_sidecar_digests` is the identity that
+        actually verifies bytes; this name is only a join token.)
+
+        Two distinct paths CAN share a basename, so a collision is disambiguated
+        with a ``#N`` suffix assigned in sorted-path order -- deterministic, and
+        it keeps the map injective, which a bare basename would not.
+
+        Only the embedded COPY is scrubbed. The caller's own envelope keeps
+        full provenance, which is the half that is useful on the authoring
+        machine.
+        """
+        entries = embedded.get("textures")
+        if not isinstance(entries, dict):
+            return 0
+
+        mapping: Dict[str, str] = {}
+        claimed: Dict[str, str] = {}  # scrubbed name -> the path that took it
+        for path in sorted(entries):
+            if not isinstance(path, str):
+                continue
+            name = os.path.basename(path.replace("\\", "/").rstrip("/")) or path
+            if claimed.get(name, path) != path:
+                stem, dot, ext = name.rpartition(".")
+                suffix = 2
+                while True:
+                    candidate = (
+                        "{}#{}{}{}".format(stem, suffix, dot, ext)
+                        if dot
+                        else "{}#{}".format(name, suffix)
+                    )
+                    if claimed.get(candidate, path) == path:
+                        break
+                    suffix += 1
+                name = candidate
+            claimed[name] = path
+            if name != path:
+                mapping[path] = name
+
+        if not mapping:
+            return 0
+
+        def rewrite(node):
+            """Replace any string that IS one of the mapped paths, anywhere."""
+            if isinstance(node, dict):
+                return {
+                    mapping.get(k, k) if isinstance(k, str) else k: rewrite(v)
+                    for k, v in node.items()
+                }
+            if isinstance(node, list):
+                return [rewrite(v) for v in node]
+            if isinstance(node, str):
+                return mapping.get(node, node)
+            return node
+
+        for key, value in list(embedded.items()):
+            embedded[key] = rewrite(value)
+        return len(mapping)
 
     @classmethod
     def _sidecar_texture_map(
@@ -1145,6 +1347,189 @@ class MeshConvert(HelpMixin):
         with cls.open_glb(glb) as edit:
             return (edit.gltf.get("extras") or {}).get("scene_sidecar")
 
+    @classmethod
+    def verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]:
+        """Check a delivered GLB against the envelope it carries.
+
+        The reader a *recipient* runs. Everything the envelope promises is
+        checkable from the file alone -- that is what ``textures`` (content
+        addresses) and ``validate`` (the counts the envelope claims for itself)
+        are for -- but until this existed nothing in the ecosystem read either
+        back, so a truncated envelope or a payload swapped after the digests
+        were stamped arrived indistinguishable from a good one.
+
+        Read-only and side-file-free by design: a recipient on another machine,
+        in another DCC, or holding nothing but the ``.glb`` can run it, and it
+        can never be what damages the asset it is inspecting.
+
+        Decodes one channel of each ORM image the envelope did not describe
+        (see :meth:`suspect_orm_materials`); everything else reads the JSON
+        chunk and hashes payloads. That cost is deliberate here and nowhere
+        else -- this is an explicit recipient-side call, not an export step.
+
+        Returns:
+            A report dict, always carrying ``ok`` (bool), ``problems`` (the
+            findings that made ``ok`` False) and ``notes`` (observations that
+            did not), plus what was inspected: ``envelope``
+            (present/version/source/asset), ``textures`` (``checked``,
+            ``verified``, ``mismatched``, ``unresolved``), ``sections``
+            (declared vs applied), ``orm`` (per
+            :meth:`suspect_orm_materials`, when anything was found),
+            ``lightmap`` and ``generator``. ``problems`` and ``ok`` are kept
+            strictly in step: an empty ``problems`` always means ``ok``. A GLB
+            with no envelope is reported, not raised -- an asset from another
+            producer is a legitimate thing to point this at.
+        """
+        report: Dict[str, Any] = {"ok": True, "problems": [], "notes": []}
+
+        def fail(message: str) -> None:
+            report["ok"] = False
+            report["problems"].append(message)
+
+        with cls.open_glb(glb) as edit:
+            extras = edit.gltf.get("extras") or {}
+            envelope = extras.get("scene_sidecar")
+            report["generator"] = (edit.gltf.get("asset") or {}).get("generator")
+            report["lightmap"] = bool(extras.get(cls.LIGHTMAP_WEB_KEY))
+            if not isinstance(envelope, dict):
+                report["envelope"] = None
+                fail("no scene-sidecar envelope: nothing here declares itself")
+                return report
+
+            version = envelope.get("version")
+            report["envelope"] = {
+                "version": version,
+                "source": envelope.get("source"),
+                "asset": envelope.get("asset"),
+            }
+            # Newer is the case worth saying out loud: this reader would skip
+            # whatever the newer schema added and report a clean bill on a file
+            # it only partly understood.
+            if version != cls.SIDECAR_VERSION:
+                fail(
+                    f"envelope schema v{version} against this reader's "
+                    f"v{cls.SIDECAR_VERSION}"
+                )
+
+            declared = envelope.get("sections") or {}
+            if not isinstance(declared, dict):
+                # Said out loud rather than normalised to {}: quietly treating a
+                # block this reader cannot parse as an empty one would report a
+                # clean bill on an envelope it never read -- the exact false
+                # green this method exists to end.
+                fail("envelope 'sections' is not an object")
+                declared = {}
+            applied = extras.get("scene_sidecar_applied")
+            report["sections"] = {
+                "declared": {
+                    name: len(entries)
+                    for name, entries in declared.items()
+                    if hasattr(entries, "__len__")
+                },
+                "applied": applied if isinstance(applied, dict) else {},
+            }
+            for name, outcome in report["sections"]["applied"].items():
+                # The apply pass records its own bad news in the artifact; a
+                # verifying reader has to repeat it rather than assume the
+                # recipient read the log of a run on someone else's machine.
+                # Anchored, not `in`: the summary spells a partial apply "10 of
+                # 20", and a bare "0 of" substring test calls that a failure.
+                text = str(outcome)
+                if text.startswith("failed") or text.startswith("0 of"):
+                    fail(f"section {name!r} did not land: {outcome}")
+
+            images = edit.images
+            refs = envelope.get("textures") or {}
+            if not isinstance(refs, dict):
+                fail("envelope 'textures' is not an object")
+                refs = {}
+            checked = verified = 0
+            mismatched: List[str] = []
+            unresolved: List[str] = []
+            for path, ref in refs.items():
+                if not isinstance(ref, dict):
+                    continue
+                checked += 1
+                index, digest = ref.get("image"), ref.get("sha256")
+                payload = (
+                    edit._image_payload(images[index])
+                    if isinstance(index, int) and 0 <= index < len(images)
+                    else None
+                )
+                if not payload or not digest:
+                    unresolved.append(path)
+                elif hashlib.sha256(payload).hexdigest() != digest:
+                    mismatched.append(path)
+                else:
+                    verified += 1
+            report["textures"] = {
+                "checked": checked,
+                "verified": verified,
+                "mismatched": mismatched,
+                "unresolved": unresolved,
+            }
+            if mismatched:
+                fail(
+                    f"{len(mismatched)} texture reference(s) do not match their "
+                    "recorded sha256 -- the payload changed after it was stamped"
+                )
+            if unresolved:
+                fail(
+                    f"{len(unresolved)} texture reference(s) resolve to no image "
+                    "payload in this file"
+                )
+
+            # `validate` is the envelope's claim about ITSELF, so a disagreement
+            # means the envelope was truncated or rewritten, not that a texture
+            # is missing -- worth separating from the digest failures above.
+            claims = envelope.get("validate")
+            if isinstance(claims, dict):
+                if claims.get("sections") != report["sections"]["declared"]:
+                    fail("envelope 'validate' section counts disagree with 'sections'")
+                if claims.get("textures") != checked:
+                    fail(
+                        f"envelope 'validate' claims {claims.get('textures')} texture "
+                        f"reference(s), found {checked}"
+                    )
+            else:
+                fail("envelope carries no 'validate' block to check against")
+
+            # `described` is the envelope's own section, so a deliverable that
+            # documented every ORM it carries reports nothing here -- and one
+            # that carries a binding nothing described says so, which is the
+            # only way a mask map packed for another engine (read channel for
+            # channel as ORM, and perfectly ordinary-looking data) surfaces at
+            # all.
+            suspect = cls.suspect_orm_materials(
+                edit, described=declared.get("metallic_roughness") or {}
+            )
+            if suspect:
+                report["orm"] = suspect
+                by_finding: Dict[str, List[str]] = {}
+                for material, found in sorted(suspect.items()):
+                    by_finding.setdefault(found["finding"], []).append(material)
+                harmful = by_finding.get(cls.ORM_FINDING_METALLIC_FULL)
+                unvalidated = by_finding.get(cls.ORM_FINDING_UNVALIDATED)
+                if harmful:
+                    fail(
+                        "metallic=1 everywhere on: "
+                        + ", ".join(harmful)
+                        + " (no diffuse response; black under a lightmap)"
+                    )
+                if unvalidated:
+                    # A NOTE, not a problem: an ORM the producer never had to
+                    # repair is perfectly legitimate, and putting this in
+                    # `problems` would make the obvious `if report["problems"]`
+                    # read as a defect on a sound deliverable. It is said at all
+                    # because nothing here can vouch for its channel layout.
+                    report["notes"].append(
+                        "ORM binding not described by the envelope on: "
+                        + ", ".join(unvalidated)
+                        + " -- its channel layout is unverified (a mask map "
+                        "packed for another engine reads as ORM here)"
+                    )
+        return report
+
     # ------------------------------------------------------------------ #
     # Lightmaps: carry a host DCC's committed bake into the GLB deliverable
     # ------------------------------------------------------------------ #
@@ -1164,7 +1549,7 @@ class MeshConvert(HelpMixin):
     #: The publisher's absolute authoring directory for the baked maps -- a
     #: BUILD-TIME hint for :meth:`apply_glb_lightmaps` to find the EXRs, with no
     #: reader once they are embedded. Stripped on the way out (see
-    #: :meth:`_strip_locate_hints`); it is machine-specific, so shipping it leaks
+    #: :meth:`_reconcile_node_markers`); it is machine-specific, so shipping it leaks
     #: the authoring drive layout and tells the recipient nothing they can use.
     LOCATE_HINT_KEY = "dir"
 
@@ -1178,33 +1563,43 @@ class MeshConvert(HelpMixin):
         avoid.
         """
         for node in gltf.get("nodes", []) or []:
-            props = (
-                ((node.get("extras") or {}).get("fromFBX") or {}).get("userProperties")
-                or {}
-            )
-            entry = props.get(cls.LIGHTMAP_METADATA_KEY)
-            if entry is None:
-                continue
-            # FBX2glTF wraps each property as {"type": ..., "value": ...}.
-            raw = entry.get("value") if isinstance(entry, dict) else entry
-            try:
-                data = json.loads(raw) if isinstance(raw, str) else raw
-            except (TypeError, ValueError) as error:
-                logger.warning(
-                    "Unparsable %s on node %r: %s",
-                    cls.LIGHTMAP_METADATA_KEY,
-                    node.get("name"),
-                    error,
-                )
-                return None
-            return data if isinstance(data, dict) else None
+            extras = node.get("extras") or {}
+            # The same TWO on-disk shapes :meth:`_reconcile_node_markers` walks,
+            # and for the same reason: FBX2glTF nests user properties under
+            # extras.fromFBX.userProperties (the Maya route), a native glTF
+            # export writes them as TOP-LEVEL node extras. Probing only the
+            # nested shape makes the whole applier a silent no-op on a natively
+            # exported deliverable -- and this is public API, pointed at
+            # whatever GLB it is handed, so the shape is not knowable from the
+            # call site. Nested first: a file carrying both came through the FBX
+            # hop, and that copy is the one the converter transcribed.
+            for props in (
+                (extras.get("fromFBX") or {}).get("userProperties") or {},
+                extras,
+            ):
+                entry = props.get(cls.LIGHTMAP_METADATA_KEY)
+                if entry is None:
+                    continue
+                # FBX2glTF wraps each property as {"type": ..., "value": ...}.
+                raw = entry.get("value") if isinstance(entry, dict) else entry
+                try:
+                    data = json.loads(raw) if isinstance(raw, str) else raw
+                except (TypeError, ValueError) as error:
+                    logger.warning(
+                        "Unparsable %s on node %r: %s",
+                        cls.LIGHTMAP_METADATA_KEY,
+                        node.get("name"),
+                        error,
+                    )
+                    return None
+                return data if isinstance(data, dict) else None
         return None
 
     @classmethod
     def without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]:
         """Copy of a ``data_export`` snapshot with build-time locate hints removed.
 
-        The DCC-side counterpart to :meth:`_strip_locate_hints`, which does the
+        The DCC-side counterpart to :meth:`_reconcile_node_markers`, which does the
         same job on a parsed glTF. Both mayatk and blendertk write an export
         sidecar straight from a ``DataNodes.dump(decode=True)`` snapshot, and
         that snapshot carries :attr:`LOCATE_HINT_KEY` -- an absolute authoring
@@ -1243,8 +1638,8 @@ class MeshConvert(HelpMixin):
         return scrubbed
 
     @classmethod
-    def _strip_locate_hints(cls, gltf: dict) -> int:
-        """Drop the build-time :attr:`LOCATE_HINT_KEY` from a parsed glTF's extras.
+    def _reconcile_node_markers(cls, gltf: dict, final: dict = None) -> int:
+        """Correct the per-node lightmap markers and drop their build-time hints.
 
         Call once the maps are embedded: the hint's only reader is the applier's
         own EXR lookup, so after that it is dead weight that ships an absolute
@@ -1257,37 +1652,85 @@ class MeshConvert(HelpMixin):
         keeps everything it can actually act on. A basename alone stays resolvable
         against ``search_dirs`` or the GLB's own directory.
 
-        Returns the number of carriers changed (0 when there was nothing to strip).
+        Those KEPT values are also corrected here, from *final* — the map name
+        and intensity this run actually committed, keyed by object name. They are
+        written by the DCC bake pass BEFORE the web encode exists, so they name an
+        ``.exr`` that ships nowhere and an intensity of 1.0 that predates
+        normalisation, while ``extras.lightmap_web`` carries the embedded PNG and
+        the scalar restoring the bake range. Measured on a client hand-off: 13.65625
+        against 1.0, i.e. a consumer trusting a marker rendered the bake ~13.7x too
+        dark, and the markers are what a reader finds FIRST (they sit next to the
+        mesh). Correcting beats deleting: the applier reads these markers to locate
+        the EXR, and the surviving keys are documented as a consumer contract — the
+        defect is that they were stale, not that they exist.
+
+        Both jobs ride the ONE walk because both rewrite the same wrapped-JSON
+        markers; splitting them would duplicate the unwrap/re-serialize dance that
+        every reader of this structure has to get right.
+
+        Args:
+            gltf: Parsed glTF, mutated in place.
+            final: Optional ``{object_name: {"map": str, "intensity": float}}`` — the
+                values this run committed. Omitted, the markers are only stripped.
+
+        Returns:
+            int: number of carriers changed (0 when there was nothing to do).
         """
         stripped = 0
         for node in gltf.get("nodes", []) or []:
-            props = (
-                ((node.get("extras") or {}).get("fromFBX") or {}).get("userProperties")
-                or {}
-            )
-            for key in (cls.LIGHTMAP_METADATA_KEY, cls.LIGHTMAP_INFO_KEY):
-                entry = props.get(key)
-                if entry is None:
-                    continue
-                wrapped = isinstance(entry, dict) and "value" in entry
-                raw = entry.get("value") if wrapped else entry
-                # Only the JSON-string form can hide a hint; anything else is
-                # either already a dict or not ours to rewrite.
-                try:
-                    data = json.loads(raw) if isinstance(raw, str) else raw
-                except (TypeError, ValueError):
-                    continue
-                if not isinstance(data, dict) or cls.LOCATE_HINT_KEY not in data:
-                    continue
-                data.pop(cls.LOCATE_HINT_KEY, None)
-                # Re-serialize in the shape it arrived in, so a reader that does
-                # not know about this scrub sees no structural change.
-                new = json.dumps(data) if isinstance(raw, str) else data
-                if wrapped:
-                    entry["value"] = new
-                else:
-                    props[key] = new
-                stripped += 1
+            extras = node.get("extras") or {}
+            # TWO on-disk shapes, both real. FBX2glTF nests user properties under
+            # extras.fromFBX.userProperties (the Maya route); blendertk's native
+            # glTF export writes them as TOP-LEVEL node extras, verified on a real
+            # deliverable. Walking only the first silently skipped every
+            # Blender-authored GLB — and this is public API the preview server
+            # points at whatever GLB it is given, so the shape is not knowable
+            # from the call site.
+            for props in (
+                (extras.get("fromFBX") or {}).get("userProperties") or {},
+                extras,
+            ):
+                for key in (cls.LIGHTMAP_METADATA_KEY, cls.LIGHTMAP_INFO_KEY):
+                    entry = props.get(key)
+                    if entry is None:
+                        continue
+                    wrapped = isinstance(entry, dict) and "value" in entry
+                    raw = entry.get("value") if wrapped else entry
+                    # Only the JSON-string form can hide a hint; anything else is
+                    # either already a dict or not ours to rewrite.
+                    try:
+                        data = json.loads(raw) if isinstance(raw, str) else raw
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    # Correct the stale values first, then drop the hint. Keyed by the
+                    # NODE name because that is what the records carry; a marker on a
+                    # node this run did not bind is left exactly as found rather than
+                    # guessed at.
+                    corrected = False
+                    # Guarded on a truthy name: several nodes can be nameless, and
+                    # None == None would then apply one binding's values to every
+                    # nameless marker in the file.
+                    node_name = node.get("name")
+                    committed = (final or {}).get(node_name) if node_name else None
+                    if committed:
+                        for field in ("map", "intensity"):
+                            if field in committed and data.get(field) != committed[field]:
+                                data[field] = committed[field]
+                                corrected = True
+                    had_hint = cls.LOCATE_HINT_KEY in data
+                    if not had_hint and not corrected:
+                        continue
+                    data.pop(cls.LOCATE_HINT_KEY, None)
+                    # Re-serialize in the shape it arrived in, so a reader that does
+                    # not know about this scrub sees no structural change.
+                    new = json.dumps(data) if isinstance(raw, str) else data
+                    if wrapped:
+                        entry["value"] = new
+                    else:
+                        props[key] = new
+                    stripped += 1
         return stripped
 
     @classmethod
@@ -1300,6 +1743,13 @@ class MeshConvert(HelpMixin):
         :meth:`fbx_to_glb`) transcribes it into that node's glTF extras as
         ``extras.fromFBX.userProperties.<key>`` -- probe-verified against v0.13.1.
         So no consumer has to pass anything; the deliverable feeds its own repair.
+
+        A GLB that never made the FBX hop carries the same key as a TOP-LEVEL node
+        extra instead (a native glTF export's custom properties), and both shapes
+        are read -- the marker walk knows both, and a probe that knew only one
+        would make this whole path a silent no-op on half the deliverables.
+        Returns ``None`` for a GLB carrying neither, which is a clean no-op for
+        every caller.
         """
         with cls.open_glb(glb) as edit:
             return cls._lightmap_manifest(edit.gltf)
@@ -1462,6 +1912,13 @@ class MeshConvert(HelpMixin):
             # warning fires once however many instances or primitives share it.
             dropped_authored: Set[int] = set()
             web_materials: Dict[str, Dict[str, Any]] = {}
+            # Keyed by the RESOLVED node rather than by the manifest entry:
+            # node lookup is namespace-tolerant (a manifest "room" can bind a
+            # GLB node "NS:room"), so keying the marker corrections off the
+            # manifest name would miss on exactly the scenes that tolerance
+            # exists for -- silently, since the markers would simply keep their
+            # stale values.
+            marker_updates: Dict[str, Dict[str, Any]] = {}
             used_transform = False
             for entry in entries:
                 name, basename = entry.get("name"), entry.get("map")
@@ -1616,6 +2073,10 @@ class MeshConvert(HelpMixin):
                                 "map": png_name,
                                 "intensity": round(scalar, 6),
                             }
+                            if node.get("name"):
+                                marker_updates[node["name"]] = web_materials[
+                                    clone["name"]
+                                ]
                             records.append(
                                 {
                                     "material": clone["name"],
@@ -1690,6 +2151,8 @@ class MeshConvert(HelpMixin):
                             "map": png_name,
                             "intensity": round(scalar, 6),
                         }
+                        if node.get("name"):
+                            marker_updates[node["name"]] = web_materials[mat_name]
                         records.append(
                             {
                                 "material": mat_name,
@@ -1720,7 +2183,14 @@ class MeshConvert(HelpMixin):
                 # successful embed: a run that bound nothing leaves them intact so
                 # a retry -- after fixing a name mismatch, say -- can still locate
                 # the EXRs.
-                cls._strip_locate_hints(edit.gltf)
+                # Same walk corrects the superseded copies: every marker this run
+                # bound still names the .exr at the pre-normalisation intensity.
+                # Fed the PUBLISHED values (the same dicts that went into
+                # lightmap_web), so the copies come out identical rather than
+                # merely close: a record's "map" is the SOURCE .exr basename —
+                # which is what a caller wants to know — and its "intensity" is
+                # unrounded where the published one is round(., 6).
+                cls._reconcile_node_markers(edit.gltf, marker_updates)
                 edit.dirty = True
         return records
 
@@ -2702,6 +3172,103 @@ class MeshConvert(HelpMixin):
             )
 
         return records
+
+    #: glTF fixes the metallic/roughness packing in the SPEC -- occlusion in R,
+    #: roughness in G, metallic in B -- so a delivered
+    #: ``metallicRoughnessTexture`` is read that way by every consumer whatever
+    #: the authoring set was packed for. Held here as glTF's constant rather
+    #: than looked up from :class:`MapRegistry`: the registry describes the map
+    #: types this pipeline AUTHORS, and reading a spec fact out of a mutable
+    #: taxonomy would let an edit there silently change what this checks.
+    #: ``test_glb_orm_layout_matches_the_registry`` pins the two together, so
+    #: the taxonomy cannot drift away from the spec unnoticed either.
+    GLTF_ORM_CHANNELS = {"R": "Ambient_Occlusion", "G": "Roughness", "B": "Metallic"}
+
+    #: The channel whose full-white value is destructive rather than neutral.
+    #: R full = no occlusion and G full = fully rough are both ordinary; B full
+    #: is metallic=1, which zeroes diffuse response.
+    _ORM_HARMFUL_CHANNEL = "B"
+
+    #: The ``finding`` values :meth:`suspect_orm_materials` reports. Named
+    #: because callers FILTER on them -- the two are routed to different
+    #: audiences (see the method) -- and a filter comparing against a literal
+    #: typo fails silently, in the direction of reporting nothing.
+    ORM_FINDING_METALLIC_FULL = "metallic=1 everywhere"
+    ORM_FINDING_UNVALIDATED = "unvalidated"
+
+    @classmethod
+    def suspect_orm_materials(
+        cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None
+    ) -> Dict[str, Dict[str, str]]:
+        """Materials whose delivered ORM binding this pipeline never validated.
+
+        Two findings, one walk, because both are the same question asked of the
+        same slot -- *is what a consumer will read here what the scene meant?*
+
+        ``metallic=1 everywhere``
+            The measured production failure. FBX2glTF white-fills a grayscale
+            ("L"-mode) PBR source; glTF reads metallic from **blue**; a
+            solid-white packing therefore renders metallic=1, which has no
+            diffuse response, and a baked lightmap contributes to diffuse
+            alone -- so a lightmapped viewer renders it pure black.
+
+        ``unvalidated``
+            The material carries an ORM binding that the envelope never
+            described, so nothing in this pipeline checked its channel
+            semantics. This is the case a whiteness test cannot see: a mask map
+            packed for another engine (Unity's MaskMap is R=Metallic,
+            G=Occlusion, B=Detail) that reaches the GLB unrepaired is read as
+            ORM and misinterpreted channel for channel, while looking like
+            perfectly ordinary image data. Reported only when the caller says
+            what WAS described, since only they know.
+
+        Parameters:
+            glb: Path to a binary glTF (.glb) or an open :class:`GlbEdit`. Read
+                only -- nothing here marks the session dirty.
+            described: Material names the envelope's ``metallic_roughness``
+                section covers, i.e. the ones a repair pass validated and
+                rewrote. Their packing comes from the authoring maps rather
+                than from the converter, so they are exempt from both findings
+                (any whiteness in them is a source question
+                :meth:`MapFactory.pack_orm_texture` already logs per map).
+                ``None`` means "nothing is known to be described", which
+                suppresses the ``unvalidated`` finding rather than reporting
+                every material.
+
+        Returns:
+            ``{material name: {"image": label, "finding": str}}``; empty when
+            none, which is the common case and the one that costs no decode.
+        """
+        known = set(described) if described is not None else None
+        findings: Dict[str, Dict[str, str]] = {}
+        with cls.open_glb(glb) as edit:
+            for mat in edit.materials:
+                name = mat.get("name")
+                if not name or (known is not None and name in known):
+                    continue
+                pbr = mat.get("pbrMetallicRoughness") or {}
+                tex = (pbr.get("metallicRoughnessTexture") or {}).get("index")
+                if tex is None:
+                    continue
+                img_idx = edit.image_for_texture(tex)
+                if img_idx is None:
+                    continue
+                # A zero factor cancels the texture, so nothing it carries can
+                # be destructive -- but it is still unvalidated data.
+                harmful = pbr.get("metallicFactor", 1.0) != 0 and edit.channel_extrema(
+                    img_idx, cls._ORM_HARMFUL_CHANNEL
+                ) == (255, 255)
+                if harmful:
+                    finding = cls.ORM_FINDING_METALLIC_FULL
+                elif known is not None:
+                    finding = cls.ORM_FINDING_UNVALIDATED
+                else:
+                    continue
+                findings[name] = {
+                    "image": edit.image_label(img_idx),
+                    "finding": finding,
+                }
+        return findings
 
     @staticmethod
     def _match_glb_materials(

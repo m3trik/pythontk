@@ -39,11 +39,23 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TYPE_CHECKING,
+)
 
 from pythontk.core_utils.app_launcher import AppLauncher
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.core_utils import script_template
+
+if TYPE_CHECKING:  # import-time only: the runtime import is deferred into the body
+    from pythontk.file_utils.temp_artifacts import TempArtifacts
 
 # Re-export so callers get the canonical mode constants from one place.
 SEND_TO = script_template.SEND_TO
@@ -68,14 +80,64 @@ class AppSpec:
     scan_globs: Tuple[str, ...] = ()
     not_found_msg: str = ""
 
+    #: Attribute holding the memoized :meth:`resolve` result (see :attr:`path`).
+    #: Written through ``object.__setattr__`` -- the dataclass is frozen, and the
+    #: cache is derived state, not a field: it stays out of ``__eq__``/``__hash__``
+    #: so a spec that has probed still compares equal to one that hasn't.
+    _CACHE_ATTR = "_resolved_path"
+
     def resolve(self) -> Optional[str]:
-        """Resolve the executable, first hit wins (env -> find_app -> install scan)."""
+        """Resolve the executable, first hit wins (env -> find_app -> install scan).
+
+        Uncached by design: this is the "look right now" call a launch path wants.
+        Callers asking repeatedly (a visibility gate, a panel init) want :attr:`path`.
+        """
         return AppLauncher.resolve_app_path(
             env_vars=self.env_vars,
             location_env_vars=self.location_env_vars,
             app_names=self.app_names,
             scan_globs=self.scan_globs,
         )
+
+    @property
+    def path(self) -> Optional[str]:
+        """:meth:`resolve`, memoized for this spec instance.
+
+        Discovery is not cheap -- ``find_app`` hits the Windows ``App Paths``
+        registry and ``scan_globs`` walks both Program Files roots, measured at
+        12-155ms per app (a MISS is the expensive case, since it exhausts every
+        stage). Anything that asks repeatedly -- a panel's availability gate,
+        which re-runs on every show -- must not pay that each time.
+
+        Specs are module-level singletons attached to their bridge class, so
+        per-instance memoization is per-app process-wide without a registry.
+        A miss is cached too: "not installed" is the answer that would otherwise
+        cost the most to re-derive. Use :meth:`refresh` after an install.
+        """
+        try:
+            return object.__getattribute__(self, self._CACHE_ATTR)
+        except AttributeError:
+            pass
+        found = self.resolve()
+        object.__setattr__(self, self._CACHE_ATTR, found)
+        return found
+
+    @property
+    def available(self) -> bool:
+        """Whether the target app is installed (cached -- see :attr:`path`)."""
+        return bool(self.path)
+
+    def refresh(self) -> Optional[str]:
+        """Discard the memoized :attr:`path` and re-probe. Returns the new value.
+
+        For the case the cache is otherwise wrong about: the user installed the
+        app during this session and wants the tool to light up without a restart.
+        """
+        try:
+            object.__delattr__(self, self._CACHE_ATTR)
+        except AttributeError:
+            pass
+        return self.path
 
     @property
     def not_found_message(self) -> str:
@@ -171,8 +233,22 @@ class HandoffBridge(LoggingMixin):
     # When False, an empty selection is allowed (e.g. a template that targets an
     # already-loaded project and exports nothing).
     requires_objects: bool = True
-    # Temp payload filename stem (``<prefix>_<tag>.fbx``).
+    # Temp payload filename stem (``<prefix>_<tag>.fbx``). Also the namespace
+    # the run scratch is allocated in -- see :meth:`_scratch_dir`.
     payload_prefix: str = "handoff"
+
+    # Modes whose staged artifacts the run itself CONSUMES, so it may delete
+    # them -- a blocking round trip that relocates its real output somewhere
+    # durable. See :meth:`_scratch_policy`, which reads this; the panel-side
+    # twin is ``uitk.BridgeSlotsBase.TRANSIENT_OUTPUT_MODES``, which stops the
+    # same run inheriting a durable Output Dir it would then delete.
+    scoped_scratch_modes: Tuple[str, ...] = ()
+
+    # ``HandoffRequest.extras`` keys the run scratch rides on. Underscored and
+    # documented as private: no deliverer reads them, and a bridge stamping its
+    # own key here would collide with the produce/ingest pair's bookkeeping.
+    _SCRATCH_STORE_KEY = "_scratch_store"
+    _SCRATCH_ROOT_KEY = "_scratch_root"
 
     def __init__(self, app_path: Optional[str] = None):
         super().__init__()
@@ -269,7 +345,16 @@ class HandoffBridge(LoggingMixin):
 
         # The return leg. A one-way hand-off's default ingest is the identity, so
         # send-only bridges pay nothing for the step existing.
-        return self._ingest(result, resolved, payload, request)
+        ingested = self._ingest(result, resolved, payload, request)
+        if ingested is not None:
+            # The run completed end to end, so a scoped scratch has served its
+            # purpose. HERE rather than in ``_ingest``: that hook is routinely
+            # overridden (and legitimately without calling ``super()``), and an
+            # invariant a subclass can silently skip is not an invariant. A
+            # failure anywhere above -- including a return leg that reports one
+            # by returning ``None`` -- leaves the scratch on disk to inspect.
+            self._discard_scratch(request, ingested)
+        return ingested
 
     def _deliverer_for(self, request: HandoffRequest) -> Optional[Deliverer]:
         """The strategy for *request*'s mode: :attr:`deliverers`, else :attr:`deliverer`."""
@@ -307,6 +392,104 @@ class HandoffBridge(LoggingMixin):
             cached = TempArtifacts(self.payload_prefix, policy="detached")
             self._payload_artifacts = cached
         return cached.path(extension=extension)
+
+    # ------------------ Run scratch -----------------------------------------
+    def _scratch_policy(self, request: HandoffRequest) -> str:
+        """Lifetime for what this run stages: a :class:`TempArtifacts` policy.
+
+        ``"detached"`` (the default) is the only sound answer for a hand-off the
+        target app reads AFTER we return: there is no completion signal, so
+        nothing may delete, and allocation sweeps stale leftovers by age instead.
+
+        Return ``"scoped"`` for a run that CONSUMES what it stages -- a blocking
+        round trip whose real output is relocated somewhere durable. The
+        skeleton (:meth:`_run`) then removes the scratch once the run completes
+        end to end, and KEEPS it on any failure, so a broken run stays
+        inspectable and the age-gated sweep reclaims it later (a host that dies
+        mid-run would skip any ``finally``).
+
+        Reads :attr:`scoped_scratch_modes`, so the ordinary case is one line of
+        DATA on the bridge; override this only for a policy the mode alone
+        cannot express.
+
+        Opting into ``"scoped"`` for a run whose real output can land INSIDE the
+        scratch means also overriding :meth:`_delivered_paths` -- otherwise the
+        cleanup takes that output with it.
+        """
+        return "scoped" if request.mode in self.scoped_scratch_modes else "detached"
+
+    def _run_scratch(self, request: HandoffRequest) -> "TempArtifacts":
+        """The temp store this run allocates its scratch directories from.
+
+        One store per run, memoized on the request, so every directory the run
+        opens shares one lifetime and one cleanup.
+        """
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        store = request.extras.get(self._SCRATCH_STORE_KEY)
+        if store is None:
+            store = TempArtifacts(
+                self.payload_prefix, policy=self._scratch_policy(request)
+            )
+            request.extras[self._SCRATCH_STORE_KEY] = store
+        return store
+
+    def _scratch_dir(self, request: HandoffRequest, name: str) -> str:
+        """Return this run's scratch directory called *name*, created.
+
+        The ``mkdtemp`` replacement for staging a hand-off: what it adds over a
+        raw allocation is an owner (see :meth:`_scratch_policy`) and a swept
+        prefix namespace, so an abandoned directory is collected on a later run
+        rather than leaking forever.
+        """
+        store = self._run_scratch(request)
+        if store.policy != "scoped":
+            # Nothing deletes these, so a FIXED name is what keeps the folder
+            # from growing a generation per send -- each run overwrites its own.
+            return store.dir_path(name=name)
+        # A scoped run deletes its own, so it takes a unique ROOT instead: two
+        # hosts running at once must not share -- or delete -- one directory.
+        # The readable names live inside it, so a root kept after a failure
+        # still says what the run staged.
+        root = request.extras.get(self._SCRATCH_ROOT_KEY)
+        if root is None:
+            root = store.dir_path()
+            request.extras[self._SCRATCH_ROOT_KEY] = root
+        target = os.path.join(root, name)
+        os.makedirs(target, exist_ok=True)
+        return target
+
+    def _delivered_paths(self, result: Optional[Dict[str, Any]]) -> List[str]:
+        """Paths this run DELIVERED, for the scoped-scratch guard.
+
+        Any one of these inside the run scratch keeps the whole scratch: a
+        bridge whose durable destination can fall back to the run's own output
+        directory would otherwise delete the very files it just produced.
+        Default: none, which is correct for every ``detached`` bridge (nothing
+        is ever deleted) and for a scoped run that always relocates its output.
+        """
+        return []
+
+    def _discard_scratch(self, request: HandoffRequest, result=None) -> None:
+        """Remove this run's scratch, unless something it delivered lives in it."""
+        store = request.extras.pop(self._SCRATCH_STORE_KEY, None)
+        root = request.extras.pop(self._SCRATCH_ROOT_KEY, None)
+        if store is None or store.policy != "scoped" or not root:
+            return
+        anchor = os.path.normcase(os.path.abspath(root))
+        for path in self._delivered_paths(result):
+            if not path:
+                continue
+            resolved = os.path.normcase(os.path.abspath(str(path)))
+            if resolved == anchor or resolved.startswith(anchor + os.sep):
+                self.logger.warning(
+                    f"Scratch folder kept: this run's output landed inside it, "
+                    f"so it holds the only copy. Move what you need somewhere "
+                    f"permanent -- a later run sweeps this folder: {root}"
+                )
+                return
+        if store.cleanup():
+            self.logger.info(f"Staged hand-off artifacts cleaned up: {root}")
 
     @staticmethod
     def import_roots(*packages: str) -> List[str]:

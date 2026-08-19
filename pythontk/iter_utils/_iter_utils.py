@@ -140,7 +140,7 @@ class IterUtils(HelpMixin):
             (list) containing values of the indices of the on (True) bits.
         """
         if len(bit_array):
-            if type(bit_array[0]) != bool:  # if list of bitArrays: flatten
+            if not isinstance(bit_array[0], bool):  # list of bitArrays: flatten
                 lst = []
                 for array in bit_array:
                     lst.append([i + 1 for i, bit in enumerate(array) if bit == 1])

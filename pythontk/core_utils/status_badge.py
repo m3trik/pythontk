@@ -77,6 +77,42 @@ class _StatusBadgeInternal:
         return badge + "\n\n" + content
 
 
+    # ---- Run-completeness gate -------------------------------------------
+    # Shared by every package runner: a badge must never be stamped by a run
+    # the environment scoped down, or the number published is a smaller green
+    # than the suite really is. Lives here rather than in each runner because
+    # six of them stamp badges and this file is already the documented single
+    # writer (m3trik/docs/TEST_BADGE_STANDARD.md).
+
+    @staticmethod
+    def _unwrap(test):
+        """Unwrap a ``unittest._SubTest`` to the case that owns it."""
+        return getattr(test, "test_case", test)
+
+    @classmethod
+    def _is_import_standin(cls, test) -> bool:
+        """True when *test* stands in for a module that never imported.
+
+        ``TestLoader`` substitutes a case defined in ``unittest.loader``
+        (``ModuleImportFailure`` / ``ModuleSkipped``) when a module raised on
+        import or raised ``SkipTest`` at import time -- the module genuinely
+        did not run, whatever its stand-in reports.
+
+        Deliberately narrower than "defined somewhere in unittest": a
+        ``setUpClass``/``setUpModule`` skip is reported through
+        ``unittest.suite._ErrorHolder``, and that module DID import and run.
+        Treating the two alike blocked the badge forever for any module whose
+        cases are all setUpClass-gated, which contradicts this module's own
+        docstring ("an all-green run with environment-gated skips still reads
+        green") and made greenness depend on which skip idiom a test author
+        happened to use.
+        """
+        test = cls._unwrap(test)
+        return (getattr(type(test), "__module__", "") or "").startswith(
+            "unittest.loader"
+        )
+
+
 class StatusBadge(_StatusBadgeInternal):
     """Render a shields.io badge and keep it up to date in a markdown file.
 
@@ -86,6 +122,76 @@ class StatusBadge(_StatusBadgeInternal):
             readme_path, passed=1234, failed=0, test_dir=Path(__file__).parent
         )
     """
+
+    # ---- Run-completeness gate (see _StatusBadgeInternal) -----------------
+
+    @staticmethod
+    def discover_module_names(test_dir: PathLike) -> set:
+        """Return the module names ``TestLoader.discover`` will import.
+
+        Mirrors discovery's top-level ``test_*.py`` match; nested directories
+        are only recursed into when they are packages (``__init__.py``), which
+        no test subdirectory in this ecosystem is.
+        """
+        return {p.stem for p in Path(test_dir).glob("test_*.py")}
+
+    @classmethod
+    def module_of(cls, test) -> str:
+        """Return the ``test_*`` module *test* came from ('' if unknown).
+
+        Handles the three shapes a runner sees: a real case (its class's
+        ``__module__``), a loader stand-in for a module that never imported
+        (its ``_testMethodName`` carries the dotted module name), and an
+        ``_ErrorHolder`` from ``setUpClass``/``setUpModule`` (its description
+        reads ``"setUpClass (test_mod.TestCase)"``).
+        """
+        test = cls._unwrap(test)
+        name = getattr(type(test), "__module__", "") or ""
+
+        if cls._is_import_standin(test):
+            name = getattr(test, "_testMethodName", "") or ""
+        elif name.startswith("unittest"):
+            # _ErrorHolder: no __module__ of its own. Its description reads
+            # "setUpClass (pkg.test_mod.TestCase)" or "setUpModule (pkg.test_mod)",
+            # so the trailing segment is a CLASS in the first form and the module
+            # itself in the second -- strip it only for setUpClass.
+            description = getattr(test, "description", "") or getattr(
+                test, "id", lambda: ""
+            )()
+            inner = description[description.find("(") + 1 : description.rfind(")")]
+            if inner and description.startswith("setUpClass"):
+                inner = inner.rsplit(".", 1)[0]
+            name = inner or ""
+
+        return name.rsplit(".", 1)[-1]
+
+    @classmethod
+    def is_import_standin(cls, test) -> bool:
+        """True when *test* stands in for a module that never imported."""
+        return cls._is_import_standin(test)
+
+    @classmethod
+    def gate(cls, expected, ran, passed: int, failed: int) -> Tuple[bool, str]:
+        """Return ``(allowed, reason)`` for stamping the test badge.
+
+        Parameters:
+            expected: Module names discovered on disk.
+            ran: Module names that actually executed.
+            passed: Passing test cases (skips excluded).
+            failed: Failures + errors.
+        """
+        missing = sorted(set(expected) - set(ran))
+        if missing:
+            shown = ", ".join(missing[:6])
+            if len(missing) > 6:
+                shown += f", +{len(missing) - 6} more"
+            return False, (
+                f"{len(missing)} of {len(expected)} module(s) did not run: {shown}"
+            )
+        if not passed and not failed:
+            return False, "no test cases ran"
+        return True, ""
+
 
     LABEL = "Tests"
     COLOR_PASSED = "brightgreen"

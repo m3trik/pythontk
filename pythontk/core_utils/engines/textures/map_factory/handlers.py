@@ -283,19 +283,41 @@ class MaskMapHandler(WorkflowHandler):
             return None
 
         # A lone resolved channel is one map wearing a packed name: the other two
-        # become constant fills, and an absent smoothness fills WHITE — every
-        # surface mirror-smooth. So it gates on the Missing Maps rule, exactly as
-        # ORM/MRAO gate their non-neutral channels ('Pack Anyway' still ships it).
-        # Only the AO-only case used to gate here, which left a metallic-only or
-        # smoothness-only set writing a Mask Map under EVERY rule — the one
-        # packing that disagreed with its siblings.
+        # become constant fills, so it gates on the Missing Maps rule and all
+        # three packings agree that a single channel needs 'Pack Anyway'. (Only
+        # the AO-only case used to gate here, which left a metallic-only or
+        # smoothness-only set writing a Mask Map under EVERY rule.) The absent-
+        # smoothness rule is separate and below — this one is about COUNT.
+        allow_incomplete = MapRegistry.allow_incomplete_pack(context.config, resolved)
         if len(resolved) < 2:
-            if not MapRegistry.allow_incomplete_pack(context.config, resolved):
+            if not allow_incomplete:
                 return None
             if context.logger:
                 context.logger.info(
                     "Only one source map present, generating Mask Map with "
                     "defaults for the other channels"
+                )
+
+        # Counting resolved channels cannot express the rule above, because the
+        # count is 2 for all three pairs and only ONE of them is unsafe.
+        # Smoothness is the single channel here whose absent fill is not neutral:
+        # pack_msao_texture fills it WHITE, i.e. every surface mirror-smooth. An
+        # absent AO also fills white (unoccluded) and an absent metallic fills
+        # black (dielectric), so both stay exempt — the same shape as ORM/MRAO,
+        # which name their non-neutral channels instead of counting. Undetectable
+        # downstream: a flat smoothness channel is what a real mirror looks like.
+        if not smoothness:
+            if not allow_incomplete:
+                if context.logger:
+                    context.logger.warning(
+                        "No smoothness/roughness/glossiness map for the Mask Map "
+                        "smoothness channel"
+                    )
+                return None
+            if context.logger:
+                context.logger.warning(
+                    "No smoothness/roughness/glossiness map for the Mask Map "
+                    "smoothness channel, using white (Missing Maps rule)"
                 )
 
         if not metallic:

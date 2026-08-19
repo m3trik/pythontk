@@ -1,4 +1,4 @@
 include LICENSE
 include README.md
 include pyproject.toml
-recursive-include pythontk *.ui *.gif *.png *.json
+recursive-include pythontk *.ui *.gif *.png *.json *.html *.js

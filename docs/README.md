@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-3203%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-3380%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -24,6 +24,12 @@ Two rules shape it:
 
 ```bash
 pip install pythontk
+```
+
+**Installing into a DCC that ships its own `numpy`.** The two hard dependencies are declared floor-only (`numpy>=1.24`, `Pillow`) and deliberately carry no ceiling: a Python environment marker sees the interpreter, never the application hosting it, and the hosts want opposite bounds — Maya 2025 ships numpy 1.24.4 with extensions compiled against 1.x, Blender 5.1 ships 2.3.4. Installing *into the host* (`mayapy -m pip install pythontk`) is fine either way: pip leaves a numpy that already satisfies the floor alone. Installing to a **fresh directory** is the case that bites, because pip resolves numpy 2.x there and a 1.x host then refuses to load it (*"module compiled using NumPy 1.x cannot be run in NumPy 2.x"*) — so let the host supply its own:
+
+```bash
+mayapy -m pip install --target <dir> --no-deps pythontk
 ```
 
 **Optional dependencies**, each gating a specific feature (guarded by `is_available()`-style checks — nothing else breaks without them):

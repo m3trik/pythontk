@@ -2,7 +2,7 @@
 
 **Role**: Core Python utils (file IO, strings, math, audio). DCC-agnostic, zero-dependency where possible.
 
-**Nav**: [← root](../CLAUDE.md) · [docs](docs/README.md) · **Used by**: [uitk](../uitk/CLAUDE.md) · [mayatk](../mayatk/CLAUDE.md) · [tentacle](../tentacle/CLAUDE.md) · [unitytk](../unitytk/CLAUDE.md)
+**Nav**: [← root](../CLAUDE.md) · [docs](docs/README.md) · **Used by**: [uitk](../uitk/CLAUDE.md) · [mayatk](../mayatk/CLAUDE.md) · [blendertk](../blendertk/CLAUDE.md) · [tentacle](../tentacle/CLAUDE.md) · [unitytk](../unitytk/CLAUDE.md) · [extapps](../extapps/CLAUDE.md)
 
 ## Hard rules
 
@@ -11,10 +11,7 @@
 
 ## API surface
 
-**Before adding a helper, check the registry** (navigation rules: [root](../CLAUDE.md)):
-
-- [`API_INDEX.md`](API_INDEX.md) (compact — read first) · [`API_REGISTRY.md`](API_REGISTRY.md) (grep, don't Read whole) · [`API_CHANGES.md`](API_CHANGES.md)
-- Cross-package shadows: [`m3trik/docs/API_SHADOWS.md`](../m3trik/docs/API_SHADOWS.md)
+[`API_INDEX.md`](API_INDEX.md) · [`API_REGISTRY.md`](API_REGISTRY.md) · [`API_CHANGES.md`](API_CHANGES.md) · shadows [`API_SHADOWS.md`](../m3trik/docs/API_SHADOWS.md) — registry rules in [root](../CLAUDE.md). Bottom of the stack: no upstream.
 
 ## Placing shared logic — `*_utils` vs `core_utils/engines/`
 

@@ -24,6 +24,8 @@ Two solvers, for the two things a caller can know about the plate:
 
 from typing import NamedTuple, Optional, Sequence, Tuple
 
+from pythontk.math_utils._math_utils import MathUtils
+
 
 class PlateEmitter(NamedTuple):
     """The area light a flat plate implies."""
@@ -102,9 +104,7 @@ class PlateEmitter(NamedTuple):
         # The long edge is a world axis here, so the tangent is exact rather
         # than a convention -- which spares every caller inventing one to
         # orient the rectangle's roll.
-        long_axis = max(
-            (i for i in range(3) if i != axis), key=lambda i: extents[i]
-        )
+        long_axis = max((i for i in range(3) if i != axis), key=lambda i: extents[i])
         tangent = [0.0, 0.0, 0.0]
         tangent[long_axis] = 1.0
 
@@ -168,23 +168,25 @@ class PlateEmitter(NamedTuple):
 
         axes = cls._principal_axes(pts)
         if normal is not None:
-            unit_normal = _normalize(normal)
+            unit_normal = cls._unit(normal)
             # Prefer the principal axis least parallel to the normal: for a
             # rectangle that is its long edge.
-            candidates = sorted(axes, key=lambda a: abs(_dot(a, unit_normal)))
-            tangent = _orthogonalize(candidates[0], unit_normal)
+            candidates = sorted(
+                axes, key=lambda a: abs(MathUtils.dot_product(a, unit_normal))
+            )
+            tangent = cls._orthogonalize(candidates[0], unit_normal)
         else:
             # PCA orders by descending variance, so the LAST axis is the plane
             # normal of a flat patch and the first is the long in-plane edge.
             unit_normal = axes[2]
-            tangent = _orthogonalize(axes[0], unit_normal)
+            tangent = cls._orthogonalize(axes[0], unit_normal)
             unit_normal = cls._resolve_sign(
                 unit_normal, centroid, toward, up_axis, extent=0.0
             )
-        bitangent = _cross(unit_normal, tangent)
+        bitangent = MathUtils.cross_product(unit_normal, tangent)
 
-        along = [_dot(_sub(p, centroid), tangent) for p in pts]
-        across = [_dot(_sub(p, centroid), bitangent) for p in pts]
+        along = [MathUtils.dot_product(cls._sub(p, centroid), tangent) for p in pts]
+        across = [MathUtils.dot_product(cls._sub(p, centroid), bitangent) for p in pts]
         size_x = max(along) - min(along)
         size_y = max(across) - min(across)
         if size_y > size_x:  # keep the long edge first, as from_bounds does
@@ -193,14 +195,14 @@ class PlateEmitter(NamedTuple):
 
         # Re-centre on the rectangle rather than the centroid: an uneven vertex
         # distribution (a subdivided half) pulls the mean off the middle.
-        middle = _add(
+        middle = cls._add(
             centroid,
-            _add(
-                _scale(tangent, (max(along) + min(along)) / 2.0),
-                _scale(bitangent, (max(across) + min(across)) / 2.0),
+            cls._add(
+                cls._scale(tangent, (max(along) + min(along)) / 2.0),
+                cls._scale(bitangent, (max(across) + min(across)) / 2.0),
             ),
         )
-        position = _add(middle, _scale(unit_normal, float(offset)))
+        position = cls._add(middle, cls._scale(unit_normal, float(offset)))
         return cls(
             size=(size_x, size_y),
             normal=tuple(unit_normal),
@@ -228,50 +230,52 @@ class PlateEmitter(NamedTuple):
         # Flat row-major 4x4; rows 0-2 are the basis vectors.
         return [tuple(basis[row * 4 : row * 4 + 3]) for row in range(3)]
 
-    @staticmethod
-    def _resolve_sign(normal, center, toward, up_axis, extent):
+    @classmethod
+    def _resolve_sign(cls, normal, center, toward, up_axis, extent):
         """Point *normal* at *toward*, falling back to 'down' about *up_axis*."""
         if toward is not None:
-            delta = _dot(_sub(tuple(toward), center), normal)
+            delta = MathUtils.dot_product(cls._sub(tuple(toward), center), normal)
             if abs(delta) > extent:
-                return normal if delta > 0 else _scale(normal, -1.0)
-        return normal if normal[up_axis] < 0 else _scale(normal, -1.0)
+                return normal if delta > 0 else cls._scale(normal, -1.0)
+        return normal if normal[up_axis] < 0 else cls._scale(normal, -1.0)
 
+    @classmethod
+    def _orthogonalize(cls, v, normal):
+        """*v* with its *normal* component removed, unitized (any perpendicular if parallel)."""
+        projected = cls._sub(v, cls._scale(normal, MathUtils.dot_product(v, normal)))
+        if (projected[0] ** 2 + projected[1] ** 2 + projected[2] ** 2) < 1e-12:
+            # v is parallel to the normal: any perpendicular will do.
+            seed = (1.0, 0.0, 0.0) if abs(normal[0]) < 0.9 else (0.0, 1.0, 0.0)
+            projected = MathUtils.cross_product(normal, seed)
+        return cls._unit(projected)
 
-def _dot(a, b):
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    @staticmethod
+    def _unit(v):
+        """Unit vector, passing a ZERO-length vector through unchanged.
 
+        Deliberately not :meth:`MathUtils.safe_normalize`, which treats anything
+        under 1e-9 as degenerate and returns the fallback: an averaged face
+        normal from near-opposing faces is legitimately tiny but still carries a
+        direction, and returning it un-normalized collapses the solved rectangle
+        to zero size. Only an exactly-zero vector has no direction to keep.
+        """
+        return (
+            MathUtils.normalize(v)
+            if MathUtils.get_magnitude(v)
+            else tuple(float(c) for c in v)
+        )
 
-def _sub(a, b):
-    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+    # Tuple arithmetic on 3-vectors. The general vector surface (dot / cross /
+    # normalize / magnitude) is MathUtils'; these three are the element-wise
+    # remainder it does not carry, kept on the class rather than at module scope.
+    @staticmethod
+    def _sub(a, b):
+        return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
+    @staticmethod
+    def _add(a, b):
+        return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
 
-def _add(a, b):
-    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
-
-
-def _scale(a, k):
-    return (a[0] * k, a[1] * k, a[2] * k)
-
-
-def _cross(a, b):
-    return (
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    )
-
-
-def _normalize(v):
-    length = (v[0] ** 2 + v[1] ** 2 + v[2] ** 2) ** 0.5 or 1.0
-    return (v[0] / length, v[1] / length, v[2] / length)
-
-
-def _orthogonalize(v, normal):
-    """*v* with its *normal* component removed, unitized (any perpendicular if parallel)."""
-    projected = _sub(v, _scale(normal, _dot(v, normal)))
-    if (projected[0] ** 2 + projected[1] ** 2 + projected[2] ** 2) < 1e-12:
-        # v is parallel to the normal: any perpendicular will do.
-        seed = (1.0, 0.0, 0.0) if abs(normal[0]) < 0.9 else (0.0, 1.0, 0.0)
-        projected = _cross(normal, seed)
-    return _normalize(projected)
+    @staticmethod
+    def _scale(a, k):
+        return (a[0] * k, a[1] * k, a[2] * k)

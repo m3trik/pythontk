@@ -94,6 +94,13 @@ _HIGH_PRECISION_CONTAINERS: Dict[str, Dict[str, str]] = {
 # avoid (nearest GROWS everything in the upper half of a POT band).
 _POT_MODES: Tuple[str, ...] = ("nearest", "down")
 
+# Relative aspect-ratio change below which a POT snap is NOT worth a warning.
+# The snap derives the short edge as an integer, so a sub-pixel remainder is
+# always present (683 for a 682.67 ideal); warning about that dust would train
+# the reader straight past the case that matters — an extreme ratio whose
+# derived edge hits the min-1 floor and really is reshaped.
+_ASPECT_DRIFT_TOLERANCE: float = 0.01
+
 # Map-type-driven mode coercion rules — the BASE tolerance, without the
 # high-precision modes folded in. Mirrors the tolerated-mode lists in the
 # original optimize_map body — defined once here so both plan() and apply()
@@ -165,12 +172,24 @@ class MapOptimizer(HelpMixin):
         mode: str = "nearest",
         max_size: Optional[int] = None,
     ) -> Tuple[int, int]:
-        """Snap both edges to a power of two.
+        """Snap the LONGEST edge to a power of two, keeping the source aspect.
+
+        Snapping each axis independently is what a naive "force POT" does, and
+        it reshapes the map rather than resizing it: 1024x768 — already POT on
+        its long edge and already inside every ceiling — came out 1024x512,
+        because 768 floors to 512 on its own. A POT rule states how BIG a
+        texture may be, not what shape it is, so only the long edge is snapped
+        and the short one is derived from the ORIGINAL ratio (nearest integer,
+        floored at 1). Making BOTH edges POT is a square/POT-both target's
+        requirement; no :class:`DeliveryBudget` flag expresses that today, so
+        it is not assumed here — the residual non-POT edge is reported by
+        ``DeliveryBudget.check`` instead of being paid for with the aspect.
 
         ``mode="down"`` never grows an edge — what a *budget* needs, since
         rounding to nearest inflates every dimension in the upper half of a
         band. ``max_size`` is a separate, harder rule: a stated ceiling must
-        survive the snap, so any edge that crossed it is halved back under.
+        survive the snap, so a long edge that crossed it is halved back under —
+        and the derived edge rides the same factor, so the shape still holds.
         Nearest still wins wherever it stays legal.
 
         Raises:
@@ -187,13 +206,107 @@ class MapOptimizer(HelpMixin):
             )
         snap = math.floor if mode == "down" else round
 
-        def _edge(value: int) -> int:
-            snapped = max(1, 2 ** int(snap(math.log2(value))))
-            while max_size and snapped > max_size and snapped > 1:
-                snapped //= 2
-            return snapped
+        long_edge = max(width, height)
+        snapped = max(1, 2 ** int(snap(math.log2(long_edge))))
+        while max_size and snapped > max_size and snapped > 1:
+            snapped //= 2
 
-        return _edge(width), _edge(height)
+        derived = max(1, round(min(width, height) * snapped / long_edge))
+        return (snapped, derived) if width >= height else (derived, snapped)
+
+    @staticmethod
+    def _aspect_shift(before: Tuple[int, int], after: Tuple[int, int]) -> float:
+        """Relative change in aspect ratio between two sizes (0.0 = identical).
+
+        Relative rather than absolute: a 0.1 drift is nothing on a 16:1 banner
+        and a visible squash on a square, so only the fraction is comparable
+        against one tolerance.
+        """
+        (bw, bh), (aw, ah) = before, after
+        if min(bw, bh, aw, ah) <= 0:
+            return 0.0
+        return abs((aw / ah) - (bw / bh)) / (bw / bh)
+
+    #: ``resolve_size_clamp`` sentinel: clamp to the active template's own
+    #: :class:`DeliveryBudget` (``enforce_budget``) rather than to a stated
+    #: pixel ceiling. Negative so it stays TRUTHY -- 0 / None already mean "no
+    #: clamp" -- and can never collide with a real pixel dimension. Same
+    #: convention as the Map Converter's ``CLAMP_TARGET``.
+    SIZE_CLAMP_TEMPLATE = -1
+
+    @classmethod
+    def resolve_size_clamp(
+        cls,
+        max_size: Any,
+        template: Optional[str] = None,
+        logger: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Turn a user-facing "max size" mode into :meth:`assess` / :meth:`optimize_map` kwargs.
+
+        The one place a size dial is interpreted, so every caller offering
+        one -- the mayatk and blendertk scene exporters' Max Texture Size
+        rows, and anything else that grows one -- answers it identically
+        instead of copying the rule:
+
+        - falsy / ``"OFF"`` -- no clamp; a template's budget stays ADVISORY
+          (``assess`` reports it in ``warnings`` and nothing resamples).
+        - a positive int (or its string form, as a hand-edited preset sends)
+          -- hard longest-edge ceiling (``max_size``).
+        - :attr:`SIZE_CLAMP_TEMPLATE` -- enforce *template*'s own
+          :class:`DeliveryBudget` size ceiling. With no template active there
+          is no budget to enforce, so this is a no-op. The budget's POT rule
+          is deliberately NOT adopted (``force_pot=False``): a ceiling only
+          ever shrinks and keeps aspect, where snapping each axis
+          independently would reshape a non-square map.
+
+        Parameters:
+            max_size: The dial's value, in any of the forms above.
+            template: Active output template (profile) name, or None.
+            logger: Optional logger warned when *max_size* is unparseable;
+                the value is ignored either way (no clamp), never guessed.
+
+        Returns:
+            Kwargs for ``assess`` / ``optimize_map`` -- ``max_size``, or
+            ``enforce_budget`` + ``force_pot=False``. Empty when no clamp
+            applies. A ceiling only affects a map larger than it;
+            ``optimize_map`` never grows one.
+        """
+        if not max_size or isinstance(max_size, bool) or str(max_size).upper() == "OFF":
+            return {}
+        try:
+            value = int(max_size)
+        except (TypeError, ValueError):
+            if logger is not None:
+                logger.warning(
+                    f"Invalid max texture size {max_size!r} — no size clamp applied."
+                )
+            return {}
+        if value == cls.SIZE_CLAMP_TEMPLATE:
+            return {"enforce_budget": True, "force_pot": False} if template else {}
+        if value <= 0:
+            return {}
+        return {"max_size": value}
+
+    @classmethod
+    def describe_size_clamp(
+        cls,
+        max_size: Any,
+        template: Optional[str] = None,
+        logger: Optional[Any] = None,
+    ) -> str:
+        """Human-readable form of :meth:`resolve_size_clamp`, for log lines.
+
+        Empty string when no clamp applies, so a caller can splice it into a
+        sentence without branching.
+        """
+        clamp = cls.resolve_size_clamp(max_size, template, logger=logger)
+        if not clamp:
+            return ""
+        if clamp.get("enforce_budget"):
+            size = getattr(OutputTemplates.budget(template), "max_size", None)
+            limit = f"{size} px" if size else "no size limit"
+            return f"clamped to the template's budget ({limit})"
+        return f"clamped to {clamp['max_size']} px"
 
     @classmethod
     def plan(
@@ -218,7 +331,12 @@ class MapOptimizer(HelpMixin):
         Parameters:
             image: Source image (only its size/mode/info are read).
             max_size: Max edge length for the resize step. None disables.
-            force_pot: Snap to a power-of-two if not already POT.
+            force_pot: Snap to a power-of-two if not already POT. The
+                LONGEST edge is snapped and the other is derived from the
+                source aspect (see :meth:`_snap_pot`), so the map is
+                resized, never reshaped; an op whose snap still shifts the
+                ratio carries a ``warning`` param (see
+                :meth:`_plan_warnings`).
             optimize_bit_depth: Enable the strict-mode + wide-gamut fallback
                 step (formerly delegated to set_bit_depth).
             map_type_key: Canonical map-type key from
@@ -401,11 +519,27 @@ class MapOptimizer(HelpMixin):
         if force_pot and width > 0 and height > 0:
             pw, ph = cls._snap_pot(width, height, pot_mode, max_size)
             if (width, height) != (pw, ph):
+                params: Dict[str, Any] = {"size": (pw, ph)}
+                # The snap derives the short edge from the source ratio, so a
+                # shift past the tolerance means the min-1 floor really did
+                # reshape an extreme ratio. That is the surprising half of a
+                # POT rule (a ceiling is not surprising), and the reason a
+                # reshape went unnoticed before is that nothing ever said it
+                # out loud — ``DeliveryBudget.check`` runs against the
+                # POST-snap size, so it can never see one.
+                if (
+                    cls._aspect_shift((width, height), (pw, ph))
+                    > _ASPECT_DRIFT_TOLERANCE
+                ):
+                    params["warning"] = (
+                        f"POT snap changed the aspect ratio: {width}x{height} "
+                        f"({width / height:.3f}) -> {pw}x{ph} ({pw / ph:.3f})"
+                    )
                 ops.append(
                     Op(
                         kind="force_pot",
                         description=f"Force POT: {width}x{height} -> {pw}x{ph}",
-                        params={"size": (pw, ph)},
+                        params=params,
                     )
                 )
                 width, height = pw, ph
@@ -463,6 +597,18 @@ class MapOptimizer(HelpMixin):
                 mode = sb_target_mode
 
         return ops
+
+    @staticmethod
+    def _plan_warnings(plan: List[Op]) -> List[str]:
+        """Advisories the plan's own ops raise, in plan order.
+
+        Distinct from an op's ``description``: that says what the run WILL do,
+        this says what is surprising about doing it. The wording lives on the
+        op — as with :class:`Op` descriptions and ``DeliveryBudget.check``, the
+        dry-run twin and the real run must say the same thing, and two copies
+        of a sentence are two chances to drift.
+        """
+        return [op.params["warning"] for op in plan if op.params.get("warning")]
 
     @staticmethod
     def project(
@@ -823,7 +969,12 @@ class MapOptimizer(HelpMixin):
             output_dir (str, optional): Directory for the optimized texture. Defaults to same directory.
             output_type (str, optional): Output image format (e.g., PNG, TGA). If None, keeps original.
             max_size (int, optional): Maximum size for the longest dimension. Only applies if the image is larger. Defaults to None.
-            force_pot (bool): Force Power of Two dimensions.
+            force_pot (bool): Snap the LONGEST edge to a power of two and
+                derive the short edge from the source aspect, so the rule
+                bounds how BIG the map is without reshaping it. It does NOT
+                guarantee both edges are POT: 1024x768 is already legal on
+                its long edge and passes through unchanged. A square/POT-both
+                target needs its own flag (see :meth:`_snap_pot`).
             suffix_old (str, optional): Suffix to rename the original file before optimization.
             suffix_opt (str, optional): Suffix to append to the optimized file (None = overwrite).
             old_files_folder (str, optional): Name of the folder to store old files.
@@ -939,6 +1090,9 @@ class MapOptimizer(HelpMixin):
                 f"to {max_size}x{max_size} .."
             )
 
+        for message in cls._plan_warnings(plan):
+            print(f"# Warning: {os.path.basename(final_output_path)}: {message}")
+
         image = cls.apply(image, plan)
 
         # File rename / archive handling — orchestrator concern, not planner.
@@ -1021,8 +1175,11 @@ class MapOptimizer(HelpMixin):
         )
 
         # Reported against what was actually written, so an explicit max_size that
-        # overshot the profile's budget still surfaces. Enforced runs land inside
-        # the budget by construction and so report nothing.
+        # overshot the profile's budget still surfaces. An ENFORCED run is inside
+        # the budget's size ceiling by construction, but can still report: the POT
+        # snap only makes the LONG edge a power of two, so a non-square map keeps a
+        # non-POT short edge that budget.check names. That residual is deliberate -
+        # it is the aspect ratio not being paid for - and saying so is the point.
         if budget:
             for message in budget.check(*image.size):
                 print(
@@ -1387,6 +1544,7 @@ class MapOptimizer(HelpMixin):
             # is whether the file this run would write lands within budget, not
             # whether the source did.
             "warnings": (budget.check(new_width, new_height) if budget else [])
+            + cls._plan_warnings(ops)
             + ([quality_skipped] if quality_skipped else [])
             + ([compression_note] if compression_note else [])
             + ([channel_loss] if channel_loss else []),

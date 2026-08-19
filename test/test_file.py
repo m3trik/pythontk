@@ -987,6 +987,53 @@ class FileTest(BaseTestCase):
             self.assertTrue(FileUtils.is_under(resolved, base))
 
     # -------------------------------------------------------------------------
+    # relativize_output_dir Tests -- the inverse of resolve_output_dir
+    # -------------------------------------------------------------------------
+
+    def test_relativize_output_dir_is_the_portable_spelling(self):
+        base = os.path.normpath("/proj/sourceimages")
+        self.assertEqual(
+            FileUtils.relativize_output_dir(os.path.join(base, "uv_transfer"), base),
+            "uv_transfer",
+        )
+        self.assertEqual(
+            FileUtils.relativize_output_dir(os.path.join(base, "bakes", "v2"), base),
+            "bakes/v2",
+        )
+
+    def test_relativize_output_dir_base_itself_is_the_empty_default(self):
+        """The field reads empty as *base*, so the base must not come back as
+        '.' -- that would resolve to the same place while reading as an edit."""
+        base = os.path.normpath("/proj/sourceimages")
+        self.assertEqual(FileUtils.relativize_output_dir(base, base), "")
+        self.assertEqual(FileUtils.relativize_output_dir("", base), "")
+
+    def test_relativize_output_dir_keeps_an_outside_path_verbatim(self):
+        """That is what the user picked, and '../..' is not portable either.
+        Verbatim, not normalized: re-spelling the separators of the value the
+        dialog just wrote would show the user an edit they did not make."""
+        base = os.path.normpath("/proj/sourceimages")
+        outside = "D:/bakes" if os.name == "nt" else "/bakes"
+        self.assertEqual(FileUtils.relativize_output_dir(outside, base), outside)
+        # A sibling of base must not become "../sourceimages_old".
+        sibling = os.path.normpath("/proj/sourceimages_old")
+        self.assertEqual(FileUtils.relativize_output_dir(sibling, base), sibling)
+        # No base to measure against -> nothing to shorten.
+        self.assertEqual(FileUtils.relativize_output_dir(sibling, None), sibling)
+
+    def test_relativize_output_dir_round_trips_through_resolve(self):
+        """The pair is what a browse dialog + a stored field rely on: the text
+        written back must resolve to the folder that was picked."""
+        base = os.path.normpath("/proj/sourceimages")
+        for picked in (
+            os.path.join(base, "uv_transfer"),
+            os.path.join(base, "bakes", "v2"),
+            base,
+        ):
+            entry = FileUtils.relativize_output_dir(picked, base)
+            self.assertEqual(FileUtils.resolve_output_dir(entry, base), picked, entry)
+
+    # -------------------------------------------------------------------------
     # path_length_limit / exceeds_path_length Tests
     # -------------------------------------------------------------------------
 

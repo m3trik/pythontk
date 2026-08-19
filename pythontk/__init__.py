@@ -54,6 +54,7 @@ DEFAULT_INCLUDE = {
     "geo_utils.rail_surface": "RailSurface",
     "geo_utils.plate_emitter": "PlateEmitter",
     "geo_utils.uv_pack": ["UvPack", "PackIslandsResult"],
+    "geo_utils.uv_transfer": ["UvTransfer", "TransferTable"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
         "ShotStore",
@@ -199,6 +200,9 @@ DEFAULT_INCLUDE = {
         "PreviewServer",
         "PreviewDeliverer",
         "PreviewBridge",
+        # What a post-conversion pass is handed; a consumer registering one
+        # against `PreviewDeliverer.EDIT_PASSES` / `FILE_PASSES` annotates it.
+        "PreviewPassContext",
     ],
     "net_utils.rpc.installer": [
         "PluginInstaller",

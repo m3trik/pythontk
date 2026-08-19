@@ -143,8 +143,8 @@ class ManifestModel(_ManifestModelInternal):
 
         Parameters:
             filepath: Path to the CSV file.
-            columns: Optional header-name mapping.  Defaults cover
-                common layouts (C-5M, C-130H, C-17A).
+            columns: Optional header-name mapping.  Defaults cover the
+                common sequence-document layouts.
             post_process: Optional callable invoked on each step after
                 assembly.  Use to compute derived fields (e.g.
                 audio objects) from the parsed data.

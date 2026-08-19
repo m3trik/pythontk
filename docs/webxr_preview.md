@@ -41,27 +41,36 @@ format: a third-party glTF tool opens it and gets a sane, if plainer, result.
         v
   GLB   (raw conversion)
         |
-        |  apply_scene_sidecar        repair base colour / emissive / metallic-roughness
-        |  apply_glb_lightmaps        bind baked maps + write the `lightmap_web` manifest
-        |  optimize_glb_textures      resize to 2048, re-encode WebP (or KTX2/basis, opt-in),
-        |                             repack the BIN chunk
+        |  PreviewDeliverer.EDIT_PASSES   (one open edit session, in this order)
+        |    scene_sidecar    repair base colour / emissive / metallic-roughness
+        |    prune_textures   drop images no material samples (Maya's env cubes)
+        |    lightmaps        bind baked maps + write the `lightmap_web` manifest
+        |  PreviewDeliverer.FILE_PASSES   (the closed file)
+        |    optimize_textures  resize to 2048, re-encode WebP (or KTX2/basis, opt-in),
+        |                       repack the BIN chunk
         v
   GLB   (deliverable)  --  PreviewServer.publish()  ->  version += 1
         |
         |  page polls /manifest.json every 1s, reloads only when `version` changes
+        |  and imports whatever `scripts` the manifest names
         v
   three.js viewer  (localhost => secure context => WebXR)
+        |
+        |  reads `handoff.rendering` out of the GLB it just loaded
+        v
+  the lighting the asset was signed off in
 ```
 
 Ownership, because it decides where a fix goes:
 
 | Layer | Owns |
 |---|---|
-| `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page |
-| `pythontk.PreviewDeliverer` | FBX → GLB → sidecar → lightmaps → optimize → publish, in that order |
+| `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page **and the active viewer scripts** |
+| `pythontk.PreviewDeliverer` | FBX → GLB → publish, and the ordered **pass registry** (`EDIT_PASSES` / `FILE_PASSES`) that runs between them |
 | `pythontk.PreviewBridge` | the glTF-appropriate export defaults and the `push()` / `url` / `stop()` surface |
-| `pythontk.MeshConvert` | every GLB edit, the sidecar envelope schema, the lightmap binding |
-| `preview_viewer.html` | rebinding the carrier slot to a real `lightMap`, scale/framing, the lighting policy |
+| `pythontk.MeshConvert` | every GLB edit, the sidecar envelope schema, the lightmap binding, **the published rendering policy** |
+| `preview_viewer.html` | rebinding the carrier slot to a real `lightMap`, scale/framing, and **spending** the rendering policy it reads out of the file |
+| `preview_scripts/*.js` | optional behaviour the page gains by activation, never by being edited |
 | `mayatk` / `blendertk` | reading the host's selection, exporting the FBX, reading scene state |
 
 Both DCC bridges are under 80 lines, most of that docstring. Everything else is shared, because
@@ -91,6 +100,65 @@ Export defaults (`PreviewBridge.params_defaults`): materials on, **textures embe
 can only fetch what the server hosts, so a path-referencing FBX previews with every map missing),
 animation off, sidecar on, and **triangulation off** — Maya's FBX exporter refuses triangulation
 combined with smoothing groups, and the converter triangulates on the way to glTF anyway.
+
+## Extending it
+
+Two seams, and the rule for choosing is where the work happens: **in the delivery** (a pass) or
+**in the page** (a script). Both are registries, so extending means an entry plus a file — never an
+edit to the path every DCC bridge already runs through.
+
+### Passes — work on the deliverable
+
+`PreviewDeliverer` runs its post-conversion work as an ordered registry, `name → method`:
+
+```python
+class DracoPreview(ptk.PreviewDeliverer):
+    FILE_PASSES = {**ptk.PreviewDeliverer.FILE_PASSES, "draco": "_pass_draco"}
+
+    def _pass_draco(self, context):
+        encode(context.glb)          # context: .glb .edit .payload .request .results .logger
+```
+
+`EDIT_PASSES` run inside **one** open GLB edit session (sidecar → prune → lightmaps); `FILE_PASSES`
+run on the **closed** file (optimize). The split is real rather than stylistic: a file pass rewrites
+the container — repacking the BIN chunk, re-encoding payloads — which is exactly what an open edit
+session cannot have happening underneath it, and `context.edit` is `None` there so a stale handle
+fails loudly instead of writing through dead buffers.
+
+Each pass is guarded **individually**. A deliverable missing one repair still beats no deliverable,
+and the alternative failed in the worst direction: one early failure took the lightmap wiring down
+with it, so the model arrived unlit with nothing naming the pass that actually broke.
+
+### Scripts — work in the page
+
+The viewer page is the stable path. It gains behaviour when the server *activates* an ES module,
+which the page imports and calls once with its own API object:
+
+```python
+bridge.push(scripts=["turntable", "inspect"])            # this push only
+bridge.push()                                            # leaves whatever is active alone
+bridge.push(scripts=[])                                  # clears them
+bridge.push(scripts={"mine": "C:/tools/overlay.js"})     # your own module, nothing vendored
+```
+
+The mapping form is the one to reach for from a DCC: a bridge creates its server lazily on the
+first delivery, so there is no `PreviewServer` to call `add_script()` on until a push has happened.
+`add_script` / `remove_script` / `set_scripts` are for code that owns a server directly (a test, a
+tool serving a GLB it produced itself), and what they register persists across pushes.
+
+`scripts=None` (the default) deliberately means *leave the server's set alone* rather than *use the
+default* — the server outlives every push, so a script registered once must not be dropped by the
+next push that simply says nothing about scripts. An explicit `[]` is still an instruction.
+
+A module's default export receives the viewer API: `THREE`, `scene`, `renderer`, `camera`,
+`controls`, `pivot`, `model`, `bounds`, `policy`, `setStatus`, `addButton(label, onClick)`, and
+`on(event, fn)` for `'load'` / `'frame'` / `'key'`. A script that throws is logged and contained —
+an optional module must never make a good preview *look* broken, because the one place this is read
+is a headset where the console is not visible.
+
+Two ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push) and
+**`inspect`** (draw calls, materials and *decoded* texture memory read off the renderer — the two
+numbers a GLB's size does not tell you).
 
 ## Does WebXR use OpenGL?
 
@@ -419,7 +487,13 @@ needs 2048 far more than a mask does) remain the cheaper complementary lever and
   Atlas packing is what normally prevents this; reaching it means one object wears another's
   lighting — which looks like a bad bake. It is warned, loudly.
 - **Draco-compressed GLBs do not load** in the bundled viewer (no decoder wired in). Don't pass
-  `--draco`.
+  `--draco`. If that changes it should arrive as a *script*, not a viewer edit.
+- **A viewer script that names a hook the page does not emit is inert, silently.** Nothing throws;
+  the callback simply never fires. `test_preview_server` checks the packaged scripts against the
+  page's `emit()` calls, which is the whole of what can be checked without a JS runtime.
+- **A script's own errors are logged, not surfaced.** Deliberate — an optional module must not make
+  a good preview look broken on a device where the console is invisible — so check the browser
+  console when a script seems to do nothing.
 - **Namespaces can disagree.** Manifest and export can differ about `NS:leaf` without either being
   wrong, so matching is exact first, then namespace-stripped — but only when the leaf is
   unambiguous. An ambiguous leaf is skipped rather than guessed.
