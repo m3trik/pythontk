@@ -316,6 +316,35 @@ class LoggingMixinTest(BaseTestCase):
         self.assertIn("TestClassA", TestClassA.logger.name)
         self.assertIn("TestClassB", TestClassB.logger.name)
 
+    def test_use_logger_routes_instance_records_to_the_adopted_logger(self):
+        """use_logger overrides ONE instance's logger; None reverts it.
+
+        A reusable component embedded in a host tool (e.g. a PresetManager
+        inside a panel) logs to its class-shared logger, invisible to the
+        host's sinks. Adoption must be instance-scoped: the sibling instance
+        and the class logger stay untouched.
+        """
+
+        class Component(LoggingMixin):
+            pass
+
+        host = logging.Logger("host_logger", logging.DEBUG)
+        stream = io.StringIO()
+        host.addHandler(logging.StreamHandler(stream))
+
+        adopted = Component()
+        sibling = Component()
+        adopted.use_logger(host)
+
+        self.assertIs(adopted.logger, host)
+        self.assertIs(sibling.logger, Component.logger)
+
+        adopted.logger.warning("panel-bound line")
+        self.assertIn("panel-bound line", stream.getvalue())
+
+        adopted.use_logger(None)
+        self.assertIs(adopted.logger, Component.logger)
+
 
 class DefaultTextLogHandlerTest(BaseTestCase):
     """Tests for DefaultTextLogHandler."""

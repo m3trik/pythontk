@@ -9,6 +9,9 @@ island transforms (rotate / mirror / scale), multi-source consolidation with
 constants, tangent-frame re-encoding of normal maps, coverage + padding.
 """
 
+import os
+import shutil
+import tempfile
 import unittest
 
 import numpy as np
@@ -240,6 +243,138 @@ class TestNormals(unittest.TestCase):
             )
 
 
+class TestAutoSize(unittest.TestCase):
+    """Consolidating N texture sets into one layout keeps the size the caller's
+    choice, but must never let the resulting density loss go unsaid.
+
+    The production failure (TURRETS_WIRES.glb): two 2048 sets transferred into
+    one shared 2048 layout. The set that landed on 9.4% of the target -- having
+    owned 94% of its own map -- dropped from ~2014px of content to ~629px, a
+    3.2x linear loss that shipped as visibly flattened roughness. 2048 was a
+    defensible size for the asset; the defect was that nothing said what it
+    cost, so nobody could judge.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="uvxfer_size_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _map(self, name, size):
+        from PIL import Image
+
+        path = os.path.join(self.tmp, name)
+        Image.new("RGB", (size, size), (128, 128, 128)).save(path)
+        return path
+
+    @staticmethod
+    def _quad(area, offset=(0.0, 0.0)):
+        """The unit quad scaled to cover *area* of UV space."""
+        return QUAD * float(np.sqrt(area)) + np.asarray(offset, dtype=float)
+
+    def _consolidation(self, big_share, small_share, px=256):
+        """Two sources, each owning ~all of its own *px* map, landing on
+        *big_share* / *small_share* of one shared target layout."""
+        src = np.concatenate([self._quad(0.90), self._quad(0.94)])
+        dst = np.concatenate(
+            [self._quad(big_share), self._quad(small_share, offset=(2.0, 2.0))]
+        )
+        ids = np.array([0, 0, 1, 1], np.int32)
+        sources = [
+            {"maps": {"baseColor": self._map("turrets.png", px)}, "constants": {}},
+            {"maps": {"baseColor": self._map("wires.png", px)}, "constants": {}},
+        ]
+        return [0, 1], sources, ["baseColor"], src, dst, ids
+
+    def test_a_squeezed_source_is_reported_not_silently_resampled(self):
+        used, sources, channels, src, dst, ids = self._consolidation(0.575, 0.094)
+        lines = []
+        size = ptk.UvTransfer._auto_size(
+            used, sources, channels, src, dst, ids, say=lines.append
+        )
+        # The size is the caller's to choose; a 2k map is ample for a small
+        # asset and the tool does not inflate one on its own initiative.
+        self.assertEqual(size, 256)
+        said = " ".join(lines)
+        self.assertIn("wires", said, "the squeezed source is not named")
+        self.assertIn("3.16x", said, "the squeeze factor is not quantified")
+        self.assertIn("81px of its 256px", said, "the cost is not stated in pixels")
+
+    def test_a_one_to_one_transfer_says_nothing(self):
+        """No consolidation, no loss, no line — the common re-bake stays quiet."""
+        sources = [{"maps": {"baseColor": self._map("only.png", 512)}, "constants": {}}]
+        lines = []
+        size = ptk.UvTransfer._auto_size(
+            [0],
+            sources,
+            ["baseColor"],
+            QUAD.copy(),
+            QUAD.copy(),
+            np.zeros(2, np.int32),
+            say=lines.append,
+        )
+        self.assertEqual(size, 512)
+        self.assertEqual(lines, [])
+
+    def test_a_roomier_target_is_not_a_complaint(self):
+        """Landing on MORE of the target than it owned at source loses nothing."""
+        sources = [{"maps": {"baseColor": self._map("s.png", 512)}, "constants": {}}]
+        lines = []
+        size = ptk.UvTransfer._auto_size(
+            [0],
+            sources,
+            ["baseColor"],
+            self._quad(0.25),
+            self._quad(1.0),
+            np.zeros(2, np.int32),
+            say=lines.append,
+        )
+        self.assertEqual(size, 512)
+        self.assertEqual(lines, [])
+
+    def test_the_report_names_the_map_it_measured(self):
+        """The label must come from the map that set the size, not whichever
+        map happens to be first in the dict -- an unresolvable path or a
+        channel this run never touched would otherwise name the culprit."""
+        src = np.concatenate([self._quad(0.90), self._quad(0.94)])
+        dst = np.concatenate([self._quad(0.575), self._quad(0.094, offset=(2.0, 2.0))])
+        ids = np.array([0, 0, 1, 1], np.int32)
+        sources = [
+            {
+                "maps": {"baseColor": self._map("turret_color.png", 256)},
+                "constants": {},
+            },
+            {
+                "maps": {
+                    # First in the dict, and it does not exist.
+                    "roughness": os.path.join(self.tmp, "missing_rough.png"),
+                    "baseColor": self._map("wire_color.png", 256),
+                },
+                "constants": {},
+            },
+        ]
+        lines = []
+        ptk.UvTransfer._auto_size(
+            [0, 1],
+            sources,
+            ["roughness", "baseColor"],
+            src,
+            dst,
+            ids,
+            say=lines.append,
+        )
+        said = " ".join(lines)
+        self.assertIn("wire_color", said)
+        self.assertNotIn("missing_rough", said)
+
+    def test_geometry_is_optional(self):
+        """A caller that cannot supply UVs gets the plain floor and no report."""
+        sources = [{"maps": {"baseColor": self._map("a.png", 1024)}, "constants": {}}]
+        lines = []
+        size = ptk.UvTransfer._auto_size([0], sources, ["baseColor"], say=lines.append)
+        self.assertEqual(size, 1024)
+        self.assertEqual(lines, [])
+
+
 class TestMergeLayouts(unittest.TestCase):
     """A layout is the unit: disjoint per-material jobs on one set merge."""
 
@@ -325,6 +460,41 @@ class TestNormalConvention(unittest.TestCase):
             "rock_Normal_OpenGL.png",
             "rock_Normal.png",  # untagged -- convention unknown, do not flip
             "rock_basecolor.png",  # not a normal map at all
+        ):
+            self.assertEqual(ptk.UvTransfer.normal_convention(name), "opengl", name)
+
+    def test_the_tag_may_lead_the_token(self):
+        """``DX_Normal`` is as real a spelling as ``Normal_DX``.
+
+        Only the token-first order was enumerated, so a leading tag fell
+        through to the untagged ``Normal`` type and the map read as OpenGL --
+        an inverted green channel, silently. That the abbreviation ``DXN``
+        already classified (hand-listed) while ``DXNormal`` did not is what
+        marks this a gap rather than a rule: whatever the rule is, those two
+        spellings have to agree.
+        """
+        for name in (
+            "rock_DX_Normal.png",
+            "rock_DXNormal.png",
+            "rock_dx_nrm.png",
+            "rock_DirectX_Normal.png",
+            "rock-dx-nrml.png",
+        ):
+            self.assertEqual(ptk.UvTransfer.normal_convention(name), "directx", name)
+        for name in (
+            "rock_GL_Normal.png",
+            "rock_OGL_nrml.png",
+            "rock_OpenGLNormal.png",
+        ):
+            self.assertEqual(ptk.UvTransfer.normal_convention(name), "opengl", name)
+
+    def test_a_tag_detached_from_the_token_still_does_not_count(self):
+        """The 2026-08-19 narrowing that must survive: a tag loose in the name
+        is not a declaration. Only a tag ADJACENT to the token is a suffix."""
+        for name in (
+            "DirectX_rock_Normal.png",
+            "rock_directx_final_normal.png",
+            "C:/tex/dx_project/rock_Normal.png",
         ):
             self.assertEqual(ptk.UvTransfer.normal_convention(name), "opengl", name)
 

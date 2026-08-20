@@ -112,11 +112,12 @@ class PreviewServerTestCase(unittest.TestCase):
         probe ran. Simulated by making the probe lie about an occupied port.
         """
         blocker = self._serve()  # occupies its ephemeral port for real
-        with unittest.mock.patch.object(
-            PreviewServer, "DEFAULT_PORT", blocker.port
-        ), unittest.mock.patch(
-            "pythontk.net_utils.preview_server.NetUtils.is_port_bindable",
-            return_value=True,
+        with (
+            unittest.mock.patch.object(PreviewServer, "DEFAULT_PORT", blocker.port),
+            unittest.mock.patch(
+                "pythontk.net_utils.preview_server.NetUtils.is_port_bindable",
+                return_value=True,
+            ),
         ):
             fallback = PreviewServer(root=self.root).start()  # port=None
         try:
@@ -223,7 +224,9 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertEqual(server.version, 2)
         _, payload, _ = self._get("scene.glb")
         self.assertEqual(payload, b"second")
-        self.assertEqual(json.loads(self._get("manifest.json")[1])["asset"], "scene.glb")
+        self.assertEqual(
+            json.loads(self._get("manifest.json")[1])["asset"], "scene.glb"
+        )
 
     def test_publish_respects_an_explicit_name(self):
         server = self._serve()
@@ -353,7 +356,10 @@ class PreviewServerTestCase(unittest.TestCase):
         # Per material, and only for the materials the manifest named. Spent
         # from the live policy rather than the constant -- the constant is now
         # what that read FALLS BACK to (see the policy test below).
-        self.assertIn("material.envMapIntensity = bakeOnly ? 0 : policy.lightmapEnvIntensity", page)
+        self.assertIn(
+            "material.envMapIntensity = bakeOnly ? 0 : policy.lightmapEnvIntensity",
+            page,
+        )
         self.assertIn("material.envMap = scene.environment", page)
         # The override opt-out is only safe while disposeModel spares the
         # shared texture; without that guard the second push runs unlit.
@@ -437,7 +443,9 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertEqual(policy["renderer"]["toneMapping"], "ACESFilmic")
         self.assertIn("new RoomEnvironment()", page)
         self.assertIn("RoomEnvironment", policy["environment"]["source"])
-        blur = re.search(r"pmrem\.fromScene\(new RoomEnvironment\(\), ([0-9.]+)\)", page)
+        blur = re.search(
+            r"pmrem\.fromScene\(new RoomEnvironment\(\), ([0-9.]+)\)", page
+        )
         self.assertIsNotNone(blur, "the viewer no longer prefilters the environment")
         # Compared as a NUMBER. Substring-matching this against the prose form
         # ("PMREM, blur 0.04", as this first did) silently accepts a viewer that
@@ -465,7 +473,9 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertIn("envelope?.handoff?.rendering", page)
         # Read BEFORE the lights are set, or the first frame of a new model is
         # lit by the previous one's policy.
-        self.assertLess(page.index("readRenderingPolicy(gltf)"), page.index("applyLighting();"))
+        self.assertLess(
+            page.index("readRenderingPolicy(gltf)"), page.index("applyLighting();")
+        )
         # Only finite NUMBERS are taken. The published policy is documentation
         # as much as data -- `lightMapIntensity` is deliberately a sentence --
         # and assigning a string to an intensity renders black with nothing in
@@ -523,7 +533,9 @@ class PreviewServerTestCase(unittest.TestCase):
         """
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
-        self.assertIn("keyLight.intensity = lightmapped ? 0 : policy.keyIntensity", page)
+        self.assertIn(
+            "keyLight.intensity = lightmapped ? 0 : policy.keyIntensity", page
+        )
         # The DECLARATION, not the bare word: this file's comments discuss the
         # removed gate by name, and a test that fires on prose about a dead
         # mechanism teaches the next reader to delete the explanation rather
@@ -595,7 +607,6 @@ class PreviewServerTestCase(unittest.TestCase):
         self._get("manifest.json")
         server.stop()
         self.assertFalse(server.has_viewer())
-
 
 
 class PreviewScriptsTestCase(unittest.TestCase):
@@ -829,11 +840,13 @@ class PreviewScriptsTestCase(unittest.TestCase):
         """
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
-        layout = page[page.index("function layout()"):]
+        layout = page[page.index("function layout()") :]
         layout = layout[: layout.index("\n}")]
         self.assertIn("pivot.position.set", layout)
         # The offset belongs to the pivot; the model carries only the centring.
-        model_position = layout[layout.index("current.position.set") : layout.index("pivot.position.set")]
+        model_position = layout[
+            layout.index("current.position.set") : layout.index("pivot.position.set")
+        ]
         self.assertNotIn(
             "FIT_DISTANCE_M",
             model_position,
@@ -1068,9 +1081,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
             return self.bridge.send(**extras)
 
     def test_a_push_can_name_the_scripts_for_that_delivery(self):
-        self.bridge.deliverer = PreviewDeliverer(
-            server=self.server, open_browser=False
-        )
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         self._push(scripts=["turntable"])
         self.assertEqual(self.server.scripts, ("turntable",))
 
@@ -1084,14 +1095,10 @@ class PreviewDelivererTestCase(unittest.TestCase):
         """
         module = Path(self.temp.path(extension=".js"))
         module.write_text("export default function () {}", encoding="utf-8")
-        self.bridge.deliverer = PreviewDeliverer(
-            server=self.server, open_browser=False
-        )
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         self._push(scripts={"mine": str(module)})
         self.assertEqual(self.server.scripts, ("mine",))
-        self.assertEqual(
-            self.server.manifest()["scripts"], ["scripts/mine.js"]
-        )
+        self.assertEqual(self.server.manifest()["scripts"], ["scripts/mine.js"])
         self.assertTrue((Path(self.server.root) / "scripts" / "mine.js").is_file())
 
     def test_saying_nothing_about_scripts_leaves_the_server_alone(self):
@@ -1103,18 +1110,14 @@ class PreviewDelivererTestCase(unittest.TestCase):
         by the next push that simply did not mention scripts.
         """
         self.server.add_script("inspect")
-        self.bridge.deliverer = PreviewDeliverer(
-            server=self.server, open_browser=False
-        )
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         self._push()
         self.assertEqual(self.server.scripts, ("inspect",))
 
     def test_an_empty_list_clears_the_scripts_for_that_push(self):
         """`[]` is an instruction, not an absence -- the counterpart of the above."""
         self.server.add_script("inspect")
-        self.bridge.deliverer = PreviewDeliverer(
-            server=self.server, open_browser=False
-        )
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         self._push(scripts=[])
         self.assertEqual(self.server.scripts, ())
 
@@ -1151,7 +1154,10 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
         ran = []
         deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        for name, method in {**PreviewDeliverer.EDIT_PASSES, **PreviewDeliverer.FILE_PASSES}.items():
+        for name, method in {
+            **PreviewDeliverer.EDIT_PASSES,
+            **PreviewDeliverer.FILE_PASSES,
+        }.items():
             setattr(deliverer, method, lambda context, name=name: ran.append(name))
         self.bridge.deliverer = deliverer
         self._push()
@@ -1246,7 +1252,9 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertEqual(result["version"], 1)
         self.assertEqual(result["url"], self.server.url)
         self.assertEqual(result["asset"], "scene.glb")
-        self.assertEqual((Path(self.server.root) / "scene.glb").read_bytes()[:4], b"glTF")
+        self.assertEqual(
+            (Path(self.server.root) / "scene.glb").read_bytes()[:4], b"glTF"
+        )
 
     def test_glb_is_allocated_through_the_bridge_payload_workflow(self):
         """The GLB must join the bridge's swept prefix, not be derived ad hoc.
@@ -1452,9 +1460,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         sections = {"emissive": {"m": {"color": (1, 0, 0)}}}
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = (
-            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        )
+        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
         with unittest.mock.patch(target, side_effect=self._fake_convert):
             with unittest.mock.patch(emissive_target, return_value=[{}]) as applied:
                 self.bridge.deliverer.deliver(
@@ -1492,7 +1498,9 @@ class PreviewDelivererTestCase(unittest.TestCase):
         def _record(glb, *_args, **_kwargs):
             seen.append([i.get("name") for i in self._glb_json(glb).get("images", [])])
 
-        convert = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        convert = (
+            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        )
         optimize = (
             "pythontk.file_utils.mesh_convert._mesh_convert."
             "MeshConvert.optimize_glb_textures"
@@ -1521,9 +1529,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         """
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = (
-            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        )
+        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
         with unittest.mock.patch(target, side_effect=self._fake_convert):
             with unittest.mock.patch(emissive_target) as applied:
                 self.bridge.deliverer.deliver(
@@ -1535,9 +1541,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         """A broken section must not cost the whole preview."""
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = (
-            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        )
+        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
         with unittest.mock.patch(target, side_effect=self._fake_convert):
             with unittest.mock.patch(emissive_target, side_effect=ValueError("bad")):
                 result = self.bridge.deliverer.deliver(
@@ -1558,9 +1562,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         """The panel needs to say what happened; silence was the original bug."""
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = (
-            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        )
+        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
         sections = {"emissive": {"a": {"color": (1, 0, 0)}, "b": {"color": (0, 1, 0)}}}
         with unittest.mock.patch(target, side_effect=self._fake_convert):
             with unittest.mock.patch(emissive_target, return_value=[{}, {}]):
@@ -1578,9 +1580,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         """A name mismatch makes the section a no-op — it must not look like success."""
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = (
-            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        )
+        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
         with unittest.mock.patch(target, side_effect=self._fake_convert):
             with unittest.mock.patch(emissive_target, return_value=[]):
                 result = self.bridge.deliverer.deliver(
@@ -1599,7 +1599,9 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
     def test_summary_separates_off_from_nothing_to_carry(self):
         """Both render the same unlit preview; the report must tell them apart."""
-        self.assertIn("off", PreviewBridge.sidecar_summary({"sidecar_requested": False}))
+        self.assertIn(
+            "off", PreviewBridge.sidecar_summary({"sidecar_requested": False})
+        )
         self.assertIn(
             "nothing to carry",
             PreviewBridge.sidecar_summary({"sidecar_requested": True, "sidecar": {}}),
@@ -1706,14 +1708,14 @@ class PreviewDelivererTestCase(unittest.TestCase):
         bridge = _StubPreviewBridge()
         bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = (
-            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        )
+        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
         with unittest.mock.patch(target, side_effect=self._fake_convert):
             with unittest.mock.patch(emissive_target, return_value=[{}]) as applied:
                 result = bridge.send()
         applied.assert_called_once()
-        self.assertEqual(applied.call_args[0][1], _StubPreviewBridge.sections["emissive"])
+        self.assertEqual(
+            applied.call_args[0][1], _StubPreviewBridge.sections["emissive"]
+        )
         self.assertEqual(result["sidecar"], {"emissive": "1 of 1"})
         self.assertTrue(result["sidecar_requested"])
 
@@ -1794,7 +1796,9 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
 
     def test_writes_emissive_factor_by_material_name(self):
         self._write_glb({"materials": [{"name": "m_arnold"}]})
-        records = MeshConvert.set_glb_emissive(str(self.glb), {"m_arnold": {"color": (1, 0.5, 0)}})
+        records = MeshConvert.set_glb_emissive(
+            str(self.glb), {"m_arnold": {"color": (1, 0.5, 0)}}
+        )
         self.assertEqual(len(records), 1)
         gltf, _rest, _bin = self._read_back()
         self.assertEqual(gltf["materials"][0]["emissiveFactor"], [1, 0.5, 0])
@@ -1824,13 +1828,18 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
         self.assertNotIn("extensions", gltf["materials"][0])
         self.assertNotIn("extensionsUsed", gltf)
 
-    def test_texture_is_embedded_as_a_data_uri(self):
+    def test_texture_is_embedded_into_the_bin(self):
         self._write_glb({"materials": [{"name": "m"}]})
-        records = MeshConvert.set_glb_emissive(str(self.glb), {"m": {"texture": self._png()}})
+        records = MeshConvert.set_glb_emissive(
+            str(self.glb), {"m": {"texture": self._png()}}
+        )
         self.assertEqual(len(records), 1)
         gltf, _rest, _bin = self._read_back()
         self.assertEqual(gltf["materials"][0]["emissiveTexture"]["index"], 0)
-        self.assertTrue(gltf["images"][0]["uri"].startswith("data:image/png;base64,"))
+        # Relocated out of the JSON chunk on close — base64 in a deliverable is
+        # a 33% premium on every embedded map.
+        self.assertNotIn("uri", gltf["images"][0])
+        self.assertIn("bufferView", gltf["images"][0])
         # A texture with no color must still light up, not stay black.
         self.assertEqual(gltf["materials"][0]["emissiveFactor"], [1.0, 1.0, 1.0])
 
@@ -1874,14 +1883,19 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
         self._write_glb({"materials": [{"name": "m"}]})
         tga = Path(self.temp.dir_path()) / "emis.tga"
         Image.new("RGB", (2, 2), (255, 0, 0)).save(tga)
-        records = MeshConvert.set_glb_emissive(str(self.glb), {"m": {"texture": str(tga)}})
+        records = MeshConvert.set_glb_emissive(
+            str(self.glb), {"m": {"texture": str(tga)}}
+        )
         self.assertEqual(len(records), 1)
         gltf, _rest, _bin = self._read_back()
-        uri = gltf["images"][0]["uri"]
-        self.assertTrue(uri.startswith("data:image/png;base64,"))
+        image = gltf["images"][0]
+        self.assertEqual(image["mimeType"], "image/png")
         # The payload really is a PNG, not TGA bytes under a PNG label.
-        decoded = base64.b64decode(uri.split(",", 1)[1])
-        self.assertTrue(decoded.startswith(b"\x89PNG"))
+        view = gltf["bufferViews"][image["bufferView"]]
+        start = view.get("byteOffset", 0)
+        self.assertTrue(
+            bytes(_bin[start : start + view["byteLength"]]).startswith(b"\x89PNG")
+        )
 
     def test_zero_factor_never_blacks_out_an_emissive_map(self):
         """glTF emission is factor x texture — a 0 factor silently kills the map.
@@ -1905,7 +1919,9 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
     def test_unknown_material_name_is_ignored(self):
         self._write_glb({"materials": [{"name": "present"}]})
         self.assertEqual(
-            MeshConvert.set_glb_emissive(str(self.glb), {"absent": {"color": (1, 1, 1)}}),
+            MeshConvert.set_glb_emissive(
+                str(self.glb), {"absent": {"color": (1, 1, 1)}}
+            ),
             [],
         )
 
@@ -1937,7 +1953,9 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
     def test_base_color_black_is_written_not_skipped(self):
         """Unlike emissive, black is a legitimate base colour."""
         self._write_glb({"materials": [{"name": "m"}]})
-        records = MeshConvert.set_glb_base_color(str(self.glb), {"m": {"color": (0, 0, 0)}})
+        records = MeshConvert.set_glb_base_color(
+            str(self.glb), {"m": {"color": (0, 0, 0)}}
+        )
         self.assertEqual(len(records), 1)
         gltf, _rest, _bin = self._read_back()
         self.assertEqual(
@@ -1948,7 +1966,9 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
     def test_base_color_is_clamped_not_normalized(self):
         """There is no strength extension for base colour — clamp into range."""
         self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_base_color(str(self.glb), {"m": {"color": (2.0, -1.0, 0.5)}})
+        MeshConvert.set_glb_base_color(
+            str(self.glb), {"m": {"color": (2.0, -1.0, 0.5)}}
+        )
         gltf, _rest, _bin = self._read_back()
         self.assertEqual(
             gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
@@ -1962,12 +1982,15 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
         gltf, _rest, _bin = self._read_back()
         pbr = gltf["materials"][0]["pbrMetallicRoughness"]
         self.assertEqual(pbr["baseColorTexture"]["index"], 0)
-        self.assertTrue(gltf["images"][0]["uri"].startswith("data:image/png;base64,"))
+        self.assertNotIn("uri", gltf["images"][0])
+        self.assertIn("bufferView", gltf["images"][0])
 
     def test_base_color_unknown_material_is_ignored(self):
         self._write_glb({"materials": [{"name": "present"}]})
         self.assertEqual(
-            MeshConvert.set_glb_base_color(str(self.glb), {"absent": {"color": (1, 0, 0)}}),
+            MeshConvert.set_glb_base_color(
+                str(self.glb), {"absent": {"color": (1, 0, 0)}}
+            ),
             [],
         )
 

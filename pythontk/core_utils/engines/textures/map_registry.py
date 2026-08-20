@@ -59,7 +59,12 @@ class MapType:
     aliases: List[str]
     color_space: str = "Linear"  # "sRGB" or "Linear"
     mode: Optional[str] = "RGB"  # "RGB", "RGBA", "L"; None = preserve natural mode
-    default_background: Optional[Tuple[int, ...]] = (0, 0, 0, 255)  # Default background color
+    default_background: Optional[Tuple[int, ...]] = (
+        0,
+        0,
+        0,
+        255,
+    )  # Default background color
     is_packed: bool = False  # Is this a packed map (e.g. ORM, MSAO)?
     scale_as_mask: bool = False  # Should this map be scaled down by mask_map_scale?
     resolution_critical: bool = False  # Surface detail depends on full resolution (color, normals, emissive). Others may be downscaled as a fraction.
@@ -182,9 +187,7 @@ class MapType:
             # loose map a channel duplicates would never be retired when the
             # packed map wins (found live: MSAO carried Smoothness in its alpha
             # but didn't replace it, so a loose Smoothness stayed wired).
-            unreplaced = [
-                t for t in self.carried_types() if t not in self.replaces
-            ]
+            unreplaced = [t for t in self.carried_types() if t not in self.replaces]
             if unreplaced:
                 raise ValueError(
                     f"Map type '{self.name}' carries {unreplaced} in its channels "
@@ -408,8 +411,16 @@ class MapRegistry(SingletonMixin):
             name="Normal_OpenGL",
             # The bare tags come first so a file named for the convention alone
             # ("rock_OGL") still classifies; the composed spellings follow.
+            # BOTH orders: `NormalGL` and `GL_Normal` are equally real
+            # spellings, and enumerating only one left the other falling
+            # through to the untagged `Normal` type -- an inverted green
+            # channel, and a suffix strip that welded the tag to the base name
+            # so the map joined a different texture set than the rest of its
+            # bake. A tag DETACHED from the token still does not count: these
+            # are suffixes, so the two must be adjacent.
             aliases=["GL", "OGL", "OpenGL", "Normal_Tangent_GL"]
-            + MapType.compose_aliases(_NORMAL_TOKENS, _OPENGL_TAGS, _TOKEN_JOINERS),
+            + MapType.compose_aliases(_NORMAL_TOKENS, _OPENGL_TAGS, _TOKEN_JOINERS)
+            + MapType.compose_aliases(_OPENGL_TAGS, _NORMAL_TOKENS, _TOKEN_JOINERS),
             color_space="Linear",
             mode="RGB",
             default_background=(127, 127, 255, 255),
@@ -418,8 +429,13 @@ class MapRegistry(SingletonMixin):
         ),
         "Normal_DirectX": MapType(
             name="Normal_DirectX",
+            # Both orders -- see `Normal_OpenGL`. The hand-listed `DXN` is the
+            # tell that tag-first spellings were already known to exist; it was
+            # the abbreviation alone that got patched, so `DXN` classified
+            # while `DXNormal` did not.
             aliases=["DX", "DXN", "DirectX", "Normal_Tangent_DX"]
-            + MapType.compose_aliases(_NORMAL_TOKENS, _DIRECTX_TAGS, _TOKEN_JOINERS),
+            + MapType.compose_aliases(_NORMAL_TOKENS, _DIRECTX_TAGS, _TOKEN_JOINERS)
+            + MapType.compose_aliases(_DIRECTX_TAGS, _NORMAL_TOKENS, _TOKEN_JOINERS),
             color_space="Linear",
             mode="RGB",
             default_background=(127, 127, 255, 255),
@@ -904,9 +920,7 @@ class MapRegistry(SingletonMixin):
                 this name and ``overwrite`` is False.
         """
         if not isinstance(map_type, MapType):
-            raise TypeError(
-                f"Expected a MapType, got {type(map_type).__name__!r}"
-            )
+            raise TypeError(f"Expected a MapType, got {type(map_type).__name__!r}")
         existing = self._maps.get(map_type.name)
         if existing is not None and not overwrite:
             if existing == map_type:
@@ -1232,9 +1246,7 @@ class MapRegistry(SingletonMixin):
                     # a production scene). Require a real boundary first; the
                     # sibling MapFactory.resolve_map_type(key=False) path has
                     # always demanded one, so this makes the two agree.
-                    boundary = self._short_alias_boundary(
-                        name_only, suffix_start_index
-                    )
+                    boundary = self._short_alias_boundary(name_only, suffix_start_index)
                     if boundary is None:
                         continue
 

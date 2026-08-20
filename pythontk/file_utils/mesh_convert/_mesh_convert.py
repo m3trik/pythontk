@@ -274,9 +274,7 @@ class MeshConvert(HelpMixin):
         #: target for the in-place write in :meth:`MeshConvert._write_glb`.
         JSON_OFFSET = 12 + 8
 
-        def __init__(
-            self, path: str, version_bytes: bytes, gltf: dict, json_len: int
-        ):
+        def __init__(self, path: str, version_bytes: bytes, gltf: dict, json_len: int):
             self.path = path
             self.version_bytes = version_bytes
             self.gltf = gltf
@@ -300,13 +298,20 @@ class MeshConvert(HelpMixin):
             #: ``(image index, channel)`` -> that channel's ``(min, max)``.
             #: Keyed by channel so the alpha probes and the ORM probe share one
             #: decode of an atlas rather than one cache each.
-            self._channel_extrema: Dict[
-                Tuple[int, str], Optional[Tuple[int, int]]
-            ] = {}
+            self._channel_extrema: Dict[Tuple[int, str], Optional[Tuple[int, int]]] = {}
             #: Texture path -> texture index, shared by every channel writer on
             #: this session so a map used as both base colour and emissive is
             #: embedded once rather than once per channel.
             self.embedded: Dict[str, int] = {}
+            #: Image ENTRIES this session embedded, relocated out of the JSON
+            #: chunk and into the BIN by
+            #: :meth:`MeshConvert._relocate_embedded_images` when the session
+            #: closes. Held as the dicts themselves rather than indices
+            #: because a pass that drops images (``prune_glb_textures``)
+            #: rebuilds the list and shifts every index after the hole; the
+            #: entry survives that, and its absence afterwards is exactly the
+            #: signal that it was pruned and must not be relocated.
+            self.pending_images: List[dict] = []
             #: sha256(image payload) -> image index, for images the file ALREADY
             #: carried when this session opened. Built lazily by
             #: :meth:`image_by_content`.
@@ -443,7 +448,8 @@ class MeshConvert(HelpMixin):
             knows an extension binding shadows the plain ``source``: after
             :meth:`optimize_glb_textures` a texture carries
             ``EXT_texture_webp`` beside its fallback ``source``, or (KTX2
-            mode) ``KHR_texture_basisu`` with no fallback at all -- either
+            mode) ``KHR_texture_basisu`` beside a core-readable fallback
+            twin (none in pure-delivery mode) -- either
             way the extension is what a capable loader reads. Bounds-checked
             like :meth:`base_color_image` -- a negative index is malformed,
             not a reference to the last texture.
@@ -763,7 +769,15 @@ class MeshConvert(HelpMixin):
         # without). A carrier must not drop data another carrier deliberately
         # embedded, and the flag is a no-op on an FBX with no user properties.
         output_base = os.path.splitext(dst_abs)[0]
-        cmd = [binary, "-i", src_abs, "-o", output_base, "--binary", "--user-properties"]
+        cmd = [
+            binary,
+            "-i",
+            src_abs,
+            "-o",
+            output_base,
+            "--binary",
+            "--user-properties",
+        ]
         if extra_args:
             cmd.extend(extra_args)
 
@@ -1716,7 +1730,10 @@ class MeshConvert(HelpMixin):
                     committed = (final or {}).get(node_name) if node_name else None
                     if committed:
                         for field in ("map", "intensity"):
-                            if field in committed and data.get(field) != committed[field]:
+                            if (
+                                field in committed
+                                and data.get(field) != committed[field]
+                            ):
                                 data[field] = committed[field]
                                 corrected = True
                     had_hint = cls.LOCATE_HINT_KEY in data
@@ -1854,6 +1871,7 @@ class MeshConvert(HelpMixin):
                 if mr and existing.get("index") == mr.get("index"):
                     return None
             return existing
+
         # ONE session for the read and the write: the manifest is read from the very
         # GLB being edited, so re-opening the path to find it would re-read and
         # re-parse the file that GlbEdit exists to read exactly once.
@@ -1968,9 +1986,7 @@ class MeshConvert(HelpMixin):
                     primitives all fail the guards -- an orphan texture otherwise)."""
                     if src not in scalars:
                         try:
-                            png, encoded = ImgUtils.encode_hdr_for_web(
-                                src, percentile
-                            )
+                            png, encoded = ImgUtils.encode_hdr_for_web(src, percentile)
                         except (ImportError, ValueError) as error:
                             logger.warning(
                                 "Lightmap %r not encoded: %s", basename, error
@@ -2393,6 +2409,12 @@ class MeshConvert(HelpMixin):
         edit = cls._read_glb(os.fspath(glb))
         yield edit
         if edit.dirty:
+            # Once, here, rather than per writer: composed repairs each embed
+            # into the JSON chunk and the BIN is rebuilt a single time for all
+            # of them. Runs on the OWNER's close only -- a session handed in by
+            # a caller is relocated when that caller closes it, after its own
+            # writers have finished embedding.
+            cls._relocate_embedded_images(edit)
             cls._write_glb(edit)
 
     @classmethod
@@ -2483,6 +2505,96 @@ class MeshConvert(HelpMixin):
             f.write(rest)
         edit.json_len = len(new_json)
 
+    @staticmethod
+    def _relocate_embedded_images(edit: "MeshConvert.GlbEdit") -> int:
+        """Move this session's embedded images from the JSON chunk into the BIN.
+
+        Every channel writer embeds as a ``data:`` URI, which keeps its edit
+        inside the JSON chunk -- no buffer offsets to recompute, which is the
+        part of GLB surgery that silently corrupts a file. That was priced for
+        a local preview, but the same writers build deliverables: measured on
+        TURRETS_WIRES.glb, the packed ORM's base64 put the JSON chunk at 45% of
+        an 8.9 MB file, 1.0 MB of it pure base64 premium, all of it parsed
+        before a loader can draw. This pays the JSON back down once, on close,
+        after every writer has had its say.
+
+        Safe because it only ever **appends**: the existing BIN is copied
+        verbatim and the new payloads land past its end, so every prior
+        bufferView keeps its index, its ``byteOffset`` and its bytes, and no
+        accessor is touched. That is the whole difference from
+        ``optimize_glb_textures``, which rewrites payloads in place and so must
+        recompute the offsets this pass leaves alone.
+
+        Only images *this session embedded* move. A ``data:`` URI the file
+        arrived with is the caller's, and an external ``uri`` cannot be read
+        from here at all -- rewriting either would be a side effect on input
+        rather than a fix to output.
+
+        Returns:
+            Number of images relocated (0 leaves the file untouched).
+        """
+        pending, edit.pending_images = edit.pending_images, []
+        if not pending:
+            return 0
+        gltf = edit.gltf
+        images = gltf.get("images") or []
+        # Identity, not index: a pruning pass rebuilds `images` and shifts
+        # every index after the hole, but a dropped entry is simply absent.
+        live_ids = {id(image) for image in images}
+        live = [
+            image
+            for image in pending
+            if id(image) in live_ids and str(image.get("uri", "")).startswith("data:")
+        ]
+        if not live:
+            return 0
+        # Buffer 0 is the BIN chunk only when it declares no ``uri``. A GLB
+        # whose first buffer is EXTERNAL has no BIN to append to, and writing
+        # one would strand the appended views on bytes the file does not carry
+        # while overwriting that buffer's byteLength. Leave the payloads in the
+        # JSON: base64 is a size cost, corrupting the buffer table is not.
+        buffers = gltf.setdefault("buffers", [])
+        if buffers and buffers[0].get("uri"):
+            return 0
+
+        # The existing BIN joins in as a memoryview rather than a `bytes` copy:
+        # on a production GLB that copy is the entire geometry, and `join`
+        # reads the view directly, so peak memory is one BIN, not two.
+        blob = edit.bin_data
+        if blob is None and edit.rest:
+            # No BIN chunk, yet something follows the JSON: an extension chunk
+            # the spec tells clients to ignore rather than drop. `replace_rest`
+            # swaps that whole tail for a BIN, so relocating here would delete
+            # bytes this class never read -- the same trade as the external
+            # buffer above, and the same answer: leave the payloads in the JSON.
+            return 0
+        chunks = [] if blob is None else [blob]
+        offset = 0 if blob is None else len(blob)
+        pad = (4 - (offset % 4)) % 4
+        if pad:  # the appended views must start 4-byte aligned
+            chunks.append(b"\x00" * pad)
+            offset += pad
+
+        views = gltf.setdefault("bufferViews", [])
+        for image in live:
+            raw = base64.b64decode(image["uri"].split(",", 1)[1])
+            views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(raw)})
+            image["bufferView"] = len(views) - 1
+            image.pop("uri", None)
+            chunks.append(raw)
+            offset += len(raw)
+            tail = (4 - (len(raw) % 4)) % 4
+            if tail:
+                chunks.append(b"\x00" * tail)
+                offset += tail
+
+        new_bin = b"".join(chunks)
+        if not buffers:  # a GLB that carried no BIN at all now has one
+            buffers.append({})
+        buffers[0]["byteLength"] = len(new_bin)
+        edit.replace_rest(new_bin)
+        return len(live)
+
     @classmethod
     def _image_semantics(cls, edit) -> Dict[int, str]:
         """Map image index -> the strongest slot semantic sampling it.
@@ -2525,6 +2637,7 @@ class MeshConvert(HelpMixin):
         image_format: str = "WEBP",
         quality: int = 85,
         workers: Optional[int] = None,
+        ktx2_fallback: bool = True,
     ) -> Dict[str, Any]:
         """Downsize and re-encode a GLB's embedded images for web delivery.
 
@@ -2579,10 +2692,25 @@ class MeshConvert(HelpMixin):
           would re-quantise a deliberately-authored bake, and their carrier
           slot's colorspace handling is viewer-rebound -- fidelity wins over
           GPU residency for exactly these images.
-        * **No PNG fallback is kept** (double payload), so the extension lands
-          in ``extensionsRequired`` -- the deliverable needs a
-          ``KHR_texture_basisu``-capable viewer (three.js ``KTX2Loader``; the
-          bundled preview page wires it).
+        * **A core-readable fallback rides along by default**
+          (*ktx2_fallback*): each converted image also embeds a resized
+          PNG/JPEG twin bound as the texture's plain ``source`` -- the
+          escape hatch the ``KHR_texture_basisu`` spec defines -- so the
+          extension stays in ``extensionsUsed`` and the GLB still opens in
+          any stock glTF importer (Blender, Unreal, Unity) instead of being
+          a terminal delivery artifact only a basisu viewer can read.
+          UASTC-class images (normals, metallic-roughness/occlusion) fall
+          back to PNG, ETC1S color to JPEG at *quality* (PNG when it
+          carries alpha), so the premium over the KTX2 payload stays modest.
+          ``ktx2_fallback=False`` is the pure-delivery mode: no fallback,
+          the extension lands in ``extensionsRequired``, and the
+          deliverable needs a ``KHR_texture_basisu``-capable viewer
+          (three.js ``KTX2Loader``; the bundled preview page wires it) --
+          the right trade when every byte is budget, as the WebXR preview
+          push chooses. A fallback whose own encode fails is logged and
+          dropped, and that image's binding re-tips the extension into
+          ``extensionsRequired`` -- never an unreadable texture with a
+          declaration claiming otherwise.
         * **Dimensions snap down to power-of-two** -- ``KHR_texture_basisu``
           requires multiple-of-4 dimensions and full mip pyramids (generated at
           encode time; a GPU-compressed texture cannot mip itself), and POT is
@@ -2598,10 +2726,17 @@ class MeshConvert(HelpMixin):
             image_format: ``"WEBP"`` (default), ``"KTX2"``, or any PIL-writable
                 format.
             quality: Lossy quality for WEBP/JPEG, and the ETC1S quality dial in
-                KTX2 mode (UASTC's tier is fixed by the encoder).
+                KTX2 mode (UASTC's tier is fixed by the encoder). Also the
+                JPEG quality of KTX2-mode fallback images.
             workers: Concurrent encode threads. Defaults to
                 :attr:`OPTIMIZE_WORKERS` capped by the core count; 1 forces the
                 serial path.
+            ktx2_fallback: KTX2 mode only. ``True`` (default) embeds a
+                core-readable PNG/JPEG twin per converted image and binds it
+                as the texture's plain ``source``, keeping the GLB importable
+                everywhere (extension in ``extensionsUsed``). ``False`` ships
+                KTX2 alone and hard-requires a basisu-capable viewer
+                (``extensionsRequired``).
 
         Returns:
             Summary dict: ``images`` (converted count), ``bytes_before`` /
@@ -2694,7 +2829,9 @@ class MeshConvert(HelpMixin):
                 if not payload:
                     continue
                 before += len(payload)
-                is_exempt = index in exempt_indices or (image.get("name") or "") in exempt
+                is_exempt = (
+                    index in exempt_indices or (image.get("name") or "") in exempt
+                )
                 if is_ktx2 and not is_exempt and index not in sampled:
                     # No texture samples this image, so nothing can rebind it
                     # through KHR_texture_basisu -- and that declaration is
@@ -2748,8 +2885,7 @@ class MeshConvert(HelpMixin):
                     # target above so the pixels resample ONCE, not through a
                     # resize-then-snap double pass. No-op for POT sources.
                     target = tuple(
-                        max(4, 1 << (max(4, edge).bit_length() - 1))
-                        for edge in target
+                        max(4, 1 << (max(4, edge).bit_length() - 1)) for edge in target
                     )
                 if target != pil.size:
                     pil = pil.resize(target, Image.LANCZOS)
@@ -2781,7 +2917,44 @@ class MeshConvert(HelpMixin):
                     # Deliberately NO keep-the-original size rule here: the win
                     # is the GPU-resident format, not the wire, and UASTC
                     # exceeding a source PNG is expected rather than a failure.
-                    return encoded
+                    fb_bytes = fb_mime = None
+                    if ktx2_fallback:
+                        # The core-readable twin bound as the texture's plain
+                        # ``source`` (see the docstring bullet). Same resized
+                        # pixels as the KTX2 encode, so the fallback shows what
+                        # the basisu path shows. Container by codec class:
+                        # ETC1S color -> JPEG at *quality* (PNG when it carries
+                        # alpha -- JPEG cannot); UASTC normals/data -> PNG,
+                        # where lossy chroma would corrupt the very channels
+                        # UASTC was chosen to protect.
+                        fb_pil = pil
+                        has_alpha = (
+                            "A" in fb_pil.getbands()
+                            or fb_pil.info.get("transparency") is not None
+                        )
+                        if codec == "ETC1S" and not has_alpha:
+                            fb_format, fb_mime = "JPEG", "image/jpeg"
+                            if fb_pil.mode not in ("RGB", "L"):
+                                fb_pil = fb_pil.convert("RGB")
+                            fb_kwargs = {"quality": quality}
+                        else:
+                            fb_format, fb_mime = "PNG", "image/png"
+                            fb_kwargs = {}
+                        fb_buffer = io.BytesIO()
+                        try:
+                            fb_pil.save(fb_buffer, format=fb_format, **fb_kwargs)
+                            fb_bytes = fb_buffer.getvalue()
+                        except Exception as error:  # noqa: BLE001 — ship KTX2-only
+                            logger.warning(
+                                "optimize_glb_textures: fallback %s encode "
+                                "failed for %r (ships KTX2-only, viewer must "
+                                "support KHR_texture_basisu): %s",
+                                fb_format,
+                                labels[key],
+                                error,
+                            )
+                            fb_bytes = fb_mime = None
+                    return (encoded, fb_bytes, fb_mime)
                 # Exempt (lightmap) images in KTX2 mode take the lossless-WebP
                 # path -- the mode's docstring bullet says why.
                 pil_format = "WEBP" if (is_ktx2 and is_exempt) else image_format
@@ -2841,13 +3014,21 @@ class MeshConvert(HelpMixin):
 
             # Phase C (serial): fan the per-job results back out to the image
             # indices that share them. ``replacements`` keys the image INDEX to
-            # its new payload.
+            # its new payload; a KTX2 job returns a tuple carrying the
+            # core-readable fallback alongside (``fallbacks`` keys the SAME
+            # source index — the twin gets its own appended image at repack).
             replacements: Dict[int, bytes] = {}
+            fallbacks: Dict[int, Tuple[bytes, str]] = {}
             for index, key in key_by_index.items():
                 encoded = encoded_by_key.get(key)
                 if encoded is None:
                     after += len(jobs[key])
                     continue
+                if isinstance(encoded, tuple):
+                    encoded, fb_bytes, fb_mime = encoded
+                    if fb_bytes:
+                        fallbacks[index] = (fb_bytes, fb_mime)
+                        after += len(fb_bytes)
                 replacements[index] = encoded
                 after += len(encoded)
 
@@ -2930,6 +3111,29 @@ class MeshConvert(HelpMixin):
                 images[index]["bufferView"] = len(views) - 1
                 images[index].pop("uri", None)
 
+            # KTX2 fallbacks are NEW images appended at the end: the KTX2
+            # payload keeps the source index (what every prior binding and the
+            # digest sidecar reference), and appending moves no existing image
+            # or view index. The texture rebind below points plain ``source``
+            # here.
+            fallback_image_of: Dict[int, int] = {}
+            for index, (fb_bytes, fb_mime) in sorted(fallbacks.items()):
+                views.append(
+                    {"buffer": 0, "byteOffset": offset, "byteLength": len(fb_bytes)}
+                )
+                padded = fb_bytes + b"\x00" * ((4 - (len(fb_bytes) % 4)) % 4)
+                chunks.append(padded)
+                offset += len(padded)
+                fb_image: Dict[str, Any] = {
+                    "mimeType": fb_mime,
+                    "bufferView": len(views) - 1,
+                }
+                name = images[index].get("name")
+                if name:
+                    fb_image["name"] = f"{name}_fallback"
+                images.append(fb_image)
+                fallback_image_of[index] = len(images) - 1
+
             # In KTX2 mode the exempt (lightmap) images took the WebP path, so
             # the mime is per image rather than per run.
             for index in replacements:
@@ -2948,6 +3152,7 @@ class MeshConvert(HelpMixin):
                 i for i in replacements if images[i].get("mimeType") == "image/ktx2"
             }
             bound_basisu = False
+            basisu_without_fallback = False
             if webp_images or ktx2_images:
                 for t_index, texture in enumerate(gltf.get("textures") or []):
                     # Resolved through the shadow-aware walk so a re-run of
@@ -2955,15 +3160,24 @@ class MeshConvert(HelpMixin):
                     # the texture's EFFECTIVE image, not a stale plain source.
                     src = edit.image_for_texture(t_index)
                     if src in ktx2_images:
-                        # KHR binding replaces the plain ``source`` outright --
-                        # keeping a PNG fallback would double the payload --
-                        # which is what puts the extension in
-                        # ``extensionsRequired`` below. A prior WebP binding
-                        # would now point at KTX2 bytes, so it goes too.
+                        # A prior WebP binding would now point at KTX2 bytes,
+                        # so it goes. Plain ``source`` becomes the appended
+                        # core-readable fallback when one exists -- the spec's
+                        # own escape hatch, what keeps the extension out of
+                        # ``extensionsRequired`` below. Without one (fallback
+                        # disabled, or its encode failed) the source is
+                        # dropped outright and the extension must be required:
+                        # a stale source would hand a non-basisu loader KTX2
+                        # bytes labeled as something it can read.
                         extensions = texture.setdefault("extensions", {})
                         extensions.pop("EXT_texture_webp", None)
                         extensions["KHR_texture_basisu"] = {"source": src}
-                        texture.pop("source", None)
+                        fb_index = fallback_image_of.get(src)
+                        if fb_index is None:
+                            texture.pop("source", None)
+                            basisu_without_fallback = True
+                        else:
+                            texture["source"] = fb_index
                         bound_basisu = True
                     elif src in webp_images:
                         # Standard binding; plain ``source`` stays as fallback.
@@ -2989,13 +3203,21 @@ class MeshConvert(HelpMixin):
             if bound_basisu:
                 # Equivalent to ``if ktx2_images`` by construction -- the encode
                 # gate above skips every image no texture samples -- so no
-                # ``image/ktx2`` can ship without this declaration.
+                # ``image/ktx2`` can ship without this declaration. It escalates
+                # to ``extensionsRequired`` only when some binding has no
+                # core-readable fallback ``source`` (pure-delivery mode, or a
+                # fallback encode failed): with every binding backed by one,
+                # a stock importer reads the fallbacks and the file must not
+                # demand a capability it can degrade without. Never removed if
+                # already present -- a prior pure-delivery pass's bindings are
+                # still fallback-less.
                 used = gltf.setdefault("extensionsUsed", [])
                 if "KHR_texture_basisu" not in used:
                     used.append("KHR_texture_basisu")
-                required = gltf.setdefault("extensionsRequired", [])
-                if "KHR_texture_basisu" not in required:
-                    required.append("KHR_texture_basisu")
+                if basisu_without_fallback:
+                    required = gltf.setdefault("extensionsRequired", [])
+                    if "KHR_texture_basisu" not in required:
+                        required.append("KHR_texture_basisu")
 
             edit.replace_rest(new_bin)
             # Re-encoding invalidated every content address the sidecar
@@ -3325,12 +3547,14 @@ class MeshConvert(HelpMixin):
         declared in ``extensionsUsed`` only when actually applied; loaders that
         don't implement it still get a sensible clamped color.
 
-        Textures are embedded as ``data:`` URIs rather than appended to the BIN
-        chunk. That keeps the edit inside the JSON chunk — no buffer offsets to
-        recompute, which is the part of GLB surgery that silently corrupts a
-        file — at the cost of base64's ~33% overhead, which a local preview can
-        afford. Repeated paths are embedded once per session, so a map used as
-        both base colour and emissive costs one copy, not one per channel.
+        Textures are embedded as ``data:`` URIs *for the duration of the
+        session*, which keeps every edit inside the JSON chunk — no buffer
+        offsets to recompute, which is the part of GLB surgery that silently
+        corrupts a file. :meth:`_relocate_embedded_images` then appends them to
+        the BIN once on close, so the file that lands pays none of base64's
+        ~33% premium. Repeated paths are embedded once per session, so a map
+        used as both base colour and emissive costs one copy, not one per
+        channel.
 
         Parameters:
             glb: Path to a binary glTF (.glb), modified in place, or an open
@@ -3498,7 +3722,9 @@ class MeshConvert(HelpMixin):
                 return out
 
             refs = _texture_refs(gltf.get("materials") or [], [])
-            live_textures = {r["index"] for r in refs if 0 <= r["index"] < len(textures)}
+            live_textures = {
+                r["index"] for r in refs if 0 <= r["index"] < len(textures)
+            }
             texture_map = {}
             for old in range(len(textures)):
                 if old in live_textures:
@@ -3612,7 +3838,9 @@ class MeshConvert(HelpMixin):
             for old in texture_map:
                 texture = textures[old]
                 if isinstance(texture.get("source"), int):
-                    texture["source"] = image_map.get(texture["source"], texture["source"])
+                    texture["source"] = image_map.get(
+                        texture["source"], texture["source"]
+                    )
                 for ext in (texture.get("extensions") or {}).values():
                     if isinstance(ext, dict) and isinstance(ext.get("source"), int):
                         ext["source"] = image_map.get(ext["source"], ext["source"])
@@ -3658,17 +3886,19 @@ class MeshConvert(HelpMixin):
 
     @classmethod
     def _embed_image(cls, edit: "MeshConvert.GlbEdit", path: str) -> Optional[int]:
-        """Embed *path* as a ``data:`` URI image and return its texture index.
+        """Embed *path* as an image and return its texture index.
 
-        Shared by every channel writer here. Data URIs keep the whole edit
-        inside the JSON chunk -- no buffer offsets to recompute, which is the
-        part of GLB surgery that silently corrupts a file -- at the cost of
-        base64's ~33% overhead, which a local preview can afford.
+        Shared by every channel writer here. The payload is staged as a
+        ``data:`` URI so the whole edit stays inside the JSON chunk -- no
+        buffer offsets to recompute, which is the part of GLB surgery that
+        silently corrupts a file -- and
+        :meth:`_relocate_embedded_images` moves it into the BIN when the
+        session closes, so base64's ~33% premium never reaches disk.
 
         Repeated paths resolve to one image via the session's embed cache, so
         the sharing now spans every writer on that session rather than only the
         one call -- a map assigned as both base colour and emissive used to be
-        base64'd into the file twice.
+        written into the file twice.
         """
         cache = edit.embedded
         if path in cache:
@@ -3746,13 +3976,17 @@ class MeshConvert(HelpMixin):
         textures = gltf.setdefault("textures", [])
         samplers = gltf.setdefault("samplers", [])
         data = base64.b64encode(raw).decode("ascii")
-        images.append(
-            {
-                "name": name or os.path.basename(cache_key),
-                "uri": f"data:{mime};base64,{data}",
-                "mimeType": mime,
-            }
-        )
+        entry = {
+            "name": name or os.path.basename(cache_key),
+            "uri": f"data:{mime};base64,{data}",
+            "mimeType": mime,
+        }
+        images.append(entry)
+        # Carried as a data URI only until the session closes: writing it here
+        # keeps every editor's edit inside the JSON chunk (no offsets to
+        # recompute mid-session), and the single relocation pass on close moves
+        # it into the BIN. See :meth:`_relocate_embedded_images`.
+        edit.pending_images.append(entry)
         # Registered so a LATER embed of the same bytes under a different source
         # path reuses this one instead of adding a third copy.
         digests.setdefault(digest, len(images) - 1)
@@ -3767,7 +4001,18 @@ class MeshConvert(HelpMixin):
             if sampler_index is None:
                 samplers.append(dict(wanted))
                 sampler_index = len(samplers) - 1
-        textures.append({"source": len(images) - 1, "sampler": sampler_index})
+        # Named for the same reason the image is: FBX2glTF names the textures it
+        # writes, so an unnamed one is a tell that a later pass added it -- and
+        # the name is the only human-readable handle on which map a slot samples
+        # when someone opens the deliverable to check it.
+        texture: Dict[str, Any] = {
+            "source": len(images) - 1,
+            "sampler": sampler_index,
+        }
+        image_name = entry.get("name")
+        if image_name:
+            texture["name"] = os.path.splitext(image_name)[0]
+        textures.append(texture)
         cache[cache_key] = len(textures) - 1
         return cache[cache_key]
 

@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-19_
+_Generated: 2026-08-20_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -269,7 +269,7 @@ _Generated: 2026-08-19_
 - `class TableMixin`
   - methods: format_table, log_table, log_group
 - `class LoggingMixin(TableMixin)`
-  - methods: logger, class_logger, logging, set_log_level, set_log_file, enable_log_buffer, disable_log_buffer, clear_log_buffer, dump_log
+  - methods: logger, use_logger, class_logger, logging, set_log_level, set_log_file, enable_log_buffer, disable_log_buffer, clear_log_buffer, dump_log
 
 ### `core_utils/module_reloader.py` — Helpers for hot-reloading packages and their submodules.
 - `reload_package(package: ModuleRef, **kwargs) -> ReloadReport`

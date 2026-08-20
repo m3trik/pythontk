@@ -3,6 +3,7 @@
 """
 Refactored tests for MapFactory using the public API (Strategy Pattern).
 """
+
 import os
 import tempfile
 import shutil
@@ -163,9 +164,7 @@ class TestMapFactoryRefactored(unittest.TestCase):
         # Check the produced file is RGB (3-channel default) and channels are M/R/AO.
         from PIL import Image
 
-        mrao_path = next(
-            p for p in results if "MRAO" in os.path.basename(p)
-        )
+        mrao_path = next(p for p in results if "MRAO" in os.path.basename(p))
         with Image.open(mrao_path) as img:
             self.assertEqual(img.mode, "RGB")
 
@@ -183,9 +182,7 @@ class TestMapFactoryRefactored(unittest.TestCase):
 
         from PIL import Image
 
-        mrao_path = next(
-            p for p in results if "MRAO" in os.path.basename(p)
-        )
+        mrao_path = next(p for p in results if "MRAO" in os.path.basename(p))
         with Image.open(mrao_path) as img:
             self.assertEqual(img.mode, "RGBA")
 
@@ -341,9 +338,7 @@ class TestMapFactoryRefactored(unittest.TestCase):
             MapFactory._supplement_sets_from_dir(sets, self.test_files_dir)
 
             base_colors = [
-                p
-                for p in sets[base]
-                if MapFactory.resolve_map_type(p) == "Base_Color"
+                p for p in sets[base] if MapFactory.resolve_map_type(p) == "Base_Color"
             ]
             self.assertEqual(len(base_colors), 1)
             self.assertEqual(
@@ -408,9 +403,7 @@ class TestMapFactoryRefactored(unittest.TestCase):
                 ignored_patterns=[],
                 callback=lambda *a: None,
             )
-            self.assertEqual(
-                source, before, "source list was mutated by discovery"
-            )
+            self.assertEqual(source, before, "source list was mutated by discovery")
         finally:
             shutil.rmtree(disc, ignore_errors=True)
 
@@ -432,9 +425,7 @@ class TestMapFactoryRefactored(unittest.TestCase):
         """Regression: processing a Normal map must not consume a provided
         Height map — Height has its own engine slot (parallax/displacement)."""
         subset = [
-            p
-            for p in self.texture_paths
-            if "Normal_OpenGL" in p or "Height" in p
+            p for p in self.texture_paths if "Normal_OpenGL" in p or "Height" in p
         ]
         results = MapFactory.prepare_maps(
             subset, output_dir=self.output_dir, rename=True
@@ -449,9 +440,7 @@ class TestMapFactoryRefactored(unittest.TestCase):
     def test_opacity_passes_through_when_not_packed(self):
         """Regression: with albedo_transparency off, a separate Opacity map
         must pass through instead of being silently consumed."""
-        subset = [
-            p for p in self.texture_paths if "BaseColor" in p or "Opacity" in p
-        ]
+        subset = [p for p in self.texture_paths if "BaseColor" in p or "Opacity" in p]
         results = MapFactory.prepare_maps(
             subset, output_dir=self.output_dir, rename=True
         )
@@ -590,8 +579,13 @@ class TestMapFactoryExtended(unittest.TestCase):
 
         self.assertEqual(MapFactory.resolve_color_space("rock_BaseColor.png"), "sRGB")
         self.assertEqual(MapFactory.resolve_color_space("rock_Emissive.png"), "sRGB")
-        for data_map in ("rock_Normal.png", "rock_Roughness.png", "rock_Metallic.png",
-                         "rock_Height.png", "rock_AO.png"):
+        for data_map in (
+            "rock_Normal.png",
+            "rock_Roughness.png",
+            "rock_Metallic.png",
+            "rock_Height.png",
+            "rock_AO.png",
+        ):
             self.assertEqual(
                 MapFactory.resolve_color_space(data_map), "Linear", msg=data_map
             )
@@ -1075,8 +1069,11 @@ class TestTextureProcessorLogic(unittest.TestCase):
         bump = PILImage.fromarray((h * 255).astype(np.uint8), "L")
 
         nm = MapFactory.convert_bump_to_normal(
-            bump, output_format="opengl", save=False,
-            smooth_filter=False, intensity=30.0,
+            bump,
+            output_format="opengl",
+            save=False,
+            smooth_filter=False,
+            intensity=30.0,
         )
         arr = np.array(nm).astype(float)
         g_top = arr[: n // 2 - 10, :, 1].mean()
@@ -1086,25 +1083,71 @@ class TestTextureProcessorLogic(unittest.TestCase):
         # Generator and detector must agree.
         self.assertEqual(MapFactory.detect_normal_map_format(nm), "OpenGL")
         nm_dx = MapFactory.convert_bump_to_normal(
-            bump, output_format="directx", save=False,
-            smooth_filter=False, intensity=30.0,
+            bump,
+            output_format="directx",
+            save=False,
+            smooth_filter=False,
+            intensity=30.0,
         )
         self.assertEqual(MapFactory.detect_normal_map_format(nm_dx), "DirectX")
 
-        # Real-world labeled asset. The detector's internal 512px thumbnail
-        # dilutes this map's correlation to ~-0.09 (full-res it is -0.19),
-        # so probe with a low threshold — the assertion is about the SIGN
-        # (the bug was a sign flip that read every real OpenGL map as
-        # DirectX-leaning).
+        # Real-world labeled asset. The assertion is about the SIGN (the bug was
+        # a sign flip that read every real OpenGL map as DirectX-leaning), so it
+        # probes below the conservative default threshold. It used to need 0.05
+        # -- noise level, per the parameter's own docstring -- because the
+        # internal thumbnail low-passed away the detail the statistic reads;
+        # native-resolution escalation doubled the measured correlation
+        # (-0.094 -> -0.189), so 0.15 is now clear of the noise floor. This map
+        # still abstains at the 0.25 default, correctly: shallow relief over a
+        # large neutral field is genuinely weak evidence.
         asset = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            "test_assets", "imgtk_test", "im_Normal_OpenGL.png",
+            "test_assets",
+            "imgtk_test",
+            "im_Normal_OpenGL.png",
         )
         if os.path.exists(asset):
             self.assertEqual(
-                MapFactory.detect_normal_map_format(asset, threshold=0.05),
+                MapFactory.detect_normal_map_format(asset, threshold=0.15),
                 "OpenGL",
             )
+
+    def test_fine_detail_survives_the_downsample_shortcut(self):
+        """A low-amplitude, high-frequency map must not read as indeterminate.
+
+        The detector thumbnails to 512 before correlating, which is a low-pass
+        filter over exactly the gradients the integrability statistic measures.
+        On maps whose relief is fine and shallow that erases the signal:
+        measured on two real OpenGL bakes, r fell from -0.368 to -0.105
+        (a 2048 production map) and from -0.19 to -0.09 (the 4096 asset above),
+        both dropping under the 0.25 threshold and returning None -- a
+        confident, correct answer downgraded to "don't know" by an
+        optimization. The shortcut stays for the common case; an inconclusive
+        result now re-reads at native resolution before giving up.
+        """
+        import numpy as np
+        from PIL import Image as PILImage
+
+        # Fine, shallow relief on a 2048 map: detail at a spatial frequency the
+        # 4x reduction cannot represent. Unambiguous at native resolution
+        # (r = -0.999); at 512 it averages to r = +0.012 -- indeterminate, and
+        # on the wrong side of zero.
+        n = 2048
+        yy, xx = np.mgrid[0:n, 0:n]
+        h = (np.sin(xx * 1.4) * np.cos(yy * 1.1)) * 0.5 + 0.5
+        bump = PILImage.fromarray((h * 255).astype(np.uint8), "L")
+        nm = MapFactory.convert_bump_to_normal(
+            bump,
+            output_format="opengl",
+            save=False,
+            smooth_filter=False,
+            intensity=2.0,
+        )
+        self.assertEqual(
+            MapFactory.detect_normal_map_format(nm),
+            "OpenGL",
+            "fine detail was averaged away by the 512px shortcut",
+        )
 
     def test_bump_to_normal_conversion_reads_registered_source(self):
         """Regression: the Bump/Height->Normal registration loop late-bound
@@ -1250,7 +1293,9 @@ class TestArchiveSupersededOriginals(unittest.TestCase):
 
     def _names(self):
         return sorted(
-            f for f in os.listdir(self.test_dir) if os.path.isfile(os.path.join(self.test_dir, f))
+            f
+            for f in os.listdir(self.test_dir)
+            if os.path.isfile(os.path.join(self.test_dir, f))
         )
 
     def test_aliased_original_is_archived_not_duplicated(self):
@@ -1273,7 +1318,9 @@ class TestArchiveSupersededOriginals(unittest.TestCase):
             "the superseded alias was left beside its canonical copy",
         )
         self.assertTrue(
-            os.path.isfile(os.path.join(self.test_dir, "_originals", "mat_BaseMap.png")),
+            os.path.isfile(
+                os.path.join(self.test_dir, "_originals", "mat_BaseMap.png")
+            ),
             "the superseded original never reached the archive folder",
         )
 

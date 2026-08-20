@@ -869,8 +869,13 @@ class PreviewDeliverer(Deliverer):
         94.7 MB -> ~15 MB, and its failure must cost quality, never the push --
         which is what the runner's per-pass guard buys.
         """
+        # ktx2_fallback=False: this GLB exists to be streamed to the viewer
+        # page, never re-imported -- the core-readable fallback twins the
+        # optimizer embeds by default would spend the very bytes this pass
+        # exists to reclaim (the bundled page wires KTX2Loader, so basisu-only
+        # is safe here).
         _mesh_convert().optimize_glb_textures(
-            context.glb, image_format=context.texture_format
+            context.glb, image_format=context.texture_format, ktx2_fallback=False
         )
 
     def deliver(

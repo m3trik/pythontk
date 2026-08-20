@@ -244,9 +244,9 @@ class MapOptimizer(HelpMixin):
         """Turn a user-facing "max size" mode into :meth:`assess` / :meth:`optimize_map` kwargs.
 
         The one place a size dial is interpreted, so every caller offering
-        one -- the mayatk and blendertk scene exporters' Max Texture Size
-        rows, and anything else that grows one -- answers it identically
-        instead of copying the rule:
+        one -- the mayatk and blendertk scene exporters' Optimize Textures
+        combo (its "Optimize + Max ..." ceiling half), and anything else that
+        grows one -- answers it identically instead of copying the rule:
 
         - falsy / ``"OFF"`` -- no clamp; a template's budget stays ADVISORY
           (``assess`` reports it in ``warnings`` and nothing resamples).
