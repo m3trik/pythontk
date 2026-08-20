@@ -1681,6 +1681,35 @@ class LoggingMixin(TableMixin):
 
         return cls._logger
 
+    def use_logger(self, logger: Optional[internal_logging.Logger]) -> None:
+        """Route THIS instance's log output through *logger*.
+
+        ``self.logger`` is normally the class-shared logger, so a reusable
+        component (a manager, an engine) embedded in a host tool logs to its
+        own channel -- invisible to the host's sinks (e.g. a panel text
+        widget wired via ``setup_logging_redirect``). Adopting the host's
+        logger sends every ``self.logger.*`` call on this instance through
+        the host's handlers and level instead, while every other instance of
+        the class keeps the shared class logger.
+
+        Instance-scoped only: class-level entry points (``cls.set_log_level``,
+        ``cls.set_log_file``, ...) still address the class logger. The
+        override rides normal attribute lookup shadowing the non-data
+        ``ClassProperty`` descriptor, so it requires an instance ``__dict__``.
+        The adopted logger must support whatever this class calls on it: any
+        stdlib logger covers the standard methods, but the ``LoggerExt``
+        extras (``log_group``, ``log_link``, ``success``, ...) exist only on
+        patched loggers such as another mixin class's ``.logger``.
+
+        Parameters:
+            logger: The host logger to adopt, or ``None`` to revert to the
+                shared class logger.
+        """
+        if logger is None:
+            self.__dict__.pop("logger", None)
+        else:
+            self.__dict__["logger"] = logger
+
     @ClassProperty
     def class_logger(cls) -> internal_logging.Logger:
         if cls.__dict__.get("_class_logger") is None:

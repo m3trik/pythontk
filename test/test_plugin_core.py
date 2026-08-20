@@ -302,7 +302,10 @@ class TestImportOps(unittest.TestCase):
 
         del sys.modules["fake_rpc_plugin"]
         import fake_rpc_plugin as reloaded
-        import fake_rpc_plugin.ops  # noqa: F401 -- cached; side effect skipped
+
+        # The re-import IS the assertion: F811 flags it as a redefinition, which
+        # is exactly the baseline being documented -- cached, side effect skipped.
+        import fake_rpc_plugin.ops  # noqa: F401, F811
 
         self.assertEqual(reloaded.REGISTERED, [])
 

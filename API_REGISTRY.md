@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-19_
+_Generated: 2026-08-20_
 
 ## Index
 
@@ -522,7 +522,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 ``MapFactory`` -- the texture-map workflow orchestrator.
 
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L63)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L64)** — Refactored factory with pluggable workflow system.
   - `MapFactory.map_types(cls) -> Dict[str, Tuple[str, ...]]` — ``{canonical_key: (canonical, *aliases)}`` for every registered map.
   - `MapFactory.passthrough_maps(cls) -> List[str]` — Maps passed through to the output when no handler consumes them.
   - `MapFactory.packed_grayscale_maps(cls) -> List[str]` — Maps that scale down by ``mask_map_scale`` (packed/mask data).
@@ -703,7 +703,7 @@ Plan, assess, and apply map (texture) optimizations.
 - **[`class MapType`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L55)** — Defines the properties of a texture map type.
   - `MapType.compose_aliases(stems: Tuple[str, ...], tags: Tuple[str, ...], separators: Tuple[str, ...] = ('_', '')) -> List[str]` *(static)* — Every ``<stem><separator><tag>`` spelling, order-preserving and de-duped.
   - `MapType.carried_types(self, include_optional: bool = False) -> List[str]` — The map types this packed map's channels carry.
-- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L196)** — Central registry for map type definitions.
+- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L199)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.register(self, map_type: MapType, overwrite: bool = False) -> MapType` — Register a new map type (or replace an existing one) at runtime.
   - `MapRegistry.counterpart_normal_spelling(cls, spelling: str, dst_type: str) -> str` *(class)* — The same normal-map spelling, written for the other handedness convention.
@@ -965,6 +965,7 @@ Class-scoped logging toolkit.
   - `TableMixin.log_group(self, title: str, items: List[str], level: str = 'info') -> None` — Log a titled list of related lines as a single record.
 - **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1632)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger`
+  - `LoggingMixin.use_logger(self, logger: Optional[internal_logging.Logger]) -> None` — Route THIS instance's log output through *logger*.
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger`
   - `LoggingMixin.logging(cls)` — Access to Python's internal logging module (aliased).
   - `LoggingMixin.set_log_level(cls, level: int | str)` *(class)* — Set log level for the class logger and its handlers.
@@ -1319,7 +1320,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
-  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
+  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.suspect_orm_materials(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]` *(class)* — Materials whose delivered ORM binding this pipeline never validated.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
@@ -1492,13 +1493,13 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 
 Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
 
-- **[`class TransferTable`](pythontk/pythontk/geo_utils/uv_transfer.py#L76)** — The per-texel correspondence from a target layout back to its source.
+- **[`class TransferTable`](pythontk/pythontk/geo_utils/uv_transfer.py#L77)** — The per-texel correspondence from a target layout back to its source.
   - `TransferTable.passes(self) -> int` *(property)*
   - `TransferTable.nbytes(self) -> int` *(property)*
   - `TransferTable.coverage(self) -> 'np.ndarray'` *(property)* — Fraction of sub-samples covered per texel, ``float32`` in [0, 1].
   - `TransferTable.mask(self) -> 'np.ndarray'` *(property)* — Bool: texels touched by any sub-sample (what the output owns).
   - `TransferTable.frames(self) -> 'np.ndarray'` *(property)* — ``(N, 2, 2)`` tangent-frame rotations, source -> target, per triangle.
-- **[`class UvTransfer(HelpMixin)`](pythontk/pythontk/geo_utils/uv_transfer.py#L129)** — Remap textures between two UV layouts of the same triangles (see module doc).
+- **[`class UvTransfer(HelpMixin)`](pythontk/pythontk/geo_utils/uv_transfer.py#L130)** — Remap textures between two UV layouts of the same triangles (see module doc).
   - `UvTransfer.build(cls, src_tris, dst_tris, size: Union[int, Tuple[int, int]], *, supersample: int = 2, source_ids=None) -> TransferTable` *(class)* — Rasterize *dst_tris* and record, per texel, the source UV it maps to.
   - `UvTransfer.transfer(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Remap *sources* through *table*.
   - `UvTransfer.transfer_normals(cls, table: TransferTable, sources, *, convention: str = 'opengl', source_masks=None, bilinear: bool = True, value_range: Tuple[float, float] = (0.0, 255.0)) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Remap tangent-space normal maps, re-expressing XY in the target frame.
@@ -1771,7 +1772,7 @@ Localhost static-file server for live browser / WebXR previews.
 - **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L701)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L1023)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L1028)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
   - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).

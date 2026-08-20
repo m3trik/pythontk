@@ -10,6 +10,7 @@ Run with:
     python -m pytest test_mesh_convert.py -v
     python test_mesh_convert.py
 """
+
 import hashlib
 import io
 import json
@@ -40,24 +41,33 @@ class TestResolveBinary(unittest.TestCase):
 
     def test_returns_managed_path_when_in_catalog(self):
         managed = os.path.join(self.tmp, "FBX2glTF.exe")
-        with patch("shutil.which", return_value=None), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=managed,
+        with (
+            patch("shutil.which", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=managed,
+            ),
         ):
             self.assertEqual(MeshConvert.resolve_binary(), managed)
 
     def test_raises_when_missing_and_required(self):
-        with patch("shutil.which", return_value=None), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
+        with (
+            patch("shutil.which", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
         ):
             with self.assertRaises(FileNotFoundError):
                 MeshConvert.resolve_binary(required=True, auto_install=False)
 
     def test_returns_none_when_missing_and_not_required(self):
-        with patch("shutil.which", return_value=None), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
+        with (
+            patch("shutil.which", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
         ):
             self.assertIsNone(
                 MeshConvert.resolve_binary(required=False, auto_install=False)
@@ -65,12 +75,15 @@ class TestResolveBinary(unittest.TestCase):
 
     def test_no_tty_with_prompt_refuses_install(self):
         """prompt=True without a TTY should NOT silently install."""
-        with patch("shutil.which", return_value=None), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.ensure"
-        ) as ensure, patch("sys.stdin") as stdin:
+        with (
+            patch("shutil.which", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
+            patch("pythontk.core_utils.app_installer.AppInstaller.ensure") as ensure,
+            patch("sys.stdin") as stdin,
+        ):
             stdin.isatty.return_value = False
             with self.assertRaises(FileNotFoundError) as cm:
                 MeshConvert.resolve_binary(
@@ -82,37 +95,53 @@ class TestResolveBinary(unittest.TestCase):
     def test_no_tty_without_prompt_installs_silently(self):
         """prompt=False allows non-interactive install (CI/automation)."""
         installed = os.path.join(self.tmp, "FBX2glTF.exe")
-        with patch("shutil.which", return_value=None), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.ensure",
-            return_value=installed,
-        ) as ensure, patch("sys.stdin") as stdin:
+        with (
+            patch("shutil.which", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.ensure",
+                return_value=installed,
+            ) as ensure,
+            patch("sys.stdin") as stdin,
+        ):
             stdin.isatty.return_value = False
             result = MeshConvert.resolve_binary(auto_install=True, prompt=False)
             self.assertEqual(result, installed)
             ensure.assert_called_once()
 
     def test_prompt_decline_raises_when_required(self):
-        with patch("shutil.which", return_value=None), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
-        ), patch("sys.stdin") as stdin:
+        with (
+            patch("shutil.which", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
+            patch("sys.stdin") as stdin,
+        ):
             stdin.isatty.return_value = True
             stdin.readline.return_value = "n\n"
             with self.assertRaises(FileNotFoundError):
-                MeshConvert.resolve_binary(auto_install=True, prompt=True, required=True)
+                MeshConvert.resolve_binary(
+                    auto_install=True, prompt=True, required=True
+                )
 
     def test_prompt_accept_triggers_install(self):
         installed = os.path.join(self.tmp, "FBX2glTF.exe")
-        with patch("shutil.which", return_value=None), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.ensure",
-            return_value=installed,
-        ) as ensure, patch("sys.stdin") as stdin:
+        with (
+            patch("shutil.which", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.ensure",
+                return_value=installed,
+            ) as ensure,
+            patch("sys.stdin") as stdin,
+        ):
             stdin.isatty.return_value = True
             stdin.readline.return_value = "y\n"
             result = MeshConvert.resolve_binary(auto_install=True, prompt=True)
@@ -169,9 +198,10 @@ class TestFbxToGlb(unittest.TestCase):
     def test_default_dst_derived_from_src(self):
         expected_dst = os.path.join(self.tmp, "model.glb")
         captured = {}
-        with patch.object(
-            MeshConvert, "resolve_binary", return_value=self.fake_bin
-        ), patch("subprocess.run", side_effect=self._run_simulator(captured)):
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=self._run_simulator(captured)),
+        ):
             result = MeshConvert.fbx_to_glb(self.src, auto_install=False)
             self.assertEqual(result, expected_dst)
             self.assertTrue(os.path.isfile(expected_dst))
@@ -179,18 +209,20 @@ class TestFbxToGlb(unittest.TestCase):
     def test_dst_glb_extension_appended_if_missing(self):
         captured = {}
         dst_no_ext = os.path.join(self.tmp, "out")
-        with patch.object(
-            MeshConvert, "resolve_binary", return_value=self.fake_bin
-        ), patch("subprocess.run", side_effect=self._run_simulator(captured)):
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=self._run_simulator(captured)),
+        ):
             result = MeshConvert.fbx_to_glb(self.src, dst_no_ext, auto_install=False)
             self.assertEqual(result, dst_no_ext + ".glb")
 
     def test_command_uses_input_output_binary_flags(self):
         dst = os.path.join(self.tmp, "out.glb")
         captured = {}
-        with patch.object(
-            MeshConvert, "resolve_binary", return_value=self.fake_bin
-        ), patch("subprocess.run", side_effect=self._run_simulator(captured)):
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=self._run_simulator(captured)),
+        ):
             MeshConvert.fbx_to_glb(self.src, dst, auto_install=False)
 
         cmd = captured["cmd"]
@@ -208,9 +240,10 @@ class TestFbxToGlb(unittest.TestCase):
     def test_extra_args_forwarded(self):
         dst = os.path.join(self.tmp, "out.glb")
         captured = {}
-        with patch.object(
-            MeshConvert, "resolve_binary", return_value=self.fake_bin
-        ), patch("subprocess.run", side_effect=self._run_simulator(captured)):
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=self._run_simulator(captured)),
+        ):
             MeshConvert.fbx_to_glb(
                 self.src, dst, auto_install=False, extra_args=["--draco"]
             )
@@ -218,12 +251,13 @@ class TestFbxToGlb(unittest.TestCase):
 
     def test_subprocess_failure_raises(self):
         dst = os.path.join(self.tmp, "out.glb")
-        with patch.object(
-            MeshConvert, "resolve_binary", return_value=self.fake_bin
-        ), patch(
-            "subprocess.run",
-            return_value=subprocess.CompletedProcess(
-                ["x"], 1, stdout="", stderr="boom"
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    ["x"], 1, stdout="", stderr="boom"
+                ),
             ),
         ):
             with self.assertRaises(RuntimeError) as cm:
@@ -232,11 +266,14 @@ class TestFbxToGlb(unittest.TestCase):
 
     def test_subprocess_zero_exit_but_no_output_raises(self):
         dst = os.path.join(self.tmp, "out.glb")
-        with patch.object(
-            MeshConvert, "resolve_binary", return_value=self.fake_bin
-        ), patch(
-            "subprocess.run",
-            return_value=subprocess.CompletedProcess(["x"], 0, stdout="", stderr=""),
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    ["x"], 0, stdout="", stderr=""
+                ),
+            ),
         ):
             with self.assertRaises(RuntimeError) as cm:
                 MeshConvert.fbx_to_glb(self.src, dst, auto_install=False)
@@ -244,11 +281,12 @@ class TestFbxToGlb(unittest.TestCase):
 
     def test_timeout_raises_runtime_error(self):
         dst = os.path.join(self.tmp, "out.glb")
-        with patch.object(
-            MeshConvert, "resolve_binary", return_value=self.fake_bin
-        ), patch(
-            "subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd=["x"], timeout=1),
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["x"], timeout=1),
+            ),
         ):
             with self.assertRaises(RuntimeError) as cm:
                 MeshConvert.fbx_to_glb(self.src, dst, auto_install=False, timeout=1)
@@ -257,9 +295,10 @@ class TestFbxToGlb(unittest.TestCase):
     def test_timeout_kwarg_forwarded_to_subprocess(self):
         dst = os.path.join(self.tmp, "out.glb")
         captured = {}
-        with patch.object(
-            MeshConvert, "resolve_binary", return_value=self.fake_bin
-        ), patch("subprocess.run", side_effect=self._run_simulator(captured)):
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=self._run_simulator(captured)),
+        ):
             MeshConvert.fbx_to_glb(self.src, dst, auto_install=False, timeout=42)
         self.assertEqual(captured["kwargs"].get("timeout"), 42)
 
@@ -278,7 +317,9 @@ class TestCheckGlbMaterials(unittest.TestCase):
         from PIL import Image
 
         if mode == "RGBA":
-            im = Image.new("RGBA", size, (200, 100, 50, alpha if alpha is not None else 255))
+            im = Image.new(
+                "RGBA", size, (200, 100, 50, alpha if alpha is not None else 255)
+            )
         elif mode == "RGB":
             im = Image.new("RGB", size, (200, 100, 50))
         else:
@@ -296,7 +337,9 @@ class TestCheckGlbMaterials(unittest.TestCase):
         bin_chunks = []
         offset = 0
         for blob in image_blobs:
-            buffer_views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(blob)})
+            buffer_views.append(
+                {"buffer": 0, "byteOffset": offset, "byteLength": len(blob)}
+            )
             bin_chunks.append(blob)
             # 4-byte align
             pad = (4 - (len(blob) % 4)) % 4
@@ -319,7 +362,9 @@ class TestCheckGlbMaterials(unittest.TestCase):
         pad_json = (4 - (len(json_bytes) % 4)) % 4
         json_bytes += b" " * pad_json
 
-        header = struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(json_bytes) + 8 + len(bin_data))
+        header = struct.pack(
+            "<4sII", b"glTF", 2, 12 + 8 + len(json_bytes) + 8 + len(bin_data)
+        )
         json_chunk = struct.pack("<I4s", len(json_bytes), b"JSON") + json_bytes
         bin_chunk = struct.pack("<I4s", len(bin_data), b"BIN\x00") + bin_data
         return header + json_chunk + bin_chunk
@@ -335,11 +380,13 @@ class TestCheckGlbMaterials(unittest.TestCase):
         blob = self._png_bytes("RGBA", alpha=255)
         path = self._write_glb(
             "opaque_blend.glb",
-            materials=[{
-                "name": "Body_base",
-                "alphaMode": "BLEND",
-                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
-            }],
+            materials=[
+                {
+                    "name": "Body_base",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png", "name": "color"}],
             textures=[{"source": 0}],
             image_blobs=[blob],
@@ -353,6 +400,7 @@ class TestCheckGlbMaterials(unittest.TestCase):
         """Texture is RGBA with varying alpha → genuine transparency, no flag."""
         from io import BytesIO
         from PIL import Image
+
         im = Image.new("RGBA", (4, 4))
         for y in range(4):
             for x in range(4):
@@ -361,11 +409,13 @@ class TestCheckGlbMaterials(unittest.TestCase):
         im.save(buf, format="PNG")
         path = self._write_glb(
             "real_blend.glb",
-            materials=[{
-                "name": "Glass",
-                "alphaMode": "BLEND",
-                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
-            }],
+            materials=[
+                {
+                    "name": "Glass",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[buf.getvalue()],
@@ -377,11 +427,13 @@ class TestCheckGlbMaterials(unittest.TestCase):
         blob = self._png_bytes("RGBA", alpha=255)
         path = self._write_glb(
             "opaque.glb",
-            materials=[{
-                "name": "Plain",
-                "alphaMode": "OPAQUE",
-                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
-            }],
+            materials=[
+                {
+                    "name": "Plain",
+                    "alphaMode": "OPAQUE",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[blob],
@@ -393,11 +445,13 @@ class TestCheckGlbMaterials(unittest.TestCase):
         blob = self._png_bytes("RGB")
         path = self._write_glb(
             "no_alpha.glb",
-            materials=[{
-                "name": "RGBish",
-                "alphaMode": "BLEND",  # weird but possible
-                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
-            }],
+            materials=[
+                {
+                    "name": "RGBish",
+                    "alphaMode": "BLEND",  # weird but possible
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[blob],
@@ -409,12 +463,14 @@ class TestCheckGlbMaterials(unittest.TestCase):
         blob = self._png_bytes("RGBA", alpha=255)
         path = self._write_glb(
             "mask.glb",
-            materials=[{
-                "name": "Leaf",
-                "alphaMode": "MASK",
-                "alphaCutoff": 0.5,
-                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
-            }],
+            materials=[
+                {
+                    "name": "Leaf",
+                    "alphaMode": "MASK",
+                    "alphaCutoff": 0.5,
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[blob],
@@ -429,14 +485,16 @@ class TestCheckGlbMaterials(unittest.TestCase):
         blob = self._png_bytes("RGBA", alpha=255)
         path = self._write_glb(
             "factor_alpha.glb",
-            materials=[{
-                "name": "TintedGlass",
-                "alphaMode": "BLEND",
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [1.0, 1.0, 1.0, 0.4],
-                    "baseColorTexture": {"index": 0},
-                },
-            }],
+            materials=[
+                {
+                    "name": "TintedGlass",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [1.0, 1.0, 1.0, 0.4],
+                        "baseColorTexture": {"index": 0},
+                    },
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[blob],
@@ -449,14 +507,16 @@ class TestCheckGlbMaterials(unittest.TestCase):
         blob = self._png_bytes("RGBA", alpha=255)
         path = self._write_glb(
             "factor_one.glb",
-            materials=[{
-                "name": "Body",
-                "alphaMode": "BLEND",
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
-                    "baseColorTexture": {"index": 0},
-                },
-            }],
+            materials=[
+                {
+                    "name": "Body",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                        "baseColorTexture": {"index": 0},
+                    },
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[blob],
@@ -470,16 +530,27 @@ class TestCheckGlbMaterials(unittest.TestCase):
 
         blend_path = self._write_glb(
             "blend_reason.glb",
-            materials=[{"name": "B", "alphaMode": "BLEND",
-                        "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+            materials=[
+                {
+                    "name": "B",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[blob],
         )
         mask_path = self._write_glb(
             "mask_reason.glb",
-            materials=[{"name": "M", "alphaMode": "MASK", "alphaCutoff": 0.5,
-                        "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+            materials=[
+                {
+                    "name": "M",
+                    "alphaMode": "MASK",
+                    "alphaCutoff": 0.5,
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[blob],
@@ -500,10 +571,16 @@ class TestCheckGlbMaterials(unittest.TestCase):
         path = self._write_glb(
             "shared_image.glb",
             materials=[
-                {"name": "A", "alphaMode": "BLEND",
-                 "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
-                {"name": "B", "alphaMode": "BLEND",
-                 "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+                {
+                    "name": "A",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                },
+                {
+                    "name": "B",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                },
             ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
@@ -548,6 +625,7 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
     def _varying_alpha_png():
         from io import BytesIO
         from PIL import Image
+
         im = Image.new("RGBA", (4, 4))
         for y in range(4):
             for x in range(4):
@@ -560,6 +638,7 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
     def _opaque_alpha_png():
         from io import BytesIO
         from PIL import Image
+
         im = Image.new("RGBA", (4, 4), (200, 100, 50, 255))
         buf = BytesIO()
         im.save(buf, format="PNG")
@@ -568,12 +647,14 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
     def _write_glb(self, name, materials, images, textures, image_blobs):
         path = os.path.join(self.tmp, name)
         with open(path, "wb") as f:
-            f.write(TestCheckGlbMaterials._build_glb(
-                materials=materials,
-                images=images,
-                textures=textures,
-                image_blobs=image_blobs,
-            ))
+            f.write(
+                TestCheckGlbMaterials._build_glb(
+                    materials=materials,
+                    images=images,
+                    textures=textures,
+                    image_blobs=image_blobs,
+                )
+            )
         return path
 
     @staticmethod
@@ -589,14 +670,16 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
         """The bug pattern: BLEND + baseColorFactor[3]=0 + varying-alpha texture."""
         path = self._write_glb(
             "buggy.glb",
-            materials=[{
-                "name": "TREELINE_D",
-                "alphaMode": "BLEND",
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
-                    "baseColorTexture": {"index": 0},
-                },
-            }],
+            materials=[
+                {
+                    "name": "TREELINE_D",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                        "baseColorTexture": {"index": 0},
+                    },
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[self._varying_alpha_png()],
@@ -611,15 +694,17 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
         """Same bug under alphaMode=MASK."""
         path = self._write_glb(
             "buggy_mask.glb",
-            materials=[{
-                "name": "FoliageMask",
-                "alphaMode": "MASK",
-                "alphaCutoff": 0.5,
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
-                    "baseColorTexture": {"index": 0},
-                },
-            }],
+            materials=[
+                {
+                    "name": "FoliageMask",
+                    "alphaMode": "MASK",
+                    "alphaCutoff": 0.5,
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                        "baseColorTexture": {"index": 0},
+                    },
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[self._varying_alpha_png()],
@@ -632,14 +717,16 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
         """alphaMode=OPAQUE never gets touched."""
         path = self._write_glb(
             "opaque.glb",
-            materials=[{
-                "name": "Plain",
-                "alphaMode": "OPAQUE",
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
-                    "baseColorTexture": {"index": 0},
-                },
-            }],
+            materials=[
+                {
+                    "name": "Plain",
+                    "alphaMode": "OPAQUE",
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                        "baseColorTexture": {"index": 0},
+                    },
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[self._varying_alpha_png()],
@@ -651,14 +738,16 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
         """Genuine partial-transparency factor must not be promoted."""
         path = self._write_glb(
             "partial.glb",
-            materials=[{
-                "name": "Glass",
-                "alphaMode": "BLEND",
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [1.0, 1.0, 1.0, 0.5],
-                    "baseColorTexture": {"index": 0},
-                },
-            }],
+            materials=[
+                {
+                    "name": "Glass",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [1.0, 1.0, 1.0, 0.5],
+                        "baseColorTexture": {"index": 0},
+                    },
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[self._varying_alpha_png()],
@@ -670,14 +759,16 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
         """Uniformly-opaque alpha (the 'check' bug) is NOT fixed by this pass."""
         path = self._write_glb(
             "uniform.glb",
-            materials=[{
-                "name": "UniformAlpha",
-                "alphaMode": "BLEND",
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
-                    "baseColorTexture": {"index": 0},
-                },
-            }],
+            materials=[
+                {
+                    "name": "UniformAlpha",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                        "baseColorTexture": {"index": 0},
+                    },
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[self._opaque_alpha_png()],
@@ -689,13 +780,15 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
         """No texture means no per-pixel alpha to recover; leave alone."""
         path = self._write_glb(
             "no_tex.glb",
-            materials=[{
-                "name": "NoTex",
-                "alphaMode": "BLEND",
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
-                },
-            }],
+            materials=[
+                {
+                    "name": "NoTex",
+                    "alphaMode": "BLEND",
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [1.0, 1.0, 1.0, 0.0],
+                    },
+                }
+            ],
             images=[],
             textures=[],
             image_blobs=[],
@@ -706,11 +799,13 @@ class TestFixGlbPhantomOpaqueAlpha(unittest.TestCase):
         """No changes → no rewrite, empty list returned, file untouched."""
         path = self._write_glb(
             "clean.glb",
-            materials=[{
-                "name": "Plain",
-                "alphaMode": "OPAQUE",
-                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
-            }],
+            materials=[
+                {
+                    "name": "Plain",
+                    "alphaMode": "OPAQUE",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
             images=[{"bufferView": 0, "mimeType": "image/png"}],
             textures=[{"source": 0}],
             image_blobs=[self._opaque_alpha_png()],
@@ -777,15 +872,18 @@ class TestBaseColorRecordHonesty(unittest.TestCase):
         # colour so the entry is still written.
         records = MeshConvert.set_glb_base_color(
             path,
-            {"Body": {"texture": os.path.join(self.tmp, "missing.png"),
-                      "color": [1.0, 0.0, 0.0]}},
+            {
+                "Body": {
+                    "texture": os.path.join(self.tmp, "missing.png"),
+                    "color": [1.0, 0.0, 0.0],
+                }
+            },
         )
         self.assertEqual(len(records), 1)
         self.assertIsNone(
             records[0]["texture"],
             "no baseColorTexture was written — the record must not claim one",
         )
-
 
 
 def _write_glb_file(path, gltf, bin_chunk=b""):
@@ -887,7 +985,19 @@ def _assert_no_dead_payload(tc, path, geometry):
         geometry,
     )
     tc.assertEqual(view.get("target"), 34962, "view attributes must survive")
-    tc.assertEqual(len(gltf["bufferViews"]), 1, "the converted ORM's view must be dropped")
+    # The displaced ORM's view must be gone, stated as the invariant that
+    # outlives the layout: nothing ships a view no accessor and no image reads.
+    # (A count was the proxy for this while embeds lived in the JSON chunk as
+    # base64; they are relocated into the BIN on close now, so the packed ORM
+    # legitimately owns a view of its own.)
+    live_views = {gltf["accessors"][0]["bufferView"]} | {
+        i["bufferView"] for i in gltf["images"] if "bufferView" in i
+    }
+    tc.assertEqual(
+        live_views,
+        set(range(len(gltf["bufferViews"]))),
+        "a bufferView shipped that nothing references",
+    )
     tc.assertEqual(gltf["buffers"][0]["byteLength"], len(blob))
     return gltf
 
@@ -1029,8 +1139,12 @@ class TestGlbEditSession(unittest.TestCase):
         # either, and the fallback is the branch that has to move the geometry.
         self.assertGreater(os.path.getsize(path), size_before)
         edit = MeshConvert._read_glb(path)
-        self.assertEqual(bytes(edit.bin_data), geometry)
-        self.assertTrue(edit.gltf["images"][0]["uri"].startswith("data:image/png"))
+        # The geometry keeps its bytes AND its place at the front of the BIN --
+        # the embed is appended behind it, never interleaved.
+        self.assertEqual(bytes(edit.bin_data)[: len(geometry)], geometry)
+        image = edit.gltf["images"][0]
+        self.assertNotIn("uri", image, "the embed stayed base64 in the JSON chunk")
+        self.assertIn("bufferView", image)
 
     def test_an_unreadable_texture_is_skipped_not_raised(self):
         """A texture that exists but cannot be read must not abort the writer.
@@ -1158,7 +1272,7 @@ class TestGlbEditSession(unittest.TestCase):
         )
 
     def test_a_shared_texture_is_embedded_once_across_channels(self):
-        """One file on disk, one base64 copy — the embed cache spans the session."""
+        """One file on disk, one embedded copy — the embed cache spans the session."""
         png = self._png()
         path = self._write_glb(
             {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
@@ -1202,13 +1316,20 @@ class TestGlbEditSession(unittest.TestCase):
         with MeshConvert.open_glb(path) as session:
             MeshConvert.set_glb_base_color(session, {"Body": {"texture": png}})
 
-        gltf = MeshConvert._read_glb(path).gltf
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
         self.assertEqual(len(gltf["images"]), 1, "the payload was embedded twice")
-        self.assertFalse(
-            any(str(i.get("uri", "")).startswith("data:") for i in gltf["images"]),
-            "a base64 copy was added alongside the bufferView image",
+        # A "no data: URI" check no longer bites here — the relocation pass
+        # would turn a duplicate embed into a second bufferView, not a second
+        # base64 blob. The BIN's size is what still catches it.
+        self.assertEqual(
+            bytes(edit.bin_data).count(raw),
+            1,
+            "a second copy of the payload reached the BIN",
         )
-        index = gltf["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"]
+        index = gltf["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"][
+            "index"
+        ]
         self.assertEqual(gltf["textures"][index]["source"], 0)
 
     def test_two_source_files_with_identical_bytes_embed_once(self):
@@ -1243,6 +1364,147 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertTrue(
             all(gltf["textures"][i]["source"] == 0 for i in indices),
             "both materials must resolve to the single embedded image",
+        )
+
+    def test_an_embedded_image_lands_in_the_bin_not_the_json(self):
+        """An embedded map ships as a bufferView, not base64 in the JSON chunk.
+
+        Measured on a delivered asset (TURRETS_WIRES.glb): the sidecar's packed
+        ORM rode in as a ``data:`` URI while the converter's own maps sat in the
+        BIN, putting 4.0 MB of base64 in the JSON chunk -- 45% of an 8.9 MB
+        deliverable, 1.0 MB of it pure base64 overhead, and every byte of it
+        parsed before a loader can draw anything. The 33% premium was priced for
+        a local preview; ``create_glb`` ships the same path as a deliverable.
+        """
+        png = self._png()
+        raw = open(png, "rb").read()
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_base_color(session, {"Body": {"texture": png}})
+
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        image = gltf["images"][0]
+        self.assertNotIn("uri", image, "the payload is still base64 in the JSON")
+        view = gltf["bufferViews"][image["bufferView"]]
+        start = view.get("byteOffset", 0)
+        self.assertEqual(
+            bytes(edit.bin_data[start : start + view["byteLength"]]),
+            raw,
+            "the relocated bytes must be the source PNG, verbatim",
+        )
+        self.assertEqual(gltf["buffers"][0]["byteLength"], len(bytes(edit.bin_data)))
+
+    def test_relocating_an_embed_preserves_existing_bin_payloads(self):
+        """Appending must not disturb a byte or an offset already in the BIN.
+
+        Recomputing existing offsets is the part of GLB surgery that silently
+        corrupts a file -- which is why the embed took the JSON in the first
+        place. Appending past the end is what makes the BIN safe to touch:
+        every prior view keeps its index, offset and bytes.
+        """
+        geometry = b"GEOMETRY" * 64
+        png = self._png()
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [{"name": "Body"}],
+                "bufferViews": [
+                    {"buffer": 0, "byteOffset": 0, "byteLength": len(geometry)}
+                ],
+                "buffers": [{"byteLength": len(geometry)}],
+                "accessors": [
+                    {
+                        "bufferView": 0,
+                        "componentType": 5126,
+                        "count": 1,
+                        "type": "SCALAR",
+                    }
+                ],
+            },
+            bin_chunk=geometry,
+        )
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_base_color(session, {"Body": {"texture": png}})
+
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        self.assertEqual(gltf["bufferViews"][0]["byteOffset"], 0)
+        self.assertEqual(gltf["bufferViews"][0]["byteLength"], len(geometry))
+        self.assertEqual(gltf["accessors"][0]["bufferView"], 0)
+        self.assertEqual(bytes(edit.bin_data)[: len(geometry)], geometry)
+        self.assertGreater(len(gltf["bufferViews"]), 1, "no view was appended")
+
+    def test_an_external_buffer_is_left_alone(self):
+        """Buffer 0 is the BIN only when it declares no ``uri``.
+
+        Appending to a GLB whose first buffer is EXTERNAL would strand the new
+        views on bytes the file does not carry and overwrite that buffer's
+        byteLength. Base64 is a size cost; a corrupt buffer table is not.
+        """
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [{"name": "Body"}],
+                "buffers": [{"uri": "geometry.bin", "byteLength": 64}],
+            }
+        )
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
+
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual(gltf["buffers"][0]["uri"], "geometry.bin")
+        self.assertEqual(gltf["buffers"][0]["byteLength"], 64)
+        self.assertTrue(gltf["images"][0]["uri"].startswith("data:"))
+        self.assertNotIn("bufferView", gltf["images"][0])
+
+    def test_an_unknown_trailing_chunk_is_never_dropped(self):
+        """No BIN, but bytes after the JSON: an extension chunk, left intact.
+
+        The relocation swaps the whole tail for a BIN (``replace_rest``), so
+        writing one here would delete a chunk the spec tells clients to ignore
+        rather than discard -- and this class never read it, so it cannot put
+        it back. Same trade as the external buffer above: base64 is a size
+        cost, silently losing bytes is not.
+        """
+        payload = b"\x01\x02\x03\x04" * 4
+        extra = struct.pack("<I4s", len(payload), b"XTRA") + payload
+        path = os.path.join(self.tmp, "extra_chunk.glb")
+        gltf = json.dumps(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        ).encode("utf-8")
+        gltf += b" " * ((4 - (len(gltf) % 4)) % 4)
+        with open(path, "wb") as f:
+            f.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(gltf) + len(extra)))
+            f.write(struct.pack("<I4s", len(gltf), b"JSON") + gltf)
+            f.write(extra)
+
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
+
+        edit = MeshConvert._read_glb(path)
+        self.assertEqual(edit.rest, extra, "the trailing chunk was rewritten")
+        self.assertTrue(edit.gltf["images"][0]["uri"].startswith("data:"))
+        self.assertNotIn("bufferView", edit.gltf["images"][0])
+
+    def test_an_embedded_texture_carries_its_name(self):
+        """The embed names its image; the texture sampling it went out unnamed.
+
+        FBX2glTF names the textures it writes, so an unnamed one in the middle
+        of the list is a tell that a later pass added it -- and it costs the
+        only human-readable handle on which slot the map serves.
+        """
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
+
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertTrue(
+            gltf["textures"][0].get("name"), "the embedded texture has no name"
         )
 
     def test_an_embed_of_new_bytes_still_lands(self):
@@ -1316,14 +1578,20 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertEqual(image["mimeType"], "image/webp")
         blob = edit.bin_data
         img_view = gltf["bufferViews"][image["bufferView"]]
-        webp = bytes(blob[img_view["byteOffset"] : img_view["byteOffset"] + img_view["byteLength"]])
+        webp = bytes(
+            blob[
+                img_view["byteOffset"] : img_view["byteOffset"] + img_view["byteLength"]
+            ]
+        )
         self.assertEqual(webp[:4], b"RIFF", "payload must be a real WebP container")
         resized = Image.open(io.BytesIO(webp))
         self.assertEqual(max(resized.size), 64)
 
         geo_view = gltf["bufferViews"][1]
         survived = bytes(
-            blob[geo_view["byteOffset"] : geo_view["byteOffset"] + geo_view["byteLength"]]
+            blob[
+                geo_view["byteOffset"] : geo_view["byteOffset"] + geo_view["byteLength"]
+            ]
         )
         self.assertEqual(survived, geometry, "geometry bytes corrupted by the repack")
         self.assertIn("EXT_texture_webp", gltf.get("extensionsUsed", []))
@@ -1380,7 +1648,9 @@ class TestGlbEditSession(unittest.TestCase):
 
         def decode(image):
             view = gltf["bufferViews"][image["bufferView"]]
-            raw = bytes(blob[view["byteOffset"] : view["byteOffset"] + view["byteLength"]])
+            raw = bytes(
+                blob[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+            )
             return Image.open(io.BytesIO(raw))
 
         self.assertEqual(max(decode(gltf["images"][0]).size), 64, "source must resize")
@@ -1561,9 +1831,7 @@ class TestGlbEditSession(unittest.TestCase):
 
         digests, summaries = [], []
         for workers in (1, 4):
-            path = self._write_glb(
-                json.loads(json.dumps(gltf)), bin_chunk=bin_chunk
-            )
+            path = self._write_glb(json.loads(json.dumps(gltf)), bin_chunk=bin_chunk)
             summaries.append(
                 MeshConvert.optimize_glb_textures(path, max_size=48, workers=workers)
             )
@@ -1731,14 +1999,16 @@ class TestGlbEditSession(unittest.TestCase):
             )
         self.assertEqual(len(records), 1)
 
-        gltf = MeshConvert._read_glb(path).gltf
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
         pbr = gltf["materials"][0]["pbrMetallicRoughness"]
         tex = pbr["metallicRoughnessTexture"]["index"]
         img = gltf["images"][gltf["textures"][tex]["source"]]
-        import base64 as b64
         import io as iolib
 
-        raw = b64.b64decode(img["uri"].split(",", 1)[1])
+        view = gltf["bufferViews"][img["bufferView"]]
+        start = view.get("byteOffset", 0)
+        raw = bytes(edit.bin_data[start : start + view["byteLength"]])
         pixels = Image.open(iolib.BytesIO(raw)).convert("RGB").getpixel((1, 1))
         self.assertEqual(pixels[2], 10, "blue channel must be the metallic map")
         self.assertEqual(pixels[1], 128, "green channel must be the roughness map")
@@ -2076,9 +2346,7 @@ class TestSceneSidecar(unittest.TestCase):
         expected["textures"] = {path: None for path in paths}
         MeshConvert._scrub_sidecar_paths(expected)
         expected.pop("textures")
-        self.assertEqual(
-            {k: v for k, v in embedded.items() if k in envelope}, expected
-        )
+        self.assertEqual({k: v for k, v in embedded.items() if k in envelope}, expected)
 
         self.assertNotIn("textures", envelope, "caller's envelope was mutated")
         return embedded
@@ -2136,9 +2404,7 @@ class TestSceneSidecar(unittest.TestCase):
         self.assertIn("textures", text)
         self.assertIn("lightmap", text)
         self.assertEqual(handoff["sections"], sorted(MeshConvert.SIDECAR_APPLIERS))
-        self.assertIn(
-            f"extras.{MeshConvert.LIGHTMAP_WEB_KEY}", handoff["reads"]
-        )
+        self.assertIn(f"extras.{MeshConvert.LIGHTMAP_WEB_KEY}", handoff["reads"])
 
     def test_apply_resolves_every_authoring_path_to_an_embedded_image(self):
         """The content-addressed join: path -> glTF image index + sha256.
@@ -2247,7 +2513,9 @@ class TestSceneSidecar(unittest.TestCase):
         handles OSError/ValueError only, so a TypeError from ``len(None)`` would
         abort an apply that was otherwise entirely fine."""
         glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({"emissive": None, "base_color": {"m": {"color": [0, 1, 0]}}})
+        envelope = self._envelope(
+            {"emissive": None, "base_color": {"m": {"color": [0, 1, 0]}}}
+        )
         summary = MeshConvert.apply_scene_sidecar(glb, envelope)
         self.assertEqual(summary, {"base_color": "1 of 1"})
         embedded = MeshConvert.read_scene_sidecar(glb)
@@ -2289,9 +2557,7 @@ class TestSceneSidecar(unittest.TestCase):
             self.assertEqual(
                 edit.gltf["materials"][0]["emissiveFactor"], [1.0, 0.0, 0.0]
             )
-            self.assertEqual(
-                edit.gltf["extras"]["scene_sidecar_applied"], summary
-            )
+            self.assertEqual(edit.gltf["extras"]["scene_sidecar_applied"], summary)
         self._assert_embeds(glb, envelope)
 
     def test_apply_composes_with_an_open_session(self):
@@ -2316,7 +2582,7 @@ class TestSceneSidecar(unittest.TestCase):
         self.assertIsNone(MeshConvert.read_scene_sidecar(glb))
 
     def test_apply_empty_sections_still_embeds(self):
-        """"Sidecar on, nothing to carry" must be visible in the artifact."""
+        """ "Sidecar on, nothing to carry" must be visible in the artifact."""
         glb = self._write_glb(materials=[{"name": "m"}])
         envelope = self._envelope({})
         self.assertEqual(MeshConvert.apply_scene_sidecar(glb, envelope), {})
@@ -2347,8 +2613,9 @@ class TestSceneSidecar(unittest.TestCase):
 
             return R()
 
-        with patch("shutil.which", return_value=os.path.join(self.tmp, "bin")), patch(
-            "subprocess.run", side_effect=fake_run
+        with (
+            patch("shutil.which", return_value=os.path.join(self.tmp, "bin")),
+            patch("subprocess.run", side_effect=fake_run),
         ):
             out = MeshConvert.fbx_to_glb(src, dst, overwrite=True, sidecar=envelope)
 
@@ -2450,7 +2717,7 @@ class TestVerifyGlb(unittest.TestCase):
         self.assertTrue(any("validate" in p for p in report["problems"]))
 
     def test_a_partial_apply_is_not_read_as_a_failure(self):
-        """"10 of 20" contains "0 of" -- the outcome test has to be anchored.
+        """ "10 of 20" contains "0 of" -- the outcome test has to be anchored.
 
         A section that matched most of its entries is a warning the apply pass
         already logged, not a broken deliverable; reporting it as one would
@@ -2474,7 +2741,9 @@ class TestVerifyGlb(unittest.TestCase):
         """The anchored test must still catch the real thing."""
         path = self._delivered()
         with MeshConvert.open_glb(path) as edit:
-            edit.gltf["extras"]["scene_sidecar_applied"] = {"base_color": "0 of 3 matched"}
+            edit.gltf["extras"]["scene_sidecar_applied"] = {
+                "base_color": "0 of 3 matched"
+            }
             edit.dirty = True
 
         report = MeshConvert.verify_glb(path)
@@ -2567,7 +2836,9 @@ class TestVerifyGlb(unittest.TestCase):
 
         self.assertFalse(report["ok"])
         self.assertIsNone(report["envelope"])
-        self.assertTrue(any("no scene-sidecar envelope" in p for p in report["problems"]))
+        self.assertTrue(
+            any("no scene-sidecar envelope" in p for p in report["problems"])
+        )
 
 
 class TestSuspectOrmMaterials(unittest.TestCase):
@@ -2771,9 +3042,9 @@ class TestSuspectOrmMaterials(unittest.TestCase):
         with self.assertLogs(
             "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
         ) as caught:
-            logging.getLogger(
-                "pythontk.file_utils.mesh_convert._mesh_convert"
-            ).warning("sentinel so assertLogs always has a record")
+            logging.getLogger("pythontk.file_utils.mesh_convert._mesh_convert").warning(
+                "sentinel so assertLogs always has a record"
+            )
             MeshConvert.apply_scene_sidecar(path, envelope)
 
         self.assertEqual(
@@ -2983,6 +3254,7 @@ class TestSidecarPathScrub(unittest.TestCase):
         envelope = {"materials": [{"name": "body"}]}
         self.assertEqual(MeshConvert._scrub_sidecar_paths(envelope), 0)
 
+
 class TestGlbLightmaps(unittest.TestCase):
     """The self-feeding lightmap applier: committed bake -> GLB deliverable.
 
@@ -3128,7 +3400,8 @@ class TestGlbLightmaps(unittest.TestCase):
         oc = gltf["materials"][0]["occlusionTexture"]
         self.assertEqual(oc["texCoord"], 1)
         img = gltf["images"][gltf["textures"][oc["index"]]["source"]]
-        self.assertTrue(img["uri"].startswith("data:image/png"))
+        self.assertEqual(img["mimeType"], "image/png")
+        self.assertIn("bufferView", img, "the carrier stayed base64 in the JSON")
         web = gltf["extras"]["lightmap_web"]
         # The exact contract preview_viewer.html parses.
         self.assertEqual(web["carrier"], "occlusion")
@@ -3184,9 +3457,9 @@ class TestGlbLightmaps(unittest.TestCase):
             web = gltf["extras"]["lightmap_web"]["materials"]
             authoritative = next(iter(web.values()))
             marker = json.loads(
-                gltf["nodes"][0]["extras"]["fromFBX"]["userProperties"][
-                    "lightmapInfo"
-                ]["value"]
+                gltf["nodes"][0]["extras"]["fromFBX"]["userProperties"]["lightmapInfo"][
+                    "value"
+                ]
             )
 
         # Guard the guard: if the encode ever produced 1.0 the assertions below
@@ -3245,9 +3518,7 @@ class TestGlbLightmaps(unittest.TestCase):
         glb = self._glb(scene)
 
         records = MeshConvert.apply_glb_lightmaps(glb)
-        self.assertEqual(
-            len(records), 1, "namespace-tolerant binding regressed"
-        )
+        self.assertEqual(len(records), 1, "namespace-tolerant binding regressed")
 
         with MeshConvert.open_glb(glb) as edit:
             authoritative = next(
@@ -3632,7 +3903,8 @@ class TestGlbLightmaps(unittest.TestCase):
     def test_shared_material_with_different_maps_first_claim_wins(self):
         """Per-object maps on one material: the second has nowhere to go. Atlas
         packing prevents this upstream; here it must warn, not mis-bind."""
-        a, _b = self._exr("a.exr"), self._exr("b.exr", value=0.25)
+        # Written for their side effect: the manifest below names them by file.
+        _a, _b = self._exr("a.exr"), self._exr("b.exr", value=0.25)
         glb = self._glb(
             self._scene(
                 self._manifest(
@@ -3716,9 +3988,7 @@ class TestGlbLightmaps(unittest.TestCase):
             for name, n in walls.items()
         }
         # The clones reference the SAME accessors -- zero geometry duplication.
-        self.assertEqual(
-            prims["wall_a"]["attributes"], prims["wall_b"]["attributes"]
-        )
+        self.assertEqual(prims["wall_a"]["attributes"], prims["wall_b"]["attributes"])
         self.assertEqual(len(gltf["images"]), 1, "one shared atlas embed")
         for name, rect in (("wall_a", rect_a), ("wall_b", rect_b)):
             mat = gltf["materials"][prims[name]["material"]]
@@ -3832,9 +4102,7 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertEqual(len(kept), 1, f"one line expected, got {caught.output}")
         with MeshConvert.open_glb(glb) as edit:
             gltf_after = edit.gltf
-        self.assertEqual(
-            gltf_after["materials"][0]["occlusionTexture"], {"index": 0}
-        )
+        self.assertEqual(gltf_after["materials"][0]["occlusionTexture"], {"index": 0})
         self.assertEqual(
             len(gltf_after.get("images") or []),
             1,
@@ -3905,7 +4173,9 @@ class _FakeKtx2Encoder:
     def __init__(self):
         self.calls = []
 
-    def encode(self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None):
+    def encode(
+        self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None
+    ):
         self.calls.append(
             {
                 "codec": codec,
@@ -3961,14 +4231,20 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         )
 
     # -------------------------------------------------------------------- tests
-    def test_per_slot_codecs_and_required_binding(self):
-        """Color -> ETC1S/sRGB, normal -> UASTC/linear; bindings replace source."""
+    def test_per_slot_codecs_and_fallback_binding(self):
+        """Color -> ETC1S/sRGB, normal -> UASTC/linear; each texture keeps a
+        core-readable fallback ``source`` (JPEG for color, PNG for normal), so
+        KHR_texture_basisu stays out of extensionsRequired and the GLB is no
+        terminal delivery artifact — a stock importer reads the fallbacks."""
         path = self._glb(
             {
                 "asset": {"version": "2.0"},
                 "images": [
                     {"name": "wall_color", "uri": self._png_uri(color=(200, 60, 40))},
-                    {"name": "wall_normal", "uri": self._png_uri(color=(127, 127, 255))},
+                    {
+                        "name": "wall_normal",
+                        "uri": self._png_uri(color=(127, 127, 255)),
+                    },
                 ],
                 "textures": [{"source": 0}, {"source": 1}],
                 "materials": [
@@ -3992,7 +4268,12 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         self.assertFalse(by_codec["UASTC"]["srgb"])
         self.assertIsNone(by_codec["UASTC"]["quality"], "quality is the ETC1S dial")
 
-        for index, codec in ((0, b"ETC1S"), (1, b"UASTC")):
+        self.assertEqual(len(gltf["images"]), 4, "one appended fallback per encode")
+        fallback_magic = {"image/jpeg": b"\xff\xd8", "image/png": b"\x89PN"}
+        for index, codec, fb_mime in (
+            (0, b"ETC1S", "image/jpeg"),
+            (1, b"UASTC", "image/png"),
+        ):
             image = gltf["images"][index]
             self.assertEqual(image["mimeType"], "image/ktx2")
             payload = self._payload(edit, image)
@@ -4002,9 +4283,72 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
             self.assertEqual(
                 texture["extensions"]["KHR_texture_basisu"]["source"], index
             )
-            self.assertNotIn("source", texture, "no fallback is kept")
+            fb_index = texture["source"]
+            self.assertGreaterEqual(fb_index, 2, "fallback is an appended image")
+            fallback = gltf["images"][fb_index]
+            self.assertEqual(fallback["mimeType"], fb_mime)
+            self.assertEqual(
+                self._payload(edit, fallback)[: len(fallback_magic[fb_mime])],
+                fallback_magic[fb_mime],
+            )
+            self.assertEqual(fallback["name"], f"{image['name']}_fallback")
         self.assertIn("KHR_texture_basisu", gltf["extensionsUsed"])
+        self.assertNotIn(
+            "KHR_texture_basisu",
+            gltf.get("extensionsRequired", []),
+            "every binding has a core-readable fallback",
+        )
+
+    def test_pure_delivery_mode_requires_basisu(self):
+        """ktx2_fallback=False is the old contract: no fallback source, and the
+        extension hard-requires a basisu-capable viewer (extensionsRequired)."""
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [{"name": "c", "uri": self._png_uri()}],
+                "textures": [{"source": 0}],
+                "materials": [
+                    {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}
+                ],
+            }
+        )
+        MeshConvert.optimize_glb_textures(
+            path, max_size=64, image_format="KTX2", ktx2_fallback=False
+        )
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual(len(gltf["images"]), 1, "no fallback appended")
+        texture = gltf["textures"][0]
+        self.assertEqual(texture["extensions"]["KHR_texture_basisu"]["source"], 0)
+        self.assertNotIn("source", texture, "no fallback is kept")
         self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"])
+
+    def test_fallback_alpha_color_stays_png(self):
+        """A color image with alpha cannot fall back to JPEG — the twin must
+        keep the channel, so ETC1S + alpha lands on PNG."""
+        import base64 as b64
+
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGBA", (32, 32), (200, 60, 40, 128)).save(buffer, format="PNG")
+        uri = "data:image/png;base64," + b64.b64encode(buffer.getvalue()).decode(
+            "ascii"
+        )
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [{"name": "decal", "uri": uri}],
+                "textures": [{"source": 0}],
+                "materials": [
+                    {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}
+                ],
+            }
+        )
+        MeshConvert.optimize_glb_textures(path, max_size=0, image_format="KTX2")
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual(self.fake.calls[0]["codec"], "ETC1S")
+        fallback = gltf["images"][gltf["textures"][0]["source"]]
+        self.assertEqual(fallback["mimeType"], "image/png")
 
     def test_shared_image_takes_the_stricter_semantic(self):
         """Bytes sampled as both color and data must encode once, as UASTC."""
@@ -4102,8 +4446,12 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         self.assertNotIn("EXT_texture_webp", texture["extensions"])
         self.assertEqual(texture["extensions"]["KHR_texture_basisu"]["source"], 0)
         self.assertNotIn("EXT_texture_webp", gltf["extensionsUsed"])
-        self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"])
+        self.assertIn("KHR_texture_basisu", gltf["extensionsUsed"])
+        self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsRequired", []))
         self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
+        # The WebP bytes the first pass wrote became the decode source for the
+        # KTX2 rerun; the plain source now points at the appended core fallback.
+        self.assertEqual(gltf["images"][texture["source"]]["mimeType"], "image/jpeg")
 
     def test_unsampled_image_never_gets_a_non_core_mime_type(self):
         """An image no texture samples cannot be rebound through
@@ -4170,7 +4518,8 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         self.assertEqual(
             self._payload(edit, gltf["images"][0])[:12], _FakeKtx2Encoder.MAGIC
         )
-        self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"])
+        self.assertIn("KHR_texture_basisu", gltf["extensionsUsed"])
+        self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsRequired", []))
         orphan = gltf["images"][1]
         self.assertNotEqual(orphan.get("mimeType"), "image/ktx2")
         self.assertTrue(orphan["uri"].startswith("data:image/png"))
@@ -4188,10 +4537,13 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         with open(path, "rb") as f:
             before = f.read()
         ImgUtils.register_ktx2_encoder(None)
-        with patch.object(Ktx2Encoder, "available", return_value=False), patch.object(
-            Ktx2Encoder,
-            "resolve_toktx",
-            side_effect=FileNotFoundError("no toktx"),
+        with (
+            patch.object(Ktx2Encoder, "available", return_value=False),
+            patch.object(
+                Ktx2Encoder,
+                "resolve_toktx",
+                side_effect=FileNotFoundError("no toktx"),
+            ),
         ):
             with self.assertRaises(FileNotFoundError):
                 MeshConvert.optimize_glb_textures(path, image_format="KTX2")

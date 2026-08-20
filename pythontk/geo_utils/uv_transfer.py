@@ -48,6 +48,7 @@ is what makes islands that were packed SMALLER resample correctly (box
 filter) and gives anti-aliased island edges; ``1`` is point sampling.
 """
 
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -512,6 +513,12 @@ class UvTransfer(HelpMixin):
         return ImgUtils.dilate_image(image, mask, iterations=int(width))
 
     # ------------------------------------------------------------- materials
+    #: How much smaller a source's share of the target layout must be before
+    #: :meth:`_auto_size` says so. 1.05 is ~5% of linear resolution -- below
+    #: that the repack is effectively density-preserving and a line about it
+    #: would be noise on every ordinary transfer.
+    _SQUEEZE_REPORT_THRESHOLD: float = 1.05
+
     #: Logical PBR channel -> token used in output filenames.
     CHANNEL_TOKENS: Dict[str, str] = {
         "baseColor": "BaseColor",
@@ -627,7 +634,11 @@ class UvTransfer(HelpMixin):
                 contributing source has a MAP for (constants alone do not
                 create an output).
             size: Output resolution; default = the largest source map feeding
-                the material (2048 if none).
+                the material (2048 if none). When a consolidation gives some
+                source a smaller share of the layout than it had, that default
+                carries less of its detail than the number suggests --
+                :meth:`_auto_size` reports the squeeze per source so the choice
+                to raise this is an informed one.
             supersample / padding: See :meth:`build` / :meth:`pad`.
             name_format: Stem with ``{material}`` / ``{channel}``.
             normal_convention: ``"opengl"`` / ``"directx"`` / ``None`` to
@@ -662,7 +673,15 @@ class UvTransfer(HelpMixin):
                 say(f"{t_mat}: no source material carries a texture map; skipped.")
                 results[t_mat] = {}
                 continue
-            res = size or cls._auto_size(used, sources, wanted)
+            res = size or cls._auto_size(
+                used,
+                sources,
+                wanted,
+                src_tris,
+                dst_tris,
+                ids,
+                say=lambda m, _t=t_mat: say(f"{_t}: {m}"),
+            )
             say(
                 f"{t_mat}: {len(dst_tris)} triangles from {len(used)} source "
                 f"material(s) -> {res}px"
@@ -749,20 +768,114 @@ class UvTransfer(HelpMixin):
         return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_") or "material"
 
     @classmethod
-    def _auto_size(cls, used, sources, channels) -> int:
+    def _auto_size(
+        cls,
+        used,
+        sources,
+        channels,
+        src_tris=None,
+        dst_tris=None,
+        ids=None,
+        say=None,
+    ) -> int:
+        """The largest source map feeding this material (2048 if none).
+
+        That is the right size for the operation as specified -- the caller
+        asked to move these maps into a new layout, not to re-budget them --
+        and *size* is the dial for anything else. What this must never do is
+        let a consolidation lose detail SILENTLY.
+
+        Consolidating several texture sets into one layout is where the number
+        stops meaning what it looks like: each set now owns a fraction of a map
+        it used to own outright, so its texel density falls by the ratio of
+        those shares while the file keeps the reassuring old resolution.
+        Measured on a delivered asset (TURRETS_WIRES.glb): two 2048 sets into
+        one 2048 layout, the turrets taking 57.5% of the target and the wires
+        9.4% having owned ~94% of their own map -- so ~2014px of wire content
+        was resampled into ~629px, a 3.2x linear loss that shipped as visibly
+        flattened roughness with nothing in the log to say so.
+
+        So the size is unchanged and the squeeze is REPORTED: per source,
+
+            squeeze = sqrt(uv_area_at_source / uv_area_at_target)
+
+        and anything above 1 means that source keeps ``1 / squeeze`` of its
+        linear resolution here. Whether that matters is the artist's call --
+        a 2k map is ample for a small asset, and inflating one on the tool's
+        own initiative would quadruple every consolidation's cost uninvited.
+        Resolution cannot buy back a layout that gave a set too little room
+        anyway; the fix for a bad squeeze is usually the packing, and the log
+        names which set so that choice can be made with the numbers in hand.
+
+        Geometry is optional: without it there is nothing to report and the
+        size is the plain floor.
+        """
         from PIL import Image
 
-        best = 0
+        report = say or (lambda m: None)
+        floor = 0
+        #: source id -> (largest map edge, the map that measured it). The label
+        #: comes from the SAME map as the size so a warning cannot name a map
+        #: that was never read (an unresolvable path, or a channel this run
+        #: never touched).
+        per_source: Dict[int, Tuple[int, str]] = {}
         for sid in used:
+            biggest, label = 0, f"source {sid}"
+            maps = sources[sid].get("maps") or {}
             for ch in channels:
-                p = sources[sid].get("maps", {}).get(ch)
+                p = maps.get(ch)
                 if p and os.path.isfile(p):
                     try:
                         with Image.open(p) as im:  # header only, no decode
-                            best = max(best, *im.size)
+                            edge = max(im.size)
                     except Exception:  # noqa: BLE001
-                        pass
-        return best or 2048
+                        continue
+                    if edge > biggest:
+                        biggest, label = edge, os.path.splitext(os.path.basename(p))[0]
+            if biggest:
+                per_source[sid] = (biggest, label)
+                floor = max(floor, biggest)
+        if not floor:
+            return 2048
+        if src_tris is None or dst_tris is None or ids is None:
+            return floor
+
+        def _area(tris) -> "np.ndarray":
+            """Unsigned UV area per triangle."""
+            a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+            return 0.5 * np.abs(
+                (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+                - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])
+            )
+
+        src_area = _area(np.asarray(src_tris, dtype=float).reshape(-1, 3, 2))
+        dst_area = _area(np.asarray(dst_tris, dtype=float).reshape(-1, 3, 2))
+        ids = np.asarray(ids, dtype=np.int32).reshape(-1)
+
+        squeezed: List[Tuple[str, int, float]] = []
+        for sid, (px, label) in per_source.items():
+            hit = ids == sid
+            at_src = float(src_area[hit].sum())
+            at_dst = float(dst_area[hit].sum())
+            if at_src <= 0.0 or at_dst <= 0.0:
+                continue  # contributes no area on one side; nothing to compare
+            squeeze = math.sqrt(at_src / at_dst)
+            if squeeze > cls._SQUEEZE_REPORT_THRESHOLD:
+                squeezed.append((label, px, squeeze))
+        if squeezed:
+            worst = max(squeezed, key=lambda s: s[2])
+            report(
+                f"{len(squeezed)} source(s) take a smaller share of this layout "
+                f"than they had at source, so {floor}px carries less of their "
+                f"detail than it did: "
+                + ", ".join(
+                    f"{lbl!r} {sq:.2f}x (~{floor / sq:.0f}px of its {px}px)"
+                    for lbl, px, sq in sorted(squeezed, key=lambda s: -s[2])
+                )
+                + f". Raise `size` above {floor} to hold {worst[0]!r} at its own "
+                f"density, or give it more of the target UV layout."
+            )
+        return floor
 
     @classmethod
     def normal_convention(cls, path: str, override: Optional[str] = None) -> str:
@@ -772,20 +885,25 @@ class UvTransfer(HelpMixin):
         (:class:`pythontk.MapRegistry`), not a local token regex: the registry
         already enumerates every handedness spelling the ecosystem's exporters
         emit -- ``_DX`` / ``DirectX`` / ``NRMLDX`` / ``N-dx`` and their OpenGL
-        twins, across every delimiter it accepts -- and it strips a trailing
-        UDIM or duplicate token first, so ``rock_NormalDX.1001_1.png``
-        classifies exactly like ``rock_NormalDX.png``. A pattern maintained
-        here could only ever be a subset of that, and every spelling it missed
-        silently flipped a normal map's green channel the wrong way.
+        twins, in EITHER order (``NormalDX`` and ``DX_Normal`` alike), across
+        every delimiter it accepts -- and it strips a trailing UDIM or
+        duplicate token first, so ``rock_NormalDX.1001_1.png`` classifies
+        exactly like ``rock_NormalDX.png``. A pattern maintained here could
+        only ever be a subset of that, and every spelling it missed silently
+        flipped a normal map's green channel the wrong way.
 
         Anything that does not resolve to ``Normal_DirectX`` -- the untagged
         ``Normal`` type, an unrecognised name -- is reported as OpenGL, which
         is the registry's own reading of an untagged map (see
         ``MapRegistry.NORMAL_TYPES``): the convention is unknown, and leaving
         it alone is the cheaper error, since flipping a guess inverts a map
-        that may already have been right. Note this is narrower than the token
-        scan it replaces, which fired on a DirectX tag ANYWHERE in the name;
-        the suffix is what names a map, so a mid-name tag no longer counts.
+        that may already have been right.
+
+        The line is ADJACENCY, not position: a tag touching the token is part
+        of the suffix and counts (``rock_directx_normal``), while one loose
+        elsewhere in the name is not a declaration and does not
+        (``DirectX_rock_Normal``, ``rock_directx_final_normal``, or a
+        ``dx_project/`` directory in the path).
 
         Parameters:
             path: The map's file path (only its filename is read).
