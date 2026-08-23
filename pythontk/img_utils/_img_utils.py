@@ -29,7 +29,15 @@ try:
     from PIL import Image, ImageOps, ImageFilter, ImageChops, ImageDraw, ImageMode
 except ImportError as e:
     logging.getLogger(__name__).debug(f"# ImportError: {__file__}\n\t{e}")
-    Image = None  # type: ignore
+    # Bind EVERY name the ``try`` imports, not just ``Image``. Two reasons, and the
+    # second is the one that bit: (1) an unbound name raises ``NameError`` at its call
+    # site instead of taking the intended "no Pillow" branch, and (2) a name that was
+    # never created is invisible to late provisioning -- blendertk's
+    # ``ensure_image_deps`` installs Pillow into Blender's Python *after* pythontk is
+    # already imported and then rebinds these globals, but it can only repair names
+    # that exist. Leaving them out silently broke every ImageOps/ImageChops path in
+    # Blender even once Pillow was present.
+    Image = ImageOps = ImageFilter = ImageChops = ImageDraw = ImageMode = None  # type: ignore
 
 # From this package:
 from pythontk.core_utils._core_utils import CoreUtils

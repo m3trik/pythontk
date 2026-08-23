@@ -32,7 +32,10 @@ DEFAULT_INCLUDE = {
         "UsdzPackager",
         "UsdMeshWriter",
     ],
-    "file_utils.temp_artifacts": ["TempArtifacts", "CachedArtifact"],
+    "file_utils.temp_artifacts": ["TempArtifacts", "CachedArtifact", "ScratchTwins"],
+    # Batch-rename executor (dry-run + one-record report) shared by the file
+    # tenant here and the mayatk / blendertk scene-naming engines.
+    "file_utils.file_naming": ["RenamePlan", "FileNaming"],
     # Shared project-workspace model + workspace.mel codec (zero-dep). One
     # project folder serves Maya (which parses the marker natively) and
     # blendertk (whose current-workspace resolver builds on this); one
@@ -148,6 +151,11 @@ DEFAULT_INCLUDE = {
     "core_utils.app_launcher": "AppLauncher",
     "core_utils.app_installer": "AppInstaller",
     "core_utils.app_handoff": [
+        # The carrier vocabulary beside USD_EXTENSIONS: one spelling for every
+        # panel (uitk) and every producer (the DCC mixins).
+        "CARRIER_PARAM",
+        "CARRIER_EXTENSIONS",
+        "CARRIER_BY_EXTENSION",
         "HandoffBridge",
         "ScriptLaunchBridge",
         "ScriptLaunchDeliverer",
@@ -164,7 +172,12 @@ DEFAULT_INCLUDE = {
     "core_utils.script_run": ["ScriptRunResult", "ScriptRunner"],
     # Process/log line-stream primitives (composed by the app-specific
     # connection shells in mayatk/blendertk, e.g. SubstanceConnection).
-    "core_utils.process_stream": ["OutputStream", "ProcessReader", "LogTailer"],
+    "core_utils.process_stream": [
+        "OutputStream",
+        "ProcessReader",
+        "LogTailer",
+        "TeeStream",
+    ],
     "core_utils.user_config": ["UserConfig"],
     "core_utils.preset_store": [
         "PresetStore",

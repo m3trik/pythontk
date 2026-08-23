@@ -285,6 +285,20 @@ class PkgVersionCheckTest(BaseTestCase):
 class PkgVersionUtilsTest(BaseTestCase):
     """Tests for _PkgVersionUtils class."""
 
+    def test_update_version_on_an_unreadable_file_returns_empty(self):
+        """An unreadable file has no version to report, which IS the "" contract.
+
+        `FileUtils.get_file_contents` swallows OSError and returns None, and
+        this function fed that straight into `enumerate` -- so a missing or
+        locked file raised `TypeError: 'NoneType' object is not iterable` from
+        inside a version bump, with nothing naming the unreadable path.
+        """
+        missing = os.path.join(
+            tempfile.gettempdir(), "pythontk_no_such_version_file.py"
+        )
+        self.assertFalse(os.path.exists(missing))
+        self.assertEqual(_PkgVersionUtils.update_version(missing), "")
+
     def test_update_version_increment_patch(self):
         """Test incrementing patch version."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:

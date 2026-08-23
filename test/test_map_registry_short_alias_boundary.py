@@ -10,21 +10,25 @@ color map was silently wired into a normal or glossiness socket. The sibling
 path (``MapFactory.resolve_map_type(key=False)``) already required a boundary
 and documented why; the two disagreed.
 
-Boundary rule: a short alias matches only after a separator, after a lowercase
+Boundary rule: an alias matches only after a separator, after a lowercase
 letter (CamelCase, ``rockN``), or standing alone -- never glued to a digit or an
 uppercase letter.
 """
 import unittest
 
-from pythontk import MapRegistry
+from pythontk import ImgUtils, MapRegistry
 
 from conftest import BaseTestCase
 
 
-class ShortAliasBoundaryTest(BaseTestCase):
+class _RegistryTestCase(BaseTestCase):
+    """A fresh MapRegistry per test - four suites here need one, and nothing else."""
+
     def setUp(self):
         self.reg = MapRegistry()
 
+
+class ShortAliasBoundaryTest(_RegistryTestCase):
     def test_model_numbers_do_not_resolve_as_map_types(self):
         """The exact filenames from the production scene must classify as None."""
         for name in (
@@ -148,10 +152,11 @@ class ShortAliasBoundaryTest(BaseTestCase):
 
 
 
-class SeparatorParityTest(BaseTestCase):
+class SeparatorParityTest(_RegistryTestCase):
     """All four separators must mean the same thing to strip and to classify.
 
-    Regression (backlog 2026-08-05): ``_short_alias_boundary`` accepted
+    Regression (backlog 2026-08-05): ``_alias_boundary`` (then named
+    ``_short_alias_boundary``) accepted
     ``_ - . `` and space, but ``get_suffix_strip_pattern``'s delimited branch was
     ``_``-only, so ``rock-ao.png`` classified as Ambient_Occlusion yet based to
     ``rock-ao``; ``rock.ao.png`` to ``rock.ao``. The long-alias attached branch
@@ -160,9 +165,6 @@ class SeparatorParityTest(BaseTestCase):
     """
 
     SEPARATORS = ("_", "-", ".", " ")
-
-    def setUp(self):
-        self.reg = MapRegistry()
 
     def test_every_separator_bases_to_the_same_stem(self):
         import pythontk as ptk
@@ -196,7 +198,7 @@ class SeparatorParityTest(BaseTestCase):
             self.assertEqual(ptk.MapFactory.get_base_texture_name(name), stem, name)
 
 
-class CompoundSuffixTest(BaseTestCase):
+class CompoundSuffixTest(_RegistryTestCase):
     """A ``<type>_<convention>`` suffix must come off whole.
 
     Measured: ``rock_NRML_DX.png`` classified as Normal_DirectX but based to
@@ -208,9 +210,6 @@ class CompoundSuffixTest(BaseTestCase):
     suffixes in a loop eats material names, turning ``Gold_Metal_Diffuse`` into
     ``Gold`` (``Metal`` is a registered alias of Metallic).
     """
-
-    def setUp(self):
-        self.reg = MapRegistry()
 
     def test_compound_normal_suffixes_strip_whole(self):
         import pythontk as ptk
@@ -336,6 +335,100 @@ class LogicalChannelTypeTest(BaseTestCase):
     def test_unknown_channel_is_none(self):
         for bad in ("", None, "notAChannel"):
             self.assertIsNone(MapRegistry.resolve_type_from_channel(bad))
+
+
+class LongAliasBoundaryTest(_RegistryTestCase):
+    """The boundary rule is about EVIDENCE, not about how long the alias is.
+
+    Until 2026-08-20 ``_match_alias`` demanded a word boundary only for aliases
+    of three characters or fewer; anything longer matched on a bare
+    ``endswith``, and ``get_suffix_strip_pattern`` mirrored the same threshold.
+    524 of the 570 registered aliases are longer than three characters, so
+    ordinary asset names classified as map types -- and because strip and
+    resolve agreed about it, one material SPLIT INTO TWO texture sets.
+    """
+
+    def test_ordinary_words_ending_in_a_long_alias_do_not_resolve(self):
+        """A lowercase word that happens to end in an alias is not a suffix."""
+        for name, was in (
+            ("wall_watercolor.png", "Base_Color"),   # ...water+COLOR
+            ("char_thigh.png", "Height"),            # ...t+HIGH
+            ("panel_gunmetal.png", "Metallic"),      # ...gun+METAL
+            ("prop_raincoat.png", "Clearcoat"),      # ...rain+COAT
+            ("bone_abnormal.png", "Normal"),         # ...ab+NORMAL
+            ("road_borough.png", "Roughness"),       # ...bo+ROUGH
+            ("cloth_lipgloss.png", "Glossiness"),    # ...lip+GLOSS
+            ("wall_damask.png", "Mask"),             # ...dam+ASK
+            ("wall_afterglow.png", "Emissive"),      # ...after+GLOW
+        ):
+            with self.subTest(name=name):
+                self.assertIsNone(
+                    self.reg.resolve_type_from_path(name),
+                    f"{name} is an ordinary word (was misread as {was})",
+                )
+
+    def test_camelcase_glued_long_aliases_still_resolve(self):
+        """The counterweight: a capitalised glued alias IS a suffix.
+
+        This is what rules out the 'require a non-alphabetic predecessor'
+        alternative -- every one of these has a lowercase letter in front of
+        the alias, and ``mat_SpecularGloss`` is the fixture behind extapps'
+        shipped Unpack SpecularGloss workflow.
+        """
+        for name, expected in (
+            ("mat_SpecularGloss.png", "Glossiness"),
+            ("test_MetSmooth.png", "Smoothness"),
+            ("test_SpecAlpha.png", "Opacity"),
+            ("rockBaseColor.png", "Base_Color"),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(self.reg.resolve_type_from_path(name), expected)
+
+    def test_delimited_long_aliases_still_resolve_in_any_case(self):
+        """A separator is an explicit authoring decision, so case is free."""
+        for name, expected in (
+            ("rock_basecolor.png", "Base_Color"),
+            ("rock-basecolor.png", "Base_Color"),
+            ("tile_roughness.png", "Roughness"),
+            ("wall_Normal.png", "Normal"),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(self.reg.resolve_type_from_path(name), expected)
+
+    def test_an_ordinary_word_does_not_split_a_texture_set(self):
+        """The damage is worse than misclassification: it splits sets.
+
+        Because ``get_suffix_strip_pattern`` carried the same length threshold,
+        the base name lost the false suffix too -- so the diffuse and the normal
+        of one material based to different stems and grouped as two sets.
+        """
+        for name in ("char_thigh.png", "wall_watercolor.png"):
+            with self.subTest(name=name):
+                stem = name.rsplit(".", 1)[0]
+                self.assertEqual(ImgUtils.get_base_texture_name(name), stem)
+
+        self.assertEqual(
+            ImgUtils.get_base_texture_name("char_thigh.png"),
+            ImgUtils.get_base_texture_name("char_thigh_Normal.png"),
+            "one material must not base to two different texture sets",
+        )
+    def test_a_bare_alias_filename_keeps_a_usable_base_name(self):
+        """A file named only after its map type must not base to "".
+
+        Fell out of the same threshold: the boundary-free long branch matched
+        the WHOLE stem, so ``Normal.png`` based to the empty string and every
+        such file collapsed into one anonymous texture set. The attached branch
+        now needs a lowercase character in front of the suffix, which a
+        stem-initial alias does not have, so the name survives intact.
+        """
+        for name in ("Normal.png", "Roughness.png", "basecolor.png"):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    ImgUtils.get_base_texture_name(name), name.rsplit(".", 1)[0]
+                )
+                # still classified - only the base name changed
+                self.assertIsNotNone(self.reg.resolve_type_from_path(name))
+
 
 if __name__ == "__main__":
     unittest.main()

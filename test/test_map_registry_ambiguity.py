@@ -200,11 +200,24 @@ class UtilityBakeMapTest(unittest.TestCase):
         )
 
     def test_new_aliases_do_not_claim_ordinary_words(self):
-        """Aliases over 3 chars match with no boundary check, so they must be
-        spellings no material name would end in.
+        """An alias must be a spelling no material name would end in.
 
         Caught during review: a bare ``Bent`` alias on Bent_Normal claimed
         ``mat_absorbent.png`` and ``mat_unbent.png``.
+
+        This used to read "aliases over 3 chars match with no boundary check,
+        so they must be..." — alias hygiene was the ONLY thing standing between
+        an ordinary word and a wrong map type. Since 2026-08-20 the boundary
+        rule applies at every alias length (see
+        ``test_map_registry_short_alias_boundary.LongAliasBoundaryTest``), so a
+        lowercase word ending in an alias no longer classifies on its own.
+        Hygiene still matters, and this test stays: the boundary rule only
+        rejects a *lowercase glued* word. A delimiter is read as an explicit
+        authoring decision at any case (measured: ``wall_metal.png`` ->
+        Metallic, ``cloth_gloss.png`` -> Glossiness, ``mat_mask.png`` -> Mask),
+        and a CamelCase step is honoured too (``wallWaterColor.png`` ->
+        Base_Color). An alias that is an ordinary English word still claims
+        those spellings, so the alias table remains the real defence.
         """
         for name in ("mat_absorbent.png", "mat_unbent.png", "mat_normalcy.png"):
             self.assert_map_type(name, None)

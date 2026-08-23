@@ -27,6 +27,8 @@ from pythontk.core_utils.app_handoff import (
     Payload,
     ScriptLaunchBridge,
     ScriptLaunchSpec,
+    CARRIER_EXTENSIONS,
+    CARRIER_PARAM,
     ROUND_TRIP,
     SAVE_AS,
     SEND_TO,
@@ -383,7 +385,7 @@ class _StubScriptBridge(ScriptLaunchBridge):
         self.exported.append((tuple(objects), fbx_path, dict(params)))
 
     def _produce(self, objects, request):
-        path = self._make_payload_path()
+        path = self._make_payload_path(self.payload_extension(request))
         self._export_fbx(objects, path, request.params)
         return Payload(primary=path)
 
@@ -494,6 +496,81 @@ class HandoffSendTest(unittest.TestCase):
         result = br.send(template="import", mode=SEND_TO)
         self.assertIsNone(result)
         self.assertEqual(self.launched, [])
+
+
+
+class HandoffCarrierTest(HandoffSendTest):
+    """The payload's interchange format is a per-request choice on one shared seam."""
+
+    def test_default_carrier_is_fbx_and_names_the_extension(self):
+        br = self._bridge()
+        result = br.send(template="import", mode=SEND_TO)
+        self.assertTrue(result["payload"].lower().endswith(".fbx"))
+        self.assertEqual(br.carriers, ("fbx",))
+        self.assertEqual(CARRIER_EXTENSIONS["fbx"], ".fbx")
+        self.assertEqual(CARRIER_EXTENSIONS["usd"], ".usd")
+
+    def test_a_bridge_offering_usd_produces_a_usd_payload_on_request(self):
+        br = self._bridge()
+        br.carriers = ("fbx", "usd")
+        result = br.send(template="import", mode=SEND_TO, params={CARRIER_PARAM: "usd"})
+        self.assertIsNotNone(result)
+        self.assertTrue(result["payload"].lower().endswith(".usd"))
+        # The producer saw the carrier it was asked for, nothing else changed.
+        (_objs, path, params), = br.exported
+        self.assertEqual(path, result["payload"])
+        self.assertEqual(params[CARRIER_PARAM], "usd")
+
+    def test_the_carrier_choice_is_case_insensitive(self):
+        br = self._bridge()
+        br.carriers = ("fbx", "usd")
+        result = br.send(template="import", mode=SEND_TO, params={CARRIER_PARAM: "USD"})
+        self.assertTrue(result["payload"].lower().endswith(".usd"))
+
+    def test_an_unoffered_carrier_is_refused_before_anything_is_exported(self):
+        br = self._bridge()  # offers fbx only
+        result = br.send(template="import", mode=SEND_TO, params={CARRIER_PARAM: "usd"})
+        self.assertIsNone(result)
+        self.assertEqual(br.exported, [])
+        self.assertEqual(self.launched, [])
+
+    def test_an_unknown_carrier_is_refused_not_mapped_to_a_default(self):
+        br = self._bridge()
+        br.carriers = ("fbx", "usd")
+        result = br.send(template="import", mode=SEND_TO, params={CARRIER_PARAM: "obj"})
+        self.assertIsNone(result)
+        self.assertEqual(br.exported, [])
+
+    def test_carrier_of_keys_a_writer_table_by_extension(self):
+        """Every spelling a carrier's files come in maps to the one key."""
+        for path, carrier in (
+            ("x/a.fbx", "fbx"),
+            ("x/a.FBX", "fbx"),
+            ("x/a.usd", "usd"),
+            ("x/a.usda", "usd"),
+            ("x/a.usdc", "usd"),
+            ("x/a.usdz", "usd"),
+        ):
+            self.assertEqual(HandoffBridge.carrier_of(path), carrier, path)
+        # No silent FBX for a path nobody writes.
+        with self.assertRaises(ValueError):
+            HandoffBridge.carrier_of("x/a.obj")
+        with self.assertRaises(ValueError):
+            HandoffBridge.carrier_of("x/a")
+
+    def test_templates_see_the_payload_under_both_token_names(self):
+        (self.tmp / "import.py").write_text(
+            "BRIDGE_MODES = (\'send_to\',)\n"
+            'FBX = r\"__FBX_PATH__\"\nPAYLOAD = r\"__PAYLOAD_PATH__\"\nSCALE = __SCALE__\n',
+            encoding="utf-8",
+        )
+        br = self._bridge()
+        br.carriers = ("fbx", "usd")
+        result = br.send(template="import", mode=SEND_TO, params={CARRIER_PARAM: "usd"})
+        body = Path(result["script"]).read_text(encoding="utf-8")
+        payload = result["payload"].replace("\\", "/")
+        self.assertIn(f'FBX = r"{payload}"', body)
+        self.assertIn(f'PAYLOAD = r"{payload}"', body)
 
 
 class HandoffContractTest(unittest.TestCase):

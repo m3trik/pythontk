@@ -1016,16 +1016,18 @@ class TestGlbEditSession(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="meshconvert_session_")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
-    def _write_glb(self, gltf, bin_chunk=b"", pretty=False, name="s.glb"):
+    def _write_glb(self, gltf, bin_chunk=b"", pretty=False, name="s.glb", tail=b""):
         """Pack a GLB. *pretty* pads the JSON chunk the way a producer that
         indents its output does — which is what leaves room for the in-place
-        rewrite, since this module always re-serializes compactly."""
+        rewrite, since this module always re-serializes compactly. *tail* is
+        appended raw, for the extension chunks a repack must carry over."""
         payload = json.dumps(gltf, indent=4 if pretty else None).encode("utf-8")
         payload += b" " * ((4 - (len(payload) % 4)) % 4)
         rest = b""
         if bin_chunk:
             bin_chunk += b"\x00" * ((4 - (len(bin_chunk) % 4)) % 4)
             rest = struct.pack("<I4s", len(bin_chunk), b"BIN\x00") + bin_chunk
+        rest += tail
         path = os.path.join(self.tmp, name)
         with open(path, "wb") as f:
             f.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(payload) + len(rest)))
@@ -1051,6 +1053,23 @@ class TestGlbEditSession(unittest.TestCase):
             return real(edit)
 
         return patch.object(MeshConvert, "_write_glb", counting), writes
+
+    @staticmethod
+    def _xtra_chunk(payload=b"\x01\x02\x03\x04" * 4):
+        """A chunk of a type this module does not know, to be carried over."""
+        return struct.pack("<I4s", len(payload), b"XTRA") + payload
+
+    def _assert_container_intact(self, path):
+        """The header's total length must still describe the file on disk.
+
+        Nothing re-reads this field -- ``_read_glb`` takes the JSON length and
+        treats the remainder as the tail -- so a tail this module grew or shrank
+        without recomputing it round-trips happily here and is rejected by a
+        strict loader instead.
+        """
+        with open(path, "rb") as f:
+            declared = struct.unpack("<I", f.read(12)[8:12])[0]
+        self.assertEqual(declared, os.path.getsize(path), "GLB total length is stale")
 
     def test_one_session_writes_once_for_every_applier(self):
         """Two channel writers sharing a session must produce one write."""
@@ -1460,34 +1479,60 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertTrue(gltf["images"][0]["uri"].startswith("data:"))
         self.assertNotIn("bufferView", gltf["images"][0])
 
-    def test_an_unknown_trailing_chunk_is_never_dropped(self):
-        """No BIN, but bytes after the JSON: an extension chunk, left intact.
+    def test_an_unknown_trailing_chunk_survives_a_repack_without_a_bin(self):
+        """Bytes after the JSON but no BIN: the relocation must not eat them.
 
-        The relocation swaps the whole tail for a BIN (``replace_rest``), so
-        writing one here would delete a chunk the spec tells clients to ignore
-        rather than discard -- and this class never read it, so it cannot put
-        it back. Same trade as the external buffer above: base64 is a size
-        cost, silently losing bytes is not.
+        A repack rebuilds the whole tail from one payload (``replace_rest``),
+        and the spec tells a client that meets a chunk type it does not know to
+        IGNORE it, not to discard it -- nothing here decodes such a chunk, so
+        nothing here could put one back. The new BIN goes FIRST, which is where
+        the spec wants it, and the stranger rides along behind.
         """
-        payload = b"\x01\x02\x03\x04" * 4
-        extra = struct.pack("<I4s", len(payload), b"XTRA") + payload
-        path = os.path.join(self.tmp, "extra_chunk.glb")
-        gltf = json.dumps(
-            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
-        ).encode("utf-8")
-        gltf += b" " * ((4 - (len(gltf) % 4)) % 4)
-        with open(path, "wb") as f:
-            f.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(gltf) + len(extra)))
-            f.write(struct.pack("<I4s", len(gltf), b"JSON") + gltf)
-            f.write(extra)
-
+        extra = self._xtra_chunk()
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]},
+            tail=extra,
+        )
         with MeshConvert.open_glb(path) as session:
             MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
 
+        self._assert_container_intact(path)
         edit = MeshConvert._read_glb(path)
-        self.assertEqual(edit.rest, extra, "the trailing chunk was rewritten")
-        self.assertTrue(edit.gltf["images"][0]["uri"].startswith("data:"))
-        self.assertNotIn("bufferView", edit.gltf["images"][0])
+        self.assertIn("bufferView", edit.gltf["images"][0], "nothing was relocated")
+        self.assertEqual(edit.rest[4:8], b"BIN\x00", "BIN must lead the tail")
+        self.assertTrue(edit.rest.endswith(extra), "the XTRA chunk was dropped")
+
+    def test_an_unknown_trailing_chunk_survives_a_repack_behind_a_bin(self):
+        """The same file WITH a BIN -- the case a `bin_data is None` guard misses.
+
+        ``replace_rest`` rewrites every byte after the JSON, so a chunk sitting
+        past the BIN is exactly as easy to lose as one standing in for it, and
+        far likelier to exist. The relocation appends, so the original geometry
+        must come back byte-for-byte too.
+        """
+        extra = self._xtra_chunk(b"\xaa\xbb" * 8)
+        geometry = b"\x07" * 32
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [{"name": "Body"}],
+                "buffers": [{"byteLength": len(geometry)}],
+            },
+            bin_chunk=geometry,
+            tail=extra,
+        )
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
+
+        self._assert_container_intact(path)
+        edit = MeshConvert._read_glb(path)
+        self.assertIn("bufferView", edit.gltf["images"][0], "nothing was relocated")
+        self.assertTrue(edit.rest.endswith(extra), "the XTRA chunk was dropped")
+        self.assertEqual(
+            bytes(edit.bin_data[: len(geometry)]),
+            geometry,
+            "the original geometry moved -- the append is not append-only",
+        )
 
     def test_an_embedded_texture_carries_its_name(self):
         """The embed names its image; the texture sampling it went out unnamed.

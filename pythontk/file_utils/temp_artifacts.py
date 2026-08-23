@@ -208,7 +208,11 @@ class TempArtifacts(LoggingMixin):
 
         Conservative by design: age-gated (never a fresh payload another app may
         still be reading), prefix-scoped (never another producer's files), and
-        errors are swallowed (a locked file just waits for the next sweep).
+        errors are swallowed (a locked file just waits for the next sweep). A
+        directory is as fresh as its NEWEST entry, not its own mtime: a file
+        rewritten in place (how Maya saves a ``.ma``) never touches the parent's
+        mtime, so a scratch dir someone keeps saving into would otherwise read as
+        abandoned and be reclaimed with their work in it.
         """
         cutoff = time.time() - self.max_age_days * 86400
         removed = []
@@ -221,7 +225,7 @@ class TempArtifacts(LoggingMixin):
                 if not entry.name.startswith(f"{self.prefix}_"):
                     continue
                 try:
-                    if entry.stat().st_mtime >= cutoff:
+                    if self._newest_mtime(entry) >= cutoff:
                         continue
                     if entry.is_dir():
                         shutil.rmtree(entry.path)
@@ -231,6 +235,22 @@ class TempArtifacts(LoggingMixin):
                 except OSError:
                     continue
         return removed
+
+    @staticmethod
+    def _newest_mtime(entry: os.DirEntry) -> float:
+        """The entry's mtime, or for a directory the newest of it and its files."""
+        newest = entry.stat().st_mtime
+        if entry.is_dir():
+            try:
+                with os.scandir(entry.path) as children:
+                    for child in children:
+                        try:
+                            newest = max(newest, child.stat().st_mtime)
+                        except OSError:
+                            continue
+            except OSError:
+                pass
+        return newest
 
     # ------------------------------------------------------------------ context manager
     def __enter__(self) -> "TempArtifacts":
@@ -383,4 +403,215 @@ class CachedArtifact(LoggingMixin):
         return self.Result(cache_path, False, scratch)
 
 
-__all__ = ["TempArtifacts", "CachedArtifact"]
+class ScratchTwins(LoggingMixin):
+    """Per-source scratch twins of foreign files, discarded only while untouched.
+
+    The "open a foreign scene as a new document" pattern the DCC Reference Managers
+    share: a converted payload is COPIED to a deterministic, per-source scratch path
+    the host opens (so a second Open resolves the same file and can close it), the
+    copy's identity is stamped, and once the host has moved on the copy is discarded
+    only if it is still that untouched copy — one the user saved into is real work
+    and stays, its location logged. Built on :class:`TempArtifacts`: one tracked,
+    age-swept ``<prefix>_<hash-of-source-path>/`` directory per source (same-named
+    sources in different folders never share a twin), the twin named
+    ``<stem>_<ext><extension>`` so the title bar and any Save-As default carry the
+    provenance (``scene.ma`` → ``scene_ma.blend``) and it can never shadow a sibling
+    ``scene<extension>``.
+
+    Example (a Blender panel opening a baked Maya scene):
+        >>> twins = ScratchTwins("btk_opened", extension=".blend")
+        >>> scratch = twins.create(source_ma, baked_blend)   # copy + stamp
+        >>> open_scene(scratch)
+        ...                                                  # later, on close / next open
+        >>> twins.discard_except(current_file)               # untouched twins go, saved ones stay
+
+    Parameters:
+        prefix: Directory prefix; also the sweep scope (one family per host).
+        extension: The twin's file extension — the HOST's native format.
+        dir: Base directory (default: the system temp dir).
+        max_age_days: Stale-sweep threshold for abandoned twin directories. Generous by
+            default: a twin is a working document until the user saves it elsewhere.
+    """
+
+    def __init__(
+        self,
+        prefix: str,
+        *,
+        extension: str,
+        dir: Optional[str] = None,  # noqa: A002 - matches TempArtifacts' own param name
+        max_age_days: float = 30,
+        log_level: str = "WARNING",
+    ):
+        super().__init__()
+        self.logger.setLevel(log_level)
+        self.extension = extension
+        self._store = TempArtifacts(
+            prefix, policy="detached", dir=dir, max_age_days=max_age_days
+        )
+        # Twin path (normalized) -> (size, mtime_ns) as written by create().
+        self._stamps: dict = {}
+        # Same key -> the path as create() handed it out. The key is normcased, so
+        # on Windows it is lowercased and is NOT what a caller can compare against
+        # path_for(); discard_except reports these instead.
+        self._paths: dict = {}
+
+    @staticmethod
+    def _key(path: str) -> str:
+        return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+    @staticmethod
+    def _stamp(path: str) -> Optional[tuple]:
+        """``(size, mtime_ns)`` of *path*, or None when absent — the cheap identity that
+        tells an untouched copy from one saved into since."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_size, st.st_mtime_ns)
+
+    @staticmethod
+    def _stamp_file(path: str) -> str:
+        """Sidecar holding the stamp ``create`` wrote, beside the twin it describes."""
+        return path + ".stamp"
+
+    def _record(self, path: str) -> None:
+        """Remember the stamp of the copy just written, in memory AND on disk.
+
+        The on-disk half is what makes the untouched-test survive a host restart: a
+        twin outlives the process that made it, so an in-memory map alone reports
+        every twin from a previous session as unrecognized — which is precisely the
+        case where overwriting it would destroy saved work.
+        """
+        stamp = self._stamp(path)
+        key = self._key(path)
+        self._stamps[key] = stamp
+        self._paths[key] = path
+        if stamp is None:
+            return
+        try:
+            with open(self._stamp_file(path), "w", encoding="utf-8") as f:
+                f.write(f"{stamp[0]} {stamp[1]}")
+        except OSError:  # unwritable sidecar; the in-memory stamp still covers today
+            self.logger.debug(f"Could not write scratch stamp beside: {path}")
+
+    def _recorded(self, path: str) -> Optional[tuple]:
+        """The stamp ``create`` last wrote for *path*, from memory or the sidecar."""
+        key = self._key(path)
+        if key in self._stamps:
+            return self._stamps[key]
+        try:
+            with open(self._stamp_file(path), encoding="utf-8") as f:
+                size, mtime_ns = f.read().split()
+            return (int(size), int(mtime_ns))
+        except (OSError, ValueError):
+            return None
+
+    def _is_untouched(self, path: str) -> bool:
+        """True when *path* is still byte-for-byte the copy this store wrote."""
+        recorded = self._recorded(path)
+        return recorded is not None and self._stamp(path) == recorded
+
+    def _forget_stamp(self, path: str) -> None:
+        try:
+            os.remove(self._stamp_file(path))
+        except OSError:
+            pass
+
+    def _preserve(self, path: str) -> Optional[str]:
+        """Move a twin that is NOT our untouched copy aside, and return its new path.
+
+        Called only from ``create``: the twin path is deterministic per source, so
+        re-opening the same source lands on a file the user may have saved real work
+        into. Renaming beside it keeps that work, keeps ``path_for`` deterministic
+        (the panels recompute it to answer "is this row the current scene?"), and
+        still lets the fresh conversion be written.
+        """
+        stem, ext = os.path.splitext(path)
+        n = 1
+        while os.path.exists(f"{stem}_saved{n}{ext}"):
+            n += 1
+        kept = f"{stem}_saved{n}{ext}"
+        try:
+            os.replace(path, kept)
+        except OSError:
+            self.logger.warning(
+                f"Could not move a modified scratch aside; leaving it untouched "
+                f"and NOT overwriting: {path}"
+            )
+            return None
+        self._forget_stamp(path)
+        self.logger.warning(f"Scratch had unsaved-elsewhere changes; kept as: {kept}")
+        return kept
+
+    def path_for(self, source: str) -> str:
+        """The deterministic twin path for *source* (nothing is created)."""
+        key = self._key(source)
+        stem, ext = os.path.splitext(os.path.basename(source))
+        folder = self._store.dir_path(
+            name=hashlib.sha1(key.encode("utf-8")).hexdigest()[:10], create=False
+        )
+        return os.path.join(folder, f"{stem}_{ext.lstrip('.').lower()}{self.extension}")
+
+    def create(self, source: str, payload: str) -> str:
+        """Copy *payload* to *source*'s twin path, stamp it, and return the path.
+        Raises ``OSError`` when the copy cannot be written."""
+        path = self.path_for(source)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path) and not self._is_untouched(path):
+            # Not the copy we wrote: the user saved into it, or a previous session
+            # left it. Either way it is real work — move it aside, never over it.
+            if self._preserve(path) is None:
+                return path
+        shutil.copyfile(payload, path)
+        self._record(path)
+        return path
+
+    def is_twin(self, path: str) -> bool:
+        """True if *path* is a twin this store created and still tracks."""
+        return bool(path) and self._key(path) in self._stamps
+
+    def discard(self, path: str) -> bool:
+        """Delete the twin at *path* if it is still the untouched copy (stamp unchanged);
+        a twin the user saved into is kept, its location logged. Either way the twin is
+        forgotten. Returns True when a file was removed."""
+        if not path:
+            return False
+        key = self._key(path)
+        stamp = self._recorded(path)
+        self._stamps.pop(key, None)
+        self._paths.pop(key, None)
+        if stamp is None:
+            return False
+        if self._stamp(path) != stamp:
+            self.logger.info(f"Keeping saved scratch: {path}")
+            return False
+        try:
+            os.remove(path)
+        except OSError:
+            return False
+        self._forget_stamp(path)
+        self.logger.info(f"Removed scratch: {path}")
+        return True
+
+    def discard_except(self, keep: Optional[str] = None) -> List[str]:
+        """Discard every tracked twin other than *keep* (the host's current file) — the
+        rest were replaced by a close or another open, so an untouched one has nothing
+        left to represent.
+
+        Returns:
+            The twins removed, spelled as ``create`` handed them out -- not the
+            normcased internal key, which on Windows is lowercased and so compares
+            unequal to :meth:`path_for`.
+        """
+        keep_key = self._key(keep) if keep else None
+        removed = []
+        for key in list(self._stamps):
+            if key == keep_key:
+                continue
+            path = self._paths.get(key, key)
+            if self.discard(path):
+                removed.append(path)
+        return removed
+
+
+__all__ = ["TempArtifacts", "CachedArtifact", "ScratchTwins"]

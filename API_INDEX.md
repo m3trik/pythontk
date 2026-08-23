@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-20_
+_Generated: 2026-08-23_
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -21,7 +21,7 @@ _Generated: 2026-08-20_
 - `class Deliverer`
   - methods: preflight, deliver
 - `class HandoffBridge(LoggingMixin)`
-  - methods: app_path, headless_app_path, params_defaults, merge_params, send, import_roots
+  - methods: app_path, headless_app_path, params_defaults, merge_params, carrier, payload_extension, carrier_of, send, import_roots
 - `class ScriptLaunchSpec`
 - `class ScriptLaunchDeliverer(Deliverer)`
   - methods: preflight, deliver, render
@@ -306,6 +306,8 @@ _Generated: 2026-08-20_
   - methods: ext, user_dir, builtin_dir, active, list, source, exists, path, load, save, delete, rename, sanitize_preset_name
 
 ### `core_utils/process_stream.py` — App-agnostic line-stream primitives for launched processes and log files.
+- `class TeeStream`
+  - methods: write, writelines, flush
 - `class OutputStream`
   - methods: push, subscribe, history, clear_history, wait_for, close, closed
 - `class ProcessReader(threading.Thread)`
@@ -369,6 +371,12 @@ _Generated: 2026-08-20_
 - `class FileUtils(HelpMixin)`
   - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, relativize_output_dir, path_length_limit, exceeds_path_length, free_space, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
 
+### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
+- `class RenamePlan(LoggingMixin)`
+  - methods: apply
+- `class FileNaming(HelpMixin, LoggingMixin)`
+  - methods: expand, stem, find, rename, set_case, strip_chars
+
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
   - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, without_locate_hints, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, prune_glb_unreferenced_textures, set_glb_base_color
@@ -388,6 +396,8 @@ _Generated: 2026-08-20_
   - methods: path, dir_path, register, cleanup, sweep_stale
 - `class CachedArtifact(LoggingMixin)`
   - methods: key, get
+- `class ScratchTwins(LoggingMixin)`
+  - methods: path_for, create, is_twin, discard, discard_except
 
 ### `file_utils/usd.py` — Zero-dependency USD (OpenUSD) file utilities.
 - `class UsdFile`
@@ -457,11 +467,11 @@ _Generated: 2026-08-20_
 
 ### `iter_utils/_iter_utils.py`
 - `class IterUtils(HelpMixin)`
-  - methods: make_iterable, nested_depth, flatten, collapse_integer_sequence, bit_array_to_list, insert_into_dict, rindex, indices, remove_duplicates, filter_results, filter_list, filter_dict, split_list, find_flat_interior_indices
+  - methods: make_iterable, nested_depth, flatten, collapse_integer_sequence, bit_array_to_list, insert_into_dict, rindex, indices, remove_duplicates, filter_results, filter_list, filter_dict, split_list, find_flat_interior_indices, find_extrema_indices
 
 ### `math_utils/_math_utils.py`
 - `class MathUtils(HelpMixin)`
-  - methods: eval_expression, convert_length_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, next_clear_offset, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance
+  - methods: eval_expression, convert_length_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, next_clear_offset, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance, fit_hermite_slopes
 
 ### `math_utils/noise.py`
 - `class BandLimitedNoise`
@@ -521,7 +531,7 @@ _Generated: 2026-08-20_
 
 ### `str_utils/_str_utils.py`
 - `class StrUtils(CoreUtils)`
-  - methods: strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`

@@ -13,6 +13,9 @@ Three small, composable pieces (no app knowledge -- pair them with
   background thread and pushes into an :class:`OutputStream`.
 * :class:`LogTailer` -- polls a log file for new bytes on a background
   thread (rotation-aware) and pushes into an :class:`OutputStream`.
+* :class:`TeeStream` -- a synchronous write-through fan-out that can stand in
+  for ``sys.stdout`` / ``sys.stderr``, so output a process would otherwise only
+  print can be recorded as well.
 
 Extracted from the Substance Painter connection module: the mechanism is
 generic process/log plumbing, so it lives here at the bottom of the stack;
@@ -32,6 +35,62 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_POLL_INTERVAL = 0.5
 _DEFAULT_HISTORY = 5000
+
+
+class TeeStream:
+    """Write text to several streams at once; usable as a ``sys.stdout`` stand-in.
+
+    The synchronous counterpart to :class:`OutputStream`: no threads, no
+    subscribers, no line splitting — it passes each write straight through, so
+    it can be assigned to ``sys.stdout`` / ``sys.stderr`` around a block whose
+    output must be recorded as well as shown. Every ecosystem test runner does
+    exactly that, which is why this lives here rather than being written out
+    once per runner (the same reason ``StatusBadge`` does).
+
+    Being a stand-in is what shapes the API: :meth:`write` returns a character
+    count like a real stream, :meth:`writelines` is defined rather than
+    delegated (delegating it would reach the first stream only, silently
+    skipping the rest), and every other attribute — ``isatty``, ``fileno``,
+    ``encoding`` — is answered by the FIRST stream, which is the real one. Pass
+    the real console first and the recorder second.
+
+    Two write failures are contained rather than raised, because a stand-in
+    that raises turns an unrelated ``print`` into a test failure: a cp1252
+    console cannot encode every character a docstring or log line contains, and
+    is retried with replacements; a detached or closed stream (``ValueError`` /
+    ``OSError``) is skipped for that write, leaving the other streams intact.
+    Anything else propagates.
+    """
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, text: str) -> int:
+        for stream in self.streams:
+            try:
+                stream.write(text)
+            except UnicodeEncodeError:
+                encoding = getattr(stream, "encoding", None) or "ascii"
+                stream.write(text.encode(encoding, "replace").decode(encoding))
+            except (ValueError, OSError):
+                pass  # detached/closed — the other streams still get it
+        return len(text)
+
+    def writelines(self, lines) -> None:
+        for line in lines:
+            self.write(line)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            try:
+                stream.flush()
+            except (ValueError, OSError):
+                pass
+
+    def __getattr__(self, name):
+        # Only reached for attributes this class does not define; `streams` is
+        # set in __init__, so there is no recursion here.
+        return getattr(self.streams[0], name)
 
 
 class OutputStream:

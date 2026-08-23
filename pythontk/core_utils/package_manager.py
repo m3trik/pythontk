@@ -358,6 +358,12 @@ class _PkgVersionUtils:
         from pythontk.file_utils._file_utils import FileUtils
 
         lines = FileUtils.get_file_contents(filepath, as_list=True)
+        if lines is None:
+            # get_file_contents returns None on a read failure (it swallows the
+            # OSError and prints the traceback). Unreadable means there is no
+            # version to report, which is the "" this function documents --
+            # without the guard the None reached enumerate as a TypeError.
+            return ""
 
         version_pattern = re.compile(version_regex)
         max_minor, max_patch = max_version_parts

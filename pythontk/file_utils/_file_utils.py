@@ -699,17 +699,21 @@ class FileUtils(HelpMixin):
             return False
 
     @staticmethod
-    def get_file_contents(filepath: str, as_list=False, encoding="utf-8") -> None:
-        """Get each line of a text file as indices of a list.
-        Will create a file if one doesn't exist.
+    def get_file_contents(
+        filepath: str, as_list: bool = False, encoding: str = "utf-8"
+    ) -> Optional[Union[str, List[str]]]:
+        """Read a text file, whole or as a list of lines.
 
         Parameters:
             filepath (str): The path to an existing text based file.
-            as_list (bool): Return as a list or a string.
+            as_list (bool): Return as a list of lines rather than one string.
             encoding (str): The encoding to use when reading the file.
 
         Returns:
-            (list)
+            (list/str/None) The lines when `as_list`, otherwise the whole text.
+            **None when the read fails**: an OSError is caught, its traceback
+            printed to stderr, and None returned. A caller that iterates or
+            indexes the result must check for None first.
         """
         try:
             with open(filepath, "r", encoding=encoding, errors="replace") as f:
@@ -1084,8 +1088,10 @@ class FileUtils(HelpMixin):
     ) -> str:
         """Convert an absolute file path to a relative path based on the given base directory.
 
-        If the file path and the base directory are on different drives,
-        the file path's drive letter is changed to match the base directory's drive letter.
+        If the file path and the base directory are on different drives, no
+        relative path exists: only the FILE NAME is kept (under *base_dir*'s
+        name when *prepend_base*). Callers that must keep such a file
+        resolvable test ``FileUtils.is_under`` first and keep it absolute.
 
         Parameters:
             file_path (str): The absolute file path to convert.

@@ -219,7 +219,9 @@ class ModuleReloaderTests(BaseTestCase):
         sys.modules["reloader_pkg_pred.keep"].value = "keep-updated"
         sys.modules["reloader_pkg_pred.skip"].value = "skip-updated"
 
-        predicate = lambda module: not module.__name__.endswith(".skip")
+        def predicate(module):
+            return not module.__name__.endswith(".skip")
+
         reloader = ModuleReloader(include_submodules=True, predicate=predicate)
         reloader.reload("reloader_pkg_pred")
 

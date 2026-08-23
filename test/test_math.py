@@ -833,7 +833,9 @@ class MathTest(BaseTestCase):
     # ------------------------------------------------- falloff / B-spline basis
 
     def test_resolve_falloff_profile_passthrough_and_names(self):
-        fn = lambda t: t * t
+        def fn(t):
+            return t * t
+
         self.assertIs(MathUtils.resolve_falloff_profile(fn), fn)
         self.assertIs(
             MathUtils.resolve_falloff_profile("smoothstep"), MathUtils.smoothstep
@@ -1362,6 +1364,96 @@ class MathTest(BaseTestCase):
         du, dv = MathUtils.fit_into_tile((3.0, 2.0, 4.0, 3.0), (0, 0), margin)
         self.assertAlmostEqual(du, -3.0)
         self.assertAlmostEqual(dv, -2.0)
+
+    @staticmethod
+    def _hermite(t0, p0, m0, t1, p1, m1, t):
+        dt = t1 - t0
+        s = (t - t0) / dt
+        h00 = 2 * s**3 - 3 * s**2 + 1
+        h10 = s**3 - 2 * s**2 + s
+        h01 = -2 * s**3 + 3 * s**2
+        h11 = s**3 - s**2
+        return h00 * p0 + h10 * dt * m0 + h01 * p1 + h11 * dt * m1
+
+    def test_fit_hermite_slopes_recovers_a_sine_from_its_extrema(self):
+        """A densely baked sine, reduced to its peaks/valleys, is reproduced
+        by the fitted tangents to well under a percent of its amplitude."""
+        import numpy as np
+
+        times = np.arange(0, 121, dtype=float)
+        values = 10.0 * np.sin(times * (2 * math.pi / 40.0))
+        keep = [0, 10, 30, 50, 70, 90, 110, 120]  # ends + extrema
+        m_in, m_out = MathUtils.fit_hermite_slopes(times, values, keep)
+        self.assertEqual(len(m_in), len(keep))
+        # Unified tangents everywhere (no flat segments).
+        for a, b in zip(m_in, m_out):
+            self.assertAlmostEqual(a, b, places=9)
+        # Ends carry the real slope (2*pi*10/40 ~ 1.57); peaks come out
+        # flat -- exactly so where the neighbouring segments are symmetric,
+        # within a few percent of the end slope where they are not (a cubic
+        # cannot trace a sine, so the fit trades a hair of peak tilt for
+        # lower error over the asymmetric first quarter-wave).
+        self.assertAlmostEqual(m_out[0], 2 * math.pi * 10 / 40, delta=0.15)
+        for tilt in m_out[1:-1]:
+            self.assertLess(abs(tilt), 0.05 * abs(m_out[0]))
+        # Reconstruction error against the original samples.
+        worst = 0.0
+        for k in range(len(keep) - 1):
+            i0, i1 = keep[k], keep[k + 1]
+            for i in range(i0, i1 + 1):
+                ev = self._hermite(
+                    times[i0],
+                    values[i0],
+                    m_out[k],
+                    times[i1],
+                    values[i1],
+                    m_in[k + 1],
+                    times[i],
+                )
+                worst = max(worst, abs(ev - values[i]))
+        # One cubic per half-wave cannot trace a cosine exactly (smoothstep
+        # vs cos is ~2% of amplitude at the quarter points) -- that bound
+        # is the inherent cost of keeping extrema only.
+        self.assertLess(worst, 0.03 * 10.0)
+
+    def test_fit_hermite_slopes_flat_segment_pins_zero_and_breaks_tangent(self):
+        """A hold between two moving segments keeps slope 0 on its faces so the
+        hold never drifts, while the motion-facing sides stay fitted."""
+        times = list(range(0, 21))
+        values = [0, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 7, 8, 9, 10, 11]
+        keep = [0, 5, 14, 20]
+        m_in, m_out = MathUtils.fit_hermite_slopes(
+            times, values, keep, flat_tolerance=1e-6
+        )
+        self.assertEqual(m_out[1], 0.0)  # into the hold
+        self.assertEqual(m_in[2], 0.0)  # out of the hold
+        self.assertAlmostEqual(m_in[1], 1.0, delta=0.05)  # ramp in
+        self.assertAlmostEqual(m_out[2], 1.0, delta=0.05)  # ramp out
+
+    def test_fit_hermite_slopes_endpoints_mirror_their_facing_side(self):
+        """A curve that opens with a hold keeps its first key unified (0/0),
+        not broken between the prior and the pinned hold face."""
+        times = list(range(7))
+        values = [5, 5, 5, 5, 6, 7, 8]
+        m_in, m_out = MathUtils.fit_hermite_slopes(times, values, [0, 3, 6], 1e-6)
+        self.assertEqual((m_in[0], m_out[0]), (0.0, 0.0))
+        self.assertEqual(m_in[-1], m_out[-1])
+
+    def test_fit_hermite_slopes_no_interior_samples_falls_back_to_finite_difference(
+        self,
+    ):
+        """Adjacent kept samples give the solver nothing to fit; the tangent
+        falls back to the sampled derivative instead of an arbitrary value."""
+        times = [0.0, 1.0, 2.0]
+        values = [0.0, 2.0, 4.0]
+        m_in, m_out = MathUtils.fit_hermite_slopes(times, values, [0, 1, 2])
+        self.assertAlmostEqual(m_out[1], 2.0, places=6)
+        self.assertAlmostEqual(m_out[0], 2.0, places=6)
+
+    def test_fit_hermite_slopes_degenerate(self):
+        self.assertEqual(MathUtils.fit_hermite_slopes([], [], []), ([], []))
+        m_in, m_out = MathUtils.fit_hermite_slopes([3.0], [1.0], [0])
+        self.assertEqual((list(m_in), list(m_out)), ([0.0], [0.0]))
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-20_
+_Generated: 2026-08-23_
 
 ## Index
 
@@ -69,6 +69,7 @@ _Generated: 2026-08-20_
 - [`core_utils/template_set.py`](#core_utils--template_set) — A discoverable, user-extensible collection of schema-validated template files.
 - [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
+- [`file_utils/file_naming.py`](#file_utils--file_naming) — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
 - [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
 - [`file_utils/metadata.py`](#file_utils--metadata)
@@ -146,36 +147,39 @@ _Generated: 2026-08-20_
 
 Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
-- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L68)** — Declarative target-application executable-discovery config (data, not code).
+- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L86)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
   - `AppSpec.path(self) -> Optional[str]` *(property)* — :meth:`resolve`, memoized for this spec instance.
   - `AppSpec.available(self) -> bool` *(property)* — Whether the target app is installed (cached -- see :attr:`path`).
   - `AppSpec.refresh(self) -> Optional[str]` — Discard the memoized :attr:`path` and re-probe.
   - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
-- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L149)** — The unit of work threaded through the skeleton.
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L167)** — The unit of work threaded through the skeleton.
   - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
-- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L169)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
-- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L184)** — Strategy: hand a produced :class:`Payload` to the target app.
+- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L187)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L202)** — Strategy: hand a produced :class:`Payload` to the target app.
   - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
-- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L205)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L223)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
   - `HandoffBridge.headless_app_path(self) -> Optional[str]` *(property)* — Executable for a BLOCKING/headless run;
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
   - `HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]` — Merge *params* over :meth:`params_defaults` (user values win).
+  - `HandoffBridge.carrier(self, request: HandoffRequest) -> str` — The carrier *request* travels as: ``params["CARRIER"]``, else the first of
+  - `HandoffBridge.payload_extension(self, request: HandoffRequest) -> str` — The file extension of *request*'s carrier (``".fbx"`` / ``".usd"``).
+  - `HandoffBridge.carrier_of(path: str) -> str` *(static)* — The carrier a payload *path* names, by extension (``"fbx"`` / ``"usd"``).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L585)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L610)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L652)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L677)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L751)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L826)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L901)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L976)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L981)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1057)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -522,7 +526,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 ``MapFactory`` -- the texture-map workflow orchestrator.
 
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L64)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L67)** — Refactored factory with pluggable workflow system.
   - `MapFactory.map_types(cls) -> Dict[str, Tuple[str, ...]]` — ``{canonical_key: (canonical, *aliases)}`` for every registered map.
   - `MapFactory.passthrough_maps(cls) -> List[str]` — Maps passed through to the output when no handler consumes them.
   - `MapFactory.packed_grayscale_maps(cls) -> List[str]` — Maps that scale down by ``mask_map_scale`` (packed/mask data).
@@ -1050,7 +1054,7 @@ Reusable module attribute resolver for package-style imports.
 <a id="core_utils--package_manager"></a>
 ### `core_utils/package_manager.py`
 
-- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L497)** — A class that encapsulates package management functionalities using pip.
+- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L503)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
   - `PackageManager.start_version_check(self, package_name=None, python_path=None) -> None` — Start a version check in a background thread.
@@ -1097,7 +1101,11 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
 
 App-agnostic line-stream primitives for launched processes and log files.
 
-- **[`class OutputStream`](pythontk/pythontk/core_utils/process_stream.py#L37)** — Thread-safe, multi-consumer text stream with bounded history.
+- **[`class TeeStream`](pythontk/pythontk/core_utils/process_stream.py#L40)** — Write text to several streams at once;
+  - `TeeStream.write(self, text: str) -> int`
+  - `TeeStream.writelines(self, lines) -> None`
+  - `TeeStream.flush(self) -> None`
+- **[`class OutputStream`](pythontk/pythontk/core_utils/process_stream.py#L96)** — Thread-safe, multi-consumer text stream with bounded history.
   - `OutputStream.push(self, line: str, source: str = '') -> None` — Append a line.
   - `OutputStream.subscribe(self, callback: Callable[[str, str], None], replay_history: bool = False) -> Callable[[], None]` — Register ``callback(source, line)``.
   - `OutputStream.history(self) -> List[Tuple[str, str]]` — Snapshot the current history buffer.
@@ -1105,9 +1113,9 @@ App-agnostic line-stream primitives for launched processes and log files.
   - `OutputStream.wait_for(self, pattern: Union[str, Pattern], timeout: Optional[float] = None, source: Optional[str] = None, include_history: bool = True) -> Optional[Tuple[str, str]]` — Block until a line matches *pattern*, or *timeout* expires.
   - `OutputStream.close(self) -> None` — Mark the stream closed.
   - `OutputStream.closed(self) -> bool` *(property)*
-- **[`class ProcessReader(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L200)** — Reads a subprocess pipe line-by-line into an :class:`OutputStream`.
+- **[`class ProcessReader(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L259)** — Reads a subprocess pipe line-by-line into an :class:`OutputStream`.
   - `ProcessReader.run(self) -> None`
-- **[`class LogTailer(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L228)** — Tails a log file from its current size forward.
+- **[`class LogTailer(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L287)** — Tails a log file from its current size forward.
   - `LogTailer.stop(self) -> None`
   - `LogTailer.run(self) -> None`
 
@@ -1285,7 +1293,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str` *(static)* — Return the next available versioned path for `filepath`.
   - `FileUtils.get_dir_contents(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)` *(static)* — Get the contents of a directory and any of its children.
   - `FileUtils.open_explorer(path: str, create_dir: bool = False, logger=None) -> bool` *(static)* — Open the file explorer at the given path.
-  - `FileUtils.get_file_contents(filepath: str, as_list=False, encoding='utf-8') -> None` *(static)* — Get each line of a text file as indices of a list.
+  - `FileUtils.get_file_contents(filepath: str, as_list: bool = False, encoding: str = 'utf-8') -> Optional[Union[str, List[str]]]` *(static)* — Read a text file, whole or as a list of lines.
   - `FileUtils.write_to_file(filepath, lines)` *(static)* — Write the given list contents to the given file.
   - `FileUtils.atomic_write_text(filepath: str, content: str, encoding: str = 'utf-8') -> None` *(static)* — Write text to a file atomically.
   - `FileUtils.copy_file(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str` *(static)* — Copies a file to a specified folder, ensuring the folder exists.
@@ -1302,6 +1310,21 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.get_json_file(cls)` *(class)* — Get the current json filepath.
   - `FileUtils.set_json(cls, key, value, file=None)` *(class)* — Parameters:
   - `FileUtils.get_json(cls, key, file=None)` *(class)* — Parameters:
+
+<a id="file_utils--file_naming"></a>
+### `file_utils/file_naming.py`
+
+Batch renaming: a dry-run-aware plan executor and a file-system engine.
+
+- **[`class RenamePlan(LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L36)** — Apply a batch of planned renames with dry-run support and a report.
+  - `RenamePlan.apply(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item') -> List[Tuple[str, str]]` *(class)* — Execute *plan* (unless ``dry_run``) and emit one report for it.
+- **[`class FileNaming(HelpMixin, LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L179)** — Batch find / rename files by name pattern — the DCC naming tools' file tenant.
+  - `FileNaming.expand(paths) -> List[str]` *(static)* — Resolve *paths* (files and/or directories) to a list of file paths.
+  - `FileNaming.stem(path: str) -> str` *(static)* — The file name without directory or extension.
+  - `FileNaming.find(cls, paths, fltr: str, regex: bool = False, ignore_case: bool = False) -> List[str]` *(class)* — Files (from *paths*) whose stem matches *fltr*.
+  - `FileNaming.rename(cls, paths, to: str, fltr: str = '', regex: bool = False, ignore_case: bool = False, retain_suffix: bool = False, valid_suffixes: Optional[List[str]] = None, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Rename files by pattern (same grammar as the DCC naming tools).
+  - `FileNaming.set_case(cls, paths, case: str = 'capitalize', dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Re-case file stems: ``upper`` / ``lower`` / ``capitalize`` / ``swapcase`` / ``title``.
+  - `FileNaming.strip_chars(cls, paths, num_chars: int = 1, trailing: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Delete *num_chars* leading (or ``trailing``) characters from each stem.
 
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
@@ -1364,9 +1387,15 @@ Prefix-scoped temp artifacts with an explicit lifetime policy.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
-- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L248)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L268)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
   - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
   - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
+- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L406)** — Per-source scratch twins of foreign files, discarded only while untouched.
+  - `ScratchTwins.path_for(self, source: str) -> str` — The deterministic twin path for *source* (nothing is created).
+  - `ScratchTwins.create(self, source: str, payload: str) -> str` — Copy *payload* to *source*'s twin path, stamp it, and return the path.
+  - `ScratchTwins.is_twin(self, path: str) -> bool` — True if *path* is a twin this store created and still tracks.
+  - `ScratchTwins.discard(self, path: str) -> bool` — Delete the twin at *path* if it is still the untouched copy (stamp unchanged);
+  - `ScratchTwins.discard_except(self, keep: Optional[str] = None) -> List[str]` — Discard every tracked twin other than *keep* (the host's current file) — the
 
 <a id="file_utils--usd"></a>
 ### `file_utils/usd.py`
@@ -1514,7 +1543,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L47)** — Helper methods for working with image file formats.
+- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L55)** — Helper methods for working with image file formats.
   - `ImgUtils.effective_mode(cls, mode: str, ext: str) -> str` *(class)* — The mode *ext* will actually store for an image in *mode*.
   - `ImgUtils.dropped_channels(cls, mode: str, ext: str) -> Tuple[str, ...]` *(class)* — Band names *ext* cannot keep from an image in *mode*.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
@@ -1624,7 +1653,7 @@ Background mask generation via rembg (optional dependency).
 <a id="iter_utils--_iter_utils"></a>
 ### `iter_utils/_iter_utils.py`
 
-- **[`class IterUtils(HelpMixin)`](pythontk/pythontk/iter_utils/_iter_utils.py#L9)**
+- **[`class IterUtils(HelpMixin)`](pythontk/pythontk/iter_utils/_iter_utils.py#L22)**
   - `IterUtils.make_iterable(x: Any, snapshot: bool = False) -> Iterable` *(static)* — Convert the given object to an iterable, unless it's a string, bytes, or bytearray.
   - `IterUtils.nested_depth(cls, lst, typ=(list, set, tuple))` *(class)* — Get the maximum nested depth of any sub-lists of the given list.
   - `IterUtils.flatten(cls, lst, return_type: Optional[type] = None)` *(class)* — Flatten arbitrarily nested lists.
@@ -1639,6 +1668,7 @@ Background mask generation via rembg (optional dependency).
   - `IterUtils.filter_dict(cls, dct: Dict, keys: bool = False, values: bool = False, **kwargs) -> Dict` *(class)* — Filter the given dictionary.
   - `IterUtils.split_list(lst, into)` *(static)* — Split a list into parts.
   - `IterUtils.find_flat_interior_indices(values, value_tolerance=1e-05)` *(static)* — Return indices of redundant interior keys in flat segments.
+  - `IterUtils.find_extrema_indices(values: Sequence[float], value_tolerance: float = 1e-05) -> 'np.ndarray'` *(static)* — Return the indices that define a sampled curve's shape.
 
 <a id="math_utils--_math_utils"></a>
 ### `math_utils/_math_utils.py`
@@ -1693,6 +1723,7 @@ Background mask generation via rembg (optional dependency).
   - `MathUtils.round_to_preferred(value: float, max_distance: float = 1.5) -> int` *(static)* — Round to aesthetically pleasing 'round' numbers (conservative approach).
   - `MathUtils.round_to_aggressive_preferred(cls, value: float) -> int` *(class)* — Round to aesthetically pleasing 'round' numbers (aggressive approach).
   - `MathUtils.calculate_rotation_distance(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float` *(static)* — Calculate the effective rotation distance between two Euler rotations.
+  - `MathUtils.fit_hermite_slopes(times: Sequence[float], values: Sequence[float], keep_indices: Sequence[int], flat_tolerance: float = 0.0) -> Tuple[List[float], List[float]]` *(static)* — Fit cubic-Hermite tangent slopes at a subset of samples so the
 
 <a id="math_utils--noise"></a>
 ### `math_utils/noise.py`
@@ -1869,6 +1900,8 @@ The in-application half of the RPC pair: registry + marshaller + server.
   - `StrUtils.get_trailing_integers(string, inc=0, as_string=False)` *(static)* — Returns any integers from the end of the given string.
   - `StrUtils.find_str(cls, find, strings, regex=False, ignore_case=False)` *(class)* — Filter for elements that containing the given string in a list of strings.
   - `StrUtils.find_str_and_format(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)` *(class)* — Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…
+  - `StrUtils.strip_suffix(name: str, suffixes: Iterable[str]) -> str` *(static)* — *name* without a trailing entry of *suffixes* (case-insensitive;
+  - `StrUtils.retain_suffix(old_name: str, new_name: str, valid_suffixes: Optional[List[str]] = None) -> str` *(static)* — Carry ``old_name``'s trailing ``_TYPE`` suffix over to ``new_name``.
   - `StrUtils.format_suffix(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str` *(static)* — Re-format the suffix for the given string.
   - `StrUtils.strip_known_affix(string: str, prefix: str = '', suffix: str = '') -> str` *(static)* — Strip a configured prefix and/or suffix from a string, case-insensitively.
   - `StrUtils.infer_affix_mode(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str` *(static)* — Infer ``"prefix"`` or ``"suffix"`` from *delimiter* placement in *text*.
