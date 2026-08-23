@@ -1337,6 +1337,39 @@ class MapRegistry(SingletonMixin):
             )
         return self._suffix_strip_pattern
 
+    def split_map_suffix(self, name_only: str) -> Tuple[str, str]:
+        """Split an extension-less filename into ``(base, tail)`` at its map-type suffix.
+
+        The composition of :meth:`split_tile_token` and
+        :meth:`get_suffix_strip_pattern`, in the one order that works: the tile
+        token sits AFTER the map-type suffix, so it has to come off before the
+        suffix is reachable at all (``rock_Normal.1001`` ends in no alias).
+
+        *tail* is everything that identifies WHICH map a texture file is — the
+        registered suffix plus any tile token — and ``base + tail`` is the input
+        verbatim, so a caller that renames the base can re-attach it and keep a
+        whole texture set together (``rock_Normal``, ``rock_AO`` and
+        ``rock_ORM.1001`` all base to ``rock``).
+
+        This is the composition every consumer needs; take it rather than the
+        raw pattern. :meth:`get_suffix_strip_pattern` documents itself as the
+        single source of truth precisely because hand-rolled copies of this
+        sequence drifted once already, and each caller that re-derives it is the
+        next chance to drift.
+
+        Parameters:
+            name_only: A filename with its extension already removed.
+
+        Returns:
+            tuple[str, str]: ``(base, tail)``; ``tail`` is ``""`` when the name
+            carries neither a map-type suffix nor a tile token.
+        """
+        name, tile = self.split_tile_token(name_only)
+        pattern = self.get_suffix_strip_pattern()
+        match = re.search(pattern, name) if pattern else None
+        cut = match.start() if match else len(name)
+        return name[:cut], name[cut:] + tile
+
     def shares_workflow(self, name: str, other: str) -> Optional[bool]:
         """Whether two map types declare any target workflow in common.
 

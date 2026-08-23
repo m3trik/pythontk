@@ -2,8 +2,6 @@
 
 _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_registry.py`._
 
-_Generated: 2026-08-23_
-
 ## Index
 
 - [`audio_utils/_audio_utils.py`](#audio_utils--_audio_utils)
@@ -717,6 +715,7 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapRegistry.split_duplicate_token(cls, name_only: str) -> Tuple[str, str]` *(class)* — Split a trailing duplicate marker off an extension-less filename.
   - `MapRegistry.resolve_type_from_path(self, path: str) -> Optional[str]` — Resolve the map type key from a file path.
   - `MapRegistry.get_suffix_strip_pattern(self) -> Optional[str]` — Regex matching one trailing map-type suffix (any registered alias).
+  - `MapRegistry.split_map_suffix(self, name_only: str) -> Tuple[str, str]` — Split an extension-less filename into ``(base, tail)`` at its map-type suffix.
   - `MapRegistry.shares_workflow(self, name: str, other: str) -> Optional[bool]` — Whether two map types declare any target workflow in common.
   - `MapRegistry.get_workflow_presets(self) -> Dict[str, Dict[str, Any]]` — Generate the workflow presets dictionary.
   - `MapRegistry.get_map_types(self) -> Dict[str, Tuple[str, ...]]` — Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.
@@ -1316,15 +1315,15 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
 
 Batch renaming: a dry-run-aware plan executor and a file-system engine.
 
-- **[`class RenamePlan(LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L36)** — Apply a batch of planned renames with dry-run support and a report.
+- **[`class RenamePlan(LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L37)** — Apply a batch of planned renames with dry-run support and a report.
   - `RenamePlan.apply(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item') -> List[Tuple[str, str]]` *(class)* — Execute *plan* (unless ``dry_run``) and emit one report for it.
-- **[`class FileNaming(HelpMixin, LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L179)** — Batch find / rename files by name pattern — the DCC naming tools' file tenant.
+- **[`class FileNaming(HelpMixin, LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L180)** — Batch find / rename files by name pattern — the DCC naming tools' file tenant.
   - `FileNaming.expand(paths) -> List[str]` *(static)* — Resolve *paths* (files and/or directories) to a list of file paths.
   - `FileNaming.stem(path: str) -> str` *(static)* — The file name without directory or extension.
-  - `FileNaming.find(cls, paths, fltr: str, regex: bool = False, ignore_case: bool = False) -> List[str]` *(class)* — Files (from *paths*) whose stem matches *fltr*.
-  - `FileNaming.rename(cls, paths, to: str, fltr: str = '', regex: bool = False, ignore_case: bool = False, retain_suffix: bool = False, valid_suffixes: Optional[List[str]] = None, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Rename files by pattern (same grammar as the DCC naming tools).
-  - `FileNaming.set_case(cls, paths, case: str = 'capitalize', dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Re-case file stems: ``upper`` / ``lower`` / ``capitalize`` / ``swapcase`` / ``title``.
-  - `FileNaming.strip_chars(cls, paths, num_chars: int = 1, trailing: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Delete *num_chars* leading (or ``trailing``) characters from each stem.
+  - `FileNaming.find(cls, paths, fltr: str, regex: bool = False, ignore_case: bool = False, base_names: bool = False) -> List[str]` *(class)* — Files (from *paths*) whose stem matches *fltr*.
+  - `FileNaming.rename(cls, paths, to: str, fltr: str = '', regex: bool = False, ignore_case: bool = False, retain_suffix: bool = False, valid_suffixes: Optional[List[str]] = None, base_names: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Rename files by pattern (same grammar as the DCC naming tools).
+  - `FileNaming.set_case(cls, paths, case: str = 'capitalize', base_names: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Re-case file stems: ``upper`` / ``lower`` / ``capitalize`` / ``swapcase`` / ``title``.
+  - `FileNaming.strip_chars(cls, paths, num_chars: int = 1, trailing: bool = False, base_names: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]` *(class)* — Delete *num_chars* leading (or ``trailing``) characters from each stem.
 
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`

@@ -52,6 +52,34 @@ class GroupTexturesBySetTest(BaseTestCase):
 
 
 class FilterRedundantMapsTest(BaseTestCase):
+    def first_precedence_rule(self):
+        """Return the first ``(dominant, redundants)`` pair that has redundants.
+
+        The precedence table is derived from ``MapType.replaces`` over
+        ``MapRegistry._maps`` -- a hard-coded class attribute, with no optional
+        dependency or environment behind it. An empty table is therefore a
+        regression, never a valid environment. Assert instead of skipping: a
+        skip counts as a pass, so an emptied registry would read green.
+
+        Returns:
+            tuple: ``(dominant_map_name, [redundant_map_name, ...])``.
+        """
+        rules = MapFactory.get_precedence_rules()
+        self.assertTrue(
+            rules,
+            "Precedence-rule registry is empty; MapRegistry._maps carries the "
+            "'replaces' relationships as source, so this is a regression",
+        )
+        dominant, redundants = next(
+            ((d, r) for d, r in rules.items() if r), (None, None)
+        )
+        self.assertIsNotNone(
+            dominant,
+            "No precedence rule declares any redundants; every 'replaces' list "
+            "in MapRegistry._maps is empty, so this is a regression",
+        )
+        return dominant, redundants
+
     def test_empty_dict_no_op(self):
         d = {}
         MapFactory.filter_redundant_maps(d)
@@ -78,15 +106,8 @@ class FilterRedundantMapsTest(BaseTestCase):
         Uses live precedence rules so this stays correct as the registry
         evolves.
         """
-        rules = MapFactory.get_precedence_rules()
-        if not rules:
-            self.skipTest("No precedence rules registered")
         # Find a rule where dominant has a non-empty redundant list
-        dominant, redundants = next(
-            ((d, r) for d, r in rules.items() if r), (None, None)
-        )
-        if not dominant:
-            self.skipTest("No precedence rule with redundants")
+        dominant, redundants = self.first_precedence_rule()
         redundant = redundants[0]
         d = {
             dominant: ["/x/dominant.png"],
@@ -97,12 +118,7 @@ class FilterRedundantMapsTest(BaseTestCase):
         self.assertNotIn(redundant, d, f"{redundant} should have been removed")
 
     def test_redundant_kept_when_dominant_empty(self):
-        rules = MapFactory.get_precedence_rules()
-        dominant, redundants = next(
-            ((d, r) for d, r in rules.items() if r), (None, None)
-        )
-        if not dominant:
-            self.skipTest("No precedence rule with redundants")
+        dominant, redundants = self.first_precedence_rule()
         redundant = redundants[0]
         d = {
             dominant: [],  # empty -> not actually present

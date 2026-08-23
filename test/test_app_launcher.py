@@ -80,7 +80,7 @@ class TestAppLauncher(unittest.TestCase):
 
             # Use our own fixture app that is guaranteed to be a standard process
             fixture_path = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "fixtures", "test_ui_app.py")
+                os.path.join(os.path.dirname(__file__), "fixtures", "ui_app_fixture.py")
             )
 
             # Launch python pointing to the fixture
@@ -127,7 +127,7 @@ class TestAppLauncher(unittest.TestCase):
             return
 
         fixture_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "fixtures", "test_ui_app.py")
+            os.path.join(os.path.dirname(__file__), "fixtures", "ui_app_fixture.py")
         )
 
         python_exe = sys.executable

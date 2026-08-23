@@ -2,8 +2,6 @@
 
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
-_Generated: 2026-08-23_
-
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
   - methods: resolve_ffmpeg, is_playable_extension, is_supported_source_extension, ensure_playable_path, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
@@ -186,7 +184,7 @@ _Generated: 2026-08-23_
 - `class MapType`
   - methods: compose_aliases, carried_types
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, split_duplicate_token, resolve_type_from_path, get_suffix_strip_pattern, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
+  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, split_duplicate_token, resolve_type_from_path, get_suffix_strip_pattern, split_map_suffix, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`

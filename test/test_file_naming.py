@@ -277,7 +277,6 @@ class TestFileNaming(unittest.TestCase):
         self.assertEqual(result, [])
         self.assertEqual(self.names(), before)
 
-
     def test_strip_chars_zero_is_a_no_op_in_both_directions(self):
         """A count of zero must change nothing -- and must not "skip" everything.
 
@@ -294,6 +293,103 @@ class TestFileNaming(unittest.TestCase):
                 )
                 self.assertEqual(result, [])
                 self.assertEqual(self.names(), before)
+
+
+class TestBaseNames(unittest.TestCase):
+    """``base_names`` — operate on the map-suffix-free base of a texture file name."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="fn_base_")
+        for name in (
+            "rock_Normal.png",
+            "rock_AO.png",
+            "rock_ORM.1001.png",
+            "rock_ORM.1002.png",
+            "rockAO.png",
+            "rock-basecolor.png",
+            "sphere.txt",
+        ):
+            with open(os.path.join(self.dir, name), "wb") as f:
+                f.write(b"x")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def names(self):
+        return sorted(os.listdir(self.dir))
+
+    def test_rename_carries_a_whole_texture_set(self):
+        """One rename of the base renames every map of the set: tiles, attached and
+        delimited suffixes alike -- and nothing outside the set."""
+        FileNaming.rename(self.dir, "stone", "rock", base_names=True)
+        self.assertEqual(
+            self.names(),
+            [
+                "sphere.txt",  # a different base: untouched
+                "stone-basecolor.png",
+                "stoneAO.png",
+                "stone_AO.png",
+                "stone_Normal.png",
+                "stone_ORM.1001.png",
+                "stone_ORM.1002.png",
+            ],
+        )
+
+    def test_rename_without_base_names_is_unchanged(self):
+        """The default still matches whole stems -- 'rock' alone matches nothing."""
+        FileNaming.rename(self.dir, "stone", "rock")
+        self.assertNotIn("stone_Normal.png", self.names())
+
+    def test_find_collects_every_map_of_a_set(self):
+        hits = FileNaming.find(self.dir, "rock", base_names=True)
+        self.assertEqual(
+            sorted(os.path.basename(h) for h in hits),
+            [
+                "rock-basecolor.png",
+                "rockAO.png",
+                "rock_AO.png",
+                "rock_Normal.png",
+                "rock_ORM.1001.png",
+                "rock_ORM.1002.png",
+            ],
+        )
+
+    def test_set_case_leaves_the_map_suffix_spelling_alone(self):
+        FileNaming.set_case(self.dir, "upper", base_names=True)
+        self.assertIn("ROCK_Normal.png", self.names())
+        self.assertIn("ROCK_ORM.1001.png", self.names())
+        self.assertIn("SPHERE.txt", self.names())
+
+    def test_strip_chars_trims_the_base_not_the_suffix(self):
+        FileNaming.strip_chars(self.dir, num_chars=2, trailing=True, base_names=True)
+        self.assertIn("ro_Normal.png", self.names())
+        self.assertIn("ro_ORM.1001.png", self.names())
+
+    def test_dry_run_touches_nothing(self):
+        before = self.names()
+        FileNaming.rename(self.dir, "stone", "rock", base_names=True, dry_run=True)
+        self.assertEqual(self.names(), before)
+
+    def test_extension_is_never_part_of_the_base(self):
+        """The stem is taken first, so an extension that IS a map alias is not a suffix."""
+        with open(os.path.join(self.dir, "panel.normal"), "wb") as f:
+            f.write(b"x")
+        FileNaming.rename(self.dir, "wall", "panel", base_names=True)
+        self.assertIn("wall.normal", self.names())
+        # ...and a plain file renames with its extension intact.
+        FileNaming.rename(self.dir, "**_v2", "sphere", base_names=True)
+        self.assertIn("sphere_v2.txt", self.names())
+
+    def test_a_name_with_no_map_suffix_is_untouched_by_base_mode(self):
+        """base_names must be safe over a mixed directory, not just a texture set."""
+        for mode in (False, True):
+            with self.subTest(base_names=mode):
+                result = FileNaming.rename(
+                    self.dir, "**_x", "sphere", base_names=mode, dry_run=True
+                )
+                planned = [os.path.basename(new) for _old, new in result]
+                self.assertEqual(planned, ["sphere_x.txt"])
+
 
 if __name__ == "__main__":
     unittest.main()
