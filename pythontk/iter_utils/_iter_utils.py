@@ -1,6 +1,19 @@
 # !/usr/bin/python
 # coding=utf-8
-from typing import Any, Callable, Iterable, List, Dict, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+    Union,
+)
+
+if TYPE_CHECKING:  # numpy is an optional dep, imported inside the methods
+    import numpy as np
 
 # from this package:
 from pythontk.core_utils.help_mixin import HelpMixin
@@ -718,6 +731,44 @@ class IterUtils(HelpMixin):
             return empty
 
         return remove_indices, seg_starts, seg_lasts
+
+    @staticmethod
+    def find_extrema_indices(
+        values: Sequence[float], value_tolerance: float = 1e-5
+    ) -> "np.ndarray":
+        """Return the indices that define a sampled curve's shape.
+
+        The kept set is: both endpoints, every local peak/valley, and both
+        boundaries of every flat run (a hold).  Everything else is a
+        monotone tween or a flat-run interior and is reproducible from
+        its neighbours, so it is dropped.  This is the key-selection half
+        of an "unbake" -- pair it with
+        :meth:`MathUtils.fit_hermite_slopes` to restore the tangents.
+
+        Parameters:
+            values: Array-like of numeric samples in time order.
+            value_tolerance: Consecutive samples closer than this are treated
+                as equal (a flat step), so sub-tolerance jitter on a hold
+                never spawns keys.
+
+        Returns:
+            numpy int array of indices into *values*, ascending.
+        """
+        import numpy as np
+
+        values = np.asarray(values, dtype=float)
+        n = len(values)
+        if n <= 2:
+            return np.arange(n)
+
+        diffs = np.diff(values)
+        step = np.sign(diffs)
+        step[np.abs(diffs) < value_tolerance] = 0
+        # An interior sample is shape-defining when the direction of travel
+        # changes across it: +/- (peak, valley), +/0 or 0/+ (hold boundary).
+        changes = step[1:] != step[:-1]
+        keep = np.concatenate(([True], changes, [True]))
+        return np.nonzero(keep)[0]
 
 
 # --------------------------------------------------------------------------------------------

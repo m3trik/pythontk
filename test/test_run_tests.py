@@ -221,6 +221,72 @@ class TestModuleCoverage(RunnerTestCase):
         )
 
 
+class TestRunLogCapture(RunnerTestCase):
+    """A run log has to hold the OUTPUT the failure was explained by.
+
+    unittest's runner writes through a ``ptk.TeeStream``, so its own report
+    reaches the log; product code does not -- a bare print(), or the traceback.print_exc()
+    of an exception the product swallowed, goes to the real stdout/stderr. Six
+    instances of the full-suite file-IO flake were logged as unexplained
+    assertion diffs because of exactly that (2026-08-20).
+    """
+
+    PROBE = (
+        "import sys\n"
+        "import unittest\n"
+        "class TestNoisy(unittest.TestCase):\n"
+        "    def test_prints(self):\n"
+        "        print('PROBE-STDOUT-MARKER')\n"
+        "        print('PROBE-STDERR-MARKER', file=sys.stderr)\n"
+    )
+
+    def setUp(self):
+        self.artifacts = TempArtifacts(
+            "run_tests_log_probe", dir=str(TEST_DIR / "temp_tests"), policy="scoped"
+        )
+        self.probe_dir = Path(self.artifacts.dir_path())
+        (self.probe_dir / "test_probe_noisy.py").write_text(
+            self.PROBE, encoding="utf-8"
+        )
+        self._sys_path = list(sys.path)
+        self._sys_modules = set(sys.modules)
+
+    def tearDown(self):
+        for name in set(sys.modules) - self._sys_modules:
+            sys.modules.pop(name, None)
+        sys.path[:] = self._sys_path
+        self.artifacts.cleanup()
+
+    def run_probe(self):
+        """Run the probe dir through the real TestRunner, returning its log.
+
+        Both console streams are stood in for, so the probe's markers do not
+        land in the parent run's own output and get mistaken for real failures.
+        """
+        runner = self.runner.TestRunner(self.probe_dir, verbosity=0)
+        with mock.patch.object(sys, "stdout", StringIO()):
+            with mock.patch.object(sys, "stderr", StringIO()):
+                runner.run()
+        return runner.log_buffer.getvalue()
+
+    def test_product_stdout_reaches_the_log(self):
+        self.assertIn("PROBE-STDOUT-MARKER", self.run_probe())
+
+    def test_product_stderr_reaches_the_log(self):
+        self.assertIn("PROBE-STDERR-MARKER", self.run_probe())
+
+    def test_the_streams_are_restored_afterwards(self):
+        runner = self.runner.TestRunner(self.probe_dir, verbosity=0)
+        with mock.patch.object(sys, "stdout", StringIO()) as fake_out:
+            with mock.patch.object(sys, "stderr", StringIO()) as fake_err:
+                runner.run()
+                # Read INSIDE the patch: mock.patch puts the attribute back on
+                # exit whatever the runner left behind, so the same two asserts
+                # after the context would pass with the restore deleted.
+                self.assertIs(sys.stdout, fake_out)
+                self.assertIs(sys.stderr, fake_err)
+
+
 class TestBadgeWiring(RunnerTestCase):
     """The gate is wired into the badge write, not merely importable."""
 

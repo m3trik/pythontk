@@ -16,10 +16,12 @@ Run with:
     python -m pytest test_img.py -v
     python test_img.py
 """
+import ast
 import os
 import unittest
 import shutil
 import tempfile
+from pathlib import Path
 import numpy as np
 from PIL import Image
 
@@ -35,6 +37,8 @@ try:
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ImgTest(BaseTestCase):
@@ -2387,6 +2391,75 @@ class ImgKtx2RoutingTest(BaseTestCase):
             with self.assertRaises(FileNotFoundError) as ctx:
                 ImgUtils.resolve_ktx2_encoder(required=True)
         self.assertIn("register_ktx2_encoder", str(ctx.exception))
+
+
+class OptionalPILGuardTest(unittest.TestCase):
+    """Every module-level ``try: from PIL import …`` must bind ALL of its names.
+
+    Pillow is optional here, and a guard that imports six names but only assigns
+    ``Image = None`` in its ``except`` leaves the other five *undefined* — so the
+    call site raises ``NameError: name 'ImageOps' is not defined`` instead of taking
+    the intended "no Pillow" branch. It also defeats late provisioning: hosts that
+    install Pillow *after* pythontk is imported (blendertk's ``ensure_image_deps``
+    does exactly this inside Blender, whose bundled Python ships no PIL) re-bind
+    these globals by looking for the ``None`` ones — a name that was never created
+    is invisible to that repair, so the module stays broken for the whole session.
+    That was a live failure: the Blender Material Updater could not pack
+    Metallic/Smoothness.
+
+    Static, so it holds for every module in the package — including ones added later
+    — and it fails in an environment that *does* have Pillow, where the runtime
+    NameError never shows up.
+    """
+
+    PKG_ROOT = REPO_ROOT / "pythontk"
+
+    @staticmethod
+    def _handler_bound_names(handler):
+        """Names assigned anywhere in an ``except`` handler body (chained assignment
+        included: ``a = b = c = None`` binds all three)."""
+        bound = set()
+        for node in ast.walk(handler):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        bound.add(target.id)
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                if isinstance(node.target, ast.Name):
+                    bound.add(node.target.id)
+        return bound
+
+    def test_module_level_pil_guards_bind_every_imported_name(self):
+        offenders = []
+        for path in sorted(self.PKG_ROOT.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for stmt in tree.body:  # module level only — a function-local import
+                if not isinstance(stmt, ast.Try):  # raises at call time by design
+                    continue
+                imported = set()
+                for node in stmt.body:
+                    if (
+                        isinstance(node, ast.ImportFrom)
+                        and (node.module or "").split(".")[0] == "PIL"
+                    ):
+                        imported |= {a.asname or a.name for a in node.names}
+                if not imported:
+                    continue
+                bound = set()
+                for handler in stmt.handlers:
+                    bound |= self._handler_bound_names(handler)
+                unbound = imported - bound
+                if unbound:
+                    offenders.append(
+                        f"{path.relative_to(REPO_ROOT).as_posix()}:{stmt.lineno} "
+                        f"leaves {sorted(unbound)} unbound"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "guarded PIL imports must assign every name in their except branch:\n"
+            + "\n".join(offenders),
+        )
 
 
 if __name__ == "__main__":

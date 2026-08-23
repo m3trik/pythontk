@@ -371,8 +371,10 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
         size = (16, 16)
         # Two disjoint islands: A = cols 0-6, B = cols 9-15, all rows.
         # Height: everything mid-grey (flat), one bump per island.
-        h_a = Image.new("L", size, 127); h_a.putpixel((2, 2), 200)
-        h_b = Image.new("L", size, 127); h_b.putpixel((12, 12), 60)
+        h_a = Image.new("L", size, 127)
+        h_a.putpixel((2, 2), 200)
+        h_b = Image.new("L", size, 127)
+        h_b.putpixel((12, 12), 60)
         # Base_Color: black bg, island painted; islands run into the
         # bottom corners so corners are NOT uniform.
         c_a = Image.new("RGB", size, (0, 0, 0))

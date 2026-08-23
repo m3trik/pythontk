@@ -326,15 +326,37 @@ class MeshConvert(HelpMixin):
                     self._rest = f.read()
             return self._rest
 
+        def _trailing_chunks(self) -> bytes:
+            """Whatever follows the BIN chunk -- or the JSON, when there is no BIN.
+
+            GLB is a chunked container, and the spec tells a client that meets a
+            chunk type it does not know to IGNORE it, not to discard it. Nothing
+            here decodes such a chunk, so nothing here could rebuild one either;
+            :meth:`replace_rest` carries this slice over verbatim instead.
+            """
+            rest = self.rest
+            if len(rest) >= 8 and rest[4:8] == b"BIN\x00":
+                # Chunk lengths are 4-byte aligned by spec, so the declared
+                # length already covers the BIN's own padding.
+                return bytes(rest[8 + struct.unpack("<I", rest[:4])[0] :])
+            return bytes(rest)  # no BIN at all: the whole tail is other chunks
+
         def replace_rest(self, new_bin: bytes) -> None:
             """Swap the BIN chunk's payload for *new_bin* (repack support).
 
             Rebuilds the chunk header, drops the derived caches, and marks the
             session so the writer rewrites the whole container -- see
             :attr:`rest_dirty` for why the in-place path must not run.
+
+            Only the BIN is replaced; any chunk beyond it rides along untouched
+            (see :meth:`_trailing_chunks`). This rebuilds the entire tail from
+            one payload, so without that carry-over a repack would delete bytes
+            it never read. BIN is emitted first, which is where the spec wants
+            it, so the result stays valid even for a file that had no BIN.
             """
+            tail = self._trailing_chunks()
             new_bin += b"\x00" * ((4 - (len(new_bin) % 4)) % 4)
-            self._rest = struct.pack("<I4s", len(new_bin), b"BIN\x00") + new_bin
+            self._rest = struct.pack("<I4s", len(new_bin), b"BIN\x00") + new_bin + tail
             self._bin = None
             self._image_digests = None
             self._channel_extrema = {}
@@ -2561,13 +2583,6 @@ class MeshConvert(HelpMixin):
         # on a production GLB that copy is the entire geometry, and `join`
         # reads the view directly, so peak memory is one BIN, not two.
         blob = edit.bin_data
-        if blob is None and edit.rest:
-            # No BIN chunk, yet something follows the JSON: an extension chunk
-            # the spec tells clients to ignore rather than drop. `replace_rest`
-            # swaps that whole tail for a BIN, so relocating here would delete
-            # bytes this class never read -- the same trade as the external
-            # buffer above, and the same answer: leave the payloads in the JSON.
-            return 0
         chunks = [] if blob is None else [blob]
         offset = 0 if blob is None else len(blob)
         pad = (4 - (offset % 4)) % 4

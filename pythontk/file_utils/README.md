@@ -20,6 +20,8 @@ The path-plumbing workhorse, in five clusters:
 
 `CachedArtifact` layers produce-once/reuse-forever on top: inputs hash to a content-addressed key; a miss produces into a *scoped scratch* store and atomically `os.replace`s into the cache slot, so a timeout-killed partial write can never poison later runs.
 
+`ScratchTwins` is the third: a per-source scratch **twin** of a foreign file (a `.blend` opened in Maya arrives as an `.ma`). The twin path is deterministic per source, so a panel can recompute it to answer "is this row the current scene?", and each source gets its own directory so two projects' `shot.ma` cannot collide. A twin is discarded only while it is still byte-for-byte the copy that was written — one the user saved into is real work, so it is kept and its location logged, and `create` moves it aside rather than over it. The untouched-test is stamped to a sidecar so it survives a host restart.
+
 ## Mesh conversion (`mesh_convert/`)
 
 `MeshConvert` wraps the godotengine **FBX2glTF** CLI (pinned, auto-installed into `~/.pythontk/tools/` on first use — override with `PYTHONTK_TOOLS_DIR`) for static-mesh FBX → GLB, then acts as a glTF/GLB repair-and-enrichment toolkit where multiple passes share one edit session:
@@ -49,6 +51,10 @@ Pure Python, explicitly no `pxr` import. `UsdFile` sniffs format by magic bytes 
 ## Workspaces (`workspace.py`)
 
 Shared project-workspace model plus a `workspace.mel` codec — pure Python, no DCC import. Despite the extension, `workspace.mel` is a flat, order-tolerant rule store that Maya round-trips losslessly *including rules it doesn't recognize*, which makes it a legitimate shared format: one project folder serves Maya natively and Blender via blendertk. The writer is merge-preserving (managed rules update in place; unrecognized rules, comments, and variables survive verbatim). `Workspace` resolves directories semantically (rule → existing conventional folder → default); `WorkspaceTemplates` holds named rule sets for new-project scaffolding.
+
+## Batch renaming (`file_naming.py`)
+
+`RenamePlan` is the host-agnostic executor both DCC naming panels share: it takes a plan of `(item, new_name)` and a `rename` **strategy callable**, applies it entry by entry, and reports what changed — collision handling, dry-run, per-entry failure isolation and the log/link formatting in one place, with no filesystem or DCC call of its own. `FileNaming` is its filesystem tenant: `expand` (paths or directories to files), `find`, `rename`, `set_case` and `strip_chars`, driving `RenamePlan` with an `os.rename` strategy. A DCC layer supplies its own strategy instead (`cmds.rename`, `object.name = …`) and gets the same behaviour for free.
 
 ## Others
 

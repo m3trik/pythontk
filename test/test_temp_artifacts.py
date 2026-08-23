@@ -29,7 +29,11 @@ import threading
 import unittest
 from unittest import mock
 
-from pythontk.file_utils.temp_artifacts import CachedArtifact, TempArtifacts
+from pythontk.file_utils.temp_artifacts import (
+    CachedArtifact,
+    ScratchTwins,
+    TempArtifacts,
+)
 
 
 class TempArtifactsBase(unittest.TestCase):
@@ -429,14 +433,31 @@ class TempArtifactsDirectoryTest(unittest.TestCase):
         LATER run must be able to collect the leftover."""
         store = self._store(policy="detached")
         d = store.dir_path()
-        with open(os.path.join(d, "f.txt"), "w") as fh:
+        f = os.path.join(d, "f.txt")
+        with open(f, "w") as fh:
             fh.write("x")
         old = time.time() - 30 * 86400
         os.utime(d, (old, old))
+        os.utime(f, (old, old))
 
         swept = self._store(policy="detached", max_age_days=7).sweep_stale()
         self.assertIn(d, swept)
         self.assertFalse(os.path.exists(d))
+
+    def test_sweep_stale_spares_a_directory_with_a_fresh_file(self):
+        """A file rewritten in place never touches its parent's mtime (Maya's .ma
+        save), so a scratch dir someone keeps working in must be judged by its
+        newest entry, not by the directory itself."""
+        store = self._store(policy="detached")
+        d = store.dir_path()
+        f = os.path.join(d, "work.ma")
+        with open(f, "w") as fh:
+            fh.write("x")
+        old = time.time() - 30 * 86400
+        os.utime(d, (old, old))  # the dir looks abandoned; the file inside is fresh
+
+        self.assertEqual(self._store(policy="detached", max_age_days=7).sweep_stale(), [])
+        self.assertTrue(os.path.isfile(f))
 
     def test_sweep_stale_spares_a_FRESH_directory(self):
         store = self._store(policy="detached")
@@ -464,6 +485,139 @@ class TempArtifactsDirectoryTest(unittest.TestCase):
         self.assertEqual(sorted(removed), sorted([f, d]))
         self.assertFalse(os.path.exists(f))
         self.assertFalse(os.path.exists(d))
+
+
+class TestScratchTwins(TempArtifactsBase):
+    """Per-source scratch twins: provenance naming, per-source dirs, untouched-only discard."""
+
+    def twins(self, **kw):
+        return ScratchTwins("tw", extension=".blend", dir=self.dir, **kw)
+
+    def test_path_carries_source_type_and_is_per_source(self):
+        t = self.twins()
+        a = t.path_for(os.path.join(self.dir, "projA", "shot.ma"))
+        b = t.path_for(os.path.join(self.dir, "projB", "shot.ma"))
+        fbx = t.path_for(os.path.join(self.dir, "projA", "shot.FBX"))
+        self.assertEqual(os.path.basename(a), "shot_ma.blend")
+        self.assertEqual(os.path.basename(fbx), "shot_fbx.blend")
+        self.assertTrue(os.path.basename(os.path.dirname(a)).startswith("tw_"))
+        self.assertEqual(os.path.dirname(os.path.dirname(a)), self.dir)
+        self.assertNotEqual(os.path.dirname(a), os.path.dirname(b))
+        # Deterministic, and nothing is created by asking.
+        self.assertEqual(t.path_for(os.path.join(self.dir, "projA", "shot.ma")), a)
+        self.assertFalse(os.path.exists(os.path.dirname(a)))
+
+    def test_create_copies_and_stamps(self):
+        t = self.twins()
+        payload = self.touch(os.path.join(self.dir, "bake.blend"), b"bake")
+        source = os.path.join(self.dir, "proj", "shot.ma")
+        path = t.create(source, payload)
+        self.assertEqual(path, t.path_for(source))
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), b"bake")
+        self.assertTrue(t.is_twin(path))
+        self.assertFalse(t.is_twin(payload))
+
+    def test_discard_removes_untouched_keeps_saved_into(self):
+        t = self.twins()
+        payload = self.touch(os.path.join(self.dir, "bake.blend"), b"bake")
+        source = os.path.join(self.dir, "proj", "shot.ma")
+        path = t.create(source, payload)
+        self.assertTrue(t.discard(path))
+        self.assertFalse(os.path.exists(path))
+        self.assertFalse(t.is_twin(path))
+
+        path = t.create(source, payload)
+        self.touch(path, b"the user saved real work here")  # stamp changes
+        self.assertFalse(t.discard(path))
+        self.assertTrue(os.path.exists(path))
+        self.assertFalse(t.is_twin(path))  # forgotten either way
+        self.assertFalse(t.discard(path))  # unknown now -> no-op
+        self.assertFalse(t.discard(os.path.join(self.dir, "never.blend")))
+        self.assertFalse(t.discard(""))
+
+    def test_discard_except_keeps_the_current_file(self):
+        t = self.twins()
+        payload = self.touch(os.path.join(self.dir, "bake.blend"), b"bake")
+        a = t.create(os.path.join(self.dir, "proj", "a.ma"), payload)
+        b = t.create(os.path.join(self.dir, "proj", "b.ma"), payload)
+        removed = t.discard_except(a.upper() if os.name == "nt" else a)  # case-insensitive on Windows
+        # Reported exactly as create() handed them out -- NOT the normcased internal
+        # key, which on Windows is lowercased and compares unequal to path_for().
+        self.assertEqual(removed, [b])
+        self.assertTrue(os.path.exists(a))
+        self.assertFalse(os.path.exists(b))
+        self.assertEqual(t.discard_except(None), [a])
+        self.assertFalse(os.path.exists(a))
+
+    def test_create_never_overwrites_a_twin_the_user_saved_into(self):
+        """Re-opening the same source must not destroy work saved into its twin.
+
+        The twin path is deterministic per source, so a second ``create`` for the same
+        source lands on the same file. Both routes to that second call are covered:
+        in-session (``discard_except`` keeps the saved twin but stops tracking it) and
+        across a host restart (the in-memory stamps are gone entirely).
+        """
+        payload = self.touch(os.path.join(self.dir, "bake.blend"), b"bake")
+        work = b"the user saved real work here"
+
+        for label, restart in (("in-session", False), ("after restart", True)):
+            with self.subTest(label):
+                # A source per case: the twin path is derived from it, and the two
+                # cases would otherwise share (and see) each other's preserved file.
+                source = os.path.join(self.dir, "proj", f"shot_{int(restart)}.ma")
+                t = self.twins()
+                path = t.create(source, payload)
+                self.touch(path, work)
+                if restart:
+                    t = self.twins()  # a new process: nothing is tracked
+                else:
+                    t.discard_except(path)  # keeps it, but forgets it
+
+                again = t.create(source, payload)
+
+                # Same deterministic path -- the panels recompute it to answer
+                # "is this row the current scene?", so it must not move.
+                self.assertEqual(again, path)
+                with open(again, "rb") as f:
+                    self.assertEqual(f.read(), b"bake")  # fresh conversion landed
+                # ...and the work is still on disk, beside it.
+                kept = [
+                    os.path.join(os.path.dirname(path), f)
+                    for f in os.listdir(os.path.dirname(path))
+                    if "_saved" in f
+                ]
+                self.assertEqual(
+                    len(kept), 1, f"expected one preserved file, got {kept}"
+                )
+                with open(kept[0], "rb") as f:
+                    self.assertEqual(f.read(), work)
+
+    def test_create_reuses_the_path_when_the_twin_is_untouched(self):
+        """The common case must NOT accumulate _saved copies."""
+        t = self.twins()
+        payload = self.touch(os.path.join(self.dir, "bake.blend"), b"bake")
+        source = os.path.join(self.dir, "proj", "shot.ma")
+        path = t.create(source, payload)
+        for _ in range(3):
+            self.assertEqual(t.create(source, payload), path)
+        siblings = [f for f in os.listdir(os.path.dirname(path)) if "_saved" in f]
+        self.assertEqual(siblings, [])
+
+    def test_abandoned_twin_dirs_are_age_swept(self):
+        t = self.twins(max_age_days=1)
+        payload = self.touch(os.path.join(self.dir, "bake.blend"), b"bake")
+        old = t.create(os.path.join(self.dir, "proj", "old.ma"), payload)
+        # sweep_stale keys off the NEWEST mtime under the dir, so "abandoned" means
+        # every file in it is old -- the twin AND the stamp sidecar beside it.
+        twin_dir = os.path.dirname(old)
+        self.age(twin_dir, 3)
+        for name in os.listdir(twin_dir):
+            self.age(os.path.join(twin_dir, name), 3)
+        ScratchTwins("tw", extension=".blend", dir=self.dir, max_age_days=1).path_for(
+            os.path.join(self.dir, "proj", "new.ma")
+        )  # a later store's first allocation sweeps
+        self.assertFalse(os.path.exists(os.path.dirname(old)))
 
 
 if __name__ == "__main__":

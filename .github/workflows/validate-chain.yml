@@ -249,11 +249,14 @@ jobs:
           pip install -e ./tentacle --no-deps
 
       - name: Compile tentacle UI files (pyside6-uic)
+        # _ui.py files are gitignored build artifacts. Compile every .ui under
+        # ui/ recursively: the old enumerated per-directory glob never gained
+        # blender_menus/, so 27 files went uncompiled and left this gate red.
         run: |
-          for ui in tentacle/tentacle/ui/*.ui tentacle/tentacle/ui/maya_menus/*.ui; do
-            out="${ui%.ui}_ui.py"
-            pyside6-uic "$ui" -o "$out"
-          done
+          while IFS= read -r ui; do
+            pyside6-uic "$ui" -o "${ui%.ui}_ui.py"
+          done < <(find tentacle/tentacle/ui -name '*.ui')
+          echo "Compiled $(find tentacle/tentacle/ui -name '*_ui.py' | wc -l) UI files"
 
       - name: Run tentacle structural tests against PR HEAD chain
         # Tolerate SIGSEGV-on-exit (PySide6+pytest cleanup issue) when all

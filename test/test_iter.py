@@ -782,6 +782,27 @@ class IterTest(BaseTestCase):
         # No filter args -> full dict unchanged.
         self.assertEqual(get_map(keys=True), {"a.png": 1, "b.jpg": 2})
 
+    def test_find_extrema_indices_keeps_shape_defining_keys_only(self):
+        """Unbake selection: endpoints, peaks/valleys and flat-run boundaries
+        survive; monotone tweens and flat-run interiors are dropped."""
+        # rise 0..3 (peak at 3), fall to 0 (valley at 6), hold flat 6..9, rise.
+        values = [0, 1, 2, 3, 2, 1, 0, 0, 0, 0, 1, 2]
+        keep = list(IterUtils.find_extrema_indices(values, 1e-5))
+        self.assertEqual(keep, [0, 3, 6, 9, 11])
+
+    def test_find_extrema_indices_noise_within_tolerance_is_flat(self):
+        """Sub-tolerance jitter on a hold must not spawn keys."""
+        values = [0.0, 1.0, 2.0, 2.0 + 1e-7, 2.0 - 1e-7, 2.0, 1.0, 0.0]
+        keep = list(IterUtils.find_extrema_indices(values, 1e-5))
+        self.assertEqual(keep, [0, 2, 5, 7])
+
+    def test_find_extrema_indices_degenerate_lengths(self):
+        self.assertEqual(list(IterUtils.find_extrema_indices([])), [])
+        self.assertEqual(list(IterUtils.find_extrema_indices([5.0])), [0])
+        self.assertEqual(list(IterUtils.find_extrema_indices([5.0, 6.0])), [0, 1])
+        # A pure monotone ramp keeps only its ends.
+        self.assertEqual(list(IterUtils.find_extrema_indices(range(20))), [0, 19])
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

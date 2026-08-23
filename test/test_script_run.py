@@ -20,7 +20,6 @@ import tempfile
 import unittest
 
 from pythontk.core_utils.script_run import (
-    CREATED,
     REWRITTEN,
     ScriptRunner,
     ScriptRunResult,

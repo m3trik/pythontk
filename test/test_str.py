@@ -1070,6 +1070,62 @@ class StrTest(BaseTestCase):
         )
 
     # -------------------------------------------------------------------------
+    # strip_suffix Tests
+    # -------------------------------------------------------------------------
+
+    def test_strip_suffix_removes_only_a_listed_suffix(self):
+        exts = [".fbx", ".usd", ".usda"]
+        self.assertEqual(StrUtils.strip_suffix("asset.fbx", exts), "asset")
+        self.assertEqual(StrUtils.strip_suffix("asset.FBX", exts), "asset")
+        self.assertEqual(StrUtils.strip_suffix("asset.usda", exts), "asset")
+        # A dotted token that is not a listed suffix is part of the name.
+        self.assertEqual(StrUtils.strip_suffix("asset.v2", exts), "asset.v2")
+        self.assertEqual(StrUtils.strip_suffix("asset", exts), "asset")
+        self.assertEqual(StrUtils.strip_suffix("asset.fbx", []), "asset.fbx")
+
+    def test_strip_suffix_strips_once_longest_first(self):
+        self.assertEqual(StrUtils.strip_suffix("a.fbx.fbx", [".fbx"]), "a.fbx")
+        self.assertEqual(StrUtils.strip_suffix("a.usda", [".usd", ".usda"]), "a")
+
+    # -------------------------------------------------------------------------
+    # retain_suffix Tests
+    # -------------------------------------------------------------------------
+
+    def test_retain_suffix_replaces_recognized_new_suffix(self):
+        valid = ["_GRP", "_LOC", "_GEO"]
+        self.assertEqual(
+            StrUtils.retain_suffix("S00B6_TAG_GRP", "S00B8_TAG_LOC", valid),
+            "S00B8_TAG_GRP",
+        )
+        self.assertEqual(
+            StrUtils.retain_suffix("S00B6_TAG_LOC", "S00B8_TAG_LOC", valid),
+            "S00B8_TAG_LOC",
+        )
+
+    def test_retain_suffix_strips_trailing_digits(self):
+        valid = ["_GRP", "_LOC"]
+        self.assertEqual(
+            StrUtils.retain_suffix("Asset_GRP2", "NewAsset_LOC", valid), "NewAsset_GRP"
+        )
+
+    def test_retain_suffix_unknown_new_suffix_kept(self):
+        self.assertEqual(
+            StrUtils.retain_suffix("Part_GEO", "Detail_HIGH", ["_GEO"]),
+            "Detail_HIGH_GEO",
+        )
+
+    def test_retain_suffix_any_suffix_when_unrestricted(self):
+        self.assertEqual(StrUtils.retain_suffix("Foo_GRP", "Bar_GEO"), "Bar_GRP")
+        self.assertEqual(StrUtils.retain_suffix("Foo_GRP", "Bar"), "Bar_GRP")
+
+    def test_retain_suffix_numeric_token_is_not_a_suffix(self):
+        self.assertEqual(StrUtils.retain_suffix("Screw_01", "Bolt"), "Bolt")
+
+    def test_retain_suffix_no_suffix_or_not_valid(self):
+        self.assertEqual(StrUtils.retain_suffix("Screw", "Bolt"), "Bolt")
+        self.assertEqual(StrUtils.retain_suffix("Screw_ABC", "Bolt", ["_GRP"]), "Bolt")
+
+    # -------------------------------------------------------------------------
     # format_suffix Tests
     # -------------------------------------------------------------------------
 

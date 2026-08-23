@@ -272,7 +272,7 @@ class MapRegistry(SingletonMixin):
         },
     }
     #: Characters that count as an explicit suffix delimiter. Shared by
-    #: :meth:`_short_alias_boundary`, :meth:`get_suffix_strip_pattern`,
+    #: :meth:`_alias_boundary`, :meth:`get_suffix_strip_pattern`,
     #: :attr:`_TOKEN_JOINERS` and ``MapFactory.resolve_map_type(key=False)`` —
     #: four readings of "does this filename end in a map-type suffix" that must
     #: agree, and did not while each carried its own idea of what a separator is.
@@ -1153,8 +1153,8 @@ class MapRegistry(SingletonMixin):
         return name_only[: match.start()], match.group(0)
 
     @staticmethod
-    def _short_alias_boundary(name_only: str, index: int) -> Optional[str]:
-        """What kind of word boundary a short alias starting at *index* sits on.
+    def _alias_boundary(name_only: str, index: int) -> Optional[str]:
+        """What kind of word boundary an alias starting at *index* sits on.
 
         Returns:
             str | None: ``"separator"`` for an explicit delimiter (``rock_AO``)
@@ -1233,39 +1233,36 @@ class MapRegistry(SingletonMixin):
         result = None
 
         for alias, map_name in all_candidates:
-            # Logic for short aliases (<= 3 chars)
-            if len(alias) <= 3:
-                # Must sit at the end of the string, on a real word boundary.
-                if name_only.lower().endswith(alias.lower()):
-                    suffix_start_index = len(name_only) - len(alias)
-                    suffix_in_name = name_only[suffix_start_index:]
+            if not name_only.lower().endswith(alias.lower()):
+                continue
 
-                    # A short alias glued to the tail of a model/part number is a
-                    # false positive that silently wires a color map into the
-                    # wrong socket ("Agilent_E4419B" -> "B" -> Bump, measured on
-                    # a production scene). Require a real boundary first; the
-                    # sibling MapFactory.resolve_map_type(key=False) path has
-                    # always demanded one, so this makes the two agree.
-                    boundary = self._short_alias_boundary(name_only, suffix_start_index)
-                    if boundary is None:
-                        continue
+            suffix_start_index = len(name_only) - len(alias)
+            suffix_in_name = name_only[suffix_start_index:]
 
-                    # After a separator the suffix is explicit, so honor the
-                    # everyday lowercase spellings ("rock_ao", "rock_nrm", and
-                    # the classic _d/_n/_s convention) — get_suffix_strip_pattern
-                    # has always stripped those case-insensitively, so requiring
-                    # a capital here made base names and classification disagree.
-                    # A CamelCase boundary is inferred from case alone and keeps
-                    # demanding the capital: without it every word ending in an
-                    # alias letter would classify ("wood_green" -> "n").
-                    if boundary == "separator" or suffix_in_name[0].isupper():
-                        result = map_name
-                        break
-            else:
-                # Long aliases: Case-insensitive
-                if name_only.lower().endswith(alias.lower()):
-                    result = map_name
-                    break
+            # An alias glued to the tail of a word is not a suffix -- it is a
+            # coincidence of spelling. "Agilent_E4419B" -> "B" -> Bump was the
+            # measured case that installed this rule, but the evidence a filename
+            # offers has nothing to do with how LONG the alias is: the rule was
+            # applied only to aliases of 3 characters or fewer until 2026-08-20,
+            # and 524 of 570 registered aliases are longer than that, so ordinary
+            # asset names classified ("char_thigh" -> Height, "wall_watercolor"
+            # -> Base_Color). get_suffix_strip_pattern applies the same rule, so
+            # base names and classification agree about what counts as a suffix.
+            boundary = self._alias_boundary(name_only, suffix_start_index)
+            if boundary is None:
+                continue
+
+            # After a separator the suffix is explicit, so honor the everyday
+            # lowercase spellings ("rock_ao", "rock_nrm", the classic _d/_n/_s
+            # convention). A CamelCase boundary is inferred from case alone and
+            # keeps demanding the capital: without it every word ending in an
+            # alias would classify ("wood_green" -> "n", "cloth_lipgloss" ->
+            # "gloss"). That capital is also what keeps "mat_SpecularGloss"
+            # working, which is why a bare non-alphabetic-predecessor rule is
+            # NOT the alternative it looks like -- it would kill that spelling.
+            if boundary == "separator" or suffix_in_name[0].isupper():
+                result = map_name
+                break
 
         return result
 
@@ -1280,18 +1277,22 @@ class MapRegistry(SingletonMixin):
         - Delimited suffixes match case-insensitively at any length
           (``brick_ao`` → ``brick``) — an explicit boundary makes false positives
           unlikely. The delimiter set is :attr:`SEPARATORS`, the same one
-          :meth:`_short_alias_boundary` accepts; when this branch was ``_``-only,
+          :meth:`_alias_boundary` accepts; when this branch was ``_``-only,
           ``rock-ao`` classified as Ambient_Occlusion but based to ``rock-ao``,
           and ``rock-basecolor`` based to ``rock-`` (the attached branch matched
           instead, leaving the delimiter behind), so three spellings of one
           texture set became three sets.
-        - Attached suffixes are case-insensitive only when longer than 3 chars;
-          short ones require a capital first letter AND a lowercase character
-          immediately before them (``brickAO``, not ``brickao`` and not
-          ``Agilent_E4419B``) so ordinary words and model numbers aren't misread
-          as map types. That lowercase-boundary rule is the same one
+        - Attached suffixes require a capital first letter AND a lowercase
+          character immediately before them, at EVERY alias length (``brickAO``
+          and ``mat_SpecularGloss``, but not ``brickao``, not ``Agilent_E4419B``
+          and not ``char_thigh``) so ordinary words and model numbers aren't
+          misread as map types. That lowercase-boundary rule is the same one
           :meth:`resolve_type_from_path` applies, so base names and classification
-          agree about what counts as a suffix.
+          agree about what counts as a suffix. The rule was applied only to
+          aliases of 3 characters or fewer until 2026-08-20; since 524 of the
+          registered aliases are longer than that, ordinary asset names both
+          classified AND lost the false suffix from their base name, splitting
+          one material across two texture sets.
 
         Returns:
             str | None: The compiled-ready pattern, or None when no maps are
@@ -1311,31 +1312,21 @@ class MapRegistry(SingletonMixin):
                 f"[{re.escape(''.join(self.SEPARATORS))}](?i:{p_delimited})$"
             )
 
-            short_suffixes = [s for s in all_aliases if len(s) <= 3]
-            long_suffixes = [s for s in all_aliases if len(s) > 3]
-
             attached_parts = []
-            if long_suffixes:
-                p_long = "|".join(re.escape(s) for s in long_suffixes)
-                attached_parts.append(f"(?i:{p_long})")
-            if short_suffixes:
-                p_short_parts = []
-                for s in short_suffixes:
-                    if s and s[0].isalpha():
-                        first = s[0].upper()
-                        rest = re.escape(s[1:])
-                        p_short_parts.append(f"{first}(?i:{rest})")
-                    else:
-                        p_short_parts.append(re.escape(s))
-                # Require a CamelCase step down from lowercase ("rockN"), matching
-                # resolve_type_from_path's boundary rule. Without it a short alias
-                # glued to a model number is stripped as a suffix
-                # ("Agilent_E4419B" -> "Agilent_E4419") while the resolver -- which
-                # does enforce the boundary -- reports no map type at all, so base
-                # names and classification disagree and texture SETS mis-group.
-                attached_parts.append(f"(?<=[a-z])(?:{'|'.join(p_short_parts)})")
+            for s in all_aliases:
+                if s and s[0].isalpha():
+                    attached_parts.append(f"{s[0].upper()}(?i:{re.escape(s[1:])})")
+                else:
+                    attached_parts.append(re.escape(s))
 
-            pattern_attached = f"(?:{'|'.join(attached_parts)})$"
+            # Require a CamelCase step down from lowercase ("rockN",
+            # "mat_SpecularGloss"), matching _match_alias's boundary rule. This
+            # applies at EVERY alias length: when it was short-aliases-only, a
+            # long alias glued to an ordinary word was stripped as a suffix while
+            # the resolver agreed it was one, so ONE material based to two stems
+            # ("char_thigh.png" -> "char_t" but "char_thigh_Normal.png" ->
+            # "char_thigh") and group_textures_by_set saw two texture sets.
+            pattern_attached = f"(?<=[a-z])(?:{'|'.join(attached_parts)})$"
 
             # Delimited first: `re.sub` scans left to right, so at the delimiter
             # position this branch consumes the separator along with the suffix

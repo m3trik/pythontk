@@ -1195,6 +1195,75 @@ class StrUtils(CoreUtils):
         return result
 
     @staticmethod
+    def strip_suffix(name: str, suffixes: Iterable[str]) -> str:
+        """*name* without a trailing entry of *suffixes* (case-insensitive; one strip).
+
+        The whitelist counterpart of ``os.path.splitext``: only a LISTED suffix
+        comes off, so ``"asset.v2"`` keeps its dotted version token while
+        ``"asset.FBX"`` loses its extension -- what an export name typed with
+        the wrong format's extension needs (the deliverable's own is appended
+        after). The longest matching suffix wins.
+
+        Parameters:
+            name (str): The name to strip.
+            suffixes (Sequence[str]): The suffixes that count (``[".fbx", ".usd"]``).
+
+        Returns:
+            (str) ``name`` without the matched suffix, else ``name`` unchanged.
+
+        Example:
+            strip_suffix("asset.fbx", [".fbx", ".usd"]) #returns: 'asset'
+            strip_suffix("asset.v2", [".fbx", ".usd"]) #returns: 'asset.v2'
+        """
+        lowered = name.lower()
+        for suffix in sorted(suffixes, key=len, reverse=True):
+            if suffix and lowered.endswith(suffix.lower()):
+                return name[: -len(suffix)]
+        return name
+
+    @staticmethod
+    def retain_suffix(
+        old_name: str, new_name: str, valid_suffixes: Optional[List[str]] = None
+    ) -> str:
+        """Carry ``old_name``'s trailing ``_TYPE`` suffix over to ``new_name``.
+
+        The rename tools' "retain suffix" option: a renamed ``Asset_GRP1``
+        keeps its ``_GRP`` no matter what the new pattern says. Trailing
+        digits are ignored for the comparison (``_GRP1`` → ``_GRP``); a purely
+        numeric trailing token (``_01``) is numbering, not a type suffix, and
+        is never retained. ``new_name``'s own *recognized* suffix is replaced;
+        an unrecognized one is kept and the old suffix appended after it.
+
+        Parameters:
+            old_name (str): The name before the rename.
+            new_name (str): The name the rename produced.
+            valid_suffixes (list, optional): The suffixes that count as type
+                suffixes (``["_GRP", "_GEO"]``). None treats any ``_token`` as one.
+
+        Returns:
+            (str) ``new_name`` with the retained suffix.
+
+        Example:
+            retain_suffix('Asset_GRP1', 'NewAsset_LOC', ['_GRP', '_LOC']) #returns: 'NewAsset_GRP'
+            retain_suffix('Part_GEO', 'Detail_HIGH', ['_GEO']) #returns: 'Detail_HIGH_GEO'
+            retain_suffix('Screw_01', 'Bolt') #returns: 'Bolt'
+        """
+        if "_" not in old_name:
+            return new_name
+        old_suffix = old_name[old_name.rfind("_") :].rstrip("0123456789")
+        if old_suffix == "_":
+            return new_name
+        if valid_suffixes is not None and old_suffix not in valid_suffixes:
+            return new_name
+        if new_name.endswith(old_suffix):
+            return new_name
+        if "_" in new_name:
+            new_suffix = new_name[new_name.rfind("_") :].rstrip("0123456789")
+            if valid_suffixes is None or new_suffix in valid_suffixes:
+                new_name = new_name[: new_name.rfind("_")]
+        return new_name + old_suffix
+
+    @staticmethod
     def format_suffix(
         string: str,
         suffix: str = "",

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 # Adjust path for pythontk import if running standalone
 try:
-    import pythontk.net_utils
+    import pythontk.net_utils  # noqa: F401  (availability probe, not a use)
 except ImportError:
     pass
 

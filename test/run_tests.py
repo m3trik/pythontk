@@ -22,6 +22,7 @@ import sys
 import unittest
 from pathlib import Path
 
+from pythontk import TeeStream
 from pythontk.core_utils.status_badge import StatusBadge
 
 # cp1252 consoles can't encode characters test docstrings legitimately use
@@ -161,7 +162,23 @@ Test Directory: {self.test_dir}
         runner = unittest.TextTestRunner(
             stream=stream, verbosity=self.verbosity, resultclass=DetailedTestResult
         )
-        result = runner.run(suite)
+        # unittest writes through `stream`, but product code does not: a bare
+        # print(), or the traceback.print_exc() of a swallowed exception, goes
+        # to the REAL stdout/stderr and never reached the log. A failure whose
+        # only explanation was printed therefore came out of the log as a bare
+        # assertion diff -- which is how six instances of the full-suite file-IO
+        # flake were logged as unexplained (2026-08-20). Tee both for the
+        # duration of the run; `stream` holds the ORIGINAL stdout object, so
+        # unittest's own output is not doubled by the redirect.
+        real_out, real_err = sys.stdout, sys.stderr
+        sys.stdout = TeeStream(real_out, self.log_buffer)
+        sys.stderr = TeeStream(real_err, self.log_buffer)
+        try:
+            result = runner.run(suite)
+        finally:
+            # In a finally so a runner crash cannot leave the process writing
+            # into a buffer nobody reads.
+            sys.stdout, sys.stderr = real_out, real_err
 
         duration = time.perf_counter() - start_time
 
@@ -210,21 +227,6 @@ Test Directory: {self.test_dir}
             f.write(self.log_buffer.getvalue())
 
         print(f"\nLog saved to: {log_file}")
-
-
-class TeeStream:
-    """Stream that writes to multiple outputs."""
-
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, text):
-        for stream in self.streams:
-            stream.write(text)
-
-    def flush(self):
-        for stream in self.streams:
-            stream.flush()
 
 
 class DetailedTestResult(unittest.TextTestResult):

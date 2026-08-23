@@ -33,7 +33,10 @@ except ImportError:
 try:
     from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 except ImportError:
-    Image = None
+    # Every imported name gets bound -- see the note on the same guard in
+    # ``pythontk/img_utils/_img_utils.py``. An unbound name is a ``NameError`` at the
+    # call site, and it cannot be repaired by a late Pillow install.
+    Image = ImageOps = ImageEnhance = ImageFilter = None
 
 if TYPE_CHECKING:
     from PIL import Image

@@ -2095,6 +2095,121 @@ class MathUtils(HelpMixin):
         dist_rot = angle_dist_deg * deg_to_rad * avg_radius
         return dist_rot
 
+    @staticmethod
+    def fit_hermite_slopes(
+        times: Sequence[float],
+        values: Sequence[float],
+        keep_indices: Sequence[int],
+        flat_tolerance: float = 0.0,
+    ) -> Tuple[List[float], List[float]]:
+        """Fit cubic-Hermite tangent slopes at a subset of samples so the
+        sparse curve reproduces the dense one.
+
+        Given dense samples ``(times, values)`` and the indices of the keys
+        that will survive (see :meth:`IterUtils.find_extrema_indices`), solve
+        one slope per kept key (value per time unit) by least squares
+        against every dropped sample.  This is the tangent-restoration half
+        of an "unbake": the result is what a hand-keyed curve through the
+        kept keys would need to trace the baked motion.
+
+        A segment whose samples all sit within *flat_tolerance* of its start
+        value is a hold: the two slopes facing into it are pinned to zero
+        (so the hold never drifts) and the key's tangent is broken -- its
+        other side stays fitted.  Everywhere else a key's in and out slopes
+        are unified.  A key the samples cannot constrain (its neighbours are
+        adjacent samples) falls back to the sampled finite difference.
+
+        Parameters:
+            times: Array-like sample times, ascending.
+            values: Array-like sample values, same length as *times*.
+            keep_indices: Ascending indices into the samples that become keys.
+            flat_tolerance: Max deviation from the segment start for the
+                segment to count as a hold.
+
+        Returns:
+            ``(in_slopes, out_slopes)`` -- two float lists aligned with
+            *keep_indices*.  Empty lists when nothing is kept.
+        """
+        import numpy as np
+
+        t = np.asarray(times, dtype=float)
+        v = np.asarray(values, dtype=float)
+        keep = np.asarray(keep_indices, dtype=int)
+        k_count = len(keep)
+        if k_count == 0:
+            return [], []
+        if k_count == 1 or len(t) < 2:
+            return [0.0] * k_count, [0.0] * k_count
+
+        # Weak prior: the sampled derivative at each kept key.  It only
+        # decides keys the dropped samples leave unconstrained (adjacent
+        # kept samples) and breaks least-squares ties; on a constrained key
+        # its pull is ~1e-6 relative.
+        prior = np.gradient(v, t)[keep]
+
+        segments = list(zip(keep[:-1], keep[1:]))
+        flat = [
+            bool(np.all(np.abs(v[i0 : i1 + 1] - v[i0]) <= flat_tolerance))
+            for i0, i1 in segments
+        ]
+
+        # Each dropped sample couples only the two keys bounding its segment,
+        # so the normal equations (A^T A + lam^2 I) m = A^T b + lam^2 prior
+        # are tridiagonal: accumulate them per segment and solve in O(keys)
+        # rather than materialise a samples x keys matrix (a production
+        # bake is tens of thousands of samples by thousands of extrema).
+        lam2 = 1e-6
+        diag = np.full(k_count, lam2)
+        off = np.zeros(k_count - 1)
+        rhs = lam2 * prior
+        for k, (i0, i1) in enumerate(segments):
+            if flat[k] or i1 - i0 < 2:
+                continue
+            t0, t1 = t[i0], t[i1]
+            dt = t1 - t0
+            if dt <= 0:
+                continue
+            p0, p1 = v[i0], v[i1]
+            s = (t[i0 + 1 : i1] - t0) / dt
+            h00 = 2 * s**3 - 3 * s**2 + 1
+            h01 = -2 * s**3 + 3 * s**2
+            a = (s**3 - 2 * s**2 + s) * dt  # weight on the left key's out slope
+            c = (s**3 - s**2) * dt  # weight on the right key's in slope
+            r = v[i0 + 1 : i1] - h00 * p0 - h01 * p1
+            diag[k] += a @ a
+            diag[k + 1] += c @ c
+            off[k] += a @ c
+            rhs[k] += a @ r
+            rhs[k + 1] += c @ r
+
+        # Thomas sweep (the system is symmetric positive definite).
+        slopes = np.empty(k_count)
+        c_prime = np.empty(k_count)
+        d_prime = np.empty(k_count)
+        c_prime[0] = off[0] / diag[0]
+        d_prime[0] = rhs[0] / diag[0]
+        for k in range(1, k_count):
+            denom = diag[k] - off[k - 1] * c_prime[k - 1]
+            c_prime[k] = off[k] / denom if k < k_count - 1 else 0.0
+            d_prime[k] = (rhs[k] - off[k - 1] * d_prime[k - 1]) / denom
+        slopes[-1] = d_prime[-1]
+        for k in range(k_count - 2, -1, -1):
+            slopes[k] = d_prime[k] - c_prime[k] * slopes[k + 1]
+
+        # A hold pins the slopes facing into it; the key's other side keeps
+        # its fitted slope (a broken tangent).
+        in_slopes = slopes.copy()
+        out_slopes = slopes.copy()
+        for k, is_flat in enumerate(flat):
+            if is_flat:
+                out_slopes[k] = 0.0
+                in_slopes[k + 1] = 0.0
+        # An endpoint has one facing side; its outward side mirrors it so the
+        # key reads as unified rather than broken.
+        in_slopes[0] = out_slopes[0]
+        out_slopes[-1] = in_slopes[-1]
+        return in_slopes.tolist(), out_slopes.tolist()
+
 
 # -----------------------------------------------------------------------------
 

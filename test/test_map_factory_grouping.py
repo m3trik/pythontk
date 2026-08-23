@@ -380,7 +380,6 @@ class CoverageAwareRedundancyTest(BaseTestCase):
         overwriting user data with extracted channel data would make the
         'lossless' feature destructive.
         """
-        import os
         from PIL import Image
 
         msao = self._msao()  # G (AO) channel = 200

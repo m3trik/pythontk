@@ -53,6 +53,7 @@ from typing import (
 from pythontk.core_utils.app_launcher import AppLauncher
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.core_utils import script_template
+from pythontk.file_utils.usd import USD_EXTENSIONS
 
 if TYPE_CHECKING:  # import-time only: the runtime import is deferred into the body
     from pythontk.file_utils.temp_artifacts import TempArtifacts
@@ -61,6 +62,23 @@ if TYPE_CHECKING:  # import-time only: the runtime import is deferred into the b
 SEND_TO = script_template.SEND_TO
 SAVE_AS = script_template.SAVE_AS
 ROUND_TRIP = script_template.ROUND_TRIP
+
+#: The request param that picks the payload's interchange format (a *carrier*).
+CARRIER_PARAM = "CARRIER"
+#: Every carrier a hand-off payload can travel as, ``{carrier: extension}``. Which
+#: format the payload is written in is a property of hand-off bridges in general --
+#: the same selection can leave as FBX or as USD -- so the vocabulary lives here,
+#: once, and a bridge only declares the subset its TARGET can read
+#: (:attr:`HandoffBridge.carriers`). The DCC-side mixins turn a carrier into the
+#: matching export call; nothing here knows how either format is written.
+CARRIER_EXTENSIONS: Dict[str, str] = {"fbx": ".fbx", "usd": ".usd"}
+#: The inverse, widened to every spelling a carrier's files come in (a ``.usda``
+#: / ``.usdc`` / ``.usdz`` payload is still the ``usd`` carrier) -- what a writer
+#: table is keyed on once a path exists (:meth:`HandoffBridge.carrier_of`).
+CARRIER_BY_EXTENSION: Dict[str, str] = {
+    **{ext: carrier for carrier, ext in CARRIER_EXTENSIONS.items()},
+    **{ext: "usd" for ext in USD_EXTENSIONS},
+}
 
 
 # --------------------------------------------------------------------------- specs
@@ -236,6 +254,13 @@ class HandoffBridge(LoggingMixin):
     # Temp payload filename stem (``<prefix>_<tag>.fbx``). Also the namespace
     # the run scratch is allocated in -- see :meth:`_scratch_dir`.
     payload_prefix: str = "handoff"
+    # Carriers (see :data:`CARRIER_EXTENSIONS`) this bridge can produce AND its
+    # target can read, in preference order: the first is what a request that
+    # doesn't choose gets, and a request asking for any other is refused in
+    # :meth:`_run` before anything is exported. A single entry means the bridge
+    # offers no choice (a target that only reads FBX). Declared as data so a
+    # panel can render the choice from the same tuple the engine enforces.
+    carriers: Tuple[str, ...] = ("fbx",)
 
     # Modes whose staged artifacts the run itself CONSUMES, so it may delete
     # them -- a blocking round trip that relocates its real output somewhere
@@ -293,6 +318,36 @@ class HandoffBridge(LoggingMixin):
         merged.update(params or {})
         return merged
 
+    # ------------------ Carrier ---------------------------------------------
+    def carrier(self, request: HandoffRequest) -> str:
+        """The carrier *request* travels as: ``params["CARRIER"]``, else the first of
+        :attr:`carriers`. Lower-cased; NOT validated -- :meth:`_run` refuses a
+        carrier the bridge doesn't offer, so a producer never sees one."""
+        chosen = request.params.get(CARRIER_PARAM) or self.carriers[0]
+        return str(chosen).strip().lower()
+
+    def payload_extension(self, request: HandoffRequest) -> str:
+        """The file extension of *request*'s carrier (``".fbx"`` / ``".usd"``)."""
+        return CARRIER_EXTENSIONS[self.carrier(request)]
+
+    @staticmethod
+    def carrier_of(path: str) -> str:
+        """The carrier a payload *path* names, by extension (``"fbx"`` / ``"usd"``).
+
+        The key a producer's writer table is looked up with, so a bridge that
+        stages its own payload path only has to name it right and every writer
+        stays a one-entry addition. Raises ``ValueError`` for an extension no
+        carrier owns -- a path like that is a bug upstream, never a silent FBX.
+        """
+        ext = os.path.splitext(str(path))[1].lower()
+        try:
+            return CARRIER_BY_EXTENSION[ext]
+        except KeyError:
+            raise ValueError(
+                f"No hand-off carrier writes {ext or '<no extension>'!r} "
+                f"({', '.join(sorted(CARRIER_BY_EXTENSION))})."
+            ) from None
+
     # ------------------ Orchestration ---------------------------------------
     def send(
         self,
@@ -324,6 +379,18 @@ class HandoffBridge(LoggingMixin):
         resolved = self._resolve_objects(objects)
         if self.requires_objects and not resolved:
             self.logger.error(f"No valid objects supplied for '{request.mode}'.")
+            return None
+
+        # A carrier the target can't read is a failed hand-off however well the
+        # export goes, so it is refused here, before the export is paid for. An
+        # unknown spelling is refused too rather than mapped to the default: the
+        # caller asked for something specific and would otherwise get FBX silently.
+        carrier = self.carrier(request)
+        if carrier not in self.carriers or carrier not in CARRIER_EXTENSIONS:
+            self.logger.error(
+                f"Carrier '{carrier}' is not one this hand-off offers "
+                f"({', '.join(self.carriers)})."
+            )
             return None
 
         # Preflight lets the deliverer abort (bad mode, missing exe, missing project)
@@ -721,8 +788,16 @@ class ScriptLaunchDeliverer(Deliverer):
     def _context(
         self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest
     ) -> Dict[str, str]:
-        """The ``__KEY__`` substitution context: the payload path + the bridge's params."""
-        context = {"FBX_PATH": str(payload.primary).replace("\\", "/")}
+        """The ``__KEY__`` substitution context: the payload path + the bridge's params.
+
+        The payload path is exposed under two tokens: ``PAYLOAD_PATH``, the
+        carrier-neutral name, and ``FBX_PATH``, the name every template was written
+        against before a payload could be anything but FBX. Both always hold the
+        same path -- a USD payload arrives under ``FBX_PATH`` too -- so a template
+        that must know the format reads the path's extension, not the token name.
+        """
+        primary = str(payload.primary).replace("\\", "/")
+        context = {"PAYLOAD_PATH": primary, "FBX_PATH": primary}
         context.update(bridge.render_context(request.params))
         return context
 
@@ -926,7 +1001,8 @@ class ScriptRoundTripDeliverer(ScriptRunDeliverer):
         self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest
     ) -> Dict[str, str]:
         # Skip ScriptRunDeliverer's staging-sibling OUT_FILE: here the target reads and
-        # writes the one payload path, which the base already exposes as __FBX_PATH__.
+        # writes the one payload path, which the base already exposes as
+        # __PAYLOAD_PATH__ / __FBX_PATH__.
         context = ScriptLaunchDeliverer._context(self, bridge, payload, request)
         context["OUT_FILE"] = str(payload.primary or "").replace("\\", "/")
         return context
@@ -1228,6 +1304,9 @@ __all__ = [
     "SEND_TO",
     "SAVE_AS",
     "ROUND_TRIP",
+    "CARRIER_PARAM",
+    "CARRIER_EXTENSIONS",
+    "CARRIER_BY_EXTENSION",
     "AppSpec",
     "HandoffRequest",
     "Payload",

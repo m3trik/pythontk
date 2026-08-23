@@ -2,8 +2,8 @@
 # coding=utf-8
 """Tests for pythontk.core_utils.process_stream.
 
-Covers OutputStream, ProcessReader, and LogTailer against in-process
-fixtures (BytesIO pipes, temp log files). The app-specific connection
+Covers TeeStream, OutputStream, ProcessReader, and LogTailer against
+in-process fixtures (BytesIO pipes, temp log files). The app-specific connection
 shells that compose these primitives (e.g. the Substance Painter
 ``SubstanceConnection`` in mayatk/blendertk) are tested with their
 consumers.
@@ -20,7 +20,96 @@ import unittest
 # Ensure package is importable when running standalone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from pythontk import OutputStream, ProcessReader, LogTailer
+from pythontk import OutputStream, ProcessReader, LogTailer, TeeStream
+
+
+class TestTeeStream(unittest.TestCase):
+    """It is assigned to ``sys.stdout``, so it has to behave like a stream."""
+
+    class _Cp1252Console:
+        """A console that rejects what cp1252 cannot encode, like Windows'."""
+
+        encoding = "cp1252"
+
+        def __init__(self):
+            self.text = ""
+
+        def write(self, text):
+            text.encode(self.encoding)  # raises UnicodeEncodeError
+            self.text += text
+
+        def flush(self):
+            pass
+
+    class _ClosedStream:
+        def write(self, text):
+            raise ValueError("I/O operation on closed file")
+
+        def flush(self):
+            raise ValueError("I/O operation on closed file")
+
+    def setUp(self):
+        self.first = io.StringIO()
+        self.second = io.StringIO()
+        self.tee = TeeStream(self.first, self.second)
+
+    def test_write_reaches_every_stream(self):
+        self.tee.write("abc")
+        self.assertEqual(self.first.getvalue(), "abc")
+        self.assertEqual(self.second.getvalue(), "abc")
+
+    def test_write_returns_a_character_count(self):
+        """`print` and friends read the return value; None breaks them."""
+        self.assertEqual(self.tee.write("abcd"), 4)
+
+    def test_writelines_reaches_every_stream(self):
+        """Delegated through __getattr__ it would reach the FIRST stream only,
+        silently dropping those lines from the recorder."""
+        self.tee.writelines(["a", "b"])
+        self.assertEqual(self.first.getvalue(), "ab")
+        self.assertEqual(self.second.getvalue(), "ab")
+
+    def test_unknown_attributes_come_from_the_real_stream(self):
+        """Product code asking stdout whether it is a terminal must not raise."""
+        self.assertFalse(self.tee.isatty())
+        self.assertEqual(self.tee.newlines, self.first.newlines)
+
+    def test_a_cp1252_console_costs_a_glyph_not_the_run(self):
+        """A check mark, not an em-dash: cp1252 encodes U+2014 at 0x97 quite
+        happily, so an em-dash never reaches the failure this contains."""
+        console = self._Cp1252Console()
+        tee = TeeStream(console, self.second)
+
+        tee.write("a check mark \u2713 here\n")
+
+        self.assertIn("?", console.text, "the console got a replacement glyph")
+        self.assertIn("\u2713", self.second.getvalue(), "the recorder got it whole")
+
+    def test_a_closed_stream_does_not_take_the_others_down(self):
+        tee = TeeStream(self._ClosedStream(), self.second)
+        self.assertEqual(tee.write("still recorded"), 14)
+        self.assertEqual(self.second.getvalue(), "still recorded")
+        tee.flush()  # must not raise either
+
+    def test_an_unexpected_write_error_still_propagates(self):
+        """Counterweight: only the two containable failures are contained.
+        Swallowing everything would turn a real bug into missing output."""
+
+        class Broken:
+            def write(self, text):
+                raise RuntimeError("boom")
+
+        with self.assertRaises(RuntimeError):
+            TeeStream(Broken(), self.second).write("x")
+
+    def test_it_stands_in_for_stdout(self):
+        """The whole point: a plain `print` reaches the recorder."""
+        real, sys.stdout = sys.stdout, TeeStream(sys.stdout, self.second)
+        try:
+            print("PROBE")
+        finally:
+            sys.stdout = real
+        self.assertIn("PROBE", self.second.getvalue())
 
 
 class TestOutputStream(unittest.TestCase):
