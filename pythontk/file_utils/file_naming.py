@@ -14,7 +14,8 @@ identical in behavior and the tools hosting them identical in output.
 
 :class:`FileNaming` is the file-system tenant: the same find / rename /
 convert-case / strip-chars operations the DCC naming tools offer, applied to
-file name *stems* (the extension is never touched).
+file name *stems* (the extension is never touched) or, with ``base_names``, to
+the map-suffix-free *base* of a texture file name.
 """
 
 from __future__ import annotations
@@ -184,10 +185,17 @@ class FileNaming(HelpMixin, LoggingMixin):
     change a file's type. ``paths`` may be file paths or directories; a
     directory contributes its direct (non-recursive) files.
 
+    ``base_names=True`` narrows that further, to the **base name** — the stem
+    with its texture-map suffix and UDIM tile held back (the split is
+    ``MapRegistry.split_map_suffix``, which owns the map-type taxonomy) — so one
+    operation carries a whole texture set without touching the tokens that
+    identify each map.
+
     Example:
         FileNaming.rename(["/shots/sh010"], "**_v2", "*_diffuse*", dry_run=True)
         FileNaming.set_case("/shots/sh010", "lower")
         FileNaming.strip_chars(files, num_chars=3, trailing=True)
+        FileNaming.rename(files, "stone", "rock", base_names=True)
     """
 
     @staticmethod
@@ -219,12 +227,32 @@ class FileNaming(HelpMixin, LoggingMixin):
         return os.path.splitext(os.path.basename(path))[0]
 
     @classmethod
+    def _name_parts(cls, files, base_names: bool) -> List[Tuple[str, str]]:
+        """``(subject, tail)`` per file — what an operation acts on, and what it preserves.
+
+        The subject is the whole stem by default and, under ``base_names``, the
+        base name that ``MapRegistry.split_map_suffix`` peels a texture-map
+        suffix and UDIM tile off (the registry owns that taxonomy; re-deriving
+        it from the raw strip pattern is how two copies of this rule drifted
+        once already). ``subject + tail`` is always the stem, so every operation
+        plans ``new_subject + tail`` and stays extension- (and, in base-name
+        mode, map-type-) safe by construction.
+        """
+        if not base_names:
+            return [(cls.stem(f), "") for f in files]
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry
+
+        split = MapRegistry().split_map_suffix
+        return [split(cls.stem(f)) for f in files]
+
+    @classmethod
     def find(
         cls,
         paths,
         fltr: str,
         regex: bool = False,
         ignore_case: bool = False,
+        base_names: bool = False,
     ) -> List[str]:
         """Files (from *paths*) whose stem matches *fltr*.
 
@@ -235,6 +263,9 @@ class FileNaming(HelpMixin, LoggingMixin):
                 against the stem only.
             regex: Treat *fltr* as a regular expression.
             ignore_case: Case-insensitive match.
+            base_names: Match the base name rather than the whole stem, so one
+                pattern collects every map of a texture set (see
+                ``MapRegistry.split_map_suffix``).
 
         Returns:
             The matching file paths, in *paths* order.
@@ -242,9 +273,11 @@ class FileNaming(HelpMixin, LoggingMixin):
         files = cls.expand(paths)
         if not fltr:
             return files
-        stems = [cls.stem(f) for f in files]
-        hits = set(StrUtils.find_str(fltr, stems, regex=regex, ignore_case=ignore_case))
-        return [f for f, s in zip(files, stems) if s in hits]
+        subjects = [s for s, _tail in cls._name_parts(files, base_names)]
+        hits = set(
+            StrUtils.find_str(fltr, subjects, regex=regex, ignore_case=ignore_case)
+        )
+        return [f for f, s in zip(files, subjects) if s in hits]
 
     @classmethod
     def rename(
@@ -256,6 +289,7 @@ class FileNaming(HelpMixin, LoggingMixin):
         ignore_case: bool = False,
         retain_suffix: bool = False,
         valid_suffixes: Optional[List[str]] = None,
+        base_names: bool = False,
         dry_run: bool = False,
         logger=None,
     ) -> List[Tuple[str, str]]:
@@ -275,6 +309,10 @@ class FileNaming(HelpMixin, LoggingMixin):
                 its new name (see :meth:`StrUtils.retain_suffix`).
             valid_suffixes: The suffixes ``retain_suffix`` recognizes; None
                 accepts any.
+            base_names: Rename the base name rather than the whole stem — the
+                texture-map suffix and UDIM tile are held back and re-attached
+                (``MapRegistry.split_map_suffix``), so one rename carries a whole
+                texture set and no map keeps a name that no longer identifies it.
             dry_run: Report the plan without renaming anything.
             logger: Report sink (defaults to this class's logger).
 
@@ -283,10 +321,11 @@ class FileNaming(HelpMixin, LoggingMixin):
             when the rename failed. On a dry run ``new_path`` is the plan.
         """
         files = cls.expand(paths)
-        stems = [cls.stem(f) for f in files]
+        parts = cls._name_parts(files, base_names)
+        subjects = [s for s, _tail in parts]
         try:
             pairs = StrUtils.find_str_and_format(
-                stems,
+                subjects,
                 to,
                 fltr,
                 regex=regex,
@@ -298,34 +337,45 @@ class FileNaming(HelpMixin, LoggingMixin):
                 f"Invalid pattern — filter '{fltr}', rename '{to}': {e}"
             )
             return []
-        # Consume matches positionally so same-stemmed files in different
-        # directories each get their own entry (find_str_and_format returns
-        # one pair per matched input, in input order).
-        by_stem: dict = {}
-        for f, s in zip(files, stems):
-            by_stem.setdefault(s, []).append(f)
+        # Consume matches positionally so same-subject files each get their own
+        # entry (find_str_and_format returns one pair per matched input, in
+        # input order). Same-stemmed files in different directories collide here,
+        # and so does every map of one texture set under `base_names`.
+        by_subject: dict = {}
+        for f, (subject, tail) in zip(files, parts):
+            by_subject.setdefault(subject, []).append((f, tail))
         plan = []
         for old, new in pairs:
-            bucket = by_stem.get(old)
+            bucket = by_subject.get(old)
             if not bucket:
                 continue
+            path, tail = bucket.pop(0)
             if retain_suffix:
                 new = StrUtils.retain_suffix(old, new, valid_suffixes)
-            plan.append((bucket.pop(0), old, new))
+            plan.append((path, old + tail, new + tail))
         return cls._apply(plan, "Rename", dry_run, logger)
 
     @classmethod
     def set_case(
-        cls, paths, case: str = "capitalize", dry_run: bool = False, logger=None
+        cls,
+        paths,
+        case: str = "capitalize",
+        base_names: bool = False,
+        dry_run: bool = False,
+        logger=None,
     ) -> List[Tuple[str, str]]:
         """Re-case file stems: ``upper`` / ``lower`` / ``capitalize`` / ``swapcase`` / ``title``.
+
+        ``base_names`` re-cases the base name only, leaving each map-type suffix
+        in the spelling the pipeline that wrote it chose.
 
         Returns:
             ``(old_path, new_path)`` per file (see :meth:`rename`).
         """
+        files = cls.expand(paths)
         plan = [
-            (f, cls.stem(f), StrUtils.set_case(cls.stem(f), case))
-            for f in cls.expand(paths)
+            (f, subject + tail, StrUtils.set_case(subject, case) + tail)
+            for f, (subject, tail) in zip(files, cls._name_parts(files, base_names))
         ]
         return cls._apply(plan, f"Convert Case ({case})", dry_run, logger)
 
@@ -335,6 +385,7 @@ class FileNaming(HelpMixin, LoggingMixin):
         paths,
         num_chars: int = 1,
         trailing: bool = False,
+        base_names: bool = False,
         dry_run: bool = False,
         logger=None,
     ) -> List[Tuple[str, str]]:
@@ -346,22 +397,26 @@ class FileNaming(HelpMixin, LoggingMixin):
         while the leading branch (``s[0:]``) correctly changed nothing. A spinbox
         cleared to 0 reaches this.
 
+        ``base_names`` counts (and cuts) within the base name, so a trailing trim
+        eats the end of the name rather than the map-type suffix behind it.
+
         Returns:
             ``(old_path, new_path)`` per file (see :meth:`rename`).
         """
         log = logger or cls.logger
         if num_chars <= 0:
             return []
+        files = cls.expand(paths)
         plan = []
-        for f in cls.expand(paths):
-            s = cls.stem(f)
-            if num_chars >= len(s):
+        for f, (subject, tail) in zip(files, cls._name_parts(files, base_names)):
+            if num_chars >= len(subject):
                 log.warning(
                     f"Skipped '{os.path.basename(f)}': cannot remove {num_chars} "
-                    f"characters from a {len(s)}-character name."
+                    f"characters from a {len(subject)}-character name."
                 )
                 continue
-            plan.append((f, s, s[:-num_chars] if trailing else s[num_chars:]))
+            cut = subject[:-num_chars] if trailing else subject[num_chars:]
+            plan.append((f, subject + tail, cut + tail))
         return cls._apply(plan, "Strip Chars", dry_run, logger)
 
     # ------------------------------------------------------------------

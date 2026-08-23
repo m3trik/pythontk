@@ -3174,12 +3174,13 @@ class ImgUtils(HelpMixin):
         base names depending on which entry point the caller reached (the
         factory's own packed-output naming uses this one).
 
-        Logic (see ``MapRegistry.get_suffix_strip_pattern`` — the SSoT):
+        Logic: ``MapRegistry.split_map_suffix`` (which composes the tile split
+        with ``get_suffix_strip_pattern`` — the SSoT) decides what a suffix is:
         - Delimited suffixes (``MapRegistry.SEPARATORS``): case-insensitive at
           any length (``_ao``, ``-ao``, ``.ao``).
-        - Attached long suffixes (>3 chars): case-insensitive.
-        - Attached short suffixes (<=3 chars): must start with a capital letter
-          (rest case-insensitive) to avoid false positives.
+        - Attached suffixes: must start with a capital letter preceded by a
+          lowercase one (``brickAO``, ``mat_SpecularGloss``), at EVERY alias
+          length — so ordinary words and model numbers aren't misread as maps.
 
         Parameters:
             filepath_or_filename (str): A texture path or name.
@@ -3200,17 +3201,13 @@ class ImgUtils(HelpMixin):
 
         registry = MapRegistry()
 
-        # A UDIM/UV-tile token sits AFTER the map-type suffix, so it has to come
-        # off before the suffix is reachable. It is dropped rather than restored:
-        # this is the MATERIAL's name (and the texture-set key's stem), which every
-        # tile of a set shares. `MapFactory.get_tile_token` reads the token back for
-        # output naming; `group_textures_by_set` re-appends it to keep tiles separable.
-        base_name, _tile = registry.split_tile_token(base_name)
-
-        # Canonical suffix pattern lives on the registry (the alias owner).
-        pattern = registry.get_suffix_strip_pattern()
-        if pattern:
-            base_name = StrUtils.format_suffix(base_name, strip=pattern)
+        # The registry owns the taxonomy AND the order the two tokens come off in
+        # (tile first, or the suffix is unreachable). The tail it returns is
+        # dropped rather than restored: this is the MATERIAL's name (and the
+        # texture-set key's stem), which every tile of a set shares.
+        # `MapFactory.get_tile_token` reads the token back for output naming;
+        # `group_textures_by_set` re-appends it to keep tiles separable.
+        base_name, _tail = registry.split_map_suffix(base_name)
 
         # Strip any configured user prefix/suffix so callers can re-apply them
         # idempotently, then collapse a trailing delimiter (preserves the

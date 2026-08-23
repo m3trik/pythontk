@@ -326,5 +326,28 @@ class TestBadgeWiring(RunnerTestCase):
         self.assertEqual(writer.call_args[0][1:3], (5, 0))  # passed, failed
 
 
+class TestFixtureNaming(unittest.TestCase):
+    """Support files under ``test/`` must not look like test modules.
+
+    ``pytest test/`` imports every file matching ``test_*.py`` -- including
+    helper scripts under ``test/fixtures/``, which unittest discovery skips
+    (no ``__init__.py``). Importing a GUI/optional-dependency helper at
+    collection time turns a missing system package into a collection ERROR
+    for the whole run, so those files carry a non-collectible name instead.
+    """
+
+    def test_fixture_helpers_are_not_collectible_by_pytest(self):
+        offenders = sorted(
+            str(p.relative_to(TEST_DIR))
+            for p in (TEST_DIR / "fixtures").rglob("test_*.py")
+        )
+        self.assertEqual(
+            offenders,
+            [],
+            "test/fixtures/ helpers must not match pytest's 'test_*.py' pattern "
+            "(pytest imports them at collection time); rename to '*_fixture.py'",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

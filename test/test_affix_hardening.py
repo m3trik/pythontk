@@ -5,6 +5,7 @@ import unittest
 
 from pythontk import StrUtils, ImgUtils
 from pythontk.core_utils.engines.textures.map_factory import MapFactory
+from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
 
 class TestStripKnownAffix(unittest.TestCase):
@@ -353,6 +354,46 @@ class TestSplitAffix(unittest.TestCase):
             StrUtils.split_affix("MAT", "auto", "suffix")
         with self.assertRaises(TypeError):
             StrUtils.split_affix("MAT", "auto", "prefix", "_")
+
+
+class TestSplitMapSuffix(unittest.TestCase):
+    """`MapRegistry.split_map_suffix` — the reversible split `get_base_texture_name`
+    and `FileNaming(base_names=True)` both resolve base names through."""
+
+    def setUp(self):
+        self.split = MapRegistry().split_map_suffix
+
+    def test_tail_is_the_suffix_plus_any_tile_token(self):
+        cases = {
+            "rock_Normal": ("rock", "_Normal"),
+            "rock_AO": ("rock", "_AO"),
+            "rock-basecolor": ("rock", "-basecolor"),
+            "rockAO": ("rock", "AO"),  # attached: capital after lowercase
+            "rock_ORM.1001": ("rock", "_ORM.1001"),  # tile comes off first
+            "rock.1001": ("rock", ".1001"),  # tile alone
+        }
+        for stem, expected in cases.items():
+            with self.subTest(stem=stem):
+                self.assertEqual(self.split(stem), expected)
+
+    def test_no_recognized_suffix_leaves_the_name_whole(self):
+        for stem in ("rock", "sphere", "char_thigh", "Agilent_E4419B", "im_Height_16"):
+            with self.subTest(stem=stem):
+                self.assertEqual(self.split(stem), (stem, ""))
+
+    def test_split_is_reversible(self):
+        """base + tail is the input verbatim — what lets a caller re-attach it."""
+        for stem in ("rock_Normal", "rockAO", "rock_ORM.1001", "char_thigh", ""):
+            with self.subTest(stem=stem):
+                self.assertEqual("".join(self.split(stem)), stem)
+
+    def test_base_agrees_with_get_base_texture_name(self):
+        """The two must not drift: one is implemented on the other."""
+        for stem in ("rock_Normal", "rockAO", "rock_ORM.1001", "sphere"):
+            with self.subTest(stem=stem):
+                self.assertEqual(
+                    self.split(stem)[0], ImgUtils.get_base_texture_name(stem + ".png")
+                )
 
 
 if __name__ == "__main__":

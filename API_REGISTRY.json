@@ -1,7 +1,6 @@
 {
   "name": "pythontk",
   "source_root": "pythontk/pythontk",
-  "generated_at": "2026-08-23",
   "modules": [
     {
       "relpath": "audio_utils/_audio_utils.py",
@@ -4236,12 +4235,21 @@
               "deprecated": false
             },
             {
+              "name": "split_map_suffix",
+              "qualname": "MapRegistry.split_map_suffix",
+              "kind": "method",
+              "signature": "(self, name_only: str) -> Tuple[str, str]",
+              "summary": "Split an extension-less filename into ``(base, tail)`` at its map-type suffix.",
+              "line": 1340,
+              "deprecated": false
+            },
+            {
               "name": "shares_workflow",
               "qualname": "MapRegistry.shares_workflow",
               "kind": "method",
               "signature": "(self, name: str, other: str) -> Optional[bool]",
               "summary": "Whether two map types declare any target workflow in common.",
-              "line": 1340,
+              "line": 1373,
               "deprecated": false
             },
             {
@@ -4250,7 +4258,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Dict[str, Any]]",
               "summary": "Generate the workflow presets dictionary.",
-              "line": 1364,
+              "line": 1397,
               "deprecated": false
             },
             {
@@ -4259,7 +4267,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[str, ...]]",
               "summary": "Return ``{canonical_key: (canonical, *aliases)}`` for every registered map.",
-              "line": 1387,
+              "line": 1420,
               "deprecated": false
             },
             {
@@ -4268,7 +4276,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Every registered canonical name and alias, sorted longest-first.",
-              "line": 1395,
+              "line": 1428,
               "deprecated": false
             },
             {
@@ -4277,7 +4285,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[str, ...]]",
               "summary": "Generate the input fallback dictionary.",
-              "line": 1410,
+              "line": 1443,
               "deprecated": false
             },
             {
@@ -4286,7 +4294,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[str, ...]]",
               "summary": "Generate the output fallback dictionary.",
-              "line": 1418,
+              "line": 1451,
               "deprecated": false
             },
             {
@@ -4295,7 +4303,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, List[str]]",
               "summary": "Generate the precedence rules dictionary.",
-              "line": 1426,
+              "line": 1459,
               "deprecated": false
             },
             {
@@ -4304,7 +4312,7 @@
               "kind": "method",
               "signature": "(self, config: Dict[str, Any] = None) -> List[str]",
               "summary": "Packed map types ranked most- to least-wanted for ``config``'s target.",
-              "line": 1436,
+              "line": 1469,
               "deprecated": false
             },
             {
@@ -4313,7 +4321,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Get list of map types that should be scaled as masks.",
-              "line": 1490,
+              "line": 1523,
               "deprecated": false
             },
             {
@@ -4322,7 +4330,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Get list of map types whose surface detail requires full resolution.",
-              "line": 1494,
+              "line": 1527,
               "deprecated": false
             },
             {
@@ -4331,7 +4339,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> bool",
               "summary": "True when surface detail for ``name`` requires full resolution.",
-              "line": 1498,
+              "line": 1531,
               "deprecated": false
             },
             {
@@ -4340,7 +4348,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> bool",
               "summary": "True when ``name`` may be written to a lossy container.",
-              "line": 1507,
+              "line": 1540,
               "deprecated": false
             },
             {
@@ -4349,7 +4357,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Get list of maps that should be passed through if not consumed.",
-              "line": 1542,
+              "line": 1575,
               "deprecated": false
             },
             {
@@ -4358,7 +4366,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[int, int, int, int]]",
               "summary": "Generate the map backgrounds dictionary.",
-              "line": 1547,
+              "line": 1580,
               "deprecated": false
             },
             {
@@ -4367,7 +4375,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, str]",
               "summary": "Generate the map modes dictionary.",
-              "line": 1555,
+              "line": 1588,
               "deprecated": false
             },
             {
@@ -4376,7 +4384,7 @@
               "kind": "classmethod",
               "signature": "(cls, config: Dict[str, Any] = None) -> str",
               "summary": "The 'Missing Maps' policy ``config`` asks for.",
-              "line": 1560,
+              "line": 1593,
               "deprecated": false
             },
             {
@@ -4385,7 +4393,7 @@
               "kind": "classmethod",
               "signature": "(cls, config: Dict[str, Any], components: List[Any]) -> bool",
               "summary": "Whether an incomplete packed map may still be written.",
-              "line": 1586,
+              "line": 1619,
               "deprecated": false
             },
             {
@@ -4394,7 +4402,7 @@
               "kind": "method",
               "signature": "(self, config: Union[str, Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]",
               "summary": "Resolve configuration from presets, dicts, and kwargs.",
-              "line": 1607,
+              "line": 1640,
               "deprecated": false
             }
           ]
@@ -8185,7 +8193,7 @@
         {
           "name": "RenamePlan",
           "summary": "Apply a batch of planned renames with dry-run support and a report.",
-          "line": 36,
+          "line": 37,
           "bases": [
             "LoggingMixin"
           ],
@@ -8196,7 +8204,7 @@
               "kind": "classmethod",
               "signature": "(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item') -> List[Tuple[str, str]]",
               "summary": "Execute *plan* (unless ``dry_run``) and emit one report for it.",
-              "line": 48,
+              "line": 49,
               "deprecated": false
             }
           ]
@@ -8204,7 +8212,7 @@
         {
           "name": "FileNaming",
           "summary": "Batch find / rename files by name pattern — the DCC naming tools' file tenant.",
-          "line": 179,
+          "line": 180,
           "bases": [
             "HelpMixin",
             "LoggingMixin"
@@ -8216,7 +8224,7 @@
               "kind": "staticmethod",
               "signature": "(paths) -> List[str]",
               "summary": "Resolve *paths* (files and/or directories) to a list of file paths.",
-              "line": 194,
+              "line": 202,
               "deprecated": false
             },
             {
@@ -8225,43 +8233,43 @@
               "kind": "staticmethod",
               "signature": "(path: str) -> str",
               "summary": "The file name without directory or extension.",
-              "line": 217,
+              "line": 225,
               "deprecated": false
             },
             {
               "name": "find",
               "qualname": "FileNaming.find",
               "kind": "classmethod",
-              "signature": "(cls, paths, fltr: str, regex: bool = False, ignore_case: bool = False) -> List[str]",
+              "signature": "(cls, paths, fltr: str, regex: bool = False, ignore_case: bool = False, base_names: bool = False) -> List[str]",
               "summary": "Files (from *paths*) whose stem matches *fltr*.",
-              "line": 222,
+              "line": 249,
               "deprecated": false
             },
             {
               "name": "rename",
               "qualname": "FileNaming.rename",
               "kind": "classmethod",
-              "signature": "(cls, paths, to: str, fltr: str = '', regex: bool = False, ignore_case: bool = False, retain_suffix: bool = False, valid_suffixes: Optional[List[str]] = None, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]",
+              "signature": "(cls, paths, to: str, fltr: str = '', regex: bool = False, ignore_case: bool = False, retain_suffix: bool = False, valid_suffixes: Optional[List[str]] = None, base_names: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]",
               "summary": "Rename files by pattern (same grammar as the DCC naming tools).",
-              "line": 250,
+              "line": 283,
               "deprecated": false
             },
             {
               "name": "set_case",
               "qualname": "FileNaming.set_case",
               "kind": "classmethod",
-              "signature": "(cls, paths, case: str = 'capitalize', dry_run: bool = False, logger=None) -> List[Tuple[str, str]]",
+              "signature": "(cls, paths, case: str = 'capitalize', base_names: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]",
               "summary": "Re-case file stems: ``upper`` / ``lower`` / ``capitalize`` / ``swapcase`` / ``title``.",
-              "line": 318,
+              "line": 359,
               "deprecated": false
             },
             {
               "name": "strip_chars",
               "qualname": "FileNaming.strip_chars",
               "kind": "classmethod",
-              "signature": "(cls, paths, num_chars: int = 1, trailing: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]",
+              "signature": "(cls, paths, num_chars: int = 1, trailing: bool = False, base_names: bool = False, dry_run: bool = False, logger=None) -> List[Tuple[str, str]]",
               "summary": "Delete *num_chars* leading (or ``trailing``) characters from each stem.",
-              "line": 333,
+              "line": 383,
               "deprecated": false
             }
           ]
@@ -10206,7 +10214,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 3226,
+              "line": 3223,
               "deprecated": false
             }
           ]

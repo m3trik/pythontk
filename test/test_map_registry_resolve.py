@@ -24,6 +24,26 @@ class ResolveConfigTest(BaseTestCase):
         self.reg = MapRegistry()
         self.presets = self.reg.get_workflow_presets()
 
+    def first_preset_name(self):
+        """Return the name of the first registered workflow preset.
+
+        Presets are generated from ``MapRegistry._workflow_settings`` -- a
+        hard-coded class attribute with no optional dependency or environment
+        behind it -- so an empty set is a regression, never a valid
+        environment. Assert instead of skipping: a skip counts as a pass, so an
+        emptied registry would read green.
+
+        Returns:
+            str: The first preset name (picked by iteration order so the test
+            survives renames).
+        """
+        self.assertTrue(
+            self.presets,
+            "Workflow-preset registry is empty; MapRegistry._workflow_settings "
+            "is the hard-coded source, so this is a regression",
+        )
+        return next(iter(self.presets))
+
     def test_returns_empty_dict_for_none(self):
         cfg = self.reg.resolve_config(None)
         self.assertIsInstance(cfg, dict)
@@ -35,9 +55,7 @@ class ResolveConfigTest(BaseTestCase):
 
     def test_known_preset_string(self):
         # Pick first available preset to be robust against renames
-        if not self.presets:
-            self.skipTest("No workflow presets available")
-        name = next(iter(self.presets))
+        name = self.first_preset_name()
         cfg = self.reg.resolve_config(name)
         # Should at least have non-empty config from the preset
         self.assertEqual(set(cfg) >= set(self.presets[name]) - {"description"}, True)
@@ -48,9 +66,7 @@ class ResolveConfigTest(BaseTestCase):
         self.assertTrue(cfg["convert"])
 
     def test_dict_with_preset_key_inherits(self):
-        if not self.presets:
-            self.skipTest("No workflow presets available")
-        name = next(iter(self.presets))
+        name = self.first_preset_name()
         cfg = self.reg.resolve_config({"preset": name, "max_size": 512})
         self.assertEqual(cfg["max_size"], 512)
         # Preset values still present
