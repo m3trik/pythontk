@@ -198,7 +198,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class OutputTemplate`
   - methods: resolve, to_dict, from_dict
 - `class OutputTemplates`
-  - methods: get, resolve, budget, profile_choices, format_choices, resolve_selection
+  - methods: get, resolve, budget, profile_choices, profile_outline, profile_outlines, format_choices, resolve_selection
 
 ### `core_utils/engines/textures/region_masks.py` — Region-mask engine — named face-group masks that gate texture regions at runtime.
 - `class RegionGroup`
@@ -296,7 +296,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: pip, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
+  - methods: pip, install_targeted, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
 
 ### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - `class Codec`

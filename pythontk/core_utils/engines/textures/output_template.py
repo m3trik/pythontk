@@ -31,10 +31,12 @@ Note on WebXR: it is not a profile of its own — the WebXR runtime material mod
 *is* glTF 2.0 (ORM packing, +Y normals), so ``WF.GLTF`` is the profile to pick, and
 its budget carries the tighter web/headset delivery ceiling.
 """
+
 from __future__ import annotations
 
+import html as _html
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pythontk.core_utils.engines.textures.map_registry import WF, MapRegistry
 
@@ -192,7 +194,8 @@ class OutputTemplate:
         return cls(
             default=OutputSpec.from_dict(d.get("default", {})),
             overrides={
-                k: OutputSpec.from_dict(v) for k, v in (d.get("overrides") or {}).items()
+                k: OutputSpec.from_dict(v)
+                for k, v in (d.get("overrides") or {}).items()
             },
             budget=DeliveryBudget.from_dict(d.get("budget") or {}),
         )
@@ -223,7 +226,9 @@ class OutputTemplates:
     # Advisory ceilings by delivery class, not by engine — the same numbers recur
     # across profiles, and naming the *reason* keeps the catalogue below readable.
     _BUDGET_NONE = DeliveryBudget()  # authoring / offline: the map is an intermediate
-    _BUDGET_REALTIME = DeliveryBudget(max_size=4096)  # high-end PC / current-gen console
+    _BUDGET_REALTIME = DeliveryBudget(
+        max_size=4096
+    )  # high-end PC / current-gen console
     _BUDGET_MOBILE = DeliveryBudget(max_size=2048)  # mobile, standalone VR, mid-tier PC
     # Web/WebXR ships over the network and decodes on the client, so it inherits the
     # mobile ceiling *and* wants POT (mip generation on the GL/WebGPU backends).
@@ -231,7 +236,9 @@ class OutputTemplates:
 
     # Profile-agnostic fallback (no profile, or an unknown one). Unbudgeted: with no
     # target named, any ceiling would be a guess presented as a recommendation.
-    DEFAULT = OutputTemplate(default=OutputSpec("png", 8), overrides=dict(_PRECISION_16))
+    DEFAULT = OutputTemplate(
+        default=OutputSpec("png", 8), overrides=dict(_PRECISION_16)
+    )
 
     # Built-in per-profile templates (read-only tier). Populated below the class so
     # the catalogue can be assembled with the class's own ``_build`` helper.
@@ -300,6 +307,20 @@ class OutputTemplates:
     #: Label for "keep whatever container each source already has".
     ORIGINAL_LABEL = "Original"
 
+    #: Handedness wording for a tangent-space normal map, keyed by the value of
+    #: a preset's ``normal_type``. The green channel's sign IS the difference,
+    #: and it is the one thing a user has to match against their engine, so the
+    #: convention is spelled out rather than left as a bare "DirectX".
+    NORMAL_CONVENTIONS = {
+        "OpenGL": "tangent-space normal, OpenGL (+Y green)",
+        "DirectX": "tangent-space normal, DirectX (-Y green)",
+    }
+    #: Stand-ins used by :meth:`profile_outline` when a value is not known at
+    #: tooltip time: the texture set's base name, and the container a panel that
+    #: does not drive the profile's template will leave each map in.
+    NAME_TOKEN = "<name>"
+    EXT_TOKEN = "<ext>"
+
     @classmethod
     def profile_choices(cls) -> List[Tuple[str, str]]:
         """``(name, description)`` for every selectable workflow profile.
@@ -315,6 +336,234 @@ class OutputTemplates:
         return [
             (name, (preset or {}).get("description", ""))
             for name, preset in MapRegistry().get_workflow_presets().items()
+        ]
+
+    @staticmethod
+    def _titleize(map_type: str) -> str:
+        """``"Ambient_Occlusion"`` -> ``"Ambient Occlusion"`` for display.
+
+        Deliberately NOT ``StrUtils``/``HotkeyUtils.humanize_label``: that one
+        re-cases a ``snake_case`` identifier word by word, and a map type is
+        already display-cased with acronyms and mixed-case spellings baked in —
+        it would return "Directx" for ``Normal_DirectX``. The separator is the
+        only thing that needs changing here.
+        """
+        return map_type.replace("_", " ")
+
+    @classmethod
+    def _channel_layout(cls, channels: Dict[str, str]) -> str:
+        """Render a packed map's channel layout as ``R: Occlusion · G: Roughness · …``.
+
+        Reads :attr:`~pythontk.core_utils.engines.textures.map_registry.MapType.channels`
+        verbatim, including its trailing-``"?"`` optional marker, so the tooltip
+        cannot claim a channel the packer treats as filler is required.
+        """
+        parts = []
+        for channel, carried in channels.items():
+            optional = carried.endswith("?")
+            label = cls._titleize(carried.rstrip("?"))
+            parts.append(
+                f"{channel}: {label}" + (" <i>(optional)</i>" if optional else "")
+            )
+        return " · ".join(parts)
+
+    @classmethod
+    def profile_outline(
+        cls,
+        profile: str,
+        *,
+        delivery: bool = True,
+        base_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """A document outline describing what *profile* writes, ready to render.
+
+        The prose description alone answers "which profile is right for me" but
+        not "what will I get" — the question a preset combo is actually asked,
+        and the one every panel currently leaves the user to infer from an
+        engine name. This spells the answer out from the same SSoT the run uses:
+        the packed maps the profile declares (with their channel layouts), the
+        normal-map convention, the maps it deliberately keeps loose, and — when
+        the caller's write is actually driven by this profile's template — the
+        containers, bit depths and delivery budget.
+
+        Rendering is left to the caller because the palette belongs upstream
+        (``uitk``'s ``TooltipFormat``): the returned keys are a generic document
+        outline — ``title`` / ``body`` / ``sections`` / ``notes`` —
+        which ``TooltipFormat.fmt`` consumes directly as ``**kwargs``. Values
+        are HTML: caller-supplied text (*base_name*) and registry prose are
+        escaped, and only semantic markup (``<b>`` / ``<i>``) is added.
+
+        Parameters:
+            profile: A :class:`~pythontk.core_utils.engines.textures.map_registry.WF`
+                profile name. An unknown or absent one still yields a valid
+                outline, but an EMPTY one — no ``sections``, no ``notes``. There
+                is nothing truthful to say about what a profile that does not
+                exist writes, and the alternative (falling back to the default
+                template) reads as a description of a real target.
+            delivery: Include the container / bit-depth / budget section, and
+                resolve each filename's extension through the profile's
+                template. Pass False from a panel that does **not** hand this
+                profile to the writer as ``output_profile`` — the Material
+                Updater reconfigures and rewires but leaves containers as
+                authored, so naming one there would be a promise it does not
+                keep. Filenames then carry :attr:`EXT_TOKEN`.
+            base_name: Stand-in for the texture set's base name in the example
+                filenames. Defaults to :attr:`NAME_TOKEN`; pass a real set name
+                to preview a concrete run.
+
+        Returns:
+            dict: ``{"title", "body", "sections", "notes"}``. ``sections`` is
+            ``(heading, [items])`` — a **Writes** list naming every file the
+            profile produces and what each one carries, plus **Delivery** when
+            *delivery* is set. Every key is always present; the collections are
+            empty for an unknown profile.
+        """
+        registry = MapRegistry()
+        preset = registry.get_workflow_presets().get(profile)
+        template = cls.get(profile)
+        base = _html.escape(base_name or cls.NAME_TOKEN)
+
+        def filename(map_type: str) -> str:
+            ext = template.resolve(map_type).ext if delivery else cls.EXT_TOKEN
+            return f"{base}_{map_type}.{_html.escape(ext)}"
+
+        # Declared THE SAME WAY get_workflow_presets derives its flags -- by the
+        # map naming the workflow -- so the tooltip and the resolved config can
+        # never disagree about which maps a profile asked for.
+        declared = [
+            entry
+            for entry in (registry.get(name) for name in registry.get_map_types())
+            if entry and profile in entry.workflows
+        ]
+
+        def written(map_type: str, contents: str) -> str:
+            return f"<b>{filename(map_type)}</b> — {contents}"
+
+        packed = [entry for entry in declared if entry.is_packed]
+        writes = [
+            written(entry.name, cls._channel_layout(entry.channels)) for entry in packed
+        ]
+        writes += [
+            written(entry.name, "written separately — this profile does not pack it")
+            for entry in declared
+            if not entry.is_packed
+        ]
+
+        sections: List[Tuple[str, List[str]]] = []
+        notes: List[str] = []
+        if preset is not None:
+            # Normals are written by every profile (the handler always runs) and
+            # are never packed, so they close the list as its one constant entry.
+            normal_type = preset["normal_type"]
+            writes.append(
+                written(
+                    f"Normal_{normal_type}",
+                    cls.NORMAL_CONVENTIONS.get(
+                        normal_type, f"tangent-space normal, {normal_type}"
+                    ),
+                )
+            )
+            sections.append(("Writes", writes))
+            if delivery:
+                sections.append(("Delivery", cls._delivery_items(template)))
+
+            if preset.get("convert_specgloss_to_pbr"):
+                notes.append(
+                    "Specular / Glossiness sources are converted to "
+                    "Metallic / Roughness before anything is packed."
+                )
+            if preset.get("cleanup_base_color"):
+                notes.append(
+                    "Base Color is cleaned to true albedo using the Metallic mask."
+                )
+            if packed:
+                # A listed packed map is a REQUEST, not a guarantee, and saying
+                # otherwise misleads exactly where the pipeline takes care not
+                # to: every packing handler falls back to loose maps when its
+                # sources are not all there (BaseColorHandler keeps a plain
+                # Base_Color "to avoid misleading filenames";
+                # MetallicSmoothnessHandler saves a loose Metallic). The
+                # Missing Maps rule is deliberately NOT cited: only the ORM /
+                # MRAO / MSAO handlers consult it, and it is the header
+                # control's own tooltip to explain — this note stays inside
+                # what the PROFILE decides.
+                note = (
+                    "A packed map is written only when its sources are really "
+                    "there; otherwise its channels are written as separate maps."
+                )
+                # Derived, not name-matched: a pack carrying Opacity is the one
+                # whose condition is "does this set have transparency at all".
+                alpha_packs = [e for e in packed if "Opacity" in e.carried_types()]
+                if alpha_packs:
+                    note += (
+                        f" {' / '.join(cls._titleize(e.name) for e in alpha_packs)}"
+                        " needs real transparency in the set — an opaque one "
+                        "keeps its sources loose."
+                    )
+                notes.append(note)
+            notes.append(
+                f"{_html.escape(cls.NAME_TOKEN)} is the texture set's base name. "
+                "Every other map in the set is written unchanged under its own name."
+            )
+
+        return {
+            "title": profile,
+            "body": _html.escape((preset or {}).get("description", "")),
+            "sections": sections,
+            "notes": notes,
+        }
+
+    @classmethod
+    def _delivery_items(cls, template: OutputTemplate) -> List[str]:
+        """Bullet lines for a template's containers, bit depths and budget."""
+
+        def spec_text(spec: OutputSpec) -> str:
+            text = f"<b>{spec.ext.upper()}</b>, {spec.bit_depth}-bit"
+            if spec.compression:
+                text += f", {spec.compression}"
+            if spec.quality:
+                text += f", quality {spec.quality}"
+            return text
+
+        default = template.default
+        items = [f"Default — {spec_text(default)}"]
+        # Group by resolved spec: the per-type overrides repeat (Height /
+        # Displacement / Bump share one), and a template whose override matches
+        # its own default (UE's normals are TGA like everything else) has
+        # nothing to report.
+        grouped: Dict[Tuple[Any, ...], List[str]] = {}
+        for map_type, spec in template.overrides.items():
+            if spec == default:
+                continue
+            grouped.setdefault(
+                (spec.ext, spec.bit_depth, spec.compression, spec.quality), []
+            ).append(cls._titleize(map_type))
+        for spec_key, map_types in grouped.items():
+            items.append(
+                f"{', '.join(map_types)} — " + spec_text(OutputSpec(*spec_key))
+            )
+
+        budget = template.budget
+        items.append(
+            f"Size ceiling — {budget.max_size} px (advisory)"
+            if budget.max_size
+            else "Size ceiling — none (authoring / offline target)"
+        )
+        if budget.force_pot:
+            items.append("Dimensions — power-of-two expected")
+        return items
+
+    @classmethod
+    def profile_outlines(cls, **kwargs) -> List[Tuple[str, Dict[str, Any]]]:
+        """``(name, outline)`` for every selectable profile, registry order.
+
+        The :meth:`profile_outline` counterpart to :meth:`profile_choices`, so a
+        panel populating a preset combo keeps its one-loop shape. ``**kwargs``
+        are forwarded to :meth:`profile_outline` (``delivery``, ``base_name``).
+        """
+        return [
+            (name, cls.profile_outline(name, **kwargs))
+            for name, _ in cls.profile_choices()
         ]
 
     @classmethod

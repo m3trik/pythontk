@@ -540,22 +540,106 @@ class PackageManager(
 
     def pip(self, command, output_as_string=False):
         """Execute a pip command and return the output."""
-        full_command = [self.python_path, "-m", "pip"] + self._parse_command(command)
-        startupinfo = self._get_startupinfo()
+        result = self._run_pip(self._parse_command(command))
+        return self._process_output(result.stdout, result.stderr, output_as_string)
 
+    def install_targeted(self, specs, target_dir, upgrade=False) -> List[str]:
+        """Resolver-aware install into a directory an embedded host imports from.
+
+        For interpreters embedded in a host app (Blender's bundled python, mayapy)
+        whose preferred landing zone is a plain directory on the host's ``sys.path``
+        rather than site-packages. A naive ``pip install --target`` is the trap this
+        exists to avoid: ``--target`` plans a COMPLETE standalone closure, ignoring
+        what the interpreter already ships, so it happily installs e.g. a newer
+        numpy over the host's bundled one. Instead, pip's own resolver produces the
+        plan (``--dry-run --report`` — interpreter-aware, sees the bundled
+        site-packages) and only the reported set is applied with ``--no-deps``.
+
+        The plan step runs with ``-s`` (no user site): a user-site dist the HOST
+        never reads must not count as satisfied. *target_dir* rides PYTHONPATH
+        during planning so prior targeted installs count as installed and re-runs
+        are no-ops.
+
+        Parameters:
+            specs (str/list): pip requirement(s), e.g. ``"tentacletk[blender]"``.
+            target_dir (str): Directory to install into (created by pip if absent).
+            upgrade (bool): Also plan upgrades for satisfied-but-older dists.
+
+        Returns:
+            list[str]: ``"name==version"`` for each dist actually installed
+            (empty when everything was already satisfied).
+
+        Raises:
+            RuntimeError: A pip invocation failed, or pip produced no report.
+        """
+        import os
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        if isinstance(specs, str):
+            specs = [specs]
+        env = {**os.environ, "PYTHONPATH": target_dir}
+
+        with TempArtifacts("pip_plan", policy="scoped") as tmp:
+            report = tmp.path(".json")
+            plan_cmd = ["install", "--dry-run", "--report", report]
+            if upgrade:
+                plan_cmd.append("--upgrade")
+            self._run_pip(plan_cmd + specs, python_flags=["-s"], env=env)
+            if not os.path.isfile(report):
+                # Zero exit but no report: pip is too old for --dry-run --report
+                # (needs 22.2+). Reading that as "nothing to install" would claim
+                # an install that never happened, so fail loudly instead.
+                raise RuntimeError(
+                    f"pip produced no install report for {specs!r} - "
+                    "--dry-run --report needs pip 22.2 or newer."
+                )
+            with open(report, "r", encoding="utf-8") as fh:
+                plan = json.load(fh)
+
+        # Skip malformed rows rather than KeyError on them: the report's shape is
+        # pip's to change, and a row carrying no name is nothing we could install.
+        pins = [
+            f"{m['name']}=={m['version']}"
+            for m in (
+                (i or {}).get("metadata") or {} for i in plan.get("install") or []
+            )
+            if m.get("name") and m.get("version")
+        ]
+        if not pins:
+            return []
+
+        # --no-deps: the plan IS the resolution; --upgrade overwrites an older
+        # copy already sitting in the target dir.
+        self._run_pip(
+            ["install", "--no-deps", "--upgrade", "--target", target_dir] + pins,
+            python_flags=["-s"],
+            env=env,
+        )
+        return pins
+
+    def _run_pip(self, args, python_flags=None, env=None):
+        """Run pip, returning the :class:`subprocess.CompletedProcess`.
+
+        The single subprocess seam for this class: :meth:`pip` keeps its public
+        string-command signature on top of it, and :meth:`install_targeted` uses
+        the *python_flags* / *env* it adds (interpreter flags land before ``-m``,
+        which is the only place ``-s`` is honoured).
+        """
+        full_command = (
+            [self.python_path] + list(python_flags or []) + ["-m", "pip"] + list(args)
+        )
         try:
-            result = subprocess.run(
+            return subprocess.run(
                 full_command,
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                startupinfo=startupinfo,
+                env=env,
+                startupinfo=self._get_startupinfo(),
             )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Command '{' '.join(full_command)}' failed: {e.stderr}")
-
-        return self._process_output(result.stdout, result.stderr, output_as_string)
 
     def _parse_command(self, command):
         """Parse the pip command from string to list format."""

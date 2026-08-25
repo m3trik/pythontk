@@ -5,7 +5,10 @@
 Run with:
     python -m pytest test_output_template.py -v
 """
+
+import html as _html
 import unittest
+import xml.etree.ElementTree as ET
 
 from pythontk import DeliveryBudget, OutputSpec, OutputTemplate, OutputTemplates
 from pythontk.core_utils.engines.textures.map_registry import WF, MapRegistry
@@ -22,7 +25,9 @@ class OutputSpecTest(unittest.TestCase):
 
     def test_from_dict_partial(self):
         # Missing keys fall back to defaults — tolerant of hand-written presets.
-        self.assertEqual(OutputSpec.from_dict({"ext": "tiff"}), OutputSpec("tiff", 8, None))
+        self.assertEqual(
+            OutputSpec.from_dict({"ext": "tiff"}), OutputSpec("tiff", 8, None)
+        )
 
 
 class OutputTemplateTest(unittest.TestCase):
@@ -37,7 +42,9 @@ class OutputTemplateTest(unittest.TestCase):
 
     def test_dict_roundtrip(self):
         t = OutputTemplates.get(WF.UE)
-        self.assertEqual(OutputTemplate.from_dict(t.to_dict()).resolve("Normal"), t.resolve("Normal"))
+        self.assertEqual(
+            OutputTemplate.from_dict(t.to_dict()).resolve("Normal"), t.resolve("Normal")
+        )
 
     def test_dict_roundtrip_carries_budget(self):
         # A template that loses its budget on the way through a preset file would
@@ -196,7 +203,13 @@ class LossySafetyGateTest(unittest.TestCase):
     def test_packed_maps_are_refused_even_when_srgb(self):
         # Albedo_Transparency is sRGB but packs opacity into alpha — the
         # channels are unrelated, which is the assumption a codec relies on.
-        for name in ("ORM", "MSAO", "MRAO", "Metallic_Smoothness", "Albedo_Transparency"):
+        for name in (
+            "ORM",
+            "MSAO",
+            "MRAO",
+            "Metallic_Smoothness",
+            "Albedo_Transparency",
+        ):
             self.assertFalse(self.reg.is_lossy_safe(name), name)
 
     def test_unknown_map_defaults_to_refused(self):
@@ -254,6 +267,196 @@ class SelectionChoicesTest(unittest.TestCase):
             OutputTemplates.resolve_selection(WF.GLTF, ".WEBP"), (WF.GLTF, "webp")
         )
         self.assertEqual(OutputTemplates.resolve_selection("", None), (None, None))
+
+
+class ProfileOutlineTest(unittest.TestCase):
+    """The rendered-tooltip outline every preset combo shows for a profile."""
+
+    KEYS = {"title", "body", "sections", "notes"}
+
+    def _writes(self, outline):
+        return dict(outline["sections"])["Writes"]
+
+    def test_outline_keys_are_the_documented_set(self):
+        # The keys ARE the contract -- panels splat them into a formatter as
+        # **kwargs, so an extra key is a TypeError at the call site.
+        for name, outline in OutputTemplates.profile_outlines():
+            self.assertEqual(set(outline), self.KEYS, name)
+
+    def test_outlines_match_the_registry_order(self):
+        names = [n for n, _ in OutputTemplates.profile_outlines()]
+        self.assertEqual(names, [n for n, _ in OutputTemplates.profile_choices()])
+
+    def test_body_is_the_profile_description(self):
+        for name, description in OutputTemplates.profile_choices():
+            self.assertEqual(OutputTemplates.profile_outline(name)["body"], description)
+
+    def test_every_profile_writes_its_normal_convention(self):
+        """The handedness is the one thing a user must match; a bare engine
+        name never said which way the green channel points."""
+        presets = MapRegistry().get_workflow_presets()
+        for name, preset in presets.items():
+            normal_type = preset["normal_type"]
+            writes = self._writes(OutputTemplates.profile_outline(name))
+            self.assertTrue(
+                any(f"_Normal_{normal_type}." in item for item in writes),
+                f"{name} does not name its {normal_type} normal output",
+            )
+
+    def test_packed_maps_are_listed_with_their_channel_layout(self):
+        writes = self._writes(OutputTemplates.profile_outline(WF.UE))
+        orm = next(item for item in writes if "_ORM." in item)
+        for channel, carried in (
+            ("R", "Ambient Occlusion"),
+            ("G", "Roughness"),
+            ("B", "Metallic"),
+        ):
+            self.assertIn(f"{channel}: {carried}", orm)
+
+    def test_optional_channels_are_marked(self):
+        """MSAO's Detail channel is filler -- coverage must not demand it, and
+        neither may the tooltip."""
+        writes = self._writes(OutputTemplates.profile_outline(WF.HDRP))
+        msao = next(item for item in writes if "_MSAO." in item)
+        self.assertIn("Detail Mask <i>(optional)</i>", msao)
+
+    def test_declared_maps_come_from_the_same_source_as_the_preset_flags(self):
+        """Outline and resolved config cannot disagree about what a profile
+        asked for: both read MapType.workflows."""
+        registry = MapRegistry()
+        for name in registry.get_workflow_presets():
+            writes = self._writes(OutputTemplates.profile_outline(name))
+            for map_name in registry.get_map_types():
+                entry = registry.get(map_name)
+                if name in entry.workflows:
+                    self.assertTrue(
+                        any(f"_{map_name}." in item for item in writes),
+                        f"{name} declares {map_name} but does not list it",
+                    )
+
+    def test_delivery_section_reports_containers_and_budget(self):
+        sections = dict(OutputTemplates.profile_outline(WF.UE)["sections"])
+        delivery = " | ".join(sections["Delivery"])
+        self.assertIn("TGA", delivery)  # UE's default container
+        self.assertIn("16-bit", delivery)  # the height-like override
+        self.assertIn("4096", delivery)  # its realtime budget
+
+    def test_delivery_off_omits_the_section_and_the_container(self):
+        """A panel that does not pass the profile as ``output_profile`` leaves
+        each map in its authored container -- naming one would be a lie."""
+        outline = OutputTemplates.profile_outline(WF.UE, delivery=False)
+        self.assertNotIn("Delivery", dict(outline["sections"]))
+        for item in self._writes(outline):
+            self.assertIn(_html.escape(OutputTemplates.EXT_TOKEN), item)
+            self.assertNotIn(".tga", item)
+
+    def test_base_name_is_substituted_and_escaped(self):
+        writes = self._writes(
+            OutputTemplates.profile_outline(WF.UE, base_name="rock<&>")
+        )
+        self.assertTrue(
+            all(item.startswith("<b>rock&lt;&amp;&gt;_") for item in writes)
+        )
+
+    def test_default_base_name_token_is_escaped(self):
+        outline = OutputTemplates.profile_outline(WF.UE)
+        for item in self._writes(outline):
+            self.assertNotIn("<name>", item)
+            self.assertIn("&lt;name&gt;", item)
+
+    def test_description_prose_is_escaped_not_injected(self):
+        """Registry descriptions are plain text by contract; embedding them in
+        markup must not let a stray bracket eat the word after it."""
+        registry = MapRegistry()
+        original = registry._workflow_settings[WF.STD]["description"]
+        registry._workflow_settings[WF.STD]["description"] = (
+            "a <b>bold</b> & wide claim"
+        )
+        try:
+            self.assertEqual(
+                OutputTemplates.profile_outline(WF.STD)["body"],
+                "a &lt;b&gt;bold&lt;/b&gt; &amp; wide claim",
+            )
+        finally:
+            registry._workflow_settings[WF.STD]["description"] = original
+
+    def test_every_fragment_is_balanced_markup(self):
+        """Qt eats the word after a bare ``<``. The outline embeds registry prose
+        and a caller's base name in markup, so an unescaped one would silently
+        swallow content -- and check_tooltips.py, being static, never sees a
+        tooltip assembled at runtime."""
+        hostile = """rock<&>'" 1001"""
+        for delivery in (True, False):
+            for name, outline in OutputTemplates.profile_outlines(
+                delivery=delivery, base_name=hostile
+            ):
+                fragments = [outline["body"], *outline["notes"]]
+                for heading, items in outline["sections"]:
+                    fragments += [heading, *items]
+                for fragment in fragments:
+                    with self.subTest(profile=name, delivery=delivery):
+                        ET.fromstring(f"<root>{fragment}</root>")
+
+    def test_specgloss_conversion_is_called_out(self):
+        notes = " ".join(OutputTemplates.profile_outline(WF.SPEC)["notes"])
+        self.assertIn("Metallic / Roughness", notes)
+
+    def test_unknown_profile_claims_nothing(self):
+        """A profile that does not exist writes nothing knowable -- describing
+        it from the default template would read as a real target's contract."""
+        outline = OutputTemplates.profile_outline("not-a-profile")
+        self.assertEqual(set(outline), self.KEYS)
+        self.assertEqual(outline["body"], "")
+        self.assertEqual(outline["sections"], [])
+        self.assertEqual(outline["notes"], [])
+
+    def test_every_declared_normal_type_has_its_handedness_spelled_out(self):
+        """The fallback wording keeps a new handedness from crashing, which is
+        also how it would go unnoticed -- so the coverage is pinned instead."""
+        for name, preset in MapRegistry().get_workflow_presets().items():
+            self.assertIn(
+                preset["normal_type"], OutputTemplates.NORMAL_CONVENTIONS, name
+            )
+
+    def _declared(self, profile, predicate):
+        registry = MapRegistry()
+        return any(
+            predicate(registry.get(m))
+            for m in registry.get_map_types()
+            if profile in registry.get(m).workflows
+        )
+
+    def test_transparency_condition_is_named_only_where_a_pack_carries_opacity(self):
+        """The clause is derived from the pack's own channels, not matched on
+        the name Albedo_Transparency -- Spec/Gloss packs Metallic_Smoothness and
+        must not be told about transparency it never handles."""
+        for name in MapRegistry().get_workflow_presets():
+            carries_alpha = self._declared(
+                name, lambda e: e.is_packed and "Opacity" in e.carried_types()
+            )
+            notes = " ".join(OutputTemplates.profile_outline(name)["notes"])
+            self.assertEqual(carries_alpha, "real transparency" in notes, name)
+
+    def test_the_missing_maps_rule_is_not_claimed_for_every_pack(self):
+        """Only the ORM / MRAO / MSAO handlers consult `allow_incomplete_pack`,
+        so a blanket citation would be wrong for Metallic_Smoothness and
+        Albedo_Transparency -- and that control documents itself in the panel."""
+        for name in MapRegistry().get_workflow_presets():
+            notes = " ".join(OutputTemplates.profile_outline(name)["notes"])
+            self.assertNotIn("Missing Maps", notes, name)
+
+    def test_a_packed_map_is_advertised_as_conditional(self):
+        """BaseColorHandler packs Albedo_Transparency only when the set carries
+        real transparency, so an opaque set gets a plain Base Color. A tooltip
+        that listed the packed name flat promised a file the run never writes."""
+        registry = MapRegistry()
+        for name, preset in registry.get_workflow_presets().items():
+            packs = any(
+                name in registry.get(m).workflows and registry.get(m).is_packed
+                for m in registry.get_map_types()
+            )
+            notes = " ".join(OutputTemplates.profile_outline(name)["notes"])
+            self.assertEqual(packs, "only when its sources" in notes, name)
 
 
 class NoLossyDefaultsTest(unittest.TestCase):
