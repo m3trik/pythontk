@@ -4468,7 +4468,7 @@
         {
           "name": "OutputSpec",
           "summary": "How a single map is written to disk.",
-          "line": 43,
+          "line": 45,
           "bases": [],
           "members": [
             {
@@ -4477,7 +4477,7 @@
               "kind": "method",
               "signature": "(self) -> dict",
               "summary": "",
-              "line": 80,
+              "line": 82,
               "deprecated": false
             },
             {
@@ -4486,7 +4486,7 @@
               "kind": "classmethod",
               "signature": "(cls, d: dict) -> 'OutputSpec'",
               "summary": "",
-              "line": 89,
+              "line": 91,
               "deprecated": false
             }
           ]
@@ -4494,7 +4494,7 @@
         {
           "name": "DeliveryBudget",
           "summary": "A profile's advisory delivery limits — reported by default, not enforced.",
-          "line": 100,
+          "line": 102,
           "bases": [],
           "members": [
             {
@@ -4503,7 +4503,7 @@
               "kind": "method",
               "signature": "(self, width: int, height: int) -> List[str]",
               "summary": "Return one message per budget rule ``width`` x ``height`` violates.",
-              "line": 127,
+              "line": 129,
               "deprecated": false
             },
             {
@@ -4512,7 +4512,7 @@
               "kind": "method",
               "signature": "(self) -> dict",
               "summary": "",
-              "line": 151,
+              "line": 153,
               "deprecated": false
             },
             {
@@ -4521,7 +4521,7 @@
               "kind": "classmethod",
               "signature": "(cls, d: dict) -> 'DeliveryBudget'",
               "summary": "",
-              "line": 155,
+              "line": 157,
               "deprecated": false
             }
           ]
@@ -4529,7 +4529,7 @@
         {
           "name": "OutputTemplate",
           "summary": "A profile's per-map output formats: a default spec + per-map-type overrides.",
-          "line": 164,
+          "line": 166,
           "bases": [],
           "members": [
             {
@@ -4538,7 +4538,7 @@
               "kind": "method",
               "signature": "(self, map_type: Optional[str]) -> OutputSpec",
               "summary": "Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).",
-              "line": 177,
+              "line": 179,
               "deprecated": false
             },
             {
@@ -4547,7 +4547,7 @@
               "kind": "method",
               "signature": "(self) -> dict",
               "summary": "",
-              "line": 183,
+              "line": 185,
               "deprecated": false
             },
             {
@@ -4556,7 +4556,7 @@
               "kind": "classmethod",
               "signature": "(cls, d: dict) -> 'OutputTemplate'",
               "summary": "",
-              "line": 191,
+              "line": 193,
               "deprecated": false
             }
           ]
@@ -4564,7 +4564,7 @@
         {
           "name": "OutputTemplates",
           "summary": "Registry of the built-in per-profile output templates and their resolution.",
-          "line": 201,
+          "line": 204,
           "bases": [],
           "members": [
             {
@@ -4573,7 +4573,7 @@
               "kind": "classmethod",
               "signature": "(cls, profile: Optional[str]) -> OutputTemplate",
               "summary": "Return the built-in template for *profile* (a ``WF`` key), or the default.",
-              "line": 261,
+              "line": 268,
               "deprecated": false
             },
             {
@@ -4582,7 +4582,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec",
               "summary": "Resolve the :class:`OutputSpec` for *map_type* under *profile*.",
-              "line": 268,
+              "line": 275,
               "deprecated": false
             },
             {
@@ -4591,7 +4591,7 @@
               "kind": "classmethod",
               "signature": "(cls, profile: Optional[str]) -> DeliveryBudget",
               "summary": "Return the advisory :class:`DeliveryBudget` for *profile*.",
-              "line": 275,
+              "line": 282,
               "deprecated": false
             },
             {
@@ -4600,7 +4600,25 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[Tuple[str, str]]",
               "summary": "``(name, description)`` for every selectable workflow profile.",
-              "line": 304,
+              "line": 325,
+              "deprecated": false
+            },
+            {
+              "name": "profile_outline",
+              "qualname": "OutputTemplates.profile_outline",
+              "kind": "classmethod",
+              "signature": "(cls, profile: str, *, delivery: bool = True, base_name: Optional[str] = None) -> Dict[str, Any]",
+              "summary": "A document outline describing what *profile* writes, ready to render.",
+              "line": 371,
+              "deprecated": false
+            },
+            {
+              "name": "profile_outlines",
+              "qualname": "OutputTemplates.profile_outlines",
+              "kind": "classmethod",
+              "signature": "(cls, **kwargs) -> List[Tuple[str, Dict[str, Any]]]",
+              "summary": "``(name, outline)`` for every selectable profile, registry order.",
+              "line": 557,
               "deprecated": false
             },
             {
@@ -4609,7 +4627,7 @@
               "kind": "classmethod",
               "signature": "(cls, sentinel: Optional[str] = PROFILE_DEFAULT_LABEL, writable: Optional[Tuple[str, ...]] = None, sentinel_first: bool = False) -> List[Tuple[str, str]]",
               "summary": "``(label, value)`` for an output-container combo.",
-              "line": 321,
+              "line": 570,
               "deprecated": false
             },
             {
@@ -4618,7 +4636,7 @@
               "kind": "classmethod",
               "signature": "(cls, profile: Optional[str], ext: Optional[str]) -> Tuple[Optional[str], Optional[str]]",
               "summary": "Turn a (profile, container) UI selection into call arguments.",
-              "line": 363,
+              "line": 612,
               "deprecated": false
             }
           ]
@@ -6527,12 +6545,21 @@
               "deprecated": false
             },
             {
+              "name": "install_targeted",
+              "qualname": "PackageManager.install_targeted",
+              "kind": "method",
+              "signature": "(self, specs, target_dir, upgrade=False) -> List[str]",
+              "summary": "Resolver-aware install into a directory an embedded host imports from.",
+              "line": 546,
+              "deprecated": false
+            },
+            {
               "name": "get_local_dependency_order",
               "qualname": "PackageManager.get_local_dependency_order",
               "kind": "staticmethod",
               "signature": "(paths: List[Union[str, Path]]) -> List[Path]",
               "summary": "Sort a list of local repository paths based on their pyproject.toml dependencies.",
-              "line": 633,
+              "line": 717,
               "deprecated": false
             },
             {

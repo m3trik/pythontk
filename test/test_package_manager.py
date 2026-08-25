@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_package_manager.py -v
     python test_package_manager.py
 """
+
 import sys
 import tempfile
 import os
@@ -87,9 +88,7 @@ class PackageManagerTest(BaseTestCase):
         )
         with patch.object(PackageManager, "pip", return_value=raw):
             result = self.pkg_mgr.list_packages()
-        self.assertEqual(
-            result, {"uitk": "1.3.54", "tentacletk": "0.13.42"}
-        )
+        self.assertEqual(result, {"uitk": "1.3.54", "tentacletk": "0.13.42"})
 
     def test_latest_versions_isolates_a_failing_lookup(self):
         """One unreachable package must not lose the other answers, and must
@@ -453,6 +452,164 @@ class PackageManagerTomllibImportTest(BaseTestCase):
             self.assertIn("pkg_a", names)
             self.assertIn("pkg_b", names)
             self.assertLess(names.index("pkg_b"), names.index("pkg_a"))
+
+
+class InstallTargetedTest(BaseTestCase):
+    """Tests for PackageManager.install_targeted (resolver-aware --target install).
+
+    The naive ``pip install --target <dir>`` plans a COMPLETE closure, ignoring
+    what the interpreter already ships (probed 2026-08-24: it planned numpy 2.5.2
+    over Blender's bundled 2.3.4) — so the method must plan with pip's own
+    resolver (``--dry-run --report``, interpreter-aware) and apply only the
+    reported set with ``--no-deps``.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.pm = PackageManager(python_path="X:/fake/python.exe")
+        self.calls = []  # captured subprocess.run invocations
+
+    def _fake_run(self, plan_items):
+        """A subprocess.run stand-in: records calls; the plan call writes *plan_items*
+        into the file named by ``--report``; every call reports success."""
+        import json
+
+        calls = self.calls
+
+        class _Result:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+
+        def run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs))
+            if "--report" in cmd:
+                report = cmd[cmd.index("--report") + 1]
+                payload = {
+                    "install": [
+                        {"metadata": {"name": n, "version": v}} for n, v in plan_items
+                    ]
+                }
+                with open(report, "w", encoding="utf-8") as fh:
+                    json.dump(payload, fh)
+            return _Result()
+
+        return run
+
+    def test_plan_then_apply_no_deps(self):
+        """Plans via --dry-run --report, then applies exactly the pins with --no-deps."""
+        from unittest import mock
+        from pythontk.core_utils import package_manager as pm_mod
+
+        with mock.patch.object(
+            pm_mod.subprocess,
+            "run",
+            side_effect=self._fake_run([("qtpy", "2.4.3"), ("blendertk", "0.5.83")]),
+        ):
+            installed = self.pm.install_targeted(
+                "tentacletk[blender]", target_dir="X:/target"
+            )
+
+        self.assertEqual(installed, ["qtpy==2.4.3", "blendertk==0.5.83"])
+        self.assertEqual(len(self.calls), 2)
+        plan_cmd, plan_kw = self.calls[0]
+        apply_cmd, apply_kw = self.calls[1]
+        # plan: interpreter-aware dry run, blind to the (host-invisible) user site
+        self.assertIn("--dry-run", plan_cmd)
+        self.assertIn("--report", plan_cmd)
+        self.assertIn("-s", plan_cmd[: plan_cmd.index("-m")])
+        self.assertIn("tentacletk[blender]", plan_cmd)
+        self.assertNotIn("--target", plan_cmd)
+        # the target dir counts as already-installed context for re-runs
+        self.assertIn("X:/target", plan_kw["env"]["PYTHONPATH"])
+        # apply: exact pins, no resolution, into the target
+        self.assertIn("--no-deps", apply_cmd)
+        self.assertIn("--target", apply_cmd)
+        self.assertEqual(apply_cmd[apply_cmd.index("--target") + 1], "X:/target")
+        self.assertIn("qtpy==2.4.3", apply_cmd)
+        self.assertIn("blendertk==0.5.83", apply_cmd)
+        self.assertIn("--upgrade", apply_cmd)
+
+    def test_empty_plan_skips_apply(self):
+        """Everything satisfied -> no apply call, empty result."""
+        from unittest import mock
+        from pythontk.core_utils import package_manager as pm_mod
+
+        with mock.patch.object(
+            pm_mod.subprocess, "run", side_effect=self._fake_run([])
+        ):
+            installed = self.pm.install_targeted("six", target_dir="X:/target")
+
+        self.assertEqual(installed, [])
+        self.assertEqual(len(self.calls), 1)  # plan only
+
+    def test_upgrade_flag_reaches_plan(self):
+        """upgrade=True plans with --upgrade so satisfied-but-older dists re-plan."""
+        from unittest import mock
+        from pythontk.core_utils import package_manager as pm_mod
+
+        with mock.patch.object(
+            pm_mod.subprocess, "run", side_effect=self._fake_run([("six", "1.17.0")])
+        ):
+            self.pm.install_targeted(["six"], target_dir="X:/t", upgrade=True)
+
+        plan_cmd, _ = self.calls[0]
+        self.assertIn("--upgrade", plan_cmd)
+
+    def test_malformed_report_rows_are_skipped(self):
+        """A row carrying no metadata must be skipped, not KeyError.
+
+        The report's shape is pip's to change; a null/partial row would otherwise
+        crash the install and, in the .bat twin, be handed to pip as a bare "==".
+        """
+        from unittest import mock
+        from pythontk.core_utils import package_manager as pm_mod
+
+        import json as _json
+
+        calls = self.calls
+
+        class _Result:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+
+        def run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs))
+            if "--report" in cmd:
+                payload = {
+                    "install": [
+                        None,
+                        {},
+                        {"metadata": {"name": "six"}},  # no version
+                        {"metadata": {"name": "qtpy", "version": "2.4.3"}},
+                    ]
+                }
+                with open(cmd[cmd.index("--report") + 1], "w", encoding="utf-8") as fh:
+                    _json.dump(payload, fh)
+            return _Result()
+
+        with mock.patch.object(pm_mod.subprocess, "run", side_effect=run):
+            installed = self.pm.install_targeted("x", target_dir="X:/t")
+
+        self.assertEqual(installed, ["qtpy==2.4.3"])
+
+    def test_missing_report_raises_rather_than_claiming_success(self):
+        """pip exiting 0 without writing a report must not read as 'nothing to do'."""
+        from unittest import mock
+        from pythontk.core_utils import package_manager as pm_mod
+
+        class _Result:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+
+        with mock.patch.object(
+            pm_mod.subprocess, "run", side_effect=lambda cmd, **kw: _Result()
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.pm.install_targeted("x", target_dir="X:/t")
+        self.assertIn("no install report", str(ctx.exception))
 
 
 if __name__ == "__main__":

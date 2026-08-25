@@ -751,22 +751,24 @@ DCC-agnostic formatters for material / texture info reports.
 
 Per-map output-format templates — the "export preset" layer.
 
-- **[`class OutputSpec`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L43)** — How a single map is written to disk.
+- **[`class OutputSpec`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L45)** — How a single map is written to disk.
   - `OutputSpec.to_dict(self) -> dict`
   - `OutputSpec.from_dict(cls, d: dict) -> 'OutputSpec'` *(class)*
-- **[`class DeliveryBudget`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L100)** — A profile's advisory delivery limits — reported by default, not enforced.
+- **[`class DeliveryBudget`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L102)** — A profile's advisory delivery limits — reported by default, not enforced.
   - `DeliveryBudget.check(self, width: int, height: int) -> List[str]` — Return one message per budget rule ``width`` x ``height`` violates.
   - `DeliveryBudget.to_dict(self) -> dict`
   - `DeliveryBudget.from_dict(cls, d: dict) -> 'DeliveryBudget'` *(class)*
-- **[`class OutputTemplate`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L164)** — A profile's per-map output formats: a default spec + per-map-type overrides.
+- **[`class OutputTemplate`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L166)** — A profile's per-map output formats: a default spec + per-map-type overrides.
   - `OutputTemplate.resolve(self, map_type: Optional[str]) -> OutputSpec` — Return the :class:`OutputSpec` for *map_type* (falls back to ``default``).
   - `OutputTemplate.to_dict(self) -> dict`
   - `OutputTemplate.from_dict(cls, d: dict) -> 'OutputTemplate'` *(class)*
-- **[`class OutputTemplates`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L201)** — Registry of the built-in per-profile output templates and their resolution.
+- **[`class OutputTemplates`](pythontk/pythontk/core_utils/engines/textures/output_template.py#L204)** — Registry of the built-in per-profile output templates and their resolution.
   - `OutputTemplates.get(cls, profile: Optional[str]) -> OutputTemplate` *(class)* — Return the built-in template for *profile* (a ``WF`` key), or the default.
   - `OutputTemplates.resolve(cls, map_type: Optional[str], profile: Optional[str] = None) -> OutputSpec` *(class)* — Resolve the :class:`OutputSpec` for *map_type* under *profile*.
   - `OutputTemplates.budget(cls, profile: Optional[str]) -> DeliveryBudget` *(class)* — Return the advisory :class:`DeliveryBudget` for *profile*.
   - `OutputTemplates.profile_choices(cls) -> List[Tuple[str, str]]` *(class)* — ``(name, description)`` for every selectable workflow profile.
+  - `OutputTemplates.profile_outline(cls, profile: str, *, delivery: bool = True, base_name: Optional[str] = None) -> Dict[str, Any]` *(class)* — A document outline describing what *profile* writes, ready to render.
+  - `OutputTemplates.profile_outlines(cls, **kwargs) -> List[Tuple[str, Dict[str, Any]]]` *(class)* — ``(name, outline)`` for every selectable profile, registry order.
   - `OutputTemplates.format_choices(cls, sentinel: Optional[str] = PROFILE_DEFAULT_LABEL, writable: Optional[Tuple[str, ...]] = None, sentinel_first: bool = False) -> List[Tuple[str, str]]` *(class)* — ``(label, value)`` for an output-container combo.
   - `OutputTemplates.resolve_selection(cls, profile: Optional[str], ext: Optional[str]) -> Tuple[Optional[str], Optional[str]]` *(class)* — Turn a (profile, container) UI selection into call arguments.
 
@@ -1055,6 +1057,7 @@ Reusable module attribute resolver for package-style imports.
 
 - **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L503)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
+  - `PackageManager.install_targeted(self, specs, target_dir, upgrade=False) -> List[str]` — Resolver-aware install into a directory an embedded host imports from.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
   - `PackageManager.start_version_check(self, package_name=None, python_path=None) -> None` — Start a version check in a background thread.
   - `PackageManager.new_version_available(self) -> bool` *(property)* — Check if a new version of the package is available.
