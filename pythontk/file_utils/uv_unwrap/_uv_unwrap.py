@@ -3,9 +3,8 @@
 import logging
 import os
 import subprocess
-import sys
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Union
 
 from pythontk.core_utils.app_launcher import AppLauncher
 from pythontk.core_utils.help_mixin import HelpMixin
@@ -271,7 +270,7 @@ class UvUnwrap(HelpMixin, _UvUnwrapInternal):
         engine: str,
         required: bool = True,
         auto_install: bool = False,
-        prompt: bool = True,
+        prompt: Union[bool, Callable[[str], bool]] = True,
     ) -> Optional[str]:
         """Resolve one engine's executable.
 
@@ -284,8 +283,12 @@ class UvUnwrap(HelpMixin, _UvUnwrapInternal):
             engine:       Engine key (``"mof"`` / ``"bff"``).
             required:     Raise FileNotFoundError when unresolved.
             auto_install: Permit downloading an installable engine.
-            prompt:       Ask before downloading (TTY only; a GUI host refuses
-                          rather than downloading silently).
+            prompt:       Consent policy for the download -- ``True`` asks on
+                          the console (a GUI host with no console refuses
+                          rather than downloading silently), ``False`` needs
+                          none, a callable ``(question) -> bool`` is asked
+                          instead (a GUI's dialog). See
+                          :meth:`AppInstaller.consent`.
 
         Returns:
             Absolute path to the executable, or None.
@@ -318,27 +321,24 @@ class UvUnwrap(HelpMixin, _UvUnwrapInternal):
                 raise FileNotFoundError(cls._not_found_message(spec))
             return None
 
-        if prompt:
-            if not (sys.stdin and sys.stdin.isatty()):
-                # GUI host / CI: refuse rather than silently pulling a binary.
-                if required:
-                    raise FileNotFoundError(
-                        f"{spec.label} is not installed and no interactive "
-                        "console is available to confirm the download. Pass "
-                        "prompt=False to install non-interactively."
-                    )
-                return None
-            sys.stdout.write(
-                f"\n{spec.label} v{spec.install['version']} is not installed. "
-                "Download to ~/.pythontk/tools/ now? [y/N] "
-            )
-            sys.stdout.flush()
-            if sys.stdin.readline().strip().lower() not in ("y", "yes"):
-                if required:
-                    raise FileNotFoundError(
-                        f"User declined {spec.label} installation."
-                    )
-                return None
+        answer = AppInstaller.consent(
+            prompt,
+            f"{spec.label} v{spec.install['version']} is not installed. "
+            "Download to ~/.pythontk/tools/ now?",
+        )
+        if answer is None:
+            # GUI host / CI: refuse rather than silently pulling a binary.
+            if required:
+                raise FileNotFoundError(
+                    f"{spec.label} is not installed and no interactive "
+                    "console is available to confirm the download. Pass "
+                    "prompt=False to install non-interactively."
+                )
+            return None
+        if not answer:
+            if required:
+                raise FileNotFoundError(f"User declined {spec.label} installation.")
+            return None
 
         try:
             return AppInstaller.ensure(
@@ -365,7 +365,7 @@ class UvUnwrap(HelpMixin, _UvUnwrapInternal):
         engine: str = "mof",
         overwrite: bool = False,
         auto_install: bool = True,
-        prompt: bool = True,
+        prompt: Union[bool, Callable[[str], bool]] = True,
         timeout: Optional[float] = DEFAULT_TIMEOUT,
         **params,
     ) -> str:
@@ -378,7 +378,8 @@ class UvUnwrap(HelpMixin, _UvUnwrapInternal):
             engine:       ``"mof"`` (hard surface) or ``"bff"`` (organic).
             overwrite:    Replace an existing *obj_out*.
             auto_install: Permit downloading an installable engine.
-            prompt:       Ask before downloading.
+            prompt:       Consent policy for that download (see
+                          :meth:`resolve_engine`).
             timeout:      Seconds before the engine is killed. None disables.
             params:       Engine-specific settings; see the engine's
                           ``allowed_params``. Unknown names raise TypeError.

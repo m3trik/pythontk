@@ -6,11 +6,12 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
 import zipfile
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Union
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -86,8 +87,13 @@ class AppInstaller:
                             {"windows": {"url": "...", "type": "zip"},
                              "linux":   {"url": "...", "type": "tar.gz"}}
 
-                        Each entry may also include a per-platform
-                        ``"executable"`` override.
+                        ``"type"`` is an archive kind (``zip``, ``tar.gz``,
+                        ``tar.xz``, ``tar.bz2``) or ``"nsis"`` -- a Windows
+                        installer, run silently into the tool directory
+                        instead of extracted (see
+                        :meth:`_run_silent_installer`). Each entry may
+                        also include a per-platform ``"executable"``
+                        override.
             executable: Binary name to search for after extraction.
                         Defaults to *name*.  On Windows ``.exe`` is
                         appended automatically during search.
@@ -113,7 +119,8 @@ class AppInstaller:
             progress_callback:
                         ``callback(bytes_downloaded, total_bytes)``.
                         When *None*, a simple ``stdout`` progress line is
-                        printed for downloads > 1 MB.
+                        printed for downloads > 1 MB -- to a terminal only
+                        (a DCC script editor gets nothing).
 
         Returns:
             Absolute path to the tool executable.
@@ -164,15 +171,29 @@ class AppInstaller:
         if os.path.isdir(tool_dir):
             shutil.rmtree(tool_dir)
         os.makedirs(tool_dir, exist_ok=True)
-        cls._extract(archive_path, tool_dir, archive_type)
+        # A corrupt or truncated archive raises out of the stdlib as tarfile.ReadError
+        # / zipfile.BadZipFile / EOFError -- none of which derive from RuntimeError,
+        # OSError or LookupError. Every resolve_* consumer catches that trio because
+        # this method's docstring promises RuntimeError, so those escaped all three of
+        # them and surfaced to the artist as a raw tar error instead of the fix-shaped
+        # 'install KTX-Software' message. Translate once, here, rather than widening
+        # three call sites -- and never to a bare except, which would fold a genuine
+        # programming error into a misleading 'install failed'.
+        try:
+            cls._extract(archive_path, tool_dir, archive_type)
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not extract {archive_name} for '{name}': {exc}"
+            ) from exc
         os.remove(archive_path)
 
         # Discover executable inside extraction
         exe_path = cls._find_executable(tool_dir, exe_name)
         if exe_path is None:
             raise RuntimeError(
-                f"Could not locate '{exe_name}' inside extracted archive "
-                f"at {tool_dir}"
+                f"Could not locate '{exe_name}' inside extracted archive at {tool_dir}"
             )
 
         # Ensure executable permission on Unix
@@ -238,6 +259,41 @@ class AppInstaller:
 
         return None
 
+    @staticmethod
+    def consent(
+        prompt: Union[bool, Callable[[str], bool], None], question: str
+    ) -> Optional[bool]:
+        """Resolve a caller's *prompt* policy for an install into a yes/no.
+
+        The one consent seam every ``resolve_*(auto_install=True, prompt=...)``
+        shares: a GUI plugs its dialog in by passing a callable, a headless
+        caller opts out with ``False``, and neither re-implements the console
+        fallback.
+
+        Parameters:
+            prompt: ``False`` (or None) -- no consent needed (returns True).
+                A callable ``(question) -> bool`` -- asked once; its
+                truthiness is the verdict (a Qt dialog, a test stub).
+                ``True`` -- ask on the console (``[y/N]``).
+            question: What to ask, e.g. ``"FBX2glTF v0.13.1 is not installed.
+                Download to ~/.pythontk/tools/ now?"``.
+
+        Returns:
+            True/False for an answer; **None** when *prompt* is True but no
+            interactive console exists (CI, a GUI host, ``pythonw``). That is
+            "nobody to ask", not a decline -- callers word it as such and
+            point at ``prompt=False``.
+        """
+        if not prompt:
+            return True
+        if callable(prompt):
+            return bool(prompt(question))
+        if not (sys.stdin and sys.stdin.isatty()):
+            return None
+        sys.stdout.write(f"\n{question} [y/N] ")
+        sys.stdout.flush()
+        return sys.stdin.readline().strip().lower() in ("y", "yes")
+
     # ------------------------------------------------------------------
     # Internal — download / verify / extract
     # ------------------------------------------------------------------
@@ -262,7 +318,14 @@ class AppInstaller:
             total = int(response.headers.get("Content-Length", 0))
             downloaded = 0
             chunk_size = 8192
-            use_stdout = progress_callback is None and total > 1_048_576
+            # The ``\r`` progress line is for a terminal only: a DCC's script
+            # editor renders every carriage return as its own line (measured:
+            # ~600 of them for a 6 MB download) and ``pythonw`` has no stdout.
+            use_stdout = (
+                progress_callback is None
+                and total > 1_048_576
+                and bool(getattr(sys.stdout, "isatty", lambda: False)())
+            )
 
             with open(dest, "wb") as fh:
                 while True:
@@ -282,6 +345,20 @@ class AppInstaller:
             if use_stdout:
                 sys.stdout.write("\n")
 
+            # http.client.HTTPResponse.read(amt) deliberately does NOT raise
+            # IncompleteRead when the peer closes the connection gracefully
+            # mid-body, so an empty read is indistinguishable from a clean EOF
+            # and a half-received file returns as a successful download.
+            # Reconcile against the length the server declared. This matters
+            # most for the 'nsis' type, which RUNS the file and re-runs it
+            # elevated on WinError 740: without this a truncated installer
+            # reached a UAC prompt. A chunked response declares no length, so
+            # the check is gated on having one.
+            if total and downloaded != total:
+                raise RuntimeError(
+                    f"Truncated download for {url}: {downloaded} of {total} bytes"
+                )
+
     @staticmethod
     def _verify_hash(file_path: str, expected: str) -> None:
         """Verify SHA-256 digest.  Deletes the file and raises on mismatch."""
@@ -293,13 +370,13 @@ class AppInstaller:
         if digest != expected:
             os.remove(file_path)
             raise RuntimeError(
-                f"SHA-256 mismatch for {file_path}: "
-                f"expected {expected}, got {digest}"
+                f"SHA-256 mismatch for {file_path}: expected {expected}, got {digest}"
             )
 
     @staticmethod
     def _extract(archive_path: str, dest: str, archive_type: str) -> None:
-        """Extract a zip, tar.gz, tar.xz, or tar.bz2 archive.
+        """Extract a zip, tar.gz, tar.xz, or tar.bz2 archive -- or, for the
+        ``nsis`` type, run the Windows installer silently into *dest*.
 
         Zip extraction uses :pymethod:`ZipFile.extractall`.
         Tar extraction filters members to prevent path-traversal attacks
@@ -325,7 +402,7 @@ class AppInstaller:
                     # as an escape and aborted a legitimate install.
                     if not FileUtils.is_under(resolved, dest_real):
                         raise RuntimeError(
-                            f"Zip member {member!r} escapes " f"destination directory"
+                            f"Zip member {member!r} escapes destination directory"
                         )
                 zf.extractall(dest)
         elif at in ("tar.gz", "tgz", "tar.xz", "tar.bz2", "tar"):
@@ -355,8 +432,133 @@ class AppInstaller:
                                 f"destination directory"
                             )
                     tf.extractall(dest)
+        elif at == "nsis":
+            AppInstaller._run_silent_installer(archive_path, dest)
         else:
             raise RuntimeError(f"Unsupported archive type: {archive_type!r}")
+
+    @classmethod
+    def _run_silent_installer(cls, installer: str, dest: str) -> None:
+        """Run an NSIS installer unattended, installing into *dest*.
+
+        Stands in for extraction when a tool ships only as an installer
+        (KTX-Software's Windows release). ``/S`` silences the wizard and
+        ``/D=<dest>`` redirects the install root. NSIS requires ``/D`` to be
+        the LAST argument and reads the rest of the command line as the
+        path -- spaces included, quotes rejected -- so the command line is
+        built as one string: ``list2cmdline`` would quote a path with spaces
+        and the installer would land in its default location instead.
+
+        A CPack-built installer requests administrator rights in its
+        manifest, so ``CreateProcess`` refuses it from a normal process
+        (WinError 740); that case re-runs through :meth:`_run_elevated`,
+        which shows the standard UAC consent and waits. The install still
+        lands in *dest* -- elevation changes who writes, not where.
+
+        Raises:
+            RuntimeError: Off Windows, on a declined UAC prompt, or on a
+                non-zero installer exit code.
+        """
+        name = os.path.basename(installer)
+        if cls._current_platform() != "windows":
+            raise RuntimeError(
+                f"'{name}' is a Windows (NSIS) installer; it cannot run on "
+                f"{cls._current_platform()}."
+            )
+        params = f"/S /D={os.path.abspath(dest)}"
+        try:
+            code = subprocess.run(f'"{installer}" {params}', check=False).returncode
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != 740:  # ERROR_ELEVATION_REQUIRED
+                raise
+            logger.info(f"{name} requests administrator rights; asking (UAC).")
+            code = cls._run_elevated(installer, params)
+        if code != 0:
+            raise RuntimeError(f"Installer '{name}' failed with exit code {code}.")
+
+    @staticmethod
+    def _run_elevated(exe: str, params: str, cwd: Optional[str] = None) -> int:
+        """Run *exe* with *params* through the Windows UAC ``runas`` verb,
+        wait for it, and return its exit code.
+
+        ``ShellExecuteExW`` is the only stdlib-reachable way to request
+        elevation: ``subprocess`` cannot (CreateProcess has no elevation
+        path) and ``os.startfile(..., "runas")`` neither waits nor reports
+        an exit code. ``ctypes`` keeps it dependency-free. *params* is
+        passed verbatim -- no re-quoting -- which is what an NSIS ``/D=``
+        needs.
+
+        Raises:
+            RuntimeError: The consent prompt was declined (``ERROR_CANCELLED``,
+                1223) or the launch failed for another reason.
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        class SHELLEXECUTEINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("fMask", wintypes.ULONG),
+                ("hwnd", wintypes.HWND),
+                ("lpVerb", wintypes.LPCWSTR),
+                ("lpFile", wintypes.LPCWSTR),
+                ("lpParameters", wintypes.LPCWSTR),
+                ("lpDirectory", wintypes.LPCWSTR),
+                ("nShow", ctypes.c_int),
+                ("hInstApp", wintypes.HINSTANCE),
+                ("lpIDList", ctypes.c_void_p),
+                ("lpClass", wintypes.LPCWSTR),
+                ("hkeyClass", wintypes.HKEY),
+                ("dwHotKey", wintypes.DWORD),
+                ("hIconOrMonitor", wintypes.HANDLE),
+                ("hProcess", wintypes.HANDLE),
+            ]
+
+        SEE_MASK_NOCLOSEPROCESS = 0x00000040
+        SEE_MASK_NOASYNC = 0x00000100
+        SW_SHOWNORMAL = 1
+        INFINITE = 0xFFFFFFFF
+        ERROR_CANCELLED = 1223
+
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
+        shell32.ShellExecuteExW.restype = wintypes.BOOL
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.GetExitCodeProcess.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        info = SHELLEXECUTEINFOW()
+        info.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+        info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+        info.lpVerb = "runas"
+        info.lpFile = exe
+        info.lpParameters = params
+        info.lpDirectory = cwd
+        info.nShow = SW_SHOWNORMAL
+        name = os.path.basename(exe)
+        if not shell32.ShellExecuteExW(ctypes.byref(info)):
+            err = ctypes.get_last_error()
+            reason = (
+                "the administrator (UAC) prompt was declined"
+                if err == ERROR_CANCELLED
+                else ctypes.FormatError(err).strip()
+            )
+            raise RuntimeError(f"Could not run '{name}' elevated: {reason}.")
+        if not info.hProcess:
+            raise RuntimeError(
+                f"'{name}' started elevated but returned no process handle to wait on."
+            )
+        try:
+            kernel32.WaitForSingleObject(info.hProcess, INFINITE)
+            code = wintypes.DWORD()
+            kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(code))
+        finally:
+            kernel32.CloseHandle(info.hProcess)
+        return int(code.value)
 
     @staticmethod
     def _find_executable(root: str, exe_name: str) -> Optional[str]:
@@ -428,6 +630,8 @@ class AppInstaller:
         for ext in ("tar.xz", "tar.gz", "tar.bz2", "tgz", "zip"):
             if clean.endswith(f".{ext}"):
                 return ext
+        # Deliberately no ``.exe`` -> ``"nsis"`` guess: that type RUNS the
+        # download, so a tool author opts in explicitly.
         return "zip"
 
     # ------------------------------------------------------------------

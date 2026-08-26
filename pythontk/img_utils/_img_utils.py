@@ -15,7 +15,17 @@ os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
 from collections import namedtuple
 from contextlib import contextmanager
-from typing import List, Tuple, Dict, Union, Any, Optional, Sequence, TYPE_CHECKING
+from typing import (
+    List,
+    Tuple,
+    Dict,
+    Union,
+    Any,
+    Callable,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+)
 
 if TYPE_CHECKING:
     from PIL import Image as PILImage
@@ -95,6 +105,22 @@ class ImgUtils(HelpMixin):
     # to offer KTX2 appends this set explicitly, gated on
     # :meth:`ktx2_available`.
     DELIVERY_FORMATS = ("ktx2",)
+
+    # Containers only a DELIVERY carrier (a GLB, the web) may hold — never a
+    # DCC scene's texture node or an FBX, whose consumers cannot read them.
+    # A superset of DELIVERY_FORMATS: KTX2 is encode-only, while WebP is a
+    # perfectly readable image *here* (PIL decodes it, glTF embeds it natively
+    # via EXT_texture_webp) and still unreadable *there* — measured 2026-08-25,
+    # a Maya `file` node pointed at a 64x64 .webp reports outSize 0x0 where
+    # png / tga / jpg all report 64x64, and an FBX exported with webp maps
+    # binds no textures in any consumer. So webp must NOT join
+    # DELIVERY_FORMATS (that one routes `save_image` to the external KTX2
+    # encoder and gates a UI on `ktx2_available`); the distinction is which
+    # DESTINATION may carry it, which is what this set names.
+    # Consumers: the scene-exporter texture clamp in mayatk / blendertk
+    # (`_resolved_output_type` / `_scene_safe_output_type`) — the GLB's own
+    # container dial (`_glb_texture_params`) is deliberately NOT clamped by it.
+    DELIVERY_ONLY_FORMATS = DELIVERY_FORMATS + ("webp",)
 
     # Plain photographic raster formats (dotted, lowercase) — the directory-scan
     # set shared by the photogrammetry/SfM ingest cluster (ExposureEqualizer /
@@ -585,12 +611,24 @@ class ImgUtils(HelpMixin):
         cls._ktx2_encoder = encoder
 
     @classmethod
-    def resolve_ktx2_encoder(cls, required: bool = False):
+    def resolve_ktx2_encoder(
+        cls,
+        required: bool = False,
+        auto_install: bool = False,
+        prompt: Union[bool, Callable[[str], bool]] = True,
+    ):
         """The registered KTX2 encoder, or the built-in ``toktx`` wrapper.
 
         Parameters:
             required: If True, raise ``FileNotFoundError`` (naming the install
                 source and the registration seam) instead of returning None.
+            auto_install: When no encoder is discoverable, offer the managed
+                KTX-Software download (:meth:`Ktx2Encoder.resolve_toktx`) and
+                bind the encoder to what it installs.
+            prompt: Consent policy for that download -- ``True`` asks on the
+                console, ``False`` needs none, a callable ``(question) -> bool``
+                is asked instead (a panel passes its dialog). See
+                :meth:`AppInstaller.consent`.
 
         Returns:
             The encoder, or None when unavailable and *required* is False.
@@ -601,21 +639,23 @@ class ImgUtils(HelpMixin):
 
         if Ktx2Encoder.available():
             return Ktx2Encoder()
+        if auto_install:
+            # The install path owns consent, fetch, and the fix-shaped error.
+            # Bind the path it hands back rather than re-discovering, so a
+            # just-written catalog entry cannot be missed.
+            toktx = Ktx2Encoder.resolve_toktx(
+                required=required, auto_install=True, prompt=prompt
+            )
+            return Ktx2Encoder(toktx=toktx) if toktx else None
         if required:
             # `Ktx2Encoder.resolve_toktx(required=True)` is expected to raise
             # this same FileNotFoundError -- but relying on the delegate to
             # always raise falls through to `return None` (handing "no
             # encoder" to a caller who explicitly asked for a guaranteed one)
             # if `available()` says False while `resolve_toktx` unexpectedly
-            # succeeds. Raise unconditionally instead; the message matches
-            # `Ktx2Encoder.resolve_toktx`'s own fix-shaped error verbatim.
-            raise FileNotFoundError(
-                "KTX2 encoding requires 'toktx' (KTX-Software). Install it "
-                "from "
-                "https://github.com/KhronosGroup/KTX-Software/releases and "
-                "ensure it is on PATH, or register a custom encoder via "
-                "ImgUtils.register_ktx2_encoder()."
-            )
+            # succeeds. Raise unconditionally instead, with the encoder's own
+            # fix-shaped message.
+            raise Ktx2Encoder.not_installed_error()
         return None
 
     @classmethod
@@ -2160,9 +2200,7 @@ class ImgUtils(HelpMixin):
     def inset_rects_to_texel_centers(
         rects: Sequence[Tuple[float, float, float, float]],
         size: Union[int, Tuple[int, int]],
-        bboxes: Optional[
-            Sequence[Optional[Tuple[float, float, float, float]]]
-        ] = None,
+        bboxes: Optional[Sequence[Optional[Tuple[float, float, float, float]]]] = None,
     ) -> List[Tuple[float, float, float, float]]:
         """Re-aim each rect so its content's edge UVs sample border-texel CENTERS.
 

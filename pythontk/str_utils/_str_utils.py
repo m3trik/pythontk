@@ -653,9 +653,9 @@ class StrUtils(CoreUtils):
             truncate('12345678', 4) #returns: '..5678' (start mode)
             truncate('12345678', 4, 'end') #returns: '1234..' (end mode)
             truncate('12345678', 6, 'middle') #returns: '12..78' (middle mode)
-            truncate('O:/Cloud/jets/c130j/sourceimages/tex/x_DIFF.png', 36, 'path')
-                #returns: 'O:/Cloud/jets/../tex/x_DIFF.png' (path mode)
-            truncate('O:/Cloud/jets/c130j/sourceimages/tex/x_DIFF.png', 36, 'path', head=1)
+            truncate('O:/Cloud/proj/asset01/sourceimages/tex/x_DIFF.png', 36, 'path')
+                #returns: 'O:/Cloud/proj/../tex/x_DIFF.png' (path mode)
+            truncate('O:/Cloud/proj/asset01/sourceimages/tex/x_DIFF.png', 36, 'path', head=1)
                 #returns: 'O:/../sourceimages/tex/x_DIFF.png' (capped head, wider tail)
         """
         if not string or not isinstance(string, str):
@@ -706,7 +706,7 @@ class StrUtils(CoreUtils):
         """Component-aware middle truncation — the 'path' mode of :meth:`truncate`.
 
         A character-count middle cut lands wherever it lands, so a path comes
-        back with half-words at the seam (``O:/Cloud/Projects/jets/..ures/x.png``).
+        back with half-words at the seam (``O:/Cloud/Projects/proj/..ures/x.png``).
         This drops whole components instead, and grows what it keeps in the
         order that carries meaning: the head opens on the drive/root *and* its
         first directory (a bare ``O:/..`` locates nothing), the tail then takes
@@ -1234,11 +1234,20 @@ class StrUtils(CoreUtils):
         is never retained. ``new_name``'s own *recognized* suffix is replaced;
         an unrecognized one is kept and the old suffix appended after it.
 
+        Retaining carries a *lost* suffix over; it never adds one. A ``new_name``
+        that still holds the suffix as one of its own ``_`` tokens comes back
+        untouched, numbering included -- without that the append patterns, which
+        keep the whole old name by definition, doubled it (``Sphere_GEO`` under
+        ``**_A`` produced ``Sphere_GEO_A_GEO``) and an auto-numbered
+        ``pCube_GEO1`` lost the number that made it unique.
+
         Parameters:
             old_name (str): The name before the rename.
             new_name (str): The name the rename produced.
             valid_suffixes (list, optional): The suffixes that count as type
-                suffixes (``["_GRP", "_GEO"]``). None treats any ``_token`` as one.
+                suffixes (``["_GRP", "_GEO"]``). None treats any ``_token`` as
+                one -- the DCC rename tools pass their naming convention, so
+                only a *defined* suffix is ever carried over there.
 
         Returns:
             (str) ``new_name`` with the retained suffix.
@@ -1246,21 +1255,31 @@ class StrUtils(CoreUtils):
         Example:
             retain_suffix('Asset_GRP1', 'NewAsset_LOC', ['_GRP', '_LOC']) #returns: 'NewAsset_GRP'
             retain_suffix('Part_GEO', 'Detail_HIGH', ['_GEO']) #returns: 'Detail_HIGH_GEO'
+            retain_suffix('Part_GEO', 'Part_GEO_A', ['_GEO']) #returns: 'Part_GEO_A'
             retain_suffix('Screw_01', 'Bolt') #returns: 'Bolt'
         """
-        if "_" not in old_name:
-            return new_name
-        old_suffix = old_name[old_name.rfind("_") :].rstrip("0123456789")
-        if old_suffix == "_":
+        digits = "0123456789"
+
+        def trailing_token(name: str) -> str:
+            """The name's trailing ``_TOKEN`` (digits ignored), else ``""``."""
+            if "_" not in name:
+                return ""
+            token = name[name.rfind("_") :].rstrip(digits)
+            return "" if token == "_" else token
+
+        old_suffix = trailing_token(old_name)
+        if not old_suffix:
             return new_name
         if valid_suffixes is not None and old_suffix not in valid_suffixes:
             return new_name
-        if new_name.endswith(old_suffix):
+        # Still carried by the new name -- as one of its own '_' tokens, trailing
+        # digits ignored -- so nothing was lost and there is nothing to retain.
+        body = old_suffix[1:]
+        if any(t.rstrip(digits) == body for t in new_name.split("_")[1:]):
             return new_name
-        if "_" in new_name:
-            new_suffix = new_name[new_name.rfind("_") :].rstrip("0123456789")
-            if valid_suffixes is None or new_suffix in valid_suffixes:
-                new_name = new_name[: new_name.rfind("_")]
+        new_suffix = trailing_token(new_name)
+        if new_suffix and (valid_suffixes is None or new_suffix in valid_suffixes):
+            new_name = new_name[: new_name.rfind("_")]
         return new_name + old_suffix
 
     @staticmethod
@@ -1276,7 +1295,10 @@ class StrUtils(CoreUtils):
         Parameters:
             string (str): The string to format.
             suffix (str): Append a new suffix to the given string.
-            strip (str/list): Specific string(s) or regex pattern(s) to strip from the end of the given string.
+            strip (str/list): Suffix string(s) to strip from the END of the given
+                string -- repeatedly, while it still ends with one. An entry that
+                spells a regex (i.e. carries a metacharacter) is instead substituted
+                out wherever it matches.
             strip_trailing_ints (bool): Strip all trailing integers.
             strip_trailing_alpha (bool): Strip all upper-case letters preceded by a non-alphanumeric character.
 
@@ -1286,6 +1308,15 @@ class StrUtils(CoreUtils):
         import re
 
         def is_regex(pattern: str) -> bool:
+            """True only for a token that SPELLS a pattern.
+
+            Compiling is not a test of intent: every plain string compiles, so
+            gating on that alone made every literal suffix a global substring
+            match -- '_LOC' in the strip list turned 'ITA_LOCKHANDLE' into
+            'ITAKHANDLE'. A metacharacter is required first.
+            """
+            if not re.search(r"[.^$*+?{}\[\]\\|()]", pattern):
+                return False
             try:
                 re.compile(pattern)
                 return True
@@ -1301,8 +1332,9 @@ class StrUtils(CoreUtils):
                     # Only treat as regex if it is a pattern (not a simple suffix string)
                     s = re.sub(pattern, "", s)
                 else:
-                    # Standard: strip all occurrences of this suffix from the end
-                    while s.endswith(pattern):
+                    # A literal token is a SUFFIX, not a substring: strip it only
+                    # while the name still ENDS with it.
+                    while pattern and s.endswith(pattern):
                         s = s[: -len(pattern)]
 
         # Strip trailing ints or uppercase alphas if requested
@@ -1327,8 +1359,10 @@ class StrUtils(CoreUtils):
         string: str,
         prefix: str = "",
         suffix: str = "",
+        *,
+        case_sensitive: bool = False,
     ) -> str:
-        """Strip a configured prefix and/or suffix from a string, case-insensitively.
+        """Strip a configured prefix and/or suffix from a string.
 
         Pure primitive: only literal affix matches (plus adjacent ``_`` separators)
         are removed. Leading/trailing underscores elsewhere in the string are
@@ -1336,8 +1370,10 @@ class StrUtils(CoreUtils):
         ``.strip("_")`` themselves, or use :py:meth:`apply_affix`.
 
         Matching rules:
-        - Case-insensitive on the affix core (underscores in the supplied affix are
-          treated as separators, not part of the token).
+        - Case-insensitive on the affix core by default (underscores in the supplied
+          affix are treated as separators, not part of the token). Pass
+          ``case_sensitive=True`` when the vocabulary is a fixed-case table: folding
+          case there buys nothing and costs real words (``_cam`` in ``security_cam``).
         - The match consumes any adjacent ``_`` runs on the affix side and tolerates
           stray ``_`` between the affix and the string boundary
           (``_Mat_brick`` with prefix ``Mat_`` → ``brick``).
@@ -1347,8 +1383,10 @@ class StrUtils(CoreUtils):
 
         Parameters:
             string: The string to strip.
-            prefix: Prefix to remove (e.g. ``"Mat_"``). Matched case-insensitively.
-            suffix: Suffix to remove (e.g. ``"_MAT"``). Matched case-insensitively.
+            prefix: Prefix to remove (e.g. ``"Mat_"``).
+            suffix: Suffix to remove (e.g. ``"_MAT"``).
+            case_sensitive: Require an exact-case match on the affix core.
+                Defaults to False, preserving the released behaviour.
 
         Returns:
             The string with the configured affixes removed. If neither matches,
@@ -1356,12 +1394,16 @@ class StrUtils(CoreUtils):
         """
         import re
 
+        # The inline flag group is what folds case; an empty group leaves the
+        # core matching exactly as written.
+        fold = "" if case_sensitive else "?i:"
+
         s = string
         if prefix:
             core = prefix.strip("_")
             if core:
                 s = re.sub(
-                    rf"^_*(?i:{re.escape(core)})(?:_+|$)",
+                    rf"^_*({fold}{re.escape(core)})(?:_+|$)",
                     "",
                     s,
                 )
@@ -1369,11 +1411,97 @@ class StrUtils(CoreUtils):
             core = suffix.strip("_")
             if core:
                 s = re.sub(
-                    rf"(?:_+|^)(?i:{re.escape(core)})_*$",
+                    rf"(?:_+|^)({fold}{re.escape(core)})_*$",
                     "",
                     s,
                 )
         return s
+
+    @staticmethod
+    def strip_any_affix(
+        string: str,
+        known,
+        *,
+        exclude=(),
+        one: bool = True,
+        case_sensitive: bool = True,
+    ) -> str:
+        """Strip whichever affix in *known* the string carries, from either end.
+
+        The companion to :py:meth:`apply_affix` for a name whose affix comes
+        from a *table* rather than a single configured pair: the caller knows
+        the whole vocabulary (every type suffix in a naming convention) but not
+        which one this particular name is wearing — nor, once a convention can
+        be spelled either way, which END it is wearing it on. ``body_GEO`` and
+        ``GEO_body`` both yield ``body``, so re-running a rename after the
+        convention flips sides corrects the name instead of doubling it.
+
+        Longest-first, so ``"_LSG"`` is tested before ``"_SG"`` — otherwise the
+        short token eats the tail of the long one and leaves ``"_L"`` behind.
+        Equal-length tokens fall back to alphabetical, which matters more than
+        it looks: ordering a *set* by length alone leaves ties to set-iteration
+        order, and Python randomizes string hashing per process — so a name
+        carrying two known affixes would have had a different one stripped from
+        one session to the next.
+
+        Parameters:
+            string: The name to strip.
+            known: Every affix spelling in the vocabulary. Order is irrelevant
+                (this sorts); empty entries are ignored.
+            exclude: Affixes to leave in place — normally the one about to be
+                applied, so an already-correct name is not churned.
+            one: Stop after the first affix that actually matched (the default,
+                and what a type-suffix pass wants: a name carries one type
+                marker, and stripping further eats real name content). ``False``
+                keeps going through the whole vocabulary.
+            case_sensitive: Match the vocabulary exactly as spelled. Defaults to
+                True, unlike :py:meth:`strip_known_affix`, because a *table* of
+                type markers is fixed-case by construction while the words a name
+                is made of are not: folding case strips the ``cam`` out of
+                ``security_cam`` for a ``_CAM`` entry, the ``set`` out of
+                ``tile_set``, and the ``con`` out of ``con_rod``.
+
+        Returns:
+            The name with the matched affix (and its adjacent separator)
+            removed, or unchanged when it carries none of them.
+
+        Example:
+            strip_any_affix("body_GEO", ["_GEO", "_MAT"])            # 'body'
+            strip_any_affix("GEO_body", ["_GEO"])                    # 'body'
+            strip_any_affix("body_GEO", ["_GEO"], exclude=["_GEO"])  # 'body_GEO'
+            strip_any_affix("security_cam", ["_CAM"])                # 'security_cam'
+        """
+        skip = {a for a in exclude if a}
+        core = string
+        for token in sorted({a for a in known if a}, key=lambda a: (-len(a), a)):
+            if token in skip:
+                continue
+            # Cheap necessary condition before the regex. ``strip_known_affix``
+            # anchors the token's core at one edge (modulo delimiter runs), so a
+            # name whose trimmed edges do not even begin or end with it cannot
+            # match -- and a full type vocabulary is ~20 tokens, of which at
+            # most one ever does. Skipping the two pattern builds for the other
+            # nineteen is a measured 20x on a whole-scene pass; it cannot
+            # produce a false negative, and a false positive (``GEOMETRY`` for
+            # ``GEO``) still falls through to the regex, which rejects it.
+            edge = token.strip("_")
+            if not edge:
+                continue
+            trimmed = core.strip("_")
+            if not case_sensitive:
+                edge, trimmed = edge.lower(), trimmed.lower()
+            if not (trimmed.startswith(edge) or trimmed.endswith(edge)):
+                continue
+            # prefix= and suffix= both: the vocabulary says WHAT the token is,
+            # not which side this name wears it on.
+            stripped = StrUtils.strip_known_affix(
+                core, prefix=token, suffix=token, case_sensitive=case_sensitive
+            )
+            if stripped != core:
+                core = stripped
+                if one:
+                    break
+        return core
 
     @staticmethod
     def infer_affix_mode(
@@ -1464,13 +1592,70 @@ class StrUtils(CoreUtils):
         if m not in ("prefix", "suffix", "auto"):
             m = "auto"
         if m == "auto":
-            m = StrUtils.infer_affix_mode(
-                text, delimiter=delimiter, default=default
-            )
+            m = StrUtils.infer_affix_mode(text, delimiter=delimiter, default=default)
 
         if m == "prefix":
             return (text, "")
         return ("", text)
+
+    @staticmethod
+    def delimit_affix(
+        text: str,
+        mode: str = "suffix",
+        *,
+        delimiter: str = "_",
+    ) -> str:
+        """Give a bare affix token its boundary delimiter, on *mode*'s side.
+
+        The forgiving counterpart to :py:meth:`apply_affix`, which concatenates
+        VERBATIM — the separator is part of the affix, not something the applier
+        inserts. That is the right contract for an engine (it must not guess),
+        and the wrong one for a field a user types into: "MAT" with Prefix
+        selected would otherwise produce ``"MATbrick"``. Any UI that accepts a
+        free-typed affix runs it through here first.
+
+        A token that already carries a delimiter at either edge is returned
+        unchanged under ``"auto"`` — there, the delimiter IS the declaration.
+        An explicit ``"prefix"``/``"suffix"`` outranks it and the delimiter is
+        re-sided, because the picker beside a field is a later statement of intent
+        than the spelling the field was pre-filled with: a convention row showing
+        ``_GEO`` that the user flips to Prefix means ``GEO_``, not a suffix-spelled
+        token stored under a prefix mode (which would then apply as ``_GEObody``).
+
+        Parameters:
+            text: The affix as typed. Empty returns empty.
+            mode: ``"prefix"`` or ``"suffix"``. Anything else (including
+                ``"auto"``, which by definition could not decide) falls back to
+                ``"suffix"``, matching :py:meth:`split_affix`'s own default.
+            delimiter: Boundary character. Empty disables the whole operation.
+
+        Returns:
+            The affix with a single boundary delimiter on the side *mode*
+            selects.
+
+        Example:
+            delimit_affix("MAT", "prefix")   # 'MAT_'
+            delimit_affix("MAT", "suffix")   # '_MAT'
+            delimit_affix("_MAT", "prefix")  # 'MAT_'  (re-sided)
+            delimit_affix("_MAT", "auto")    # '_MAT'  (already declared)
+            delimit_affix("", "prefix")      # ''
+        """
+        text = (text or "").strip()
+        if not text or not delimiter:
+            return text
+
+        mode = (mode or "").lower()
+        if text.startswith(delimiter) or text.endswith(delimiter):
+            if mode not in ("prefix", "suffix"):
+                return text
+            # Re-side rather than return: the caller named a side.
+            text = text.strip(delimiter)
+            if not text:
+                return ""
+
+        if mode == "prefix":
+            return f"{text}{delimiter}"
+        return f"{delimiter}{text}"
 
     @staticmethod
     def apply_affix(
@@ -1500,6 +1685,14 @@ class StrUtils(CoreUtils):
         if not prefix and not suffix:
             return string
         core = StrUtils.strip_known_affix(string, prefix=prefix, suffix=suffix)
+        # The de-duplication strip must never consume the WHOLE name. A node
+        # whose name IS its affix ("Cam" under a ``_CAM`` rule, or a literal
+        # "GEO" under ``_GEO``) stripped to nothing and came back as the bare
+        # affix, losing the name. Guarding on emptiness rather than on case is
+        # what keeps the case-folded strip that normalises a sloppy lowercase
+        # affix -- "body_geo" still becomes "body_GEO" instead of doubling.
+        if not core.strip("_"):
+            core = string
         if prefix:
             core = core.lstrip("_")
         if suffix:

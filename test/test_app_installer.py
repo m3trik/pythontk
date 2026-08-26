@@ -188,6 +188,91 @@ class TestAppInstaller(unittest.TestCase):
         resp.__exit__.assert_called_once()
         self.assertTrue(os.path.isfile(dest))
 
+    def test_download_rejects_a_truncated_transfer(self):
+        """A graceful mid-body close must not read as a finished download.
+
+        ``http.client.HTTPResponse.read(amt)`` deliberately does NOT raise
+        ``IncompleteRead`` when the peer closes cleanly part-way through, so an
+        empty read is indistinguishable from a real EOF. Left unreconciled, a
+        half-received file returned as success -- and for the ``nsis`` installer
+        type, which RUNS the download and re-runs it elevated on WinError 740,
+        that put a truncated binary behind a UAC prompt.
+        """
+        body = b"x" * 80_000
+        resp = MagicMock()
+        resp.headers = {"Content-Length": "200000"}  # server promised more
+        resp.read = MagicMock(side_effect=[body, b""])
+
+        dest = os.path.join(self.tmp, "truncated.bin")
+        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+            with self.assertRaisesRegex(RuntimeError, "80000 of 200000"):
+                AppInstaller._download("https://example.com/big.exe", dest)
+
+    def test_download_allows_a_response_with_no_declared_length(self):
+        """A chunked response has no Content-Length; the check must not fire."""
+        body = b"y" * 1024
+        resp = MagicMock()
+        resp.headers = {}  # chunked: nothing declared
+        resp.read = MagicMock(side_effect=[body, b""])
+
+        dest = os.path.join(self.tmp, "chunked.bin")
+        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+            AppInstaller._download("https://example.com/chunked.bin", dest)
+        self.assertEqual(os.path.getsize(dest), len(body))
+
+    def test_download_accepts_an_exactly_complete_transfer(self):
+        """The guard must not reject the normal case."""
+        body = b"z" * 4096
+        resp = MagicMock()
+        resp.headers = {"Content-Length": str(len(body))}
+        resp.read = MagicMock(side_effect=[body, b""])
+
+        dest = os.path.join(self.tmp, "complete.bin")
+        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+            AppInstaller._download("https://example.com/complete.bin", dest)
+        self.assertEqual(os.path.getsize(dest), len(body))
+
+    def test_a_corrupt_archive_surfaces_as_the_documented_runtime_error(self):
+        """ensure() promises RuntimeError; the stdlib raises something else.
+
+        A truncated or HTML-error-page download raises tarfile.ReadError /
+        zipfile.BadZipFile / EOFError, none of which derive from RuntimeError,
+        OSError or LookupError -- the trio every resolve_* consumer catches
+        precisely because this method documents RuntimeError. They escaped all
+        three and reached the artist as a raw tar error instead of the
+        fix-shaped "install it by hand" message.
+        """
+
+        def fake_download(url, dest, progress_callback=None):
+            with open(dest, "wb") as fh:
+                fh.write(b"BZh91AY&SY" + b"\x00" * 500)
+
+        platforms = {
+            "linux": {"url": "https://example.invalid/x.tar.bz2", "type": "tar.bz2"}
+        }
+        with (
+            patch.object(AppInstaller, "_download", staticmethod(fake_download)),
+            patch.object(
+                AppInstaller, "_resolve_location", staticmethod(lambda loc: self.tmp)
+            ),
+            patch(
+                "pythontk.core_utils.app_installer.platform.system",
+                return_value="Linux",
+            ),
+            # a prior test may have registered a tool of this name; ensure()
+            # returns early on an existing install, which would skip the extract
+            patch.object(AppInstaller, "get_path", staticmethod(lambda *a, **k: None)),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Could not extract") as ctx:
+                AppInstaller.ensure(
+                    "corrupt-archive-probe",
+                    platforms=platforms,
+                    executable="toktx",
+                    version="4.4.2",
+                )
+        # the real cause stays chained for anyone debugging
+        self.assertIsNotNone(ctx.exception.__cause__)
+
     # ------------------------------------------------------------------
     # Catalog
     # ------------------------------------------------------------------
@@ -487,6 +572,110 @@ class TestAppInstaller(unittest.TestCase):
         os.makedirs(dest)
         AppInstaller._extract(zip_path, dest, "zip")
         self.assertTrue(os.path.isfile(os.path.join(dest, "subdir", "tool.exe")))
+
+    # ------------------------------------------------------------------
+    # "nsis" type: a silent installer run stands in for extraction
+    # ------------------------------------------------------------------
+
+    def test_guess_archive_type_never_infers_a_runnable_type(self):
+        """``nsis`` RUNS the download, so it is opt-in only: an ``.exe`` URL
+        with no explicit type must not be guessed into it."""
+        self.assertNotEqual(
+            AppInstaller._guess_archive_type(
+                "https://x.example/Tool-1.0-Windows-x64.exe"
+            ),
+            "nsis",
+        )
+
+    def test_extract_nsis_runs_the_installer_silently_into_dest(self):
+        """An NSIS installer is "extracted" by running it with ``/S`` and an
+        UNQUOTED ``/D=<dest>`` as the LAST argument: NSIS reads the rest of
+        the command line as the directory, spaces included, and a quoted
+        ``/D`` is rejected -- so the command line is a string, never a list
+        ``list2cmdline`` would quote."""
+        installer = os.path.join(self.tmp, "Tool-Windows-x64.exe")
+        dest = os.path.join(self.tmp, "with space", "tool_1.0")
+        calls = []
+
+        def fake_run(cmdline, **kw):
+            calls.append(cmdline)
+            return MagicMock(returncode=0)
+
+        with patch.object(AppInstaller, "_current_platform", return_value="windows"):
+            with patch(
+                "pythontk.core_utils.app_installer.subprocess.run",
+                side_effect=fake_run,
+            ):
+                AppInstaller._extract(installer, dest, "nsis")
+        self.assertEqual(len(calls), 1)
+        cmdline = calls[0]
+        self.assertIsInstance(cmdline, str)
+        self.assertTrue(cmdline.startswith(f'"{installer}" /S '), cmdline)
+        self.assertTrue(cmdline.endswith(f"/D={dest}"), cmdline)
+        self.assertNotIn('"/D=', cmdline)
+
+    def test_extract_nsis_elevates_when_the_installer_requests_admin(self):
+        """WinError 740 (elevation required) re-runs through the UAC path."""
+        installer = os.path.join(self.tmp, "Tool.exe")
+        dest = os.path.join(self.tmp, "tool")
+        denied = OSError(22, "The requested operation requires elevation")
+        denied.winerror = 740
+        with patch.object(AppInstaller, "_current_platform", return_value="windows"):
+            with patch(
+                "pythontk.core_utils.app_installer.subprocess.run",
+                side_effect=denied,
+            ):
+                with patch.object(
+                    AppInstaller, "_run_elevated", return_value=0
+                ) as elevated:
+                    AppInstaller._extract(installer, dest, "nsis")
+        elevated.assert_called_once_with(installer, f"/S /D={dest}")
+
+    def test_extract_nsis_nonzero_exit_raises(self):
+        installer = os.path.join(self.tmp, "Tool.exe")
+        with patch.object(AppInstaller, "_current_platform", return_value="windows"):
+            with patch(
+                "pythontk.core_utils.app_installer.subprocess.run",
+                return_value=MagicMock(returncode=2),
+            ):
+                with self.assertRaises(RuntimeError) as ctx:
+                    AppInstaller._extract(
+                        installer, os.path.join(self.tmp, "t"), "nsis"
+                    )
+        self.assertIn("exit code 2", str(ctx.exception))
+
+    def test_extract_nsis_refuses_off_windows(self):
+        with patch.object(AppInstaller, "_current_platform", return_value="linux"):
+            with self.assertRaises(RuntimeError):
+                AppInstaller._extract("tool.exe", self.tmp, "nsis")
+
+    # ------------------------------------------------------------------
+    # consent: the one prompt policy every resolve_*(auto_install=...) shares
+    # ------------------------------------------------------------------
+
+    def test_consent_policies(self):
+        """``False`` = no consent needed; a callable is asked with the question
+        and its answer is the verdict; ``True`` reads the console and reports
+        None (not a decline) when there is no interactive console to read."""
+        self.assertTrue(AppInstaller.consent(False, "Install?"))
+
+        asked = []
+
+        def ask(question):
+            asked.append(question)
+            return False
+
+        self.assertFalse(AppInstaller.consent(ask, "Install?"))
+        self.assertEqual(asked, ["Install?"])
+
+        with patch("pythontk.core_utils.app_installer.sys") as fake_sys:
+            fake_sys.stdin.isatty.return_value = False
+            self.assertIsNone(AppInstaller.consent(True, "Install?"))
+            fake_sys.stdin.isatty.return_value = True
+            fake_sys.stdin.readline.return_value = "y\n"
+            self.assertTrue(AppInstaller.consent(True, "Install?"))
+            fake_sys.stdin.readline.return_value = "\n"
+            self.assertFalse(AppInstaller.consent(True, "Install?"))
 
     # ------------------------------------------------------------------
     # resolve_ffmpeg catalog fallback

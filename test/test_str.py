@@ -1125,6 +1125,31 @@ class StrTest(BaseTestCase):
         self.assertEqual(StrUtils.retain_suffix("Screw", "Bolt"), "Bolt")
         self.assertEqual(StrUtils.retain_suffix("Screw_ABC", "Bolt", ["_GRP"]), "Bolt")
 
+    def test_retain_suffix_not_duplicated_when_new_name_still_carries_it(self):
+        valid = ["_GRP", "_GEO"]
+        # The append patterns ('**_A', '*_v2') keep the whole old name, so the
+        # type suffix was never lost -- a second copy is not a retention.
+        self.assertEqual(
+            StrUtils.retain_suffix("Sphere_GEO", "Sphere_GEO_A", valid),
+            "Sphere_GEO_A",
+        )
+        self.assertEqual(
+            StrUtils.retain_suffix("Master_GRP", "Master_GRP_v2", valid),
+            "Master_GRP_v2",
+        )
+
+    def test_retain_suffix_keeps_numbering_on_the_new_name(self):
+        valid = ["_GEO"]
+        # A host's auto-numbered '_GEO1' has to survive: stripping the number
+        # and re-appending the bare suffix collapses distinct names onto one.
+        self.assertEqual(
+            StrUtils.retain_suffix("pCube_GEO1", "pCube_GEO1", valid), "pCube_GEO1"
+        )
+        self.assertEqual(
+            StrUtils.retain_suffix("pCube_GEO1", "pCube_GEO1_A", valid),
+            "pCube_GEO1_A",
+        )
+
     # -------------------------------------------------------------------------
     # format_suffix Tests
     # -------------------------------------------------------------------------
@@ -1137,11 +1162,47 @@ class StrTest(BaseTestCase):
         )
 
     def test_format_suffix_list_strip(self):
-        """Test format_suffix with list of strings to strip."""
+        """Test format_suffix with list of strings to strip.
+
+        Literal entries are end-anchored (see
+        test_format_suffix_literal_strip_is_end_anchored), so a list peels
+        nested suffixes off in the order given.
+        """
         self.assertEqual(
-            StrUtils.format_suffix("p001Cube1", "_suffix", ["Cu", "be1"]),
+            StrUtils.format_suffix("p001Cube1", "_suffix", ["_GRP", "Cube1"]),
             "p001_suffix",
         )
+        self.assertEqual(
+            StrUtils.format_suffix("p001_GEO_LOC", "_suffix", ["_LOC", "_GEO"]),
+            "p001_suffix",
+        )
+
+    def test_format_suffix_literal_strip_is_end_anchored(self):
+        """A literal strip token is a SUFFIX, not a substring.
+
+        Bug: any token that merely COMPILED as a regex (i.e. every plain
+        string) was substituted out globally, so stripping '_LOC' turned
+        'ITA_LOCKHANDLE' into 'ITAKHANDLE' -- mayatk's
+        create_locator_at_object renamed the object mid-name.
+        Fixed: 2026-08-25
+        """
+        affixes = ("_GRP", "_LOC", "_GEO")
+        # Mid-name occurrences are left alone.
+        self.assertEqual(
+            StrUtils.format_suffix("ITA_LOCKHANDLE", "", affixes),
+            "ITA_LOCKHANDLE",
+        )
+        self.assertEqual(
+            StrUtils.format_suffix("ITA_LOCKHANDLE_GEO", "_LOC", affixes),
+            "ITA_LOCKHANDLE_LOC",
+        )
+        # A real trailing affix still comes off, repeatedly and in list order.
+        self.assertEqual(StrUtils.format_suffix("pCube_LOC", "", affixes), "pCube")
+        self.assertEqual(StrUtils.format_suffix("pCube_GEO_LOC", "", affixes), "pCube")
+        # A token that spells a regex still matches anywhere.
+        self.assertEqual(StrUtils.format_suffix("a1b2c3", "", r"\d"), "abc")
+        # An empty entry is a no-op, not an infinite loop.
+        self.assertEqual(StrUtils.format_suffix("pCube", "", ["", "_LOC"]), "pCube")
 
     def test_format_suffix_strip_trailing(self):
         """Test format_suffix with strip_trailing option."""

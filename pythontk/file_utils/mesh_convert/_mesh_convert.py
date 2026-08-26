@@ -12,10 +12,20 @@ import shlex
 import shutil
 import struct
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -133,6 +143,87 @@ class MeshConvert(HelpMixin):
         "wrong. Check 'version' against the schema you expect."
     )
 
+    #: Schema version of the FBX-side handoff block (:meth:`build_fbx_handoff`).
+    #: Separate from :attr:`SIDECAR_VERSION`: that versions the GLB envelope
+    #: this block does not live in, and tying them would force a bump on one
+    #: carrier every time the other changed.
+    FBX_HANDOFF_VERSION = 1
+
+    #: ``data_export`` channel the FBX handoff block is published on. A channel
+    #: like any other, so it rides into the FBX as a user property with no
+    #: export-path change and no second carrier -- the deliverable has one
+    #: in-band metadata node and this joins it.
+    FBX_HANDOFF_CHANNEL = "handoff"
+
+    #: What each known ``data_export`` channel holds, for the block's ``reads``
+    #: map. Descriptions only: the channel LIST is taken from the carrier at
+    #: stamp time, so a producer added later still appears (described
+    #: generically) rather than silently falling out of the contract -- the
+    #: block must never claim a channel the file lacks, nor omit one it has.
+    FBX_HANDOFF_CHANNELS: Dict[str, str] = {
+        "lightmap_metadata": (
+            "per-object baked-lightmap records: map file name, uvIndex, "
+            "intensity, scaleOffset"
+        ),
+        "shot_metadata": "shot definitions (name, frame range, notes)",
+        "fbx_takes": "the take list realized on this FBX, one per shot",
+        "audio_manifest": "audio events with the frames they fire on",
+        "shadow_metadata": "shadow-proxy geometry pairing",
+        "emissive_groups": "named emissive material groups and their weights",
+    }
+
+    #: The standalone-reader contract for an **FBX** deliverable -- the twin of
+    #: :attr:`HANDOFF_INSTRUCTIONS`, kept beside it so the two carriers'
+    #: accounts of the same pipeline cannot drift.
+    #:
+    #: Same rules as the glTF text and for the same reasons: plain declarative
+    #: sentences about this file's own structure, no instructions to the reader
+    #: about what to do next (which is what makes it safe for an agent to read
+    #: as untrusted content), and it names the asset through the block's own
+    #: ``asset`` key rather than saying "this file".
+    #:
+    #: The load-bearing sentence is the one about lightmaps NOT being embedded.
+    #: An FBX embeds what its MATERIALS reference, and a lighting-only bake
+    #: deliberately does not wire its map into a material -- that is the point,
+    #: the PBR material survives the bake -- so the maps the manifest names are
+    #: the one part of the deliverable that genuinely does not travel with it.
+    #: Measured on a delivered room: 23.0 MB of the 23.5 MB file is embedded
+    #: material textures and not one byte of it is the lightmap. Saying so in
+    #: the file is what stops that being a surprise the recipient has to be
+    #: told about out of band.
+    #:
+    #: Unlike the glTF text this refers to "the FBX carrying this block" rather
+    #: than to an ``asset`` key. The block is stamped by an export PREPARER,
+    #: which runs before any FBX path is chosen -- the session hook fires for
+    #: File > Export and the Game Exporter too -- so an asset name here could
+    #: only ever have been the SCENE's, naming a ``.ma`` as though it were the
+    #: deliverable. The authoring scene rides under ``source`` instead, where
+    #: it is provenance rather than a false identity.
+    FBX_HANDOFF_INSTRUCTIONS = (
+        "The FBX carrying this block embeds every texture its MATERIALS "
+        "reference, so material assignment resolves with no external files "
+        "and no filesystem paths. Tool-authored metadata rides as user "
+        "properties on the 'data_export' node; 'reads' names each channel "
+        "present on it in this file and what that channel holds, and every "
+        "channel value is a JSON string. 'lightmap_metadata' names each baked "
+        "object's map by FILE NAME, with 'uvIndex' (0-based, so 1 is the "
+        "second UV set), 'intensity' (the multiplier restoring the bake's "
+        "original range) and 'scaleOffset' (that object's [scaleX, scaleY, "
+        "offsetX, offsetY] rect within a shared atlas). Those maps are NOT "
+        "embedded: an FBX carries what its materials reference and a "
+        "lighting-only bake leaves the map unwired so the authored material "
+        "survives, so the file name is a join token against maps supplied "
+        "separately, and the directory it sat in is deliberately not carried. "
+        "Each baked object additionally carries its own 'lightmapInfo' user "
+        "property repeating that object's record. Geometry, materials and "
+        "their embedded textures are otherwise complete. The asset carries no "
+        "lights of its own; 'rendering' records the lighting setup the "
+        "reference viewer used to produce the look this asset was approved "
+        "in, so a consumer that lights it differently renders something "
+        "different without either side being wrong. Check 'version' against "
+        "the schema you expect."
+    )
+
     #: The reference viewer's lighting setup (``net_utils/preview_viewer.html``),
     #: published as data so a recipient can reproduce the look the asset was
     #: signed off in instead of inferring it. A baked asset needs this more than
@@ -230,6 +321,7 @@ class MeshConvert(HelpMixin):
         "base_color": "set_glb_base_color",
         "emissive": "set_glb_emissive",
         "metallic_roughness": "set_glb_metallic_roughness",
+        "alpha_mode": "set_glb_alpha_mode",
     }
     # Image types glTF 2.0 accepts natively. Anything else (TIFF, EXR, TGA —
     # all common in a DCC source tree) is re-encoded to PNG via Pillow when
@@ -644,14 +736,18 @@ class MeshConvert(HelpMixin):
         cls,
         required: bool = True,
         auto_install: bool = False,
-        prompt: bool = True,
+        prompt: Union[bool, Callable[[str], bool]] = True,
     ) -> Optional[str]:
         """Resolve the FBX2glTF executable from PATH or managed installs.
 
         Parameters:
             required:      Raise FileNotFoundError when missing.
             auto_install:  Download FBX2glTF if not found.
-            prompt:        Ask before downloading (TTY only; non-TTY proceeds).
+            prompt:        Consent policy for the download -- ``True`` asks on
+                           the console (no console = refuse), ``False`` needs
+                           none, a callable ``(question) -> bool`` is asked
+                           instead (a GUI's dialog). See
+                           :meth:`AppInstaller.consent`.
 
         Returns:
             Absolute path to FBX2glTF executable, or None.
@@ -680,27 +776,25 @@ class MeshConvert(HelpMixin):
                 )
             return None
 
-        if prompt:
-            if not (sys.stdin and sys.stdin.isatty()):
-                # No interactive console (CI, GUI host, pythonw.exe, etc.).
-                # Refuse to silently download — caller must opt-in via prompt=False.
-                if required:
-                    raise FileNotFoundError(
-                        "FBX2glTF is not installed and no interactive console "
-                        "is available to confirm the download. Pass "
-                        "prompt=False to install non-interactively."
-                    )
-                return None
-            sys.stdout.write(
-                f"\nFBX2glTF v{FBX2GLTF_VERSION} is not installed. "
-                f"Download to ~/.pythontk/tools/ now? [y/N] "
-            )
-            sys.stdout.flush()
-            answer = sys.stdin.readline().strip().lower()
-            if answer not in ("y", "yes"):
-                if required:
-                    raise FileNotFoundError("User declined FBX2glTF installation.")
-                return None
+        answer = AppInstaller.consent(
+            prompt,
+            f"FBX2glTF v{FBX2GLTF_VERSION} is not installed. "
+            "Download to ~/.pythontk/tools/ now?",
+        )
+        if answer is None:
+            # No interactive console (CI, GUI host, pythonw.exe, etc.).
+            # Refuse to silently download — caller must opt-in via prompt=False.
+            if required:
+                raise FileNotFoundError(
+                    "FBX2glTF is not installed and no interactive console "
+                    "is available to confirm the download. Pass "
+                    "prompt=False to install non-interactively."
+                )
+            return None
+        if not answer:
+            if required:
+                raise FileNotFoundError("User declined FBX2glTF installation.")
+            return None
 
         try:
             return AppInstaller.ensure(
@@ -723,11 +817,12 @@ class MeshConvert(HelpMixin):
         *,
         overwrite: bool = False,
         auto_install: bool = True,
-        prompt: bool = True,
+        prompt: Union[bool, Callable[[str], bool]] = True,
         timeout: Optional[float] = DEFAULT_TIMEOUT,
         extra_args: Optional[List[str]] = None,
         sidecar: Optional[Dict[str, Any]] = None,
         lightmaps: bool = True,
+        lightmap_dirs: Sequence[str] = (),
     ) -> str:
         """Convert an FBX file to a binary glTF 2.0 (GLB) file.
 
@@ -737,7 +832,8 @@ class MeshConvert(HelpMixin):
                            ``.glb`` is appended if absent.
             overwrite:     Replace existing destination.
             auto_install:  Download FBX2glTF if missing.
-            prompt:        Ask before downloading.
+            prompt:        Consent policy for that download (see
+                           :meth:`resolve_binary`).
             timeout:       Subprocess timeout in seconds. None disables.
             extra_args:    Extra CLI flags forwarded to FBX2glTF
                            (e.g. ``["--draco"]``, ``["-v"]``).
@@ -754,6 +850,16 @@ class MeshConvert(HelpMixin):
                            self-feeding -- the manifest travels inside the FBX,
                            so a scene with no committed bake is a clean no-op
                            and callers pass nothing.
+            lightmap_dirs: Extra directories to resolve the manifest's EXR
+                           basenames against, forwarded as that method's
+                           ``search_dirs``. The manifest carries its own
+                           authoring-directory hint, but that is recorded when
+                           the bake is COMMITTED and goes stale the moment the
+                           project is reorganised or handed to another machine
+                           -- at which point the bind silently finds nothing.
+                           A host that knows where its textures live now (a
+                           DCC's workspace, the scene's own folder) passes them
+                           here rather than relying on a historical hint.
 
         Returns:
             Absolute path to the written GLB file.
@@ -850,13 +956,27 @@ class MeshConvert(HelpMixin):
                         fx["new_alpha"],
                         fx["image"],
                     )
+                # Before the sidecar writes the GLB's OWN handoff, so the
+                # file never holds both accounts at once.
+                try:
+                    dropped = cls.strip_fbx_handoff(edit.gltf)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("strip_fbx_handoff skipped: %s", exc)
+                else:
+                    if dropped:
+                        edit.dirty = True
+                        logger.debug(
+                            "Dropped the FBX handoff block from %d node(s); the "
+                            "GLB carries its own.",
+                            dropped,
+                        )
                 if sidecar:
                     cls.apply_scene_sidecar(edit, sidecar)
                 if lightmaps:
                     # Guarded like the alpha repair: a lightmap failure must
                     # never cost the sidecar or the conversion.
                     try:
-                        bound = cls.apply_glb_lightmaps(edit)
+                        bound = cls.apply_glb_lightmaps(edit, search_dirs=lightmap_dirs)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("GLB lightmaps skipped: %s", exc)
                     else:
@@ -950,6 +1070,102 @@ class MeshConvert(HelpMixin):
                 # the file.
                 "rendering": copy.deepcopy(cls.RENDERING_POLICY),
             },
+        }
+
+    @classmethod
+    def strip_fbx_handoff(cls, gltf: dict) -> int:
+        """Drop the FBX's handoff block from a converted glTF's node extras.
+
+        FBX2glTF transcribes every user property on the ``data_export`` carrier
+        into ``nodes[N].extras.fromFBX.userProperties`` (probe-measured), so the
+        block :meth:`build_fbx_handoff` stamps for the FBX arrives inside the
+        GLB as well -- where it is not provenance but a WRONG self-description:
+        it states that the lightmaps the manifest names are not embedded, which
+        is true of the FBX and false of a GLB that embeds them, and its
+        ``reads`` map names ``data_export.<channel>`` paths that do not exist in
+        a glTF. A deliverable carrying two accounts of itself, one of them
+        wrong, is worse than one carrying none -- and the GLB has its own, in
+        ``extras.scene_sidecar.handoff``.
+
+        Removed even when no sidecar was applied (a bare conversion): "no
+        self-description" is a recoverable state, "a confidently wrong one" is
+        not. Every other transcribed channel is left alone -- ``lightmap_metadata``
+        is this applier's own designed input, and the per-object markers are
+        read by consumers outside this repo.
+
+        Returns:
+            How many nodes were stripped.
+        """
+        stripped = 0
+        for node in gltf.get("nodes") or []:
+            props = ((node.get("extras") or {}).get("fromFBX") or {}).get(
+                "userProperties"
+            )
+            if isinstance(props, dict) and props.pop(cls.FBX_HANDOFF_CHANNEL, None):
+                stripped += 1
+        return stripped
+
+    @classmethod
+    def build_fbx_handoff(
+        cls,
+        channels: Iterable[str],
+        source: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """The standalone-reader contract for an FBX, ready to publish.
+
+        The FBX twin of the ``handoff`` section :meth:`build_scene_sidecar`
+        puts in a GLB. Both deliverables of a pair are routinely handed on
+        alone -- the GLB to a web consumer, the FBX to an engine -- and until
+        now only one of them could be read without a covering note.
+
+        Deliberately NOT the scene-sidecar envelope. That envelope carries
+        repairs for what the FBX *format* mistranslates, which is meaningless
+        inside the FBX itself; and this package's standing split (see
+        :meth:`build_scene_sidecar`'s scope note) is that FBX-side metadata
+        rides as ``data_export`` channels while the sidecar is the GLB's. This
+        is one more channel on the carrier that already exists, not a second
+        carrier and not a companion file.
+
+        Parameters:
+            channels: The channel names actually present on the carrier --
+                normally ``DataNodes.dump()["data_export"]``. Taken from the
+                caller rather than assumed so the block describes THIS file:
+                a channel the scene never wrote must not be claimed, and one
+                a newer producer wrote must not be omitted. The handoff
+                channel itself is dropped if passed (it does not describe
+                itself).
+            source: Producer identity and provenance, e.g. ``{"application":
+                "maya", "version": "2025", "scene": "OFFICE_ENV.ma"}``. No
+                asset name is carried: this is stamped before any FBX path is
+                chosen, so the only name available would be the scene's.
+
+        Returns:
+            The block, JSON-serializable. Empty dict when *channels* holds
+            nothing to describe -- a carrier with no metadata has no handoff
+            to make, and stamping one would put a lone self-referential
+            channel in an otherwise empty node.
+        """
+        present = [c for c in channels if c != cls.FBX_HANDOFF_CHANNEL]
+        if not present:
+            return {}
+        return {
+            "version": cls.FBX_HANDOFF_VERSION,
+            # Empty entries dropped rather than published as nulls: an unsaved
+            # scene has no name, and "scene": null in a delivered artifact reads
+            # as a field that failed rather than one that does not apply.
+            "source": {k: v for k, v in (source or {}).items() if v} or None,
+            "instructions": cls.FBX_HANDOFF_INSTRUCTIONS,
+            "reads": {
+                f"data_export.{name}": cls.FBX_HANDOFF_CHANNELS.get(
+                    name, "tool-authored channel"
+                )
+                for name in sorted(present)
+            },
+            # The same policy the GLB publishes, from the same constant: a
+            # recipient who lights a baked asset normally blows out every baked
+            # surface, and that reads as a bake regression whichever container
+            # it arrived in.
+            "rendering": copy.deepcopy(cls.RENDERING_POLICY),
         }
 
     @classmethod
@@ -1946,6 +2162,15 @@ class MeshConvert(HelpMixin):
             # exr abspath -> encode scalar; ``None`` records a failed encode so a map
             # shared by several objects is not retried (and re-logged) per object.
             scalars: Dict[str, Optional[float]] = {}
+            #: Unfindable map -> how many manifest entries wanted it. Counted
+            #: rather than warned inline for two reasons: an atlas is shared by
+            #: every object baked into it, so a line per ENTRY turned one moved
+            #: folder into 48 identical ones (measured on a delivered room --
+            #: which is how the failure got lost in an export log and shipped a
+            #: lightmap-less deliverable); and the number of objects at stake,
+            #: the one thing that says how bad it is, is not known until the
+            #: walk is over.
+            missing: Dict[Optional[str], int] = {}
             claimed: Dict[int, str] = {}  # material index -> exr abspath
             # Source material indices whose authored carrier map was already
             # reported (displaced, or kept under replace_authored=False) -- so the
@@ -1995,9 +2220,7 @@ class MeshConvert(HelpMixin):
                     None,
                 )
                 if src is None:
-                    logger.warning(
-                        "Lightmap for %r: %r not found in %s.", name, basename, dirs
-                    )
+                    missing[basename] = missing.get(basename, 0) + 1
                     continue
                 src = os.path.abspath(src)
 
@@ -2201,6 +2424,21 @@ class MeshConvert(HelpMixin):
                             }
                         )
 
+            for basename, wanted in missing.items():
+                # Deliberately does NOT advise passing ``search_dirs``: every
+                # shipped caller already does (the DCC exporters and the preview
+                # hand over the host's live texture folders), so by the time
+                # this fires the directories listed ARE the full search and the
+                # map is in none of them. Naming them, and what it costs, is the
+                # whole actionable content.
+                logger.warning(
+                    "Lightmap %r not found in %s -- the %d object(s) baked into "
+                    "it are not bound and will render unlit.",
+                    basename,
+                    dirs,
+                    wanted,
+                )
+
             if used_transform:
                 ext_used = edit.gltf.setdefault("extensionsUsed", [])
                 if "KHR_texture_transform" not in ext_used:
@@ -2230,6 +2468,19 @@ class MeshConvert(HelpMixin):
                 # unrounded where the published one is round(., 6).
                 cls._reconcile_node_markers(edit.gltf, marker_updates)
                 edit.dirty = True
+            elif entries:
+                # The one outcome silence gets wrong. Every miss above is warned
+                # individually, but each reads as a per-object detail; a caller
+                # -- and an exporter's log -- needs the TOTAL said once, because
+                # "the scene was never baked" (a clean no-op, returned far
+                # above) and "the bake exists and none of it reached the file"
+                # are the same empty list and wildly different deliverables.
+                logger.warning(
+                    "Lightmaps NOT wired: the manifest lists %d object(s) and "
+                    "none bound -- the GLB ships unlit. Searched %s.",
+                    len(entries),
+                    dirs,
+                )
         return records
 
     # ------------------------------------------------------------------ #
@@ -2645,6 +2896,56 @@ class MeshConvert(HelpMixin):
         return semantics
 
     @classmethod
+    def describe_texture_pass(
+        cls,
+        summary: Dict[str, Any],
+        image_format: str,
+        max_size: int = 0,
+    ) -> str:
+        """Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
+
+        Twin of :meth:`MapOptimizer.describe_size_clamp`, and here for the same
+        reason: the wording is a claim about THIS method's contract, and both
+        DCC exporters have to make it. They cannot import each other, so a
+        sentence written in both drifts in both -- which it already had, the
+        Blender copy trailing Maya's.
+
+        The claim worth centralising is that *max_size* is a **ceiling, not a
+        target**. An asset authored at the ceiling resamples nothing, so a
+        caller that reports the MODE ("resized") tells its user the exporter
+        rescaled textures it never touched -- read, on a 2048 set under a 2048
+        ceiling, as "it upscaled my maps to 2K". ``summary["resized"]`` is the
+        count that actually happened, and this renders it.
+
+        Parameters:
+            summary: What :meth:`optimize_glb_textures` returned. Empty means
+                the pass ran and replaced nothing, which gets its own sentence
+                -- "asked for and got nothing" must not read like "never ran".
+            image_format: The carrier the pass was asked for (``"KTX2"``, ...).
+            max_size: The ceiling that was in force; ``0`` = never resample.
+
+        Returns:
+            One complete sentence, ready to log.
+        """
+        if not summary:
+            return (
+                f"GLB texture pass ({image_format}) changed nothing: no "
+                "embedded image improved on its original bytes."
+            )
+        if not max_size:
+            did = "container only, pixels untouched"
+        elif summary.get("resized"):
+            did = f"{summary['resized']} resampled down to fit {max_size}px"
+        else:
+            did = f"none resampled - all were already within {max_size}px"
+        return (
+            f"GLB textures delivered as {image_format}: "
+            f"{summary['images']} image(s), "
+            f"{summary['bytes_before'] / 1e6:.1f} MB -> "
+            f"{summary['bytes_after'] / 1e6:.1f} MB ({did})."
+        )
+
+    @classmethod
     def optimize_glb_textures(
         cls,
         glb: GlbTarget,
@@ -2667,10 +2968,15 @@ class MeshConvert(HelpMixin):
         conversions stay byte-stable.
 
         Every embedded image (bufferView-backed or data URI) is decoded,
-        resized so its longest edge is *max_size*, and re-encoded -- WebP by
-        default: alpha-capable, universally decoded by WebXR-class browsers,
-        and roughly an order of magnitude smaller than PNG at visually equal
-        quality. Lightmaps are exempt from the resize (the bake sized them
+        resized so its longest edge is *max_size*, and re-encoded. WebP is the
+        default, and because nothing core-readable survives that pass (the
+        image IS the WebP), ``EXT_texture_webp`` lands in ``extensionsRequired``
+        -- the file says it needs a WebP-capable reader instead of handing a
+        core one WebP bytes through a plain ``source``, which glTF 2.0, whose
+        core permits image/jpeg and image/png only, does not allow. WebP is
+        alpha-capable, universally decoded by WebXR-class browsers, and roughly
+        an order of magnitude smaller than PNG at visually equal quality.
+        Lightmaps are exempt from the resize (the bake sized them
         deliberately) and re-encode LOSSLESS (lossy WebP's 4:2:0 chroma
         blotches magenta/green on near-black texels); exemption is both by
         the names the ``lightmap_web`` manifest lists and structurally, by
@@ -2702,11 +3008,16 @@ class MeshConvert(HelpMixin):
           it, and a non-core ``image/ktx2`` that no declaration enables is
           invalid glTF. Same rule as ``MapOptimizer.resolve_compression``,
           keyed structurally (by glTF slot) instead of by filename.
-        * **Lightmaps stay on the lossless-WebP path** even in KTX2 mode:
-          ETC1S would blotch them for the same reason lossy WebP does, UASTC
-          would re-quantise a deliberately-authored bake, and their carrier
-          slot's colorspace handling is viewer-rebound -- fidelity wins over
-          GPU residency for exactly these images.
+        * **Lightmaps never take a Basis codec** even in KTX2 mode: ETC1S
+          would blotch them for the same reason lossy WebP does, UASTC would
+          re-quantise a deliberately-authored bake, and their carrier slot's
+          colorspace handling is viewer-rebound -- fidelity wins over GPU
+          residency for exactly these images. Their container then follows
+          *ktx2_fallback*: with fallbacks ON they keep the core-readable PNG,
+          because EXT_texture_webp may only stay out of ``extensionsRequired``
+          when the texture carries a PNG/JPEG twin, and WebP + twin costs more
+          than the PNG alone (measured: 103 KB + 209 KB vs 209 KB). Pure
+          delivery takes lossless WebP and requires the extension.
         * **A core-readable fallback rides along by default**
           (*ktx2_fallback*): each converted image also embeds a resized
           PNG/JPEG twin bound as the texture's plain ``source`` -- the
@@ -2755,8 +3066,13 @@ class MeshConvert(HelpMixin):
 
         Returns:
             Summary dict: ``images`` (converted count), ``bytes_before`` /
-            ``bytes_after`` (image payload totals). Empty when Pillow is
-            unavailable or there is nothing to do.
+            ``bytes_after`` (image payload totals), and ``resized`` -- how many
+            of those images were actually RESAMPLED. *max_size* is a ceiling,
+            never a target: a source already within it keeps its pixels, so
+            ``resized`` is 0 for a whole asset authored at the ceiling and a
+            caller reporting the mode ("resized") rather than this count tells
+            its user their textures were rescaled when nothing was. Empty when
+            Pillow is unavailable or there is nothing to do.
         """
         try:
             from PIL import Image
@@ -2837,6 +3153,12 @@ class MeshConvert(HelpMixin):
             # semantic is a constant None and the key degenerates to the pair.)
             before = after = 0
             jobs: Dict[Tuple[str, bool, Optional[str]], bytes] = {}
+            #: job key -> did its pixels actually get resampled. Reported so a
+            #: caller can say what HAPPENED instead of which mode ran: a ceiling
+            #: is a clamp, so a run whose sources are all already within it
+            #: resizes nothing, and a log that calls that "resized" reads as an
+            #: upscale to whoever set the ceiling.
+            resized_by_key: Dict[Tuple[str, bool, Optional[str]], bool] = {}
             labels: Dict[Tuple[str, bool, Optional[str]], Union[str, int]] = {}
             key_by_index: Dict[int, Tuple[str, bool, Optional[str]]] = {}
             for index, image in enumerate(images):
@@ -2902,6 +3224,9 @@ class MeshConvert(HelpMixin):
                     target = tuple(
                         max(4, 1 << (max(4, edge).bit_length() - 1)) for edge in target
                     )
+                # Written from the worker that owns this key -- one call per
+                # key, so distinct keys never collide.
+                resized_by_key[key] = target != pil.size
                 if target != pil.size:
                     pil = pil.resize(target, Image.LANCZOS)
                 if is_ktx2 and not is_exempt:
@@ -2970,10 +3295,23 @@ class MeshConvert(HelpMixin):
                             )
                             fb_bytes = fb_mime = None
                     return (encoded, fb_bytes, fb_mime)
-                # Exempt (lightmap) images in KTX2 mode take the lossless-WebP
-                # path -- the mode's docstring bullet says why.
-                pil_format = "WEBP" if (is_ktx2 and is_exempt) else image_format
-                if mime == "image/png":
+                # Exempt (lightmap) images in KTX2 mode never take a Basis
+                # codec -- the mode's docstring bullet says why -- so they need
+                # a container of their own. WebP is the smallest lossless one,
+                # but glTF core cannot read it, and EXT_texture_webp may only
+                # stay OUT of ``extensionsRequired`` when the texture also
+                # carries a PNG/JPEG fallback. Carrying both costs MORE than
+                # the plain PNG does (measured on a delivered room: 103 KB WebP
+                # + 209 KB fallback vs 209 KB PNG alone), so the whole point of
+                # the WebP is gone the moment a fallback is required. Hence:
+                # fallbacks on -- the "opens in any reader" mode -- keeps the
+                # core-readable PNG and declares no extension at all; pure
+                # delivery takes the WebP and requires the extension below.
+                if is_ktx2 and is_exempt:
+                    pil_format = "WEBP" if not ktx2_fallback else "PNG"
+                else:
+                    pil_format = image_format
+                if pil_format == "PNG":
                     save_kwargs = {}
                 elif is_exempt and pil_format == "WEBP":
                     # Lightmaps must round-trip pixel-exact. Lossy WebP is
@@ -3149,11 +3487,13 @@ class MeshConvert(HelpMixin):
                 images.append(fb_image)
                 fallback_image_of[index] = len(images) - 1
 
-            # In KTX2 mode the exempt (lightmap) images took the WebP path, so
-            # the mime is per image rather than per run.
+            # In KTX2 mode the exempt (lightmap) images took a container of
+            # their own (see the encode branch), so the mime is per image
+            # rather than per run.
+            exempt_mime = "image/webp" if not ktx2_fallback else "image/png"
             for index in replacements:
                 images[index]["mimeType"] = (
-                    "image/webp" if (is_ktx2 and key_by_index[index][1]) else mime
+                    exempt_mime if (is_ktx2 and key_by_index[index][1]) else mime
                 )
             gltf["bufferViews"] = views
             new_bin = b"".join(chunks)
@@ -3168,6 +3508,7 @@ class MeshConvert(HelpMixin):
             }
             bound_basisu = False
             basisu_without_fallback = False
+            webp_without_fallback = False
             if webp_images or ktx2_images:
                 for t_index, texture in enumerate(gltf.get("textures") or []):
                     # Resolved through the shadow-aware walk so a re-run of
@@ -3195,15 +3536,37 @@ class MeshConvert(HelpMixin):
                             texture["source"] = fb_index
                         bound_basisu = True
                     elif src in webp_images:
-                        # Standard binding; plain ``source`` stays as fallback.
-                        texture.setdefault("extensions", {})["EXT_texture_webp"] = {
-                            "source": src
-                        }
-                        texture.setdefault("source", src)
+                        # Same fallback rule as the basisu branch above, and it
+                        # has to be: this previously left ``source`` pointing at
+                        # the image it had just REPLACED with WebP bytes and
+                        # called that a fallback. It is not one -- it is the
+                        # same image -- so the file declared EXT_texture_webp as
+                        # merely *used* while a core reader, which glTF 2.0
+                        # permits only image/jpeg and image/png, resolved the
+                        # texture to WebP. Measured on a delivered room: both
+                        # lightmap textures shipped that way with
+                        # ``extensionsRequired`` unset, i.e. the file advertised
+                        # itself as readable by anyone and was not.
+                        extensions = texture.setdefault("extensions", {})
+                        extensions["EXT_texture_webp"] = {"source": src}
+                        fb_index = fallback_image_of.get(src)
+                        if fb_index is None:
+                            texture.pop("source", None)
+                            webp_without_fallback = True
+                        else:
+                            texture["source"] = fb_index
             if webp_images:
                 used = gltf.setdefault("extensionsUsed", [])
                 if "EXT_texture_webp" not in used:
                     used.append("EXT_texture_webp")
+                if webp_without_fallback:
+                    # Same escalation the basisu binding makes, for the same
+                    # reason: a binding with no core-readable ``source`` is one
+                    # a stock importer cannot degrade to, so the file must say
+                    # it needs the extension instead of silently failing in it.
+                    required = gltf.setdefault("extensionsRequired", [])
+                    if "EXT_texture_webp" not in required:
+                        required.append("EXT_texture_webp")
             elif bound_basisu:
                 # A KTX2 pass over a previously WebP-optimized GLB strips the
                 # EXT_texture_webp bindings it re-encodes past; a declaration
@@ -3246,12 +3609,18 @@ class MeshConvert(HelpMixin):
             "images": len(replacements),
             "bytes_before": before,
             "bytes_after": after,
+            "resized": sum(
+                1
+                for index, key in key_by_index.items()
+                if index in replacements and resized_by_key.get(key)
+            ),
         }
         logger.info(
-            "optimize_glb_textures: %d image(s), %.1f MB -> %.1f MB.",
+            "optimize_glb_textures: %d image(s), %.1f MB -> %.1f MB (%d resampled).",
             summary["images"],
             before / 1e6,
             after / 1e6,
+            summary["resized"],
         )
         return summary
 
@@ -4067,6 +4436,65 @@ class MeshConvert(HelpMixin):
         except (OSError, ValueError) as error:
             logger.warning("GLB texture embed: could not re-encode %s: %s", path, error)
             return None
+
+    @classmethod
+    def set_glb_alpha_mode(
+        cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]
+    ) -> List[Dict]:
+        """Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.
+
+        The sibling of :meth:`set_glb_base_color` for the one material fact
+        FBX2glTF has to guess: it derives ``alphaMode`` from the base colour's
+        alpha channel alone, so an RGBA base colour is always ``BLEND`` -- a
+        cutout material (``MASK``: alpha test, depth writes, the opaque queue)
+        cannot be expressed by the FBX at all, and a solid body wearing a
+        blended material sorts its own back faces through its front in every
+        WebXR viewer. The DCC knows which it authored (Maya's
+        ``SceneState._read_alpha_mode`` reads the StingrayPBS graph) and says
+        so through this section.
+
+        Parameters:
+            glb: Path to a binary glTF (.glb), modified in place, or an open
+                :class:`GlbEdit` session whose owner will write it.
+            alpha_mode: ``{material_name: {"mode": "OPAQUE"|"MASK"|"BLEND",
+                "cutoff": float}}``. ``cutoff`` is written only for ``MASK``
+                (absent = glTF's default 0.5); any other mode drops a stale
+                one. Names absent from the GLB are reported, an unknown mode
+                is skipped with a warning rather than written.
+
+        Returns:
+            List of records: ``material``, ``alphaMode``, ``alphaCutoff``.
+        """
+        if not alpha_mode:
+            return []
+        records: List[Dict] = []
+        with cls.open_glb(glb) as edit:
+            for name, spec, mat in cls._match_glb_materials(
+                edit.gltf, alpha_mode, "set_glb_alpha_mode"
+            ):
+                mode = str(spec.get("mode") or "").upper()
+                if mode not in ("OPAQUE", "MASK", "BLEND"):
+                    logger.warning(
+                        "set_glb_alpha_mode: %s has no glTF alphaMode %r -- skipped.",
+                        name,
+                        spec.get("mode"),
+                    )
+                    continue
+                mat["alphaMode"] = mode
+                edit.dirty = True
+                cutoff = spec.get("cutoff") if mode == "MASK" else None
+                if cutoff is None:
+                    mat.pop("alphaCutoff", None)
+                else:
+                    mat["alphaCutoff"] = float(cutoff)
+                records.append(
+                    {
+                        "material": name,
+                        "alphaMode": mode,
+                        "alphaCutoff": mat.get("alphaCutoff"),
+                    }
+                )
+        return records
 
     @classmethod
     def set_glb_base_color(

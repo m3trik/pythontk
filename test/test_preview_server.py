@@ -2000,5 +2000,133 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
             MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (1, 1, 1)}})
 
 
+class LightmapSummaryTestCase(unittest.TestCase):
+    """`PreviewBridge.lightmap_summary`: the panel's one line on the bake.
+
+    A bake whose maps were not found renders exactly like no bake, and the
+    applier's warning names a file, not an outcome -- so the push result has
+    to say how many objects came back unlit, and the panel has to show it.
+    """
+
+    def test_nothing_to_report_is_not_a_line(self):
+        self.assertEqual(PreviewBridge.lightmap_summary(None), "")
+        self.assertEqual(PreviewBridge.lightmap_summary({}), "")
+        self.assertEqual(
+            PreviewBridge.lightmap_summary(
+                {"lightmaps": {"expected": 0, "bound": 0, "unbound": []}}
+            ),
+            "",
+        )
+
+    def test_every_object_bound(self):
+        line = PreviewBridge.lightmap_summary(
+            {"lightmaps": {"expected": 3, "bound": 3, "unbound": []}}
+        )
+        self.assertEqual(line, "Lightmaps: 3/3 object(s) bound.")
+
+    def test_unbound_objects_are_named_and_called_unlit(self):
+        names = [f"wall_{i}" for i in range(7)]
+        line = PreviewBridge.lightmap_summary(
+            {"lightmaps": {"expected": 9, "bound": 2, "unbound": names}}
+        )
+        self.assertIn("2/9", line)
+        self.assertIn("UNLIT", line)
+        self.assertIn("wall_0", line)
+        self.assertIn("+2 more", line)
+
+
+class LightmapReportTestCase(unittest.TestCase):
+    """The deliverer REPORTS the lightmap pass rather than only logging it."""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_preview_lightmap_report", policy="scoped")
+        self.server = PreviewServer(root=self.temp.dir_path(), port=0).start()
+        self.bridge = _StubBridge()
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+
+    def tearDown(self):
+        self.server.stop()
+        self.temp.cleanup()
+
+    @staticmethod
+    def _lit_glb(dst, manifest):
+        """A one-mesh GLB carrying *manifest* the way FBX2glTF transcribes it."""
+        carrier = {
+            "fromFBX": {
+                "userProperties": {
+                    "lightmap_metadata": {
+                        "type": "eFbxString",
+                        "value": json.dumps(manifest),
+                    }
+                }
+            }
+        }
+        gltf = {
+            "asset": {"version": "2.0"},
+            "nodes": [
+                {"name": "room", "mesh": 0},
+                {"name": "data_export", "extras": carrier},
+            ],
+            "meshes": [
+                {
+                    "primitives": [
+                        {
+                            "attributes": {
+                                "POSITION": 0,
+                                "TEXCOORD_0": 1,
+                                "TEXCOORD_1": 2,
+                            },
+                            "material": 0,
+                        }
+                    ]
+                }
+            ],
+            "materials": [{"name": "roomMat"}],
+        }
+        Path(dst).write_bytes(PreviewDelivererTestCase._glb_bytes(gltf))
+        return dst
+
+    def _push(self, gltf_writer):
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=gltf_writer):
+            return self.bridge.send()
+
+    def test_a_map_found_nowhere_is_reported_unbound(self):
+        manifest = {
+            "version": 1,
+            "dir": str(self.temp.dir_path()),  # the hint: exists, holds no map
+            "objects": [
+                {
+                    "name": "room",
+                    "map": "room_LightMap.exr",
+                    "uvIndex": 1,
+                    "intensity": 1.0,
+                    "scaleOffset": [1, 1, 0, 0],
+                }
+            ],
+        }
+
+        result = self._push(lambda src, dst=None, **kw: self._lit_glb(dst, manifest))
+
+        self.assertEqual(
+            result["lightmaps"], {"expected": 1, "bound": 0, "unbound": ["room"]}
+        )
+        line = PreviewBridge.lightmap_summary(result)
+        self.assertIn("0/1", line)
+        self.assertIn("room", line)
+
+    def test_no_manifest_reports_nothing_expected(self):
+        def bare(src, dst=None, **kw):
+            Path(dst).write_bytes(
+                PreviewDelivererTestCase._glb_bytes({"asset": {"version": "2.0"}})
+            )
+            return dst
+
+        result = self._push(bare)
+
+        self.assertEqual(result["lightmaps"]["expected"], 0)
+        self.assertEqual(PreviewBridge.lightmap_summary(result), "")
+
+
 if __name__ == "__main__":
     unittest.main()

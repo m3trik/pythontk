@@ -52,6 +52,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/module_resolver.py`](#core_utils--module_resolver) — Reusable module attribute resolver for package-style imports.
 - [`core_utils/namedtuple_container.py`](#core_utils--namedtuple_container)
 - [`core_utils/namespace_handler.py`](#core_utils--namespace_handler)
+- [`core_utils/naming_convention.py`](#core_utils--naming_convention) — Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 - [`core_utils/package_manager.py`](#core_utils--package_manager)
 - [`core_utils/preset_store.py`](#core_utils--preset_store) — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - [`core_utils/process_stream.py`](#core_utils--process_stream) — App-agnostic line-stream primitives for launched processes and log files.
@@ -190,9 +191,10 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 <a id="core_utils--app_installer"></a>
 ### `core_utils/app_installer.py`
 
-- **[`class AppInstaller`](pythontk/pythontk/core_utils/app_installer.py#L40)** — Download, extract, and manage external OS-level tool binaries.
+- **[`class AppInstaller`](pythontk/pythontk/core_utils/app_installer.py#L41)** — Download, extract, and manage external OS-level tool binaries.
   - `AppInstaller.ensure(cls, name: str, platforms: Dict[str, dict], executable: Optional[str] = None, version: Optional[str] = None, sha256: Optional[Dict[str, str]] = None, location: str = 'user', update: bool = False, add_to_path: bool = True, progress_callback: Optional[Callable[[int, int], None]] = None) -> str` *(class)* — Ensure a tool is available locally, downloading if necessary.
   - `AppInstaller.get_path(cls, name: str, location: str = 'user', executable: Optional[str] = None, add_to_path: bool = False) -> Optional[str]` *(class)* — Find a tool without installing.
+  - `AppInstaller.consent(prompt: Union[bool, Callable[[str], bool], None], question: str) -> Optional[bool]` *(static)* — Resolve a caller's *prompt* policy for an install into a yes/no.
 
 <a id="core_utils--app_launcher"></a>
 ### `core_utils/app_launcher.py`
@@ -546,6 +548,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.get_precedence_rules(cls) -> Dict[str, List[str]]` *(class)* — Returns a dictionary of map precedence rules.
   - `MapFactory.resolve_normal_maps(cls, sorted_maps: Dict[str, Any], target_format: Optional[str] = None, convert: bool = True) -> Dict[str, Dict[str, str]]` *(class)* — Reduce an inventory to exactly ONE normal map — optionally in a given convention.
   - `MapFactory.filter_redundant_maps(cls, sorted_maps: Dict[str, Any], config: Dict[str, Any] = None, extract_missing: bool = True) -> Dict[str, Dict[str, str]]` *(class)* — Resolve packed-map redundancy in-place — losslessly.
+  - `MapFactory.extract_channels(cls, packed_type: str, packed_path: Optional[str], targets: List[str], config: Dict[str, Any] = None) -> Optional[Dict[str, str]]` *(class)* — Extract ``targets`` from a packed map into loose files beside it.
   - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
   - `MapFactory.pack_transparency_into_albedo(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…
   - `MapFactory.pack_smoothness_into_metallic(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
@@ -1052,6 +1055,33 @@ Reusable module attribute resolver for package-style imports.
   - `NamespaceHandler.resolve(self, key: str, default: Any = None, resolve_placeholders: bool = True) -> Any`
   - `NamespaceHandler.is_resolving(self, key: str) -> bool` — Returns True if this key is currently being resolved (to prevent recursion).
 
+<a id="core_utils--naming_convention"></a>
+### `core_utils/naming_convention.py`
+
+Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
+
+- **[`class AffixRule`](pythontk/pythontk/core_utils/naming_convention.py#L62)** — One convention entry: a spelling plus where it lands on a base name.
+  - `AffixRule.parts(self, *, default: str = 'suffix') -> Tuple[str, str]` — ``(prefix, suffix)`` for this rule — at most one is non-empty.
+  - `AffixRule.apply(self, name: str, *, default: str = 'suffix') -> str` — Idempotently put this rule's affix on *name* (no-op for empty text).
+  - `AffixRule.as_dict(self) -> Dict[str, str]` — JSON-shaped form (``label`` omitted — it ships with the defaults).
+- **[`class NamingConvention(_NamingConventionInternal)`](pythontk/pythontk/core_utils/naming_convention.py#L141)** — The ecosystem's single source of truth for type-based name affixes.
+  - `NamingConvention.resolve(cls, *, refresh: bool = False) -> Dict[str, AffixRule]` *(class)* — The full table: three layers, each overlaying the one before it.
+  - `NamingConvention.reload(cls) -> Dict[str, AffixRule]` *(class)* — Drop the cache and re-read the config doc.
+  - `NamingConvention.keys(cls) -> List[str]` *(class)* — Every type key, in the shipped order (user-added keys appended).
+  - `NamingConvention.items(cls) -> List[Tuple[str, AffixRule]]` *(class)* — ``(key, rule)`` pairs in :meth:`keys` order.
+  - `NamingConvention.get(cls, key: str, fallback: Optional[AffixRule] = None) -> AffixRule` *(class)* — The rule for *key*, or *fallback* (an empty, no-op rule by default).
+  - `NamingConvention.label(cls, key: str) -> str` *(class)* — Human title for *key* (the key itself when it has no shipped label).
+  - `NamingConvention.affix(cls, key: str) -> str` *(class)* — The affix spelling for *key* (``""`` when the type is unset).
+  - `NamingConvention.mode(cls, key: str) -> str` *(class)* — The placement mode for *key* (``"auto"`` when unset).
+  - `NamingConvention.affix_parts(cls, key: str, *, default: str = 'suffix') -> Tuple[str, str]` *(class)* — ``(prefix, suffix)`` for *key* — the pair tools actually apply.
+  - `NamingConvention.apply(cls, name: str, key: str, *, default: str = 'suffix') -> str` *(class)* — Idempotently apply *key*'s affix to *name*.
+  - `NamingConvention.all_affixes(cls) -> List[str]` *(class)* — Every non-empty spelling, longest first.
+  - `NamingConvention.bind(cls, bindings: Iterable[Tuple[str, str, str]], overrides: Optional[Dict[str, str]] = None, modes: Optional[Dict[str, str]] = None) -> Dict[str, AffixRule]` *(class)* — Join this table to a host's type vocabulary: ``{host key: AffixRule}``.
+  - `NamingConvention.set(cls, key: str, text: str, mode: str = 'auto', label: str = '') -> AffixRule` *(class)* — Set one entry and persist it.
+  - `NamingConvention.update(cls, mapping: Dict[str, object]) -> Dict[str, AffixRule]` *(class)* — Set several entries at once and persist.
+  - `NamingConvention.reset(cls, key: Optional[str] = None) -> Dict[str, AffixRule]` *(class)* — Drop the user's override for *key* (or every override when ``None``).
+  - `NamingConvention.config_path(cls)` *(class)* — Where the user's overrides are written.
+
 <a id="core_utils--package_manager"></a>
 ### `core_utils/package_manager.py`
 
@@ -1331,10 +1361,12 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
-- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L52)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
-  - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
-  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L62)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+  - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
+  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
+  - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* — Drop the FBX's handoff block from a converted glTF's node extras.
+  - `MeshConvert.build_fbx_handoff(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to publish.
   - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* — Apply a scene-sidecar envelope to a GLB and embed it in its extras.
   - `MeshConvert.sidecar_foreign_packings(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* — ``{path: map type}`` for envelope textures authored for another engine.
   - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The scene-sidecar envelope embedded in a GLB, or ``None``.
@@ -1345,11 +1377,13 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
+  - `MeshConvert.describe_texture_pass(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str` *(class)* — Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
   - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.suspect_orm_materials(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]` *(class)* — Materials whose delivered ORM binding this pipeline never validated.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
   - `MeshConvert.prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop textures no material samples, and the images/bufferViews only they used.
+  - `MeshConvert.set_glb_alpha_mode(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.
   - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
 
 <a id="file_utils--mesh_ops"></a>
@@ -1422,12 +1456,12 @@ Zero-dependency USD (OpenUSD) file utilities.
 <a id="file_utils--uv_unwrap--_uv_unwrap"></a>
 ### `file_utils/uv_unwrap/_uv_unwrap.py`
 
-- **[`class EngineSpec`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L116)** — Everything :class:`UvUnwrap` needs to drive one external unwrapper.
-- **[`class UvUnwrap(HelpMixin, _UvUnwrapInternal)`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L198)** — Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
+- **[`class EngineSpec`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L115)** — Everything :class:`UvUnwrap` needs to drive one external unwrapper.
+- **[`class UvUnwrap(HelpMixin, _UvUnwrapInternal)`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L197)** — Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
   - `UvUnwrap.resolve_method(cls, method: str) -> str` *(class)* — Map ``"hard"`` / ``"organic"`` to an engine key (keys pass through).
   - `UvUnwrap.available_engines(cls) -> Dict[str, Optional[str]]` *(class)* — Map each engine name to its resolved executable path, or None.
-  - `UvUnwrap.resolve_engine(cls, engine: str, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]` *(class)* — Resolve one engine's executable.
-  - `UvUnwrap.unwrap(cls, obj_in: str, obj_out: Optional[str] = None, *, engine: str = 'mof', overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, **params) -> str` *(class)* — Unwrap *obj_in* with *engine*;
+  - `UvUnwrap.resolve_engine(cls, engine: str, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve one engine's executable.
+  - `UvUnwrap.unwrap(cls, obj_in: str, obj_out: Optional[str] = None, *, engine: str = 'mof', overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = DEFAULT_TIMEOUT, **params) -> str` *(class)* — Unwrap *obj_in* with *engine*;
   - `UvUnwrap.hard_surface(cls, obj_in: str, obj_out: Optional[str] = None, **kwargs) -> str` *(class)* — Unwrap with Ministry of Flat -- the hard-surface path.
   - `UvUnwrap.organic(cls, obj_in: str, obj_out: Optional[str] = None, **kwargs) -> str` *(class)* — Unwrap with Boundary First Flattening -- the organic path.
 
@@ -1545,7 +1579,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L55)** — Helper methods for working with image file formats.
+- **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L65)** — Helper methods for working with image file formats.
   - `ImgUtils.effective_mode(cls, mode: str, ext: str) -> str` *(class)* — The mode *ext* will actually store for an image in *mode*.
   - `ImgUtils.dropped_channels(cls, mode: str, ext: str) -> Tuple[str, ...]` *(class)* — Band names *ext* cannot keep from an image in *mode*.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
@@ -1557,7 +1591,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.create_image(mode, size=(4096, 4096), color=None)` *(static)* — Create a new image.
   - `ImgUtils.register_dds_codec(cls, codec) -> None` *(class)* — Register an external DDS codec for block formats Pillow can't write.
   - `ImgUtils.register_ktx2_encoder(cls, encoder) -> None` *(class)* — Register the KTX2/Basis encoder ``save_image`` uses for ``.ktx2``.
-  - `ImgUtils.resolve_ktx2_encoder(cls, required: bool = False)` *(class)* — The registered KTX2 encoder, or the built-in ``toktx`` wrapper.
+  - `ImgUtils.resolve_ktx2_encoder(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True)` *(class)* — The registered KTX2 encoder, or the built-in ``toktx`` wrapper.
   - `ImgUtils.ktx2_available(cls) -> bool` *(class)* — True when ``.ktx2`` output is currently writable — the capability
   - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
@@ -1636,8 +1670,9 @@ Perceptual-hash + sharpness curation for large image sets.
 
 KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 
-- **[`class Ktx2Encoder`](pythontk/pythontk/img_utils/ktx2_encoder.py#L49)** — Encode images to ``.ktx2`` (Basis Universal) by shelling out to ``toktx``.
-  - `Ktx2Encoder.resolve_toktx(cls, required: bool = False) -> Optional[str]` *(class)* — Resolve the ``toktx`` executable: PATH, conventional install
+- **[`class Ktx2Encoder`](pythontk/pythontk/img_utils/ktx2_encoder.py#L106)** — Encode images to ``.ktx2`` (Basis Universal) by shelling out to ``toktx``.
+  - `Ktx2Encoder.not_installed_error(cls, detail: str = '') -> FileNotFoundError` *(class)* — The fix-shaped error every "no toktx" outcome raises: install
+  - `Ktx2Encoder.resolve_toktx(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the ``toktx`` executable: PATH, conventional install
   - `Ktx2Encoder.available(cls) -> bool` *(class)* — True when a ``toktx`` binary is discoverable.
   - `Ktx2Encoder.read_header(cls, path: str) -> Dict[str, int]` *(class)* — Read the fixed-layout KTX 2.0 header of *path* — no transcoder needed.
   - `Ktx2Encoder.args_for(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> List[str]` — Assemble the full ``toktx`` command for one encode.
@@ -1784,7 +1819,7 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview_server.py#L302)** — Serve a directory of preview assets on loopback, with a live manifest.
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview_server.py#L305)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -1799,17 +1834,20 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.stop(self) -> None` — Stop serving and release the port.
   - `PreviewServer.publish(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int` — Place an asset in the serve root and bump the manifest version.
   - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer in the default browser.
-- **[`class PreviewPassContext`](pythontk/pythontk/net_utils/preview_server.py#L668)** — What a post-conversion preview pass reads, and reports into.
+- **[`class PreviewPassContext`](pythontk/pythontk/net_utils/preview_server.py#L677)** — What a post-conversion preview pass reads, and reports into.
   - `PreviewPassContext.logger(self)` *(property)* — The bridge's logger -- every pass reports through the push's own sink.
   - `PreviewPassContext.sidecar(self) -> Optional[Dict[str, Any]]` *(property)* — The scene-sidecar envelope the producer attached, if any.
-- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L701)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
+  - `PreviewPassContext.lightmap_search_dirs(self) -> Sequence[str]` *(property)* — The host's live texture folders (:meth:`PreviewBridge.lightmap_search_dirs`).
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L724)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L1028)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L1085)** — Hand-off bridge whose target is a live preview page rather than an application.
+  - `PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Extra directories the lightmap pass resolves the manifest's EXRs against.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
   - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
+  - `PreviewBridge.lightmap_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port.
 
 <a id="net_utils--rpc--client"></a>
@@ -1905,9 +1943,11 @@ The in-application half of the RPC pair: registry + marshaller + server.
   - `StrUtils.strip_suffix(name: str, suffixes: Iterable[str]) -> str` *(static)* — *name* without a trailing entry of *suffixes* (case-insensitive;
   - `StrUtils.retain_suffix(old_name: str, new_name: str, valid_suffixes: Optional[List[str]] = None) -> str` *(static)* — Carry ``old_name``'s trailing ``_TYPE`` suffix over to ``new_name``.
   - `StrUtils.format_suffix(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str` *(static)* — Re-format the suffix for the given string.
-  - `StrUtils.strip_known_affix(string: str, prefix: str = '', suffix: str = '') -> str` *(static)* — Strip a configured prefix and/or suffix from a string, case-insensitively.
+  - `StrUtils.strip_known_affix(string: str, prefix: str = '', suffix: str = '', *, case_sensitive: bool = False) -> str` *(static)* — Strip a configured prefix and/or suffix from a string.
+  - `StrUtils.strip_any_affix(string: str, known, *, exclude=(), one: bool = True, case_sensitive: bool = True) -> str` *(static)* — Strip whichever affix in *known* the string carries, from either end.
   - `StrUtils.infer_affix_mode(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str` *(static)* — Infer ``"prefix"`` or ``"suffix"`` from *delimiter* placement in *text*.
   - `StrUtils.split_affix(text: str, mode: str = 'auto', *, default: str = 'prefix', delimiter: str = '_') -> Tuple[str, str]` *(static)* — Split an affix string into a ``(prefix, suffix)`` pair per *mode*.
+  - `StrUtils.delimit_affix(text: str, mode: str = 'suffix', *, delimiter: str = '_') -> str` *(static)* — Give a bare affix token its boundary delimiter, on *mode*'s side.
   - `StrUtils.apply_affix(string: str, prefix: str = '', suffix: str = '') -> str` *(static)* — Idempotently apply a prefix and/or suffix to a string.
   - `StrUtils.alpha_sequence(index: int) -> str` *(static)* — Excel-column-style alphabetic label for a 0-based index.
   - `StrUtils.sequential_suffixes(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]` *(static)* — Generate ``count`` sequential labels for naming sibling items.

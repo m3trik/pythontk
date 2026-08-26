@@ -37,6 +37,7 @@ Served surface:
     ``POST /viewer-closed``  -> the viewer's unload beacon, so a closed tab is
                                 known at once rather than after a timeout
 """
+
 from __future__ import annotations
 
 import json
@@ -49,7 +50,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pythontk.core_utils.app_handoff import (
     Deliverer,
@@ -246,7 +247,9 @@ class _PreviewServerInternal:
         before awaiting its import, so a parse failure retires it for the life
         of the page.
         """
-        if dst.exists() and (self._temp is None or dst.read_bytes() == src.read_bytes()):
+        if dst.exists() and (
+            self._temp is None or dst.read_bytes() == src.read_bytes()
+        ):
             return
         self._write_asset(src, dst, move=False)
 
@@ -493,9 +496,11 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
                 f"set_scripts expects a list or mapping, not a string: {scripts!r}. "
                 f"Use add_script({scripts!r}) or set_scripts([{scripts!r}])."
             )
-        items = scripts.items() if isinstance(scripts, dict) else [
-            (name, None) for name in (scripts or ())
-        ]
+        items = (
+            scripts.items()
+            if isinstance(scripts, dict)
+            else [(name, None) for name in (scripts or ())]
+        )
         # Resolved BEFORE the swap so a bad name leaves the active set intact
         # rather than half-applied -- the page is already running against it.
         resolved = {name: self._resolve_script(name, path) for name, path in items}
@@ -516,7 +521,9 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         if path is not None:
             source = Path(path)
             if not source.is_file():
-                raise FileNotFoundError(f"Viewer script {name!r}: no such file: {source}")
+                raise FileNotFoundError(
+                    f"Viewer script {name!r}: no such file: {source}"
+                )
             return source
         filename = self.SCRIPTS.get(name)
         if filename is None:
@@ -582,7 +589,9 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
             daemon=True,
         )
         self._thread.start()
-        self.logger.info("Preview server listening on %s (serving %s)", self.url, self.root)
+        self.logger.info(
+            "Preview server listening on %s (serving %s)", self.url, self.root
+        )
         return self
 
     def stop(self) -> None:
@@ -697,6 +706,20 @@ class PreviewPassContext:
         """The scene-sidecar envelope the producer attached, if any."""
         return (self.payload.extras or {}).get("scene_sidecar")
 
+    @property
+    def lightmap_search_dirs(self) -> Sequence[str]:
+        """The host's live texture folders (:meth:`PreviewBridge.lightmap_search_dirs`).
+
+        Read through ``getattr`` because a deliverer is pluggable — this one is
+        paired with :class:`PreviewBridge` in every shipped bridge, but nothing
+        stops it being mounted on a plain :class:`HandoffBridge`, and there the
+        attribute error would be swallowed by the runner's per-pass guard and
+        skip the lightmaps entirely: the exact silent-unlit outcome the hook
+        exists to prevent.
+        """
+        hook = getattr(self.bridge, "lightmap_search_dirs", None)
+        return hook() if callable(hook) else ()
+
 
 class PreviewDeliverer(Deliverer):
     """Hand-off strategy: convert the produced FBX to GLB and publish it.
@@ -786,7 +809,9 @@ class PreviewDeliverer(Deliverer):
             self.server = PreviewServer(title=self.title)
         return self.server.start()
 
-    def _run_passes(self, passes: Dict[str, str], context: "PreviewPassContext") -> None:
+    def _run_passes(
+        self, passes: Dict[str, str], context: "PreviewPassContext"
+    ) -> None:
         """Run *passes* in order, guarding each one separately.
 
         The guard is per pass, not per chain: a deliverable missing one repair
@@ -855,11 +880,33 @@ class PreviewDeliverer(Deliverer):
         preview. (The conversion's own lightmap pass is switched off for the
         same reason -- see ``lightmaps=False`` in :meth:`deliver`.)
         """
-        bound = _mesh_convert().apply_glb_lightmaps(context.edit)
+        MeshConvert = _mesh_convert()
+        # What the manifest ASKED for, read before the bind from the same open
+        # session -- so the result can say how many objects came back unlit,
+        # which the bound records alone cannot (a miss leaves no record).
+        manifest = MeshConvert._lightmap_manifest(context.edit.gltf) or {}
+        wanted = [
+            str(entry.get("name"))
+            for entry in (manifest.get("objects") or [])
+            if entry.get("name")
+        ]
+        bound = MeshConvert.apply_glb_lightmaps(
+            # The host's live texture folders, so a manifest whose recorded
+            # authoring directory has since moved still finds its EXRs --
+            # otherwise the push previews unlit and blames the bake.
+            context.edit,
+            search_dirs=context.lightmap_search_dirs,
+        )
         if bound:
             context.logger.info(
                 "Lightmaps wired into %d material binding(s).", len(bound)
             )
+        bound_objects = {str(record.get("object")) for record in bound}
+        context.results["lightmaps"] = {
+            "expected": len(wanted),
+            "bound": len([name for name in wanted if name in bound_objects]),
+            "unbound": [name for name in wanted if name not in bound_objects],
+        }
 
     def _pass_optimize_textures(self, context: "PreviewPassContext") -> None:
         """Re-encode and repack the textures for web delivery.
@@ -908,7 +955,10 @@ class PreviewDeliverer(Deliverer):
             # the emissive and metallic-roughness repairs, and the room
             # rendered black in its own preview.
             MeshConvert.fbx_to_glb(
-                payload.primary, dst=glb, overwrite=True, prompt=False,
+                payload.primary,
+                dst=glb,
+                overwrite=True,
+                prompt=False,
                 lightmaps=False,
             )
         except (OSError, RuntimeError, ValueError) as error:
@@ -1019,6 +1069,13 @@ class PreviewDeliverer(Deliverer):
             "asset": server.manifest()["asset"],
             "opened_browser": opened,
             "sidecar": applied,
+            # ``{"expected", "bound", "unbound": [names]}`` from the lightmap
+            # pass, or ``None`` when it never ran (a pass failure, a
+            # deliverer without it). ``expected`` is what the manifest named;
+            # an unbound object previews UNLIT, and only this says so --
+            # the viewer renders "no bake", "bake not found" and "bake bound"
+            # as three shades of the same dark room.
+            "lightmaps": context.results.get("lightmaps"),
             # Whether one was *offered* -- the caller cannot infer it from an
             # empty summary, which also means "switched off".
             "sidecar_requested": "scene_sidecar" in extras,
@@ -1044,6 +1101,24 @@ class PreviewBridge(HandoffBridge):
     """
 
     deliverer: Optional[PreviewDeliverer] = None
+
+    def lightmap_search_dirs(self) -> Sequence[str]:
+        """Extra directories the lightmap pass resolves the manifest's EXRs against.
+
+        The manifest travelling inside the FBX names its maps by BASENAME plus
+        the authoring directory recorded when the bake was committed, and
+        ``MeshConvert.apply_glb_lightmaps`` tries that hint first. It is history
+        rather than a contract: reorganise the project, or open the scene on
+        another machine, and every lookup misses -- so the push previews unlit
+        with the bake sitting on disk one folder away, which reads as a broken
+        bake rather than a stale path.
+
+        Empty here because pythontk cannot know where a host keeps its
+        textures. A DCC bridge overrides it with the host's live answer
+        (mayatk's returns ``EnvUtils.texture_search_dirs()``), which is the same
+        hook shape the rest of this class uses to stay host-independent.
+        """
+        return ()
 
     def params_defaults(self) -> Dict[str, Any]:
         """glTF-appropriate export defaults, read by both DCC export mixins.
@@ -1190,9 +1265,41 @@ class PreviewBridge(HandoffBridge):
             # (MeshConvert.SIDECAR_APPLIERS), so naming one here would go
             # stale with every addition -- it already had, when base colour
             # joined emissive and this line still said "no emissive found".
-            return "Scene sidecar: nothing to carry (the scene has nothing the FBX drops)."
+            return (
+                "Scene sidecar: nothing to carry (the scene has nothing the FBX drops)."
+            )
         return "Scene sidecar: " + ", ".join(
             f"{name} {outcome}" for name, outcome in sorted(applied.items())
+        )
+
+    @staticmethod
+    def lightmap_summary(result: Optional[Dict[str, Any]]) -> str:
+        """One plain-text line on the lightmaps: bound, or how many came back unlit.
+
+        The sibling of :meth:`sidecar_summary`, for the same reason: a bake
+        the pass could not find renders exactly like no bake at all, and
+        the one warning the applier logs names a file, not an outcome. Empty
+        for a scene with no committed lightmaps -- nothing to report is not
+        a line. Names the unbound objects (capped) so the panel's message is
+        the whole diagnosis: which maps to find, not just that some are lost.
+        """
+        if not result:
+            return ""
+        report = result.get("lightmaps") or {}
+        expected = int(report.get("expected") or 0)
+        if not expected:
+            return ""
+        bound = int(report.get("bound") or 0)
+        unbound = [str(name) for name in report.get("unbound") or []]
+        if not unbound:
+            return f"Lightmaps: {bound}/{expected} object(s) bound."
+        listed = ", ".join(unbound[:5])
+        if len(unbound) > 5:
+            listed += f", +{len(unbound) - 5} more"
+        return (
+            f"Lightmaps: {bound}/{expected} object(s) bound - {len(unbound)} "
+            f"preview UNLIT ({listed}). Their maps were not found where the "
+            "bake markers point; see the log for the folders searched."
         )
 
     def stop(self) -> None:

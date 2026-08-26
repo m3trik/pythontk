@@ -83,6 +83,10 @@ class TestResolveBinary(unittest.TestCase):
             ),
             patch("pythontk.core_utils.app_installer.AppInstaller.ensure") as ensure,
             patch("sys.stdin") as stdin,
+            # consent() writes the question to stdout; without this the suite
+            # prints a live-looking "Download ... [y/N]" prompt mid-run, which
+            # reads as the tests asking for input when they are not.
+            patch("sys.stdout", new_callable=io.StringIO),
         ):
             stdin.isatty.return_value = False
             with self.assertRaises(FileNotFoundError) as cm:
@@ -106,6 +110,10 @@ class TestResolveBinary(unittest.TestCase):
                 return_value=installed,
             ) as ensure,
             patch("sys.stdin") as stdin,
+            # consent() writes the question to stdout; without this the suite
+            # prints a live-looking "Download ... [y/N]" prompt mid-run, which
+            # reads as the tests asking for input when they are not.
+            patch("sys.stdout", new_callable=io.StringIO),
         ):
             stdin.isatty.return_value = False
             result = MeshConvert.resolve_binary(auto_install=True, prompt=False)
@@ -120,6 +128,10 @@ class TestResolveBinary(unittest.TestCase):
                 return_value=None,
             ),
             patch("sys.stdin") as stdin,
+            # consent() writes the question to stdout; without this the suite
+            # prints a live-looking "Download ... [y/N]" prompt mid-run, which
+            # reads as the tests asking for input when they are not.
+            patch("sys.stdout", new_callable=io.StringIO),
         ):
             stdin.isatty.return_value = True
             stdin.readline.return_value = "n\n"
@@ -141,6 +153,10 @@ class TestResolveBinary(unittest.TestCase):
                 return_value=installed,
             ) as ensure,
             patch("sys.stdin") as stdin,
+            # consent() writes the question to stdout; without this the suite
+            # prints a live-looking "Download ... [y/N]" prompt mid-run, which
+            # reads as the tests asking for input when they are not.
+            patch("sys.stdout", new_callable=io.StringIO),
         ):
             stdin.isatty.return_value = True
             stdin.readline.return_value = "y\n"
@@ -194,6 +210,43 @@ class TestFbxToGlb(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
         return _run
+
+    def test_lightmap_dirs_reach_the_applier(self):
+        """The conversion must be able to say where the maps live NOW.
+
+        The applier has always taken *search_dirs*; ``fbx_to_glb`` had no way
+        to offer them, so every exporter and preview that converts through it
+        was stuck with whatever authoring directory the bake recorded. A
+        reorganised project then bound nothing, and the deliverable shipped
+        unlit -- measured on a delivered room.
+        """
+        seen = {}
+
+        def _spy(edit, search_dirs=()):
+            seen["search_dirs"] = list(search_dirs)
+            return []
+
+        def _run(cmd, **kw):
+            # A REAL (if empty) GLB: the post-process opens the converted file,
+            # and the plain-bytes simulator the other tests use never reaches
+            # the lightmap pass at all.
+            body = json.dumps({"asset": {"version": "2.0"}}).encode()
+            body += b" " * ((4 - len(body) % 4) % 4)
+            with open(cmd[cmd.index("-o") + 1] + ".glb", "wb") as fh:
+                fh.write(
+                    struct.pack("<4sII", b"glTF", 2, 20 + len(body))
+                    + struct.pack("<I4s", len(body), b"JSON")
+                    + body
+                )
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=_run),
+            patch.object(MeshConvert, "apply_glb_lightmaps", side_effect=_spy),
+        ):
+            MeshConvert.fbx_to_glb(self.src, lightmap_dirs=["D:/maps", "D:/more"])
+        self.assertEqual(seen.get("search_dirs"), ["D:/maps", "D:/more"])
 
     def test_default_dst_derived_from_src(self):
         expected_dst = os.path.join(self.tmp, "model.glb")
@@ -1643,6 +1696,98 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertEqual(
             gltf["textures"][0]["extensions"]["EXT_texture_webp"]["source"], 0
         )
+        # Nothing core-readable survives a WebP pass -- the image IS the webp --
+        # so the extension is REQUIRED, not merely used. Left un-escalated, the
+        # file claimed any reader could open it while handing a core one webp
+        # bytes through `source`, which glTF 2.0 does not permit.
+        self.assertIn("EXT_texture_webp", gltf.get("extensionsRequired", []))
+        self.assertNotIn(
+            "source",
+            gltf["textures"][0],
+            "no PNG/JPEG twin exists here, so no fallback may be claimed",
+        )
+
+    def test_describe_texture_pass_reports_the_outcome_not_the_mode(self):
+        """The sentence both DCC exporters log, pinned in the one place it lives.
+
+        A ceiling is not a target: an asset authored at it resamples nothing,
+        and the wording must not imply otherwise -- a "(resized)" label over an
+        unchanged 2048 set reads as "the exporter upscaled my maps to 2K".
+        """
+        full = {"images": 4, "bytes_before": 13.1e6, "bytes_after": 15.7e6}
+
+        untouched = MeshConvert.describe_texture_pass(
+            {**full, "resized": 0}, "KTX2", 2048
+        )
+        self.assertIn("none resampled", untouched)
+        self.assertIn("2048px", untouched)
+        self.assertNotIn("resized", untouched)
+
+        shrunk = MeshConvert.describe_texture_pass({**full, "resized": 3}, "KTX2", 2048)
+        self.assertIn("3 resampled down to fit 2048px", shrunk)
+
+        # max_size 0 is "never resample", so no resize claim may appear at all.
+        container = MeshConvert.describe_texture_pass({**full, "resized": 0}, "WEBP", 0)
+        self.assertIn("pixels untouched", container)
+        self.assertNotIn("resampled", container)
+
+        # An empty summary is a DIFFERENT outcome from never running.
+        nothing = MeshConvert.describe_texture_pass({}, "KTX2", 2048)
+        self.assertIn("changed nothing", nothing)
+
+    def test_max_size_is_a_ceiling_and_the_summary_says_what_it_resampled(self):
+        """A ceiling never upscales, and ``resized`` counts what actually moved.
+
+        Pins the pair of claims a delivery log makes on this pass. The mode
+        label alone ("resized") reads, to whoever set the ceiling, as "your
+        textures were rescaled to 2K" -- so an asset authored AT the ceiling
+        has to come back ``resized: 0`` with its pixels untouched, and only a
+        genuinely oversized source may be counted.
+        """
+        import base64
+
+        from PIL import Image
+
+        def png_bytes(size):
+            buffer = io.BytesIO()
+            Image.new("RGB", (size, size), (200, 180, 40)).save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        sizes = {"under.png": 32, "at.png": 64, "over.png": 128}
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [
+                    {
+                        "name": name,
+                        "uri": "data:image/png;base64,"
+                        + base64.b64encode(png_bytes(size)).decode("ascii"),
+                        "mimeType": "image/png",
+                    }
+                    for name, size in sizes.items()
+                ],
+                "textures": [{"source": i} for i in range(len(sizes))],
+            }
+        )
+        summary = MeshConvert.optimize_glb_textures(path, max_size=64)
+        self.assertEqual(
+            summary["resized"], 1, "only the oversized source may be counted"
+        )
+
+        edit = MeshConvert._read_glb(path)
+        blob = edit.bin_data
+        for image in edit.gltf["images"]:
+            view = edit.gltf["bufferViews"][image["bufferView"]]
+            raw = bytes(
+                blob[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+            )
+            got = Image.open(io.BytesIO(raw)).size
+            expected = min(sizes[image["name"]], 64)
+            self.assertEqual(
+                got,
+                (expected, expected),
+                f"{image['name']}: a ceiling clamps, never upscales",
+            )
 
     def test_optimize_relocates_data_uris_and_exempts_lightmaps(self):
         """A data-URI image lands in the BIN; a lightmap resists the resize."""
@@ -2669,6 +2814,155 @@ class TestSceneSidecar(unittest.TestCase):
             self.assertEqual(
                 edit.gltf["materials"][0]["emissiveFactor"], [0.0, 1.0, 0.0]
             )
+
+
+class TestFbxHandoff(unittest.TestCase):
+    """The FBX half of the standalone-reader contract."""
+
+    def test_describes_exactly_the_channels_the_carrier_holds(self):
+        """The block must never claim a channel the file lacks, nor omit one it
+        has — it is read back off the carrier for that reason, so a producer
+        added later still appears rather than silently falling out."""
+        block = MeshConvert.build_fbx_handoff(
+            ["lightmap_metadata", "audio_manifest", "some_future_channel"]
+        )
+        self.assertEqual(
+            sorted(block["reads"]),
+            [
+                "data_export.audio_manifest",
+                "data_export.lightmap_metadata",
+                "data_export.some_future_channel",
+            ],
+        )
+        self.assertEqual(
+            block["reads"]["data_export.some_future_channel"],
+            "tool-authored channel",
+            "an unknown channel is described generically, never dropped",
+        )
+        self.assertIn("uvIndex", block["reads"]["data_export.lightmap_metadata"])
+
+    def test_no_channels_means_no_block(self):
+        """A carrier with nothing on it has no handoff to make; stamping one
+        would leave a lone self-referential channel in an empty node."""
+        self.assertEqual(MeshConvert.build_fbx_handoff([]), {})
+        self.assertEqual(
+            MeshConvert.build_fbx_handoff([MeshConvert.FBX_HANDOFF_CHANNEL]),
+            {},
+            "the block does not describe itself",
+        )
+
+    def test_states_that_the_lightmaps_are_not_embedded(self):
+        """The load-bearing sentence, and the whole reason this exists.
+
+        An FBX embeds what its MATERIALS reference; a lighting-only bake
+        deliberately leaves its map unwired so the authored material survives.
+        So the maps the manifest names are the one part of the deliverable that
+        does not travel with it — measured on a delivered room, 23.0 MB of a
+        23.5 MB file was embedded material textures and none of it the
+        lightmap. Unstated, that is a surprise the recipient has to be told
+        about out of band, which is exactly what a handoff block is for.
+        """
+        text = MeshConvert.FBX_HANDOFF_INSTRUCTIONS
+        self.assertIn("NOT", text)
+        self.assertIn("embedded", text)
+        self.assertIn("lightmapInfo", text)
+        self.assertIn("scaleOffset", text)
+        # No asset key is carried, so the text must not lean on one.
+        self.assertNotIn("named by 'asset'", text)
+        block = MeshConvert.build_fbx_handoff(["lightmap_metadata"])
+        self.assertNotIn("asset", block)
+
+    def test_publishes_the_same_rendering_policy_as_the_glb(self):
+        """A recipient who lights a baked asset normally blows out every baked
+        surface, and that reads as a bake regression whichever container it
+        arrived in — so both carriers publish the one policy, by copy."""
+        block = MeshConvert.build_fbx_handoff(["lightmap_metadata"])
+        self.assertEqual(block["rendering"], MeshConvert.RENDERING_POLICY)
+        self.assertIsNot(
+            block["rendering"],
+            MeshConvert.RENDERING_POLICY,
+            "a caller mutating the block must not edit the class constant",
+        )
+
+    def test_source_drops_entries_that_do_not_apply(self):
+        """An unsaved scene has no name; publishing ``"scene": null`` in a
+        delivered artifact reads as a field that failed rather than one that
+        does not apply."""
+        block = MeshConvert.build_fbx_handoff(
+            ["lightmap_metadata"],
+            source={"application": "maya", "version": "2025", "scene": None},
+        )
+        self.assertEqual(block["source"], {"application": "maya", "version": "2025"})
+        self.assertIsNone(
+            MeshConvert.build_fbx_handoff(["lightmap_metadata"])["source"]
+        )
+
+    def test_the_block_is_stripped_out_of_a_converted_glb(self):
+        """A GLB must not carry the FBX's account of itself.
+
+        FBX2glTF transcribes every ``data_export`` user property into node
+        extras (probe-measured on a real conversion), so the FBX's handoff
+        arrives inside the GLB -- where it states the lightmaps are not
+        embedded, which is true of the FBX and false of a GLB that embeds them,
+        and names ``data_export.<channel>`` paths a glTF does not have. Two
+        accounts, one wrong, is worse than one.
+        """
+        gltf = {
+            "nodes": [
+                {
+                    "name": "box",
+                    "extras": {
+                        "fromFBX": {
+                            "userProperties": {
+                                "currentUVSet": {"type": "eFbxString", "value": "map1"},
+                                "lightmapInfo": {"type": "eFbxString", "value": "{}"},
+                            }
+                        }
+                    },
+                },
+                {
+                    "name": "data_export",
+                    "extras": {
+                        "fromFBX": {
+                            "userProperties": {
+                                "lightmap_metadata": {
+                                    "type": "eFbxString",
+                                    "value": "{}",
+                                },
+                                MeshConvert.FBX_HANDOFF_CHANNEL: {
+                                    "type": "eFbxString",
+                                    "value": "{}",
+                                },
+                            }
+                        }
+                    },
+                },
+                {"name": "plain"},
+            ]
+        }
+        self.assertEqual(MeshConvert.strip_fbx_handoff(gltf), 1)
+        carrier = gltf["nodes"][1]["extras"]["fromFBX"]["userProperties"]
+        self.assertNotIn(MeshConvert.FBX_HANDOFF_CHANNEL, carrier)
+        self.assertIn(
+            "lightmap_metadata",
+            carrier,
+            "the applier's own designed input must survive",
+        )
+        self.assertIn(
+            "lightmapInfo",
+            gltf["nodes"][0]["extras"]["fromFBX"]["userProperties"],
+            "per-object markers are read by consumers outside this repo",
+        )
+        self.assertEqual(
+            MeshConvert.strip_fbx_handoff(gltf), 0, "idempotent; nothing left to drop"
+        )
+
+    def test_block_is_json_serializable(self):
+        """It rides an FBX user property as a JSON string."""
+        block = MeshConvert.build_fbx_handoff(
+            ["lightmap_metadata"], source={"application": "maya", "version": "2025"}
+        )
+        self.assertEqual(json.loads(json.dumps(block))["version"], block["version"])
 
 
 class TestVerifyGlb(unittest.TestCase):
@@ -4086,6 +4380,67 @@ class TestGlbLightmaps(unittest.TestCase):
         displaced = [m for m in caught.output if "is dropped on every" in m]
         self.assertEqual(len(displaced), 1, f"one line expected, got {caught.output}")
 
+    def test_stale_locate_hint_binds_through_search_dirs(self):
+        """A moved texture folder must not silently ship an unlit deliverable.
+
+        The manifest's ``dir`` is recorded when the bake is COMMITTED, so it is
+        history rather than a contract: measured on a delivered room whose maps
+        moved from ``production/maya/sourceimages`` to ``production/sourceimages``,
+        every EXR lookup missed and the GLB shipped unlit while the bake sat one
+        folder away. The host knows where its textures are now, and *search_dirs*
+        is how it says so.
+        """
+        moved = os.path.join(self.tmp, "moved")
+        os.makedirs(moved)
+        exr = self._exr()
+        os.rename(exr, os.path.join(moved, os.path.basename(exr)))
+        manifest = self._manifest([{"name": "room", "map": os.path.basename(exr)}])
+        manifest["dir"] = os.path.join(self.tmp, "gone")  # the stale hint
+
+        self.assertEqual(
+            MeshConvert.apply_glb_lightmaps(self._glb(self._scene(manifest))),
+            [],
+            "precondition: the stale hint alone finds nothing",
+        )
+        records = MeshConvert.apply_glb_lightmaps(
+            self._glb(self._scene(manifest), name="fixed.glb"), search_dirs=[moved]
+        )
+        self.assertEqual(len(records), 1, "search_dirs must rescue the stale hint")
+
+    def test_unfindable_map_warns_once_and_reports_the_total(self):
+        """The failure has to be legible in an export log, not 48 lines of noise.
+
+        Every object baked into one atlas shares its basename, so warning per
+        ENTRY turned one moved folder into 48 identical lines -- which is how
+        this got lost in a real export log and shipped a lightmap-less
+        deliverable. One line per missing MAP, plus one summary naming the
+        total, because "never baked" (a silent no-op) and "baked and none of it
+        reached the file" are the same empty list and wildly different
+        deliverables.
+        """
+        manifest = self._manifest(
+            [{"name": f"room{i}", "map": "absent_Lightmap.exr"} for i in range(1, 4)]
+        )
+        glb = self._glb(self._scene(manifest, objects=("room1", "room2", "room3")))
+        with self.assertLogs(
+            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+        ) as caught:
+            self.assertEqual(MeshConvert.apply_glb_lightmaps(glb), [])
+        not_found = [m for m in caught.output if "not found in" in m]
+        totals = [m for m in caught.output if "Lightmaps NOT wired" in m]
+        self.assertEqual(len(not_found), 1, f"one per MAP, got {caught.output}")
+        self.assertEqual(len(totals), 1, f"one summary, got {caught.output}")
+        self.assertIn("3 object(s)", totals[0])
+        # The count is the point of collapsing the lines: one warning that says
+        # nothing about how much is at stake is not better than 48 that do.
+        self.assertIn("3 object(s)", not_found[0])
+        self.assertNotIn(
+            "search_dirs",
+            not_found[0],
+            "every shipped caller already passes them; advising it here is "
+            "wrong by the time this fires",
+        )
+
     def test_lightmap_displaces_a_packed_orm_occlusion_silently(self):
         """A slot holding the material's own metallicRoughnessTexture is the
         packed-ORM occlusion binding (set_glb_metallic_roughness, or FBX2glTF's
@@ -4431,9 +4786,9 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         MeshConvert.optimize_glb_textures(path, max_size=0, image_format="KTX2")
         self.assertEqual(self.fake.calls[0]["size"], (64, 32))
 
-    def test_lightmap_stays_lossless_webp(self):
-        """The bake keeps its fidelity path even in KTX2 mode."""
-        path = self._glb(
+    def _ktx2_lightmap_glb(self):
+        """A KTX2-mode scene with one ordinary map and one exempt lightmap."""
+        return self._glb(
             {
                 "asset": {"version": "2.0"},
                 "extras": {
@@ -4449,22 +4804,72 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
                 ],
             }
         )
+
+    def test_lightmap_stays_core_readable_when_fallbacks_are_on(self):
+        """The bake never takes a Basis codec, so it needs a container of its own
+        -- and in the "opens in any reader" mode that container must be one glTF
+        core can read.
+
+        This previously shipped the lightmap as WebP and bound it through
+        EXT_texture_webp with the plain ``source`` pointing at the SAME image,
+        calling that a fallback. glTF 2.0 core permits image/jpeg and image/png
+        only, so with the extension merely *used* the file advertised itself as
+        readable by anyone while a core reader resolved the texture to WebP.
+        Measured on a delivered room: both lightmap textures shipped that way.
+
+        Carrying a real PNG twin alongside the WebP would cost MORE than the
+        PNG alone (103 KB + 209 KB vs 209 KB), so ``ktx2_fallback=True`` keeps
+        the lightmap on the core path and declares no extension for it at all.
+        """
+        path = self._ktx2_lightmap_glb()
         MeshConvert.optimize_glb_textures(path, max_size=64, image_format="KTX2")
+
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
+        self.assertNotEqual(
+            gltf["images"][1].get("mimeType"),
+            "image/webp",
+            "a fallback-mode lightmap must stay core-readable",
+        )
+        self.assertNotIn("extensions", gltf["textures"][1])
+        self.assertIsNotNone(gltf["textures"][1].get("source"))
+        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsUsed", []))
+        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsRequired", []))
+        # The whole point of the fallback mode: a stock importer opens it.
+        self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsRequired", []))
+        # The encoder saw only the source image — never the lightmap.
+        self.assertEqual(len(self.fake.calls), 1)
+
+    def test_lightmap_takes_lossless_webp_in_pure_delivery_mode(self):
+        """With no fallbacks the wire is the whole budget, so the lightmap takes
+        the smallest lossless container -- and the file SAYS it needs it.
+
+        Lossy WebP is YUV 4:2:0, which blotches near-black lightmap texels, so
+        the encode stays lossless either way; what changes is that nothing here
+        is core-readable any more, which ``extensionsRequired`` must declare.
+        """
+        path = self._ktx2_lightmap_glb()
+        MeshConvert.optimize_glb_textures(
+            path, max_size=64, image_format="KTX2", ktx2_fallback=False
+        )
 
         edit = MeshConvert._read_glb(path)
         gltf = edit.gltf
-        self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
         lightmap = gltf["images"][1]
         self.assertEqual(lightmap["mimeType"], "image/webp")
         self.assertEqual(self._payload(edit, lightmap)[:4], b"RIFF")
-        # The carrier texture keeps the standard WebP binding WITH fallback.
         self.assertEqual(
             gltf["textures"][1]["extensions"]["EXT_texture_webp"]["source"], 1
         )
-        self.assertEqual(gltf["textures"][1]["source"], 1)
-        self.assertIn("EXT_texture_webp", gltf["extensionsUsed"])
-        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsRequired", []))
-        # Only the encoder saw only the source image — never the lightmap.
+        self.assertNotIn(
+            "source",
+            gltf["textures"][1],
+            "no core-readable twin exists, so none may be claimed",
+        )
+        for ext in ("EXT_texture_webp", "KHR_texture_basisu"):
+            self.assertIn(ext, gltf["extensionsUsed"])
+            self.assertIn(ext, gltf["extensionsRequired"])
+        # The encoder saw only the source image — never the lightmap.
         self.assertEqual(len(self.fake.calls), 1)
 
     def test_webp_then_ktx2_rerun_cleans_the_webp_declaration(self):
@@ -4595,6 +5000,59 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         with open(path, "rb") as f:
             after = f.read()
         self.assertEqual(after, before, "no partial rewrite")
+
+
+class TestSetGlbAlphaMode(unittest.TestCase):
+    """The sidecar's alpha_mode section: alphaMode / alphaCutoff by material name."""
+
+    def setUp(self):
+        import pythontk as ptk
+
+        artifacts = ptk.TempArtifacts("mesh_convert_alpha_mode")
+        self.tmp = artifacts.dir_path()
+        self.addCleanup(artifacts.cleanup)
+
+    def _glb(self, name, materials):
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as f:
+            f.write(
+                TestCheckGlbMaterials._build_glb(
+                    materials=materials, images=[], textures=[], image_blobs=[]
+                )
+            )
+        return path
+
+    @staticmethod
+    def _materials(path):
+        with open(path, "rb") as f:
+            f.read(12)
+            chunk0_len = struct.unpack("<I", f.read(4))[0]
+            f.read(4)
+            return json.loads(f.read(chunk0_len).decode("utf-8"))["materials"]
+
+    def test_mask_writes_mode_and_cutoff(self):
+        path = self._glb("cutout.glb", [{"name": "M", "alphaMode": "BLEND"}])
+        records = MeshConvert.set_glb_alpha_mode(
+            path, {"M": {"mode": "MASK", "cutoff": 0.25}}
+        )
+        self.assertEqual(len(records), 1)
+        mat = self._materials(path)[0]
+        self.assertEqual(mat["alphaMode"], "MASK")
+        self.assertAlmostEqual(mat["alphaCutoff"], 0.25)
+
+    def test_blend_drops_a_stale_cutoff(self):
+        path = self._glb(
+            "glass.glb", [{"name": "G", "alphaMode": "MASK", "alphaCutoff": 0.5}]
+        )
+        MeshConvert.set_glb_alpha_mode(path, {"G": {"mode": "BLEND"}})
+        mat = self._materials(path)[0]
+        self.assertEqual(mat["alphaMode"], "BLEND")
+        self.assertNotIn("alphaCutoff", mat)
+
+    def test_registered_as_a_sidecar_section(self):
+        self.assertEqual(
+            MeshConvert.SIDECAR_APPLIERS.get("alpha_mode"), "set_glb_alpha_mode"
+        )
 
 
 if __name__ == "__main__":

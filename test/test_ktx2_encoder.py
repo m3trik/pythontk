@@ -10,6 +10,8 @@ Run with:
     python -m pytest test_ktx2_encoder.py -v
     python test_ktx2_encoder.py
 """
+
+import contextlib
 import os
 import shutil
 import struct
@@ -34,6 +36,55 @@ class _TempDirTestCase(BaseTestCase):
         )
         os.makedirs(self.out_dir, exist_ok=True)
         self.addCleanup(shutil.rmtree, self.out_dir, ignore_errors=True)
+
+
+class Ktx2ManagedInstallIntegrityTest(BaseTestCase):
+    """The managed install must never run unverified bytes.
+
+    Windows is typed ``nsis`` -- the one AppInstaller type that RUNS the download
+    rather than unpacking it, and re-runs it through ShellExecuteExW('runas') on
+    WinError 740. Consent is obtained for KTX-Software; without a pinned digest,
+    what executes as Administrator was never confirmed to BE KTX-Software.
+    """
+
+    def test_every_platform_entry_has_a_pinned_digest(self):
+        from pythontk.img_utils.ktx2_encoder import (
+            KTX_SOFTWARE_PLATFORMS,
+            KTX_SOFTWARE_SHA256,
+        )
+
+        self.assertEqual(
+            set(KTX_SOFTWARE_PLATFORMS),
+            set(KTX_SOFTWARE_SHA256),
+            "a platform can be installed with nothing to verify it against",
+        )
+        for plat, digest in KTX_SOFTWARE_SHA256.items():
+            with self.subTest(platform=plat):
+                self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_resolve_toktx_passes_the_digests_to_the_installer(self):
+        """A digest table nothing hands to ensure() verifies nothing."""
+        from pythontk.core_utils import app_installer as ai
+        from pythontk.img_utils import ktx2_encoder as mod
+
+        seen = {}
+
+        def fake_ensure(name, **kw):
+            seen.update(kw)
+            return "/tools/toktx"
+
+        with (
+            # drive discovery to empty so the managed install is reached
+            mock.patch.object(mod.shutil, "which", return_value=None),
+            mock.patch.object(mod.Ktx2Encoder, "_WINDOWS_INSTALL_PATHS", ()),
+            mock.patch.object(
+                ai.AppInstaller, "get_path", staticmethod(lambda *a, **k: None)
+            ),
+            mock.patch.object(ai.AppInstaller, "ensure", staticmethod(fake_ensure)),
+        ):
+            mod.Ktx2Encoder.resolve_toktx(auto_install=True, prompt=False)
+
+        self.assertEqual(seen.get("sha256"), mod.KTX_SOFTWARE_SHA256)
 
 
 class Ktx2EncoderArgsTest(BaseTestCase):
@@ -155,9 +206,7 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
 
             def fake_run(argv, **kw):
                 source = argv[-1]
-                self.assertTrue(
-                    os.path.isfile(source), "staged PNG must exist at call"
-                )
+                self.assertTrue(os.path.isfile(source), "staged PNG must exist at call")
                 staged_modes.append(Image.open(source).mode)
                 return mock.Mock(returncode=0, stderr="", stdout="")
 
@@ -167,9 +216,7 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
             ):
                 enc.encode(
                     Image.new(mode, (8, 8)),
-                    os.path.join(
-                        self.out_dir, f"m_{mode.replace(';', '')}.ktx2"
-                    ),
+                    os.path.join(self.out_dir, f"m_{mode.replace(';', '')}.ktx2"),
                 )
             self.assertEqual(staged_modes, [expected], f"{mode} -> ktx2")
 
@@ -217,9 +264,7 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
         gating the rescale on ``startswith("I;")`` and calling ``point``
         turned a working (if clipping) convert into a hard ValueError."""
         enc = Ktx2Encoder(toktx="toktx-test-bin")
-        ramp = np.array(
-            [x * 257 for x in range(256)], dtype=np.uint16
-        ).reshape(1, 256)
+        ramp = np.array([x * 257 for x in range(256)], dtype=np.uint16).reshape(1, 256)
         source = Image.frombytes("I;16B", (256, 1), ramp.astype(">u2").tobytes())
         staged = os.path.join(self.out_dir, "ramp_be.png")
         enc._stage_image(source, staged)
@@ -277,11 +322,13 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
         self.assertIn("Tonemap", message)
 
     def test_missing_binary_error_names_the_fix(self):
-        with mock.patch("shutil.which", return_value=None), mock.patch(
-            "os.path.isfile", return_value=False
-        ), mock.patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
+        with (
+            mock.patch("shutil.which", return_value=None),
+            mock.patch("os.path.isfile", return_value=False),
+            mock.patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
         ):
             with self.assertRaises(FileNotFoundError) as ctx:
                 Ktx2Encoder.resolve_toktx(required=True)
@@ -289,6 +336,97 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
         message = str(ctx.exception)
         self.assertIn("KTX-Software", message)
         self.assertIn("register_ktx2_encoder", message)
+
+    # -- auto_install: the managed download behind a consent seam ---------
+
+    @contextlib.contextmanager
+    def _no_toktx(self):
+        """Discovery finds nothing: PATH, conventional paths, catalog."""
+        with (
+            mock.patch("shutil.which", return_value=None),
+            mock.patch("os.path.isfile", return_value=False),
+            mock.patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
+        ):
+            yield
+
+    def test_auto_install_downloads_through_app_installer(self):
+        """``auto_install=True, prompt=False`` hands the managed install to
+        AppInstaller under the tool name the catalog probe reads back, with
+        the Windows release typed as the NSIS installer it is."""
+        from pythontk.core_utils.app_installer import AppInstaller
+        from pythontk.img_utils.ktx2_encoder import (
+            KTX_SOFTWARE_PLATFORMS,
+            KTX_SOFTWARE_VERSION,
+        )
+
+        installed = os.path.join(self.out_dir, "bin", "toktx.exe")
+        with (
+            self._no_toktx(),
+            mock.patch.object(AppInstaller, "ensure", return_value=installed) as ensure,
+        ):
+            path = Ktx2Encoder.resolve_toktx(
+                required=True, auto_install=True, prompt=False
+            )
+        self.assertEqual(path, installed)
+        ensure.assert_called_once()
+        self.assertEqual(ensure.call_args.args[0], Ktx2Encoder.TOOL_NAME)
+        kwargs = ensure.call_args.kwargs
+        self.assertIs(kwargs["platforms"], KTX_SOFTWARE_PLATFORMS)
+        self.assertEqual(kwargs["executable"], "toktx")
+        self.assertEqual(kwargs["version"], KTX_SOFTWARE_VERSION)
+        self.assertEqual(KTX_SOFTWARE_PLATFORMS["windows"]["type"], "nsis")
+        self.assertIn(KTX_SOFTWARE_VERSION, KTX_SOFTWARE_PLATFORMS["windows"]["url"])
+
+    def test_auto_install_asks_the_prompt_and_honours_a_decline(self):
+        """A callable *prompt* is the consent seam a GUI plugs its dialog
+        into: it is asked a question naming the tool, and a "no" raises the
+        fix-shaped error WITHOUT touching the network."""
+        from pythontk.core_utils.app_installer import AppInstaller
+
+        asked = []
+
+        def decline(question):
+            asked.append(question)
+            return False
+
+        with self._no_toktx(), mock.patch.object(AppInstaller, "ensure") as ensure:
+            with self.assertRaises(FileNotFoundError) as ctx:
+                Ktx2Encoder.resolve_toktx(
+                    required=True, auto_install=True, prompt=decline
+                )
+            self.assertIsNone(
+                Ktx2Encoder.resolve_toktx(
+                    required=False, auto_install=True, prompt=decline
+                )
+            )
+        ensure.assert_not_called()
+        self.assertEqual(len(asked), 2)
+        self.assertIn("KTX-Software", asked[0])
+        self.assertIn("KTX-Software", str(ctx.exception))
+
+    def test_auto_install_failure_is_the_fix_shaped_error(self):
+        """A failed download/install surfaces as FileNotFoundError naming the
+        manual install source, so a caller's one except clause covers both
+        "not found" and "could not be fetched"."""
+        from pythontk.core_utils.app_installer import AppInstaller
+
+        with (
+            self._no_toktx(),
+            mock.patch.object(
+                AppInstaller,
+                "ensure",
+                side_effect=RuntimeError("Download failed for x"),
+            ),
+        ):
+            with self.assertRaises(FileNotFoundError) as ctx:
+                Ktx2Encoder.resolve_toktx(
+                    required=True, auto_install=True, prompt=False
+                )
+        self.assertIn("Download failed", str(ctx.exception))
+        self.assertIn("KTX-Software", str(ctx.exception))
 
 
 class Ktx2HeaderTest(_TempDirTestCase):
