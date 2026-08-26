@@ -1210,7 +1210,7 @@ class MapFactory(LoggingMixin):
             if uncovered:
                 extracted = None
                 if extract_missing:
-                    extracted = cls._extract_channels_from_packed(
+                    extracted = cls.extract_channels(
                         dominant,
                         cls._first_path(sorted_maps[dominant]),
                         uncovered,
@@ -1379,7 +1379,7 @@ class MapFactory(LoggingMixin):
             # re-extracting a channel one already supplies swaps the caller's
             # own entry for derived data (measured: an `asset_Mixed_AO.png`
             # replaced by an extracted `asset_Ambient_Occlusion.png` — the
-            # canonical-name guard in `_extract_channels_from_packed` cannot
+            # canonical-name guard in `extract_channels` cannot
             # catch it, since the caller's file need not use that name).
             # Excluded are any the winners will retire below: `replaces` may
             # name a type its packing does not carry (MSAO lists Specular),
@@ -1394,7 +1394,7 @@ class MapFactory(LoggingMixin):
 
             if uncovered:
                 extracted = (
-                    cls._extract_channels_from_packed(
+                    cls.extract_channels(
                         loser,
                         cls._first_path(sorted_maps[loser]),
                         uncovered,
@@ -1424,7 +1424,7 @@ class MapFactory(LoggingMixin):
             )
 
     @classmethod
-    def _extract_channels_from_packed(
+    def extract_channels(
         cls,
         packed_type: str,
         packed_path: Optional[str],
@@ -1438,6 +1438,13 @@ class MapFactory(LoggingMixin):
         so naming, mode enforcement, and ``dry_run`` behave exactly like every
         other generated map. All-or-nothing: if any target cannot be derived,
         returns None so the caller can fall back to keeping the packed map.
+        A target already on disk under its canonical name is REUSED, never
+        overwritten — the caller's own maps outrank derived data.
+
+        Public because a shader that cannot sample a channel needs exactly this:
+        StingrayPBS binds a ``TEX_*`` slot only through the compound plug, so a
+        packed map can drive ONE slot and its other channels have to become
+        images of their own (``mayatk.GameShader``).
 
         Parameters:
             packed_type: The packed map's canonical type (e.g. "MSAO").

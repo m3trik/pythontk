@@ -20,20 +20,24 @@ There is no pure-Python Basis encoder, so encoding shells out to ``toktx``
 (ships with KTX-Software, https://github.com/KhronosGroup/KTX-Software/releases)
 — the same pattern as ``AudioUtils``' ffmpeg dependency. Discovery is PATH,
 then the conventional install locations, then the :class:`AppInstaller` managed
-catalog; a caller can also pass an explicit binary path or register a custom
-encoder via :meth:`ImgUtils.register_ktx2_encoder`.
+catalog — and, with ``auto_install=True``, a managed download of the pinned
+release (:data:`KTX_SOFTWARE_VERSION`) behind the caller's consent policy; a
+caller can also pass an explicit binary path or register a custom encoder via
+:meth:`ImgUtils.register_ktx2_encoder`.
 
 Both codecs are 8-bit LDR: a 16-bit source is announced and reduced. Mip levels
 are generated at encode time by default — a compressed texture cannot generate
 its own mips at runtime, and glTF's ``KHR_texture_basisu`` requires level count
 1 or a full pyramid.
 """
+
 import logging
 import os
+import platform
 import shutil
 import struct
 import subprocess
-from typing import Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 try:
     from PIL import Image
@@ -44,6 +48,59 @@ except ImportError:
     Image = None
 
 logger = logging.getLogger(__name__)
+
+#: The KTX-Software release the managed install fetches (GitHub release tag
+#: ``v<version>``). Bump deliberately: the ``toktx`` flag surface
+#: :meth:`Ktx2Encoder.args_for` assembles is pinned to what this release accepts.
+KTX_SOFTWARE_VERSION = "4.4.2"
+_KTX_RELEASE_URL = (
+    "https://github.com/KhronosGroup/KTX-Software/releases/download/"
+    f"v{KTX_SOFTWARE_VERSION}/KTX-Software-{KTX_SOFTWARE_VERSION}"
+)
+_ARM64 = platform.machine().lower() in ("arm64", "aarch64")
+
+#: :class:`AppInstaller` platform table for the managed install. Windows ships
+#: only an NSIS installer (run silently into the tools dir -- the ``nsis``
+#: type); Linux a plain tarball whose ``bin/toktx`` finds ``lib/libktx.so`` by
+#: ``$ORIGIN`` rpath. macOS ships a ``.pkg`` that needs root to install, so it
+#: is deliberately absent: a Mac user installs KTX-Software by hand and PATH
+#: discovery picks it up.
+KTX_SOFTWARE_PLATFORMS = {
+    "windows": {
+        "url": f"{_KTX_RELEASE_URL}-Windows-{'arm64' if _ARM64 else 'x64'}.exe",
+        "type": "nsis",
+    },
+    "linux": {
+        "url": f"{_KTX_RELEASE_URL}-Linux-{'arm64' if _ARM64 else 'x86_64'}.tar.bz2",
+        "type": "tar.bz2",
+    },
+}
+
+#: SHA-256 of each release asset in :data:`KTX_SOFTWARE_PLATFORMS`, keyed the way
+#: :meth:`AppInstaller.ensure` reads it -- by PLATFORM. The URLs above are
+#: arch-dependent, so each entry mirrors the same ``_ARM64`` conditional; a flat
+#: one-digest-per-platform table would hard-fail every install on an arm64 machine.
+#:
+#: Windows is the reason this exists: its entry is typed ``nsis``, the one installer
+#: type that RUNS the download instead of unpacking it, and re-runs it elevated on
+#: WinError 740. Consent is obtained for KTX-Software; without a digest, what runs as
+#: Administrator was never confirmed to BE KTX-Software. Pinning also means a
+#: truncated transfer is rejected rather than executed.
+#:
+#: Taken from the v4.4.2 release assets (GitHub's published per-asset digest;
+#: the Windows x64 entry additionally re-verified by downloading and hashing:
+#: 6,417,024 bytes). Bumping KTX_SOFTWARE_VERSION MUST update all four.
+_KTX_SHA256 = {
+    "windows-x64": "1f323b0fec19794f5e6c0425a61d4b1da396872a10be862d105f4f4b2d2957fe",
+    "windows-arm64": "86d6edba47f3df597f3b9bceda6e4da8b4205b43c8386519e1c0d2ce804c4284",
+    "linux-x86_64": "a8781bad05f9624edbf910b7f258cd0a4ba7d3e63b49ecc0a0ab440bf6a0a245",
+    "linux-arm64": "60382e7b842177b8048bd58ccdc770383f8ef65b94452a25d3afdb55f2405c5a",
+}
+
+KTX_SOFTWARE_SHA256 = {
+    "windows": _KTX_SHA256["windows-arm64" if _ARM64 else "windows-x64"],
+    "linux": _KTX_SHA256["linux-arm64" if _ARM64 else "linux-x86_64"],
+}
 
 
 class Ktx2Encoder:
@@ -78,6 +135,9 @@ class Ktx2Encoder:
     #: Codec vocabulary accepted by :meth:`encode` (and by
     #: ``OutputSpec.compression`` for ``ktx2`` targets).
     CODECS = ("ETC1S", "UASTC")
+
+    #: :class:`AppInstaller` catalog key of the managed install.
+    TOOL_NAME = "ktx-software"
 
     #: KTX 2.0 file identifier — first 12 bytes of any valid output.
     KTX2_MAGIC = b"\xabKTX 20\xbb\r\n\x1a\n"
@@ -118,13 +178,38 @@ class Ktx2Encoder:
     # ------------------------------------------------------------------
 
     @classmethod
-    def resolve_toktx(cls, required: bool = False) -> Optional[str]:
+    def not_installed_error(cls, detail: str = "") -> FileNotFoundError:
+        """The fix-shaped error every "no toktx" outcome raises: install
+        source, the auto-install switch, and the registration seam."""
+        return FileNotFoundError(
+            f"KTX2 encoding requires 'toktx' (KTX-Software){detail}. Install it "
+            "from https://github.com/KhronosGroup/KTX-Software/releases and "
+            "ensure it is on PATH, pass auto_install=True to download it, or "
+            "register a custom encoder via ImgUtils.register_ktx2_encoder()."
+        )
+
+    @classmethod
+    def resolve_toktx(
+        cls,
+        required: bool = False,
+        auto_install: bool = False,
+        prompt: Union[bool, Callable[[str], bool]] = True,
+    ) -> Optional[str]:
         """Resolve the ``toktx`` executable: PATH, conventional install
-        locations, then the :class:`AppInstaller` managed catalog.
+        locations, the :class:`AppInstaller` managed catalog -- then, with
+        *auto_install*, a managed download of :data:`KTX_SOFTWARE_VERSION`.
 
         Parameters:
             required: If True, raises ``FileNotFoundError`` (with the install
                 source) instead of returning None.
+            auto_install: Permit downloading KTX-Software into the managed
+                tools dir when discovery finds nothing. On Windows the release
+                is an installer that requests administrator rights, so a UAC
+                prompt follows the download.
+            prompt: Consent policy for that download -- ``True`` asks on the
+                console, ``False`` needs none, a callable ``(question) -> bool``
+                is asked instead (a panel passes its dialog). See
+                :meth:`AppInstaller.consent`.
 
         Returns:
             Path to ``toktx``, or None when not found and *required* is False.
@@ -137,23 +222,56 @@ class Ktx2Encoder:
             if os.path.isfile(candidate):
                 return candidate
 
-        # Managed catalog only — no auto-download: KTX-Software's Windows
-        # release is an NSIS installer, not an unzip-and-run archive, so
-        # ``AppInstaller.ensure`` has nothing safe to do unattended.
         from pythontk.core_utils.app_installer import AppInstaller
 
-        managed = AppInstaller.get_path("ktx-software", executable="toktx")
+        managed = AppInstaller.get_path(
+            cls.TOOL_NAME, executable="toktx", add_to_path=True
+        )
         if managed:
             return managed
 
-        if required:
-            raise FileNotFoundError(
-                "KTX2 encoding requires 'toktx' (KTX-Software). Install it from "
-                "https://github.com/KhronosGroup/KTX-Software/releases and ensure "
-                "it is on PATH, or register a custom encoder via "
-                "ImgUtils.register_ktx2_encoder()."
+        if not auto_install:
+            if required:
+                raise cls.not_installed_error()
+            return None
+
+        question = (
+            f"KTX-Software v{KTX_SOFTWARE_VERSION} (toktx) is not installed.\n"
+            "Download and install it into the pythontk tools folder now?"
+        )
+        if platform.system().lower() == "windows":
+            question += (
+                "\n\nWindows will ask for administrator approval: the "
+                "KTX-Software installer requires it."
             )
-        return None
+        answer = AppInstaller.consent(prompt, question)
+        if answer is None:
+            if required:
+                raise cls.not_installed_error(
+                    ", and no interactive console is available to confirm the "
+                    "download (pass prompt=False to install non-interactively)"
+                )
+            return None
+        if not answer:
+            if required:
+                raise cls.not_installed_error(" and the download was declined")
+            return None
+
+        try:
+            return AppInstaller.ensure(
+                cls.TOOL_NAME,
+                platforms=KTX_SOFTWARE_PLATFORMS,
+                executable="toktx",
+                version=KTX_SOFTWARE_VERSION,
+                sha256=KTX_SOFTWARE_SHA256,
+            )
+        except (RuntimeError, OSError, LookupError) as exc:
+            logger.warning(f"KTX-Software install failed: {exc}")
+            if required:
+                raise cls.not_installed_error(
+                    f" and the managed install failed: {exc}"
+                ) from exc
+            return None
 
     @classmethod
     def available(cls) -> bool:
@@ -246,7 +364,9 @@ class Ktx2Encoder:
                 f"Unknown KTX2 codec {codec!r}: expected one of {self.CODECS}."
             )
 
-        args = [self.resolve_toktx(required=True) if self._toktx is None else self._toktx]
+        args = [
+            self.resolve_toktx(required=True) if self._toktx is None else self._toktx
+        ]
         args += ["--t2", "--encode", codec_key.lower()]
         if mipmaps:
             args.append("--genmipmap")

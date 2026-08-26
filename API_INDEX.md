@@ -32,7 +32,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/app_installer.py`
 - `class AppInstaller`
-  - methods: ensure, get_path
+  - methods: ensure, get_path, consent
 
 ### `core_utils/app_launcher.py`
 - `class AppLauncher`
@@ -143,7 +143,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/textures/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
 - `class MapFactory(LoggingMixin)`
-  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, get_tile_token, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, resolve_normal_maps, filter_redundant_maps, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, foreign_packings, unpack_to_channels, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
+  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, get_tile_token, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, resolve_normal_maps, filter_redundant_maps, extract_channels, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, foreign_packings, unpack_to_channels, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
 
 ### `core_utils/engines/textures/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
 - `class MapConversion`
@@ -294,6 +294,12 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class NamespaceHandler(LoggingMixin)`
   - methods: placeholders, is_placeholder, get_placeholder, set_placeholder, resolve_all_placeholders, has_placeholder, keys, items, values, setdefault, has, peek, raw, resolve, is_resolving
 
+### `core_utils/naming_convention.py` — Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
+- `class AffixRule`
+  - methods: parts, apply, as_dict
+- `class NamingConvention(_NamingConventionInternal)`
+  - methods: resolve, reload, keys, items, get, label, affix, mode, affix_parts, apply, all_affixes, bind, set, update, reset, config_path
+
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
   - methods: pip, install_targeted, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
@@ -377,7 +383,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, without_locate_hints, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, prune_glb_unreferenced_textures, set_glb_base_color
+  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, without_locate_hints, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_base_color
 
 ### `file_utils/mesh_ops.py` — File-level mesh processing via PyMeshLab (optional dependency).
 - `class OpSpec`
@@ -457,7 +463,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `img_utils/ktx2_encoder.py` — KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 - `class Ktx2Encoder`
-  - methods: resolve_toktx, available, read_header, args_for, encode
+  - methods: not_installed_error, resolve_toktx, available, read_header, args_for, encode
 
 ### `img_utils/mask_generator.py` — Background mask generation via rembg (optional dependency).
 - `class MaskGenerator`
@@ -495,11 +501,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
   - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, open_in_browser
 - `class PreviewPassContext`
-  - methods: logger, sidecar
+  - methods: logger, sidecar, lightmap_search_dirs
 - `class PreviewDeliverer(Deliverer)`
   - methods: ensure_server, deliver
 - `class PreviewBridge(HandoffBridge)`
-  - methods: params_defaults, url, push, sidecar_summary, stop
+  - methods: lightmap_search_dirs, params_defaults, url, push, sidecar_summary, lightmap_summary, stop
 
 ### `net_utils/rpc/client.py` — Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 - `class RpcClient`
@@ -529,7 +535,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `str_utils/_str_utils.py`
 - `class StrUtils(CoreUtils)`
-  - methods: strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, infer_affix_mode, split_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`

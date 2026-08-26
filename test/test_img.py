@@ -2392,6 +2392,32 @@ class ImgKtx2RoutingTest(BaseTestCase):
                 ImgUtils.resolve_ktx2_encoder(required=True)
         self.assertIn("register_ktx2_encoder", str(ctx.exception))
 
+    def test_auto_install_returns_an_encoder_bound_to_the_installed_binary(self):
+        """``auto_install=True`` forwards to ``Ktx2Encoder.resolve_toktx`` --
+        the prompt policy included, so a GUI's consent dialog reaches the
+        install -- and binds the path it returns, never a second discovery
+        pass that could miss a just-written catalog entry."""
+        from unittest import mock
+
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        ImgUtils.register_ktx2_encoder(None)
+
+        def consent(question):
+            return True
+
+        with mock.patch.object(Ktx2Encoder, "available", return_value=False), mock.patch.object(
+            Ktx2Encoder, "resolve_toktx", return_value=r"C:\managed\toktx.exe"
+        ) as resolve:
+            encoder = ImgUtils.resolve_ktx2_encoder(
+                required=True, auto_install=True, prompt=consent
+            )
+        self.assertIsInstance(encoder, Ktx2Encoder)
+        self.assertEqual(encoder._toktx, r"C:\managed\toktx.exe")
+        resolve.assert_called_once_with(
+            required=True, auto_install=True, prompt=consent
+        )
+
 
 class OptionalPILGuardTest(unittest.TestCase):
     """Every module-level ``try: from PIL import …`` must bind ALL of its names.

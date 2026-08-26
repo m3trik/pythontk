@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.32"
+__version__ = "0.9.33"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -179,6 +179,13 @@ DEFAULT_INCLUDE = {
         "TeeStream",
     ],
     "core_utils.user_config": ["UserConfig"],
+    # Ecosystem SSoT for type-based name affixes (mesh -> _GEO, material -> _MAT).
+    # Qt-free and DCC-free on purpose: uitk's affix picker resolves against it and
+    # cannot import a toolkit, and extapps has no DCC at all.
+    "core_utils.naming_convention": [
+        "AffixRule",
+        "NamingConvention",
+    ],
     "core_utils.preset_store": [
         "PresetStore",
         "Codec",

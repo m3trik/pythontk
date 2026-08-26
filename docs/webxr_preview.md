@@ -235,6 +235,22 @@ scene's authored emissive map — which matters precisely when the light sources
 geometry — and because it **degrades sanely**: a third-party viewer applies it as grey AO rather
 than showing nothing.
 
+### Where the maps are found — and what happens when they are not
+
+The manifest names each map by **basename**; the folder it records is the one the bake was
+committed from, and that is history, not a contract (a reorganised project, a scene migrated to
+another module, a teammate's machine). The applier resolves each basename against, in order: the
+manifest's recorded folder, the `search_dirs` the host hands it, and the GLB's own folder. Both
+DCC hosts pass `LightmapBaker.search_dirs()` — the project's texture folders plus wherever the
+bake markers' maps were actually found — so a map that moved into a subfolder still binds. A map
+found nowhere is **not guessed at**: its objects are left unbound (they render unlit, exactly like
+no bake), the applier logs one line naming the file and the folders searched, and the push result
+carries `lightmaps: {"expected", "bound", "unbound": [...]}` which `PreviewBridge.lightmap_summary`
+renders for the panel. The fix lives in the DCC, not here: the Texture Path Editor lists lightmap
+dependencies beside the textures (Find & Copy relocates them and repoints the markers; Normalize
+re-spells the recorded folder workspace-relative so another machine resolves it), and the Scene
+Exporter's *Check For Valid Paths* fails on a lightmap the markers name but no folder holds.
+
 Per-instance atlas rects (one object's patch of a shared atlas) cannot bind on a shared material,
 so they ride a **material clone carrying `KHR_texture_transform`** — pure JSON referencing the same
 accessors and the same embedded texture, so any compliant viewer renders the rect with no custom
