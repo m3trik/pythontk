@@ -22,6 +22,12 @@ DEFAULT_INCLUDE = {
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",
     "file_utils.mesh_convert._mesh_convert": "MeshConvert",
+    # Deliverable inspection/verification (read-only siblings of the
+    # editors above): structured GLB access, a zero-dep binary-FBX
+    # reader, and the gate runner the export pipelines point at files.
+    "file_utils.mesh_convert.glb_reader": ["GlbReader"],
+    "file_utils.mesh_convert.fbx_file": ["FbxFile"],
+    "file_utils.mesh_convert.export_verify": ["ExportVerifier"],
     "file_utils.uv_unwrap._uv_unwrap": "UvUnwrap",
     # Zero-dep USD primitives: sniffing, spec-compliant USDZ packaging, and a
     # usda mesh author + OBJ converters (the no-DCC publish path). DCC-native
@@ -72,6 +78,11 @@ DEFAULT_INCLUDE = {
         "BatchComplete",
         "StoreInvalidated",
         "SHOT_PALETTE",
+    ],
+    # The shot system's record of what IT wrote on scene curves, so those
+    # writes can be released when the boundary that caused them moves.
+    "core_utils.engines.shots.shot_ledger": [
+        "ShotEditLedger",
     ],
     "core_utils.engines.shots.shot_plan": [
         "ShotMove",

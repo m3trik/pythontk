@@ -171,6 +171,101 @@ class TestPlanRespace(_ShotTest):
             self.assertEqual(m.new_end, round(m.new_end))
 
 
+class TestPlanGapRetimes(_ShotTest):
+    """Which gaps change width -- the half of a respace that is NOT a rigid move.
+
+    A shot keeps its duration, so its content can travel with it unchanged. A
+    gap's whole purpose in a respace is to change width, so content living in
+    one has to be retimed instead. Measured on a 12-shot production assembly,
+    carrying it rigidly instead left a gap's own key 13 frames PAST the
+    following shot's content, and cost the PRECEDING shot -- which never moved
+    -- 42 of its 109 frames to the tangent change that caused.
+    """
+
+    def _shots(self):
+        # Two 100-frame shots with a 135-frame gap, then a 15-frame one: the
+        # shape that produced the report.
+        return [
+            ShotBlock(shot_id=1, name="A", start=0, end=100),
+            ShotBlock(shot_id=2, name="B", start=235, end=335),
+            ShotBlock(shot_id=3, name="C", start=350, end=450),
+        ]
+
+    def test_a_shrinking_gap_is_reported_with_its_new_width(self):
+        store = _store(self._shots())
+        plan = ShotPlanner.plan_respace(store, gap=15, start_frame=0)
+        gaps = ShotPlanner.plan_gap_retimes(store, plan)
+        self.assertEqual([(g.left_id, g.right_id) for g in gaps], [(1, 2)])
+        gap = gaps[0]
+        self.assertEqual((gap.lo, gap.hi), (100, 235))
+        self.assertEqual(gap.new_width, 15)
+        self.assertTrue(gap.shrinks)
+        self.assertFalse(gap.grows)
+        self.assertAlmostEqual(gap.scale, 15.0 / 135.0)
+
+    def test_a_growing_gap_is_distinguished_from_a_shrinking_one(self):
+        """They cannot run at the same moment: a scale is only safe while the
+        timeline it writes into is empty, and that is before the moves for one
+        and after them for the other."""
+        store = _store(self._shots())
+        plan = ShotPlanner.plan_respace(store, gap=60, start_frame=0)
+        by_pair = {(g.left_id, g.right_id): g for g in ShotPlanner.plan_gap_retimes(store, plan)}
+        self.assertTrue(by_pair[(1, 2)].shrinks)  # 135 -> 60
+        self.assertTrue(by_pair[(2, 3)].grows)  # 15 -> 60
+
+    def test_a_pure_translation_retimes_nothing(self):
+        """Every shot moving by the same delta keeps every gap, so a plain slide
+        of the whole sequence must not pay for -- or be changed by -- any of
+        this."""
+        store = _store(
+            [
+                ShotBlock(shot_id=1, name="A", start=0, end=100),
+                ShotBlock(shot_id=2, name="B", start=115, end=215),
+                ShotBlock(shot_id=3, name="C", start=230, end=330),
+            ]
+        )
+        plan = ShotPlanner.plan_respace(store, gap=15, start_frame=40)
+        self.assertEqual(ShotPlanner.plan_gap_retimes(store, plan), [])
+
+    def test_a_ripple_that_leaves_its_pivot_behind_still_changes_a_gap(self):
+        """The pivot is excluded from a ripple by design, so the gap between it
+        and the first shot that DID move is stretched by the full delta -- and
+        content in that gap has to be retimed exactly as in a respace. Not an
+        edge case: it is what a downstream ripple always does."""
+        store = _store(self._shots())
+        plan = ShotPlanner.plan_ripple_downstream(store, 1, after_frame=0, delta=50)
+        gaps = ShotPlanner.plan_gap_retimes(store, plan)
+        self.assertEqual([(g.left_id, g.right_id) for g in gaps], [(1, 2)])
+        self.assertTrue(gaps[0].grows)
+        self.assertEqual(gaps[0].new_width, 185)
+        self.assertEqual(gaps[0].left_delta, 0.0)
+
+    def test_the_left_delta_is_how_far_the_gap_itself_travels(self):
+        """The gap's content rides the PRECEDING shot, so its left edge moves by
+        that shot's delta -- which is where the post-move scale is anchored."""
+        store = _store(self._shots())
+        plan = ShotPlanner.plan_respace(store, gap=15, start_frame=50)
+        gap = ShotPlanner.plan_gap_retimes(store, plan)[0]
+        self.assertEqual(gap.left_delta, 50)
+
+    def test_a_collapsed_gap_scales_to_zero_rather_than_dividing(self):
+        store = _store(self._shots())
+        plan = ShotPlanner.plan_respace(store, gap=0, start_frame=0)
+        for gap in ShotPlanner.plan_gap_retimes(store, plan):
+            self.assertEqual(gap.new_width, 0)
+            self.assertEqual(gap.scale, 0.0)
+
+    def test_contiguous_shots_have_no_gap_to_retime(self):
+        store = _store(
+            [
+                ShotBlock(shot_id=1, name="A", start=0, end=100),
+                ShotBlock(shot_id=2, name="B", start=100, end=200),
+            ]
+        )
+        plan = ShotPlanner.plan_respace(store, gap=30, start_frame=0)
+        self.assertEqual(ShotPlanner.plan_gap_retimes(store, plan), [])
+
+
 class TestPlanRipple(_ShotTest):
     def test_downstream_excludes_pivot_and_earlier(self):
         store = _store(
@@ -420,7 +515,7 @@ class TestApplySkeleton(_ShotTest):
         key_calls = []
         audio_calls = []
 
-        def move_keys(objects, lo, hi, delta, over=False):
+        def move_keys(objects, lo, hi, delta, over=False, **window):
             key_calls.append(
                 {
                     "objects": list(objects),
@@ -431,7 +526,7 @@ class TestApplySkeleton(_ShotTest):
                 }
             )
 
-        def shift_audio(lo, hi, delta):
+        def shift_audio(lo, hi, delta, **window):
             audio_calls.append((lo, hi, delta))
 
         ShotApply.apply(plan, store, move_keys=move_keys, shift_audio=shift_audio)
@@ -822,10 +917,20 @@ class TestExportViewRefresh(_ShotTest):
 
     def test_empty_store_export_view_is_the_clearing_payload(self):
         # Pinned literally: this is what a DCC subclass writes onto its carrier
-        # for an empty store, and empty channels are what clear it.
+        # for an empty store, and empty channels are what clear it.  ``fps``
+        # qualifies the frame numbers the takes are expressed in, so it rides
+        # the envelope even when there are none.
+        store = ShotStore([])
         self.assertEqual(
-            ShotStore([]).to_export_view(),
-            {"fbx_takes": [], "shot_metadata": {"version": 1, "shots": []}},
+            store.to_export_view(),
+            {
+                "fbx_takes": [],
+                "shot_metadata": {
+                    "version": 1,
+                    "fps": store.scene_fps,
+                    "shots": [],
+                },
+            },
         )
 
     def test_empty_store_still_publishes(self):
@@ -840,7 +945,14 @@ class TestExportViewRefresh(_ShotTest):
         self.assertEqual(len(store.published), 1)
         self.assertEqual(
             store.published[0],
-            {"fbx_takes": [], "shot_metadata": {"version": 1, "shots": []}},
+            {
+                "fbx_takes": [],
+                "shot_metadata": {
+                    "version": 1,
+                    "fps": store.scene_fps,
+                    "shots": [],
+                },
+            },
         )
 
     def test_populated_store_publishes_its_takes(self):
@@ -858,6 +970,11 @@ class TestExportViewRefresh(_ShotTest):
             view["shot_metadata"],
             {
                 "version": 1,
+                # The rate the take frames above are counted in -- without it
+                # they are unitless to every consumer that did not author the
+                # scene (MeshConvert.apply_glb_animations reads this back out
+                # of the delivered GLB).
+                "fps": store.scene_fps,
                 "shots": [
                     {
                         "clip": "Intro",
@@ -977,6 +1094,607 @@ class TestDetectionConstants(_ShotTest):
         self.assertIn("translateX", STANDARD_TRANSFORM_ATTRS)
         self.assertIn("visibility", STANDARD_TRANSFORM_ATTRS)
         self.assertEqual(len(STANDARD_TRANSFORM_ATTRS), 10)
+
+
+class TestBoundaryLedger(unittest.TestCase):
+    """The store-scoped boundary-snapshot ledger.
+
+    Scene keys ride the DCC's undo queue; shot bounds live here, outside
+    it.  One ledger per store (= per scene) is shared by every panel that
+    mutates boundaries, so an undo after ANY panel's edit restores the
+    right snapshot — per-controller stacks desynced from each other.
+    """
+
+    def _store(self):
+        store = ShotStore()
+        store.define_shot("A", 0, 50)
+        store.define_shot("B", 60, 100)
+        return store
+
+    def test_restore_returns_the_pre_edit_bounds(self):
+        store = self._store()
+        store.push_boundary_snapshot()
+        store.update_shot(0, start=10, end=70)
+        self.assertTrue(store.restore_boundary_snapshot())
+        self.assertEqual(
+            (store.shot_by_id(0).start, store.shot_by_id(0).end), (0.0, 50.0)
+        )
+
+    def test_restore_removes_shots_created_after_the_snapshot(self):
+        """Undo of an insert must not leave a phantom overlapping shot."""
+        store = self._store()
+        store.push_boundary_snapshot()
+        store.update_shot(1, start=180, end=220)  # the ripple
+        store.define_shot("Inserted", 60, 170)  # the insert
+        store.restore_boundary_snapshot()
+        self.assertIsNone(store.shot_by_name("Inserted"))
+        self.assertEqual(
+            (store.shot_by_id(1).start, store.shot_by_id(1).end), (60.0, 100.0)
+        )
+
+    def test_redo_reapplies_what_undo_stepped_back_from(self):
+        """Without the redo side, a DCC redo re-applies the scene keys while
+        the bounds stay restored — the keys-outside-their-shot state."""
+        store = self._store()
+        store.push_boundary_snapshot()
+        store.update_shot(0, start=0, end=80)
+        store.update_shot(1, start=90, end=130)
+        store.restore_boundary_snapshot()
+        self.assertEqual(store.shot_by_id(0).end, 50.0)
+        self.assertTrue(store.redo_boundary_snapshot())
+        self.assertEqual(store.shot_by_id(0).end, 80.0)
+        self.assertEqual(store.shot_by_id(1).start, 90.0)
+        # And undo works again after the redo.
+        self.assertTrue(store.restore_boundary_snapshot())
+        self.assertEqual(store.shot_by_id(0).end, 50.0)
+
+    def test_a_new_edit_invalidates_the_redo_branch(self):
+        store = self._store()
+        store.push_boundary_snapshot()
+        store.update_shot(0, end=80)
+        store.restore_boundary_snapshot()
+        store.push_boundary_snapshot()  # a NEW edit begins
+        store.update_shot(0, end=95)
+        self.assertFalse(
+            store.redo_boundary_snapshot(),
+            "a new edit must clear the redo branch, mirroring every undo queue",
+        )
+        self.assertEqual(store.shot_by_id(0).end, 95.0, "and leave the edit intact")
+
+    def test_discard_drops_a_noop_restore_point(self):
+        store = self._store()
+        store.push_boundary_snapshot()
+        store.discard_boundary_snapshot()  # the edit turned out to be a no-op
+        self.assertFalse(store.restore_boundary_snapshot())
+
+    def test_restore_on_empty_ledger_is_a_safe_noop(self):
+        store = self._store()
+        self.assertFalse(store.restore_boundary_snapshot())
+        self.assertFalse(store.redo_boundary_snapshot())
+
+    def test_ledger_is_capped(self):
+        store = self._store()
+        for _ in range(store._BOUNDARY_LEDGER_CAP + 10):
+            store.push_boundary_snapshot()
+        self.assertEqual(len(store._boundary_undo), store._BOUNDARY_LEDGER_CAP)
+
+    def test_clear_drops_both_sides(self):
+        store = self._store()
+        store.push_boundary_snapshot()
+        store.update_shot(0, end=80)
+        store.restore_boundary_snapshot()
+        store.push_boundary_snapshot()
+        store.clear_boundary_snapshots()
+        self.assertFalse(store._boundary_undo)
+        self.assertFalse(store._boundary_redo)
+
+    def test_restore_recreates_shots_deleted_after_the_snapshot(self):
+        """Undo of a delete: the keys were never deleted with the store
+        record, so re-creating it from the snapshot is a faithful restore
+        — full identity included, not just bounds."""
+        store = self._store()
+        store.update_shot(
+            0, name="Hero", description="the money shot", objects=["cubeA"]
+        )
+        store.shot_by_id(0).metadata["camera"] = "cam1"
+        store.push_boundary_snapshot()
+        store.remove_shot(0)
+        self.assertIsNone(store.shot_by_id(0))
+        store.restore_boundary_snapshot()
+        shot = store.shot_by_id(0)
+        self.assertIsNotNone(shot, "the deleted shot must be re-created")
+        self.assertEqual(
+            (shot.name, shot.description, shot.objects, shot.metadata),
+            ("Hero", "the money shot", ["cubeA"], {"camera": "cam1"}),
+            "with its FULL identity, not just bounds",
+        )
+
+    def test_redo_of_an_insert_recreates_the_inserted_shot(self):
+        """Redo re-applies the scene keys (the ripple); without membership
+        re-creation the inserted shot's record stayed gone while the keys
+        moved — the asymmetric half of the phantom-shot fix."""
+        store = self._store()
+        store.push_boundary_snapshot()
+        store.update_shot(1, start=180, end=220)  # the ripple
+        inserted = store.define_shot("Inserted", 60, 170)
+        store.restore_boundary_snapshot()  # undo removes it
+        self.assertIsNone(store.shot_by_id(inserted.shot_id))
+        store.redo_boundary_snapshot()
+        again = store.shot_by_id(inserted.shot_id)
+        self.assertIsNotNone(again, "redo must bring the inserted shot back")
+        self.assertEqual(
+            (again.name, again.start, again.end), ("Inserted", 60.0, 170.0)
+        )
+        self.assertEqual(
+            (store.shot_by_id(1).start, store.shot_by_id(1).end), (180.0, 220.0)
+        )
+
+    def test_snapshot_includes_objects(self):
+        store = self._store()
+        store.update_shot(0, objects=["cubeA"])
+        store.push_boundary_snapshot()
+        store.update_shot(0, objects=["cubeA", "cubeB"])
+        store.restore_boundary_snapshot()
+        self.assertEqual(store.shot_by_id(0).objects, ["cubeA"])
+
+
+class TestBoundaryLedgerTags(unittest.TestCase):
+    """Restore points carry an opaque DCC tag.
+
+    A restore point and the DCC undo step that accompanies it are two
+    different stacks and do NOT always come in pairs — an edit that moved
+    only BOUNDS records nothing natively.  The store keeps whatever marker
+    the DCC layer hands it so that layer can tell the cases apart.
+    """
+
+    def _store(self):
+        store = ShotStore()
+        store.define_shot("A", 0, 50)
+        store.define_shot("B", 60, 100)
+        return store
+
+    def test_untagged_push_peeks_none(self):
+        store = self._store()
+        store.push_boundary_snapshot()
+        self.assertIsNone(store.peek_boundary_tag())
+        self.assertTrue(store.has_boundary_snapshot())
+
+    def test_peek_is_none_when_empty_and_has_is_false(self):
+        store = self._store()
+        self.assertIsNone(store.peek_boundary_tag())
+        self.assertFalse(store.has_boundary_snapshot())
+        self.assertFalse(store.has_boundary_snapshot(redo=True))
+
+    def test_tag_stamps_the_newest_restore_point(self):
+        store = self._store()
+        store.push_boundary_snapshot()
+        self.assertTrue(store.tag_boundary_snapshot((False, "other_op")))
+        self.assertEqual(store.peek_boundary_tag(), (False, "other_op"))
+
+    def test_tagging_an_empty_ledger_reports_failure(self):
+        self.assertFalse(self._store().tag_boundary_snapshot((True, "x")))
+
+    def test_tag_only_touches_the_top_entry(self):
+        store = self._store()
+        store.push_boundary_snapshot(tag=(True, "first"))
+        store.push_boundary_snapshot()
+        store.tag_boundary_snapshot((False, "second"))
+        self.assertEqual(store.peek_boundary_tag(), (False, "second"))
+        store.restore_boundary_snapshot()
+        self.assertEqual(store.peek_boundary_tag(), (True, "first"))
+
+    def test_tag_rides_across_to_the_redo_side(self):
+        """Redoing an edit re-applies the same DCC step (or, unpaired, none)."""
+        store = self._store()
+        store.push_boundary_snapshot(tag=(False, "bounds_only"))
+        store.update_shot(0, end=70)
+        store.restore_boundary_snapshot()
+        self.assertEqual(store.peek_boundary_tag(redo=True), (False, "bounds_only"))
+        self.assertTrue(store.has_boundary_snapshot(redo=True))
+        store.redo_boundary_snapshot()
+        self.assertEqual(store.peek_boundary_tag(), (False, "bounds_only"))
+
+    def test_tagged_entries_still_restore_bounds(self):
+        store = self._store()
+        store.push_boundary_snapshot(tag=(True, "chunk_1"))
+        store.update_shot(0, start=10, end=70)
+        self.assertTrue(store.restore_boundary_snapshot())
+        self.assertEqual(
+            (store.shot_by_id(0).start, store.shot_by_id(0).end), (0.0, 50.0)
+        )
+
+
+class TestOrderedPhaseOverwrites(unittest.TestCase):
+    """Phase 1 must let keys pass their neighbours.
+
+    Its topological order only orders the moves the PLAN contains.  A shared
+    curve can carry keys no shot owns (keys inside a shot that does not list
+    that object); those never move, and a clamping "move" semantic collapses
+    the travelling key onto the first one it meets — landing it at the wrong
+    frame, duplicated.  Reproduced on a real production scene.
+    """
+
+    def test_ordered_moves_pass_over(self):
+        store = ShotStore()
+        store.define_shot("A", 0, 50, objects=["obj"])
+        store.define_shot("B", 60, 100, objects=["obj"])
+        calls = []
+
+        def move_keys(objects, lo, hi, delta, over=False, **window):
+            calls.append(over)
+
+        ShotApply.apply(
+            ShotPlanner.plan_respace(store, gap=20, start_frame=0),
+            store,
+            move_keys=move_keys,
+        )
+        self.assertTrue(calls, "the plan must have moved something")
+        self.assertTrue(
+            all(calls), "every phase must pass over=True (see the MoveKeys protocol)"
+        )
+
+
+class TestDiscardRestoresTheRedoBranch(unittest.TestCase):
+    """``discard_boundary_snapshot`` is the inverse of the push before it.
+
+    A push clears the redo branch, which is right for a real edit.  But
+    several paths push UP FRONT and only then discover the edit was a no-op
+    (a drag that scaled nothing, a trim with zero delta, a delete whose every
+    cutKey failed on a locked attr) — and those were costing the user their
+    redo branch with nothing on screen to explain it.
+    """
+
+    def _store_with_redo(self):
+        store = ShotStore()
+        store.define_shot("A", 0, 50)
+        store.define_shot("B", 60, 100)
+        store.push_boundary_snapshot(tag=(False, "edit"))
+        store.update_shot(0, end=40)
+        store.restore_boundary_snapshot()  # -> a redo branch now exists
+        return store
+
+    def test_a_no_op_edit_keeps_the_redo_branch(self):
+        store = self._store_with_redo()
+        store.push_boundary_snapshot(tag=(False, "noop"))
+        store.discard_boundary_snapshot()
+        self.assertTrue(store.has_boundary_snapshot(redo=True))
+        self.assertEqual(store.peek_boundary_tag(redo=True), (False, "edit"))
+
+    def test_the_restored_redo_branch_still_applies(self):
+        store = self._store_with_redo()
+        store.push_boundary_snapshot()
+        store.discard_boundary_snapshot()
+        self.assertTrue(store.redo_boundary_snapshot())
+        self.assertEqual(store.shot_by_id(0).end, 40.0)
+
+    def test_a_real_edit_still_invalidates_the_redo_branch(self):
+        store = self._store_with_redo()
+        store.push_boundary_snapshot(tag=(True, "real"))
+        store.update_shot(1, end=90)
+        self.assertFalse(store.has_boundary_snapshot(redo=True))
+
+    def test_discard_still_drops_the_undo_entry(self):
+        store = self._store_with_redo()
+        depth = len(store._boundary_undo)
+        store.push_boundary_snapshot()
+        store.discard_boundary_snapshot()
+        self.assertEqual(len(store._boundary_undo), depth)
+
+    def test_a_second_discard_cannot_resurrect_a_consumed_branch(self):
+        """The stash is a single slot; consuming the redo branch clears it."""
+        store = self._store_with_redo()
+        store.redo_boundary_snapshot()  # consumes the branch
+        store.push_boundary_snapshot()
+        store.discard_boundary_snapshot()
+        self.assertFalse(store.has_boundary_snapshot(redo=True))
+
+    def test_discard_on_an_empty_ledger_is_harmless(self):
+        store = ShotStore()
+        store.define_shot("A", 0, 50)
+        store.discard_boundary_snapshot()
+        self.assertFalse(store.has_boundary_snapshot())
+        self.assertFalse(store.has_boundary_snapshot(redo=True))
+
+
+class TestObjectsToAdopt(unittest.TestCase):
+    """The rule deciding what a moving shot may carry.
+
+    A mover shifts a shot's own object list within a window, so anything
+    keyed in that window but missing from the list is left behind — the shot
+    moves and part of its animation does not.  Membership goes stale for
+    ordinary reasons (a renamed object, an object animated after the shots
+    were authored), so the window has to be consulted; but claiming purely
+    on time steals keys at a shared boundary.
+    """
+
+    def test_an_object_no_shot_owns_is_adopted(self):
+        self.assertEqual(
+            ShotPlanner.objects_to_adopt({"orphan": [10.0, 20.0]}, set(), 0.0, 50.0),
+            ["orphan"],
+        )
+
+    def test_an_object_the_shot_already_lists_is_skipped(self):
+        self.assertEqual(
+            ShotPlanner.objects_to_adopt({"mine": [10.0]}, {"mine"}, 0.0, 50.0), []
+        )
+
+    def test_keys_outside_the_window_do_not_qualify(self):
+        self.assertEqual(
+            ShotPlanner.objects_to_adopt({"late": [80.0]}, set(), 0.0, 50.0), []
+        )
+
+    def test_a_gapped_window_is_half_open(self):
+        """With a gap, the upper bound is the NEXT shot's own opening sample."""
+        self.assertEqual(
+            ShotPlanner.objects_to_adopt({"edge": [50.0]}, set(), 0.0, 50.0), []
+        )
+        self.assertEqual(
+            ShotPlanner.objects_to_adopt({"edge": [0.0]}, set(), 0.0, 50.0), ["edge"]
+        )
+
+    def test_a_closed_upper_bound_takes_the_shared_sample(self):
+        """Contiguous: the shared sample is this shot's closing fencepost."""
+        self.assertEqual(
+            ShotPlanner.objects_to_adopt(
+                {"edge": [50.0]}, set(), 0.0, 50.0, hi_closed=True
+            ),
+            ["edge"],
+        )
+
+    def test_an_open_lower_bound_declines_the_shared_sample(self):
+        """The same sample seen from the FOLLOWING shot: not its to move."""
+        self.assertEqual(
+            ShotPlanner.objects_to_adopt(
+                {"edge": [40.0]}, set(), 40.0, 60.0, lo_open=True
+            ),
+            [],
+        )
+
+    def test_the_two_flags_partition_a_shared_sample(self):
+        """Exactly one of the two adjacent shots claims it — never both, never
+        neither.  This is what replaced the owner exemption: the resized-shot
+        case (B ends where C starts) now falls out of the window itself."""
+        keyed = {"B": [20.0, 30.0, 40.0]}
+        preceding = ShotPlanner.objects_to_adopt(
+            keyed, set(), 20.0, 40.0, hi_closed=True
+        )
+        following = ShotPlanner.objects_to_adopt(keyed, set(), 40.0, 60.0, lo_open=True)
+        self.assertEqual(preceding, ["B"], "the shared sample is the owner's")
+        self.assertEqual(following, [], "and the next shot must not claim it too")
+
+    def test_stale_membership_far_from_any_boundary_is_still_adopted(self):
+        """An object animated after the shots were authored: no flag involved,
+        it simply has a key inside the window being moved."""
+        self.assertEqual(
+            ShotPlanner.objects_to_adopt(
+                {"shared": [10.0, 500.0]}, set(), 480.0, 520.0
+            ),
+            ["shared"],
+        )
+
+    def test_the_result_is_sorted_and_deduplicated(self):
+        got = ShotPlanner.objects_to_adopt(
+            {"b": [1.0, 2.0], "a": [3.0]}, set(), 0.0, 10.0
+        )
+        self.assertEqual(got, ["a", "b"])
+
+    def test_empty_inputs_are_harmless(self):
+        self.assertEqual(ShotPlanner.objects_to_adopt({}, set(), 0.0, 10.0), [])
+        self.assertEqual(ShotPlanner.objects_to_adopt({"x": []}, None, 0.0, 10.0), [])
+
+
+class TestFencepostEnvelope(unittest.TestCase):
+    """Contiguous shots share one sample; the preceding shot owns it.
+
+    A shot spans the samples ``start..end``, so at gap 0 shot N's closing
+    sample and shot N+1's opening sample are the same frame number.  The
+    envelope's two closure flags decide it once, for every consumer, and
+    the result must PARTITION: never both shots, never neither.
+    """
+
+    def _shots(self, *pairs):
+        return [
+            ShotBlock(i, chr(65 + i), lo, hi, []) for i, (lo, hi) in enumerate(pairs)
+        ]
+
+    def test_contiguous_shots_close_the_upper_bound_and_open_the_lower(self):
+        shots = self._shots((0, 40), (40, 80), (80, 120))
+        self.assertEqual(ShotPlanner.envelope_for(shots, 0), (0, 40, False, True))
+        self.assertEqual(ShotPlanner.envelope_for(shots, 1), (40, 80, True, True))
+        env = ShotPlanner.envelope_for(shots, 2)
+        self.assertEqual(env[0], 80)
+        self.assertTrue(env[2], "the last shot still declines its opening sample")
+        self.assertFalse(env[3], "and its unbounded end closes nothing")
+
+    def test_a_gapped_boundary_keeps_the_plain_half_open_window(self):
+        shots = self._shots((0, 40), (50, 90))
+        self.assertEqual(ShotPlanner.envelope_for(shots, 0), (0, 50, False, False))
+        self.assertEqual(ShotPlanner.envelope_for(shots, 1)[:3], (50, 1.0e9, False))
+
+    def test_every_shared_sample_belongs_to_exactly_one_shot(self):
+        shots = self._shots((0, 40), (40, 80), (80, 120))
+
+        def owners(t):
+            return [
+                s.name
+                for i, s in enumerate(shots)
+                if ShotPlanner.in_window(t, *ShotPlanner.envelope_for(shots, i))
+            ]
+
+        self.assertEqual(owners(40.0), ["A"], "shared sample -> preceding shot")
+        self.assertEqual(owners(80.0), ["B"])
+        self.assertEqual(owners(0.0), ["A"], "the very first sample still lands")
+        for t in (0.5, 39.5, 40.5, 79.5, 119.0):
+            self.assertEqual(len(owners(t)), 1, f"frame {t} must have one owner")
+
+    def test_trailing_gap_content_still_travels_with_the_preceding_shot(self):
+        shots = self._shots((0, 40), (50, 90))
+        self.assertTrue(
+            ShotPlanner.in_window(45.0, *ShotPlanner.envelope_for(shots, 0)),
+            "a fade tail in the gap belongs to the shot it trails",
+        )
+        self.assertFalse(
+            ShotPlanner.in_window(45.0, *ShotPlanner.envelope_for(shots, 1))
+        )
+
+
+class TestBoundarySplits(unittest.TestCase):
+    """Opening a gap pulls a shared sample apart; the following shot needs a copy."""
+
+    def _store(self, *pairs):
+        st = ShotStore()
+        st.shots = [
+            ShotBlock(i, chr(65 + i), lo, hi, []) for i, (lo, hi) in enumerate(pairs)
+        ]
+        return st
+
+    def test_a_respace_that_opens_a_gap_reports_the_following_shot(self):
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_respace(st, gap=10, start_frame=0)
+        self.assertEqual(ShotPlanner.boundary_splits(st, plan), [(0, 1, 40.0, 50.0)])
+
+    def test_a_respace_that_keeps_the_gap_at_zero_reports_nothing(self):
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_respace(st, gap=0, start_frame=0)
+        self.assertEqual(ShotPlanner.boundary_splits(st, plan), [])
+
+    def test_an_already_gapped_boundary_is_not_a_split(self):
+        st = self._store((0, 40), (50, 90))
+        plan = ShotPlanner.plan_respace(st, gap=20, start_frame=0)
+        self.assertEqual(ShotPlanner.boundary_splits(st, plan), [])
+
+    def test_a_shot_absent_from_the_plan_counts_as_stationary(self):
+        """Only the following shot moves: the boundary still splits."""
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_ripple_downstream(st, 0, 40.0, 15.0)
+        self.assertNotIn(0, plan.moves, "the pivot is excluded by construction")
+        self.assertEqual(ShotPlanner.boundary_splits(st, plan), [(0, 1, 40.0, 55.0)])
+
+
+class TestKeyCollisions(unittest.TestCase):
+    """Collapsing a gap converges two samples on one frame.
+
+    Maya neither refuses nor overwrites there — it stacks a duplicate a
+    fraction of a frame away — so the caller has to know beforehand.
+    """
+
+    def test_a_mover_landing_on_a_stationary_key_is_reported(self):
+        windows = [(50.0, 90.0, False, False, -10.0)]  # B collapses onto A
+        self.assertEqual(
+            ShotPlanner.key_collisions(windows, [10.0, 40.0, 50.0, 70.0]),
+            [(40.0, [50.0], [40.0])],
+        )
+
+    def test_a_clear_destination_is_not_reported(self):
+        windows = [(50.0, 90.0, False, False, -10.0)]
+        self.assertEqual(ShotPlanner.key_collisions(windows, [10.0, 50.0, 70.0]), [])
+
+    def test_keys_that_travel_together_never_collide(self):
+        """The whole window shifts, so its keys keep their spacing."""
+        windows = [(0.0, 100.0, False, False, 25.0)]
+        self.assertEqual(ShotPlanner.key_collisions(windows, [10.0, 20.0, 30.0]), [])
+
+    def test_two_movers_converging_on_one_frame_are_reported(self):
+        windows = [
+            (0.0, 45.0, False, False, 10.0),
+            (45.0, 90.0, False, False, -10.0),
+        ]
+        got = ShotPlanner.key_collisions(windows, [30.0, 50.0])
+        self.assertEqual(got, [(40.0, [30.0, 50.0], [])])
+
+    def test_a_group_with_no_mover_is_not_a_collision(self):
+        """Two stationary keys cannot already share a frame."""
+        self.assertEqual(ShotPlanner.key_collisions([], [10.0, 20.0]), [])
+
+
+class TestPivotMovePlan(unittest.TestCase):
+    """One shot moving outside a multi-shot plan still uses the engine's window.
+
+    Both DCC pivot movers derive their envelope from this, so a shared
+    sample cannot be assigned one way by the plan path and another by the
+    single-shot path — which is exactly how the two movers drifted apart.
+    """
+
+    def _store(self, *pairs):
+        st = ShotStore()
+        st.shots = [
+            ShotBlock(i, chr(65 + i), lo, hi, []) for i, (lo, hi) in enumerate(pairs)
+        ]
+        st.snap_whole_frames = False
+        return st
+
+    def test_the_move_carries_the_shots_own_envelope_and_flags(self):
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_pivot_move(st, 1, 60)
+        mv = plan.moves[1]
+        self.assertEqual((mv.old_start, mv.old_end), (40, 80))
+        self.assertEqual((mv.new_start, mv.new_end), (60, 100))
+        self.assertTrue(mv.env_lo_open, "A closes on 40, so B must decline it")
+        self.assertEqual(mv.env_start, 40)
+
+    def test_only_the_named_shot_is_in_the_plan(self):
+        st = self._store((0, 40), (40, 80), (80, 120))
+        plan = ShotPlanner.plan_pivot_move(st, 1, 60)
+        self.assertEqual(list(plan.moves), [1], "nothing is rippled")
+        self.assertEqual(plan.parked, [])
+
+    def test_a_zero_delta_move_is_planned_but_not_sequenced(self):
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_pivot_move(st, 1, 40)
+        self.assertIn(1, plan.moves)
+        self.assertFalse(plan.moves[1].moves)
+        self.assertEqual(plan.sequence, [], "a shot that does not move is not applied")
+
+    def test_an_unknown_shot_yields_an_empty_plan(self):
+        st = self._store((0, 40))
+        self.assertEqual(ShotPlanner.plan_pivot_move(st, 99, 10).moves, {})
+
+    def test_the_duration_is_preserved(self):
+        st = self._store((10, 55))
+        mv = ShotPlanner.plan_pivot_move(st, 0, 100).moves[0]
+        self.assertEqual(mv.new_end - mv.new_start, 45)
+
+
+class TestMoveWindows(unittest.TestCase):
+    """The window tuples a collision test consumes come from the engine."""
+
+    def _store(self, *pairs):
+        st = ShotStore()
+        st.shots = [
+            ShotBlock(i, chr(65 + i), lo, hi, []) for i, (lo, hi) in enumerate(pairs)
+        ]
+        return st
+
+    def test_only_moving_shots_contribute_a_window(self):
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_respace(st, gap=10, start_frame=0)
+        # A stays at [0,40]; only B moves.
+        self.assertEqual(len(ShotPlanner.move_windows(plan)), 1)
+
+    def test_each_window_carries_bounds_flags_and_delta(self):
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_respace(st, gap=10, start_frame=0)
+        lo, hi, lo_open, hi_closed, delta = ShotPlanner.move_windows(plan)[0]
+        self.assertEqual((lo, delta), (40, 10.0))
+        self.assertTrue(lo_open, "B declines the sample A closes on")
+        self.assertIsInstance(hi_closed, bool)
+        self.assertGreater(hi, lo)
+
+    def test_a_plan_that_moves_nothing_has_no_windows(self):
+        st = self._store((0, 40), (50, 90))
+        plan = ShotPlanner.plan_respace(st, gap=10, start_frame=0)
+        self.assertEqual(ShotPlanner.move_windows(plan), [])
+
+    def test_the_windows_feed_key_collisions_directly(self):
+        """The two are a matched pair — pin the shape by using it."""
+        st = self._store((0, 40), (50, 90))
+        plan = ShotPlanner.plan_respace(st, gap=0, start_frame=0)
+        windows = ShotPlanner.move_windows(plan)
+        self.assertEqual(
+            ShotPlanner.key_collisions(windows, [10.0, 40.0, 50.0]),
+            [(40.0, [50.0], [40.0])],
+            "B's opening sample collapses onto A's closing one",
+        )
 
 
 if __name__ == "__main__":

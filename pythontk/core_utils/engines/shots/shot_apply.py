@@ -27,20 +27,28 @@ from pythontk.core_utils.engines.shots.shot_plan import MovePlan, _INF, ShotPlan
 
 
 # ``move_keys`` protocol:
-#     move_keys(objects, env_lo, env_hi, delta, over=False) -> None
-# Shift the keys of *objects* whose time falls in the half-open envelope
-# ``[env_lo, env_hi)`` by *delta* frames.  ``over=True`` (used by the park /
-# land phases) must let keys pass neighbouring keys on the same curve — those
-# phases teleport a shot's keys across other shots' content, and a clamping
-# "move" semantic would strand them.  The ordered phase uses ``over=False``:
-# the plan's topological order guarantees those moves never cross.
+#     move_keys(objects, env_lo, env_hi, delta, over=False,
+#               lo_open=False, hi_closed=False) -> None
+# Shift the keys of *objects* whose time falls in the envelope
+# ``[env_lo, env_hi)`` by *delta* frames.  ``lo_open`` / ``hi_closed`` reshape
+# the bounds for a SHARED sample between contiguous shots — the fencepost rule
+# in ``shot_plan._envelope_for``; a writer MUST honour them or two shots claim
+# one frame.  ``over=True`` must let keys pass
+# neighbouring keys on the same curve; EVERY phase passes it.  The park / land
+# phases teleport a shot's keys across other shots' content, and the ordered
+# phase needs it too: its topological order only orders the moves the plan
+# CONTAINS, and a shared curve can carry keys no shot owns (keys inside a
+# shot that does not list that object).  Those are never in the plan, never
+# move, and a clamping "move" semantic collapses the travelling key onto the
+# first one it meets — landing it at the wrong frame, duplicated.
 MoveKeys = Callable[..., None]
 
 # ``shift_audio`` protocol:
-#     shift_audio(env_lo, env_hi, delta) -> None
-# Shift audio keys within the envelope by *delta*.  Optional; ``None`` skips
-# audio entirely (the common pure case).
-ShiftAudio = Callable[[float, float, float], None]
+#     shift_audio(env_lo, env_hi, delta, lo_open=False, hi_closed=False) -> None
+# Shift audio keys within the envelope by *delta*, honouring the same
+# fencepost flags as ``move_keys``.  Optional; ``None`` skips audio entirely
+# (the common pure case).
+ShiftAudio = Callable[..., None]
 
 
 class ShotApply:
@@ -110,9 +118,15 @@ class ShotApply:
         def _capped(env_end: float) -> float:
             return env_end if env_end < _INF / 2 else cap
 
-        def _audio(env_lo: float, env_hi: float, delta: float) -> None:
+        def _audio(move, env_lo: float, env_hi: float, delta: float) -> None:
             if shift_audio is not None:
-                shift_audio(env_lo, env_hi, delta)
+                shift_audio(
+                    env_lo,
+                    env_hi,
+                    delta,
+                    lo_open=move.env_lo_open,
+                    hi_closed=move.env_hi_closed,
+                )
 
         # Phase 0 — park cycle members' keys beyond every envelope.
         for shot_id in plan.parked:
@@ -121,9 +135,15 @@ class ShotApply:
             if shot is None:
                 continue
             move_keys(
-                shot.objects, move.env_start, _capped(move.env_end), park, over=True
+                shot.objects,
+                move.env_start,
+                _capped(move.env_end),
+                park,
+                over=True,
+                lo_open=move.env_lo_open,
+                hi_closed=move.env_hi_closed,
             )
-            _audio(move.env_start, _capped(move.env_end), park)
+            _audio(move, move.env_start, _capped(move.env_end), park)
 
         # Phase 1 — ordered moves.
         for i, shot_id in enumerate(plan.sequence):
@@ -133,8 +153,18 @@ class ShotApply:
             shot = shots_by_id.get(shot_id)
             if shot is None:
                 continue
-            move_keys(shot.objects, move.env_start, _capped(move.env_end), move.delta)
-            _audio(move.env_start, _capped(move.env_end), move.delta)
+            # over=True: see the MoveKeys protocol note — unowned keys on a
+            # shared curve are not in the plan and would clamp this move.
+            move_keys(
+                shot.objects,
+                move.env_start,
+                _capped(move.env_end),
+                move.delta,
+                over=True,
+                lo_open=move.env_lo_open,
+                hi_closed=move.env_hi_closed,
+            )
+            _audio(move, move.env_start, _capped(move.env_end), move.delta)
             shot.start = move.new_start
             shot.end = move.new_end
 
@@ -154,9 +184,14 @@ class ShotApply:
                 _capped(move.env_end) + park,
                 move.delta - park,
                 over=True,
+                lo_open=move.env_lo_open,
+                hi_closed=move.env_hi_closed,
             )
             _audio(
-                move.env_start + park, _capped(move.env_end) + park, move.delta - park
+                move,
+                move.env_start + park,
+                _capped(move.env_end) + park,
+                move.delta - park,
             )
             shot.start = move.new_start
             shot.end = move.new_end

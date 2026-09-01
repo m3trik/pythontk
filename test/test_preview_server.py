@@ -23,7 +23,12 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from pythontk.core_utils.app_handoff import HandoffBridge, HandoffRequest, Payload
+from pythontk.core_utils.app_handoff import (
+    Deliverer,
+    HandoffBridge,
+    HandoffRequest,
+    Payload,
+)
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 from pythontk.net_utils.preview_server import (
@@ -469,8 +474,14 @@ class PreviewServerTestCase(unittest.TestCase):
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
         self.assertIn("function readRenderingPolicy(gltf)", page)
-        self.assertIn("holder.scene_sidecar", page)
-        self.assertIn("envelope?.handoff?.rendering", page)
+        self.assertIn("readExtras(gltf, 'scene_sidecar')", page)
+        self.assertIn("?.handoff?.rendering", page)
+        # ONE probe for every extras block the page reads (scene_sidecar,
+        # lightmap_web, animation_web): a value can ride as an object or a JSON
+        # string, under the scene's extras or the glTF root's, and a per-block
+        # copy of that walk is how one block ends up missing a holder and going
+        # silently inert on a deliverable the others handle.
+        self.assertEqual(page.count("for (const holder of"), 1)
         # Read BEFORE the lights are set, or the first frame of a new model is
         # lit by the previous one's policy.
         self.assertLess(
@@ -607,6 +618,44 @@ class PreviewServerTestCase(unittest.TestCase):
         self._get("manifest.json")
         server.stop()
         self.assertFalse(server.has_viewer())
+
+    def test_the_viewer_plays_the_clips_a_deliverable_carries(self):
+        """An animated GLB that renders as a still is the whole bug.
+
+        The page mounted no ``AnimationMixer`` at all, so a deliverable whose
+        shots were split into named clips previewed as a static model -- with
+        nothing on screen saying it had animation in it, in a headset where
+        the console is not visible either.
+        """
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        self.assertIn("new THREE.AnimationMixer(gltf.scene)", page)
+        # Driven from the frame loop, and BEFORE the script hook, so a module
+        # subscribing to 'frame' sees this frame's pose rather than the last.
+        loop = page[page.index("renderer.setAnimationLoop") :]
+        self.assertLess(loop.index("mixer.update(delta)"), loop.index("emit('frame'"))
+        # Set up per model swap, or the second push plays the first's clips.
+        self.assertIn("setupAnimation(gltf);", page)
+
+    def test_the_viewer_opens_on_the_clip_the_file_names(self):
+        """``animations[0]`` is the wrong default on a shot-split deliverable.
+
+        Maya's FBX exporter keeps the whole-timeline take alongside the takes
+        it split out and it converts FIRST, so index 0 is the entire timeline
+        rather than shot 1. ``extras.animation_web.default_clip`` is the file's
+        own answer (``MeshConvert.apply_glb_animations`` writes it), and the
+        page has to be reading it rather than picking an index.
+        """
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        self.assertIn(f"readExtras(gltf, '{MeshConvert.ANIMATION_WEB_KEY}')", page)
+        # Regex, not a literal: the page reads the field through whichever
+        # optional-chaining spelling the surrounding guard makes correct, and
+        # WHICH FIELD it opens on is the behaviour worth pinning.
+        self.assertRegex(page, r"manifest\??\.default_clip")
+        # The picker leads with the declared shots; the glTF's own animation
+        # order is left alone, so index-keyed consumers still agree with it.
+        self.assertIn("entry.meta?.declared", page)
 
 
 class PreviewScriptsTestCase(unittest.TestCase):
@@ -921,6 +970,12 @@ class _StubBridge(HandoffBridge):
     def _produce(self, objects, request):
         path = self._make_payload_path(extension=".fbx")
         Path(path).write_bytes(b"fake-fbx-payload")
+        # What Maya's FBX plugin leaves beside an embedded-media export: the
+        # textures, extracted again. Roughly the size of the payload, so a
+        # cleanup that misses it reclaims about half of what the push cost.
+        media = Path(path).with_suffix(".fbm")
+        media.mkdir(exist_ok=True)
+        (media / "albedo.png").write_bytes(b"extracted-texture")
         return Payload(primary=path)
 
 
@@ -1280,6 +1335,65 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self._deliver()
         self.assertFalse(Path(self.converted[0]["dst"]).exists())
 
+    def test_the_consumed_fbx_is_released_once_the_glb_exists(self):
+        """The preview CONSUMES its payload, so it must not wait out the sweep.
+
+        Every other hand-off bridge launches an app that reads the FBX after
+        the call returns, which is why the payload store is ``detached`` and
+        deletes nothing. A preview has a completion signal: the moment the GLB
+        is written, nothing will ever read the FBX again. Left to the 7-day
+        age gate it accumulated -- measured on a production assembly, 324 MB
+        per push and 3.1 GB sitting in the system temp dir.
+        """
+        self._deliver()
+        fbx = Path(self.converted[0]["src"])
+        self.assertFalse(
+            fbx.exists(), f"the consumed payload {fbx.name} was left on disk"
+        )
+
+    def test_the_fbx_media_folder_goes_with_the_payload(self):
+        """Maya's FBX plugin writes an embedded-media folder beside the payload.
+
+        `<stem>.fbm` holds the textures the FBX embedded, EXTRACTED again — so
+        it is roughly the size of the payload itself and releasing only the
+        `.fbx` reclaims about half of what the push cost. Measured on a
+        production assembly after the first cut of this fix: the 324 MB `.fbx`
+        went and a 314 MB `.fbm` stayed.
+        """
+        self._deliver()
+        fbx = Path(self.converted[0]["src"])
+        media = fbx.with_suffix(".fbm")
+        self.assertFalse(fbx.exists())
+        self.assertFalse(media.exists(), "the .fbm outlived its payload")
+
+    def test_a_failed_conversion_KEEPS_the_payload_to_inspect(self):
+        """The mirror rule: nothing consumed it, so it is still evidence."""
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        produced = []
+
+        def _boom(src, dst=None, **kwargs):
+            produced.append(src)
+            raise RuntimeError("FBX2glTF exploded")
+
+        with unittest.mock.patch(target, side_effect=_boom):
+            self.assertIsNone(self.bridge.send())
+        self.assertTrue(Path(produced[0]).exists(), "a failed push lost its evidence")
+
+    def test_a_payload_the_bridge_did_not_mint_is_never_released(self):
+        """`PreviewDeliverer` is a pluggable strategy: mounted on a bridge whose
+        producer hands back a durable path, releasing it would delete the
+        caller's own file."""
+        durable = Path(self.temp.dir_path()) / "authored_by_someone_else.fbx"
+        durable.write_bytes(b"not-ours")
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            self.bridge.deliverer.deliver(
+                self.bridge, Payload(primary=str(durable)), HandoffRequest(mode="push")
+            )
+        self.assertTrue(durable.exists(), "deleted a payload the bridge never minted")
+
     def test_repeated_pushes_bump_the_version(self):
         self._deliver()
         result = self._deliver()
@@ -1473,6 +1587,65 @@ class PreviewDelivererTestCase(unittest.TestCase):
                 )
         applied.assert_called_once()
         self.assertEqual(applied.call_args[0][1], sections["emissive"])
+
+    def test_the_sidecar_is_handed_to_the_conversion_itself(self):
+        """The conversion's own chain clones materials (one per faded
+        subtree), and a clone copies its source as it stands -- so the
+        envelope's repairs have to land INSIDE `fbx_to_glb`, ahead of that
+        pass, not in a pass of ours afterwards. Measured with it applied
+        afterwards on a production assembly: the metallic-roughness repair
+        reached one fade clone of the screen material and the eleven-primitive
+        original kept the converter's roughness/metalness-255 packing."""
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        envelope = _sidecar({"emissive": {"m": {"color": (1, 0, 0)}}})
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            self.bridge.deliverer.deliver(
+                self.bridge,
+                Payload(primary=self._fbx(), extras={"scene_sidecar": envelope}),
+                HandoffRequest(),
+            )
+        self.assertEqual(self.converted[-1].get("sidecar"), envelope)
+
+    def test_an_envelope_the_conversion_already_applied_is_read_back_not_reapplied(
+        self,
+    ):
+        """Applying twice would write the authored alpha mode over the fade
+        clones' BLEND and pop every fade; the outcome the conversion recorded
+        is what the panel gets."""
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        outcome = {"emissive": "1 of 1"}
+
+        def _converted_with_sidecar(src, dst=None, **kwargs):
+            self.converted.append({"src": src, "dst": dst, **kwargs})
+            Path(dst).write_bytes(
+                self._glb_bytes(
+                    {
+                        "asset": {"version": "2.0"},
+                        "extras": {MeshConvert.SIDECAR_APPLIED_KEY: outcome},
+                    }
+                )
+            )
+            return dst
+
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
+        with unittest.mock.patch(target, side_effect=_converted_with_sidecar):
+            with unittest.mock.patch(emissive_target) as applied:
+                result = self.bridge.deliverer.deliver(
+                    self.bridge,
+                    Payload(
+                        primary=self._fbx(),
+                        extras={
+                            "scene_sidecar": _sidecar(
+                                {"emissive": {"m": {"color": (1, 0, 0)}}}
+                            )
+                        },
+                    ),
+                    HandoffRequest(),
+                )
+        applied.assert_not_called()
+        self.assertEqual(result["sidecar"], outcome)
 
     def test_dead_environment_maps_never_reach_the_texture_pass(self):
         """Maya's IBL maps are dropped BEFORE the embed pass pays to re-encode them.
@@ -2000,6 +2173,93 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
             MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (1, 1, 1)}})
 
 
+class PublishFileTestCase(unittest.TestCase):
+    """`PreviewBridge.publish_file`: a GLB already on disk, straight to the page.
+
+    The one delivery shape with no host in it. What has to hold is that it
+    reaches the SAME server a push uses (a second viewer would defeat the
+    point), that it leaves the user's file where it found it, and that the two
+    ways an unserveable file arrives -- gone, or not a .glb -- are refused with
+    something the caller can act on rather than an empty scene in the page.
+    """
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_publish_file", policy="scoped")
+        self.server = PreviewServer(root=self.temp.dir_path(), port=0).start()
+        self.bridge = _StubPreviewBridge()
+        # Bound on the INSTANCE: the shipped bridges bind their deliverer as a
+        # class attribute, and writing one there would leak into every other
+        # test in this file.
+        self.bridge.deliverer = PreviewDeliverer(server=self.server)
+
+    def tearDown(self):
+        self.server.stop()
+        self.temp.cleanup()
+
+    def _glb(self, name="authored.glb"):
+        path = Path(self.temp.dir_path()) / name
+        path.write_bytes(b"glTF" + b"\x02\x00\x00\x00")
+        return path
+
+    def test_it_serves_the_file_on_the_bridge_s_own_server(self):
+        """Same server, port and tab as a push -- which is what lets an
+        authored asset and an export be compared by switching one control."""
+        glb = self._glb()
+        result = self.bridge.publish_file(glb, open_browser=False)
+        self.assertEqual(result["url"], self.server.url)
+        self.assertEqual(result["version"], 1)
+        self.assertEqual(result["source"], str(glb))
+        served = Path(self.server.root) / self.server.manifest()["asset"]
+        self.assertEqual(served.read_bytes(), glb.read_bytes())
+
+    def test_the_users_file_is_copied_never_moved(self):
+        """A push moves its own scratch GLB. This one is the user's asset."""
+        glb = self._glb()
+        self.bridge.publish_file(glb, open_browser=False)
+        self.assertTrue(glb.is_file(), "publish_file moved the user's own file")
+
+    def test_it_publishes_unchanged(self):
+        """No sidecar, no lightmap wiring, no texture re-encode: those passes
+        repair what a DCC export loses, and a finished GLB has answered them.
+        The byte-for-byte check above is the contract; this pins that the
+        conversion is not reached at all."""
+        glb = self._glb()
+        with unittest.mock.patch.object(MeshConvert, "fbx_to_glb") as convert:
+            self.bridge.publish_file(glb, open_browser=False)
+        convert.assert_not_called()
+
+    def test_the_viewer_scripts_are_the_callers_to_set(self):
+        glb = self._glb()
+        self.bridge.publish_file(glb, open_browser=False, scripts=["turntable"])
+        self.assertEqual(self.server.scripts, ("turntable",))
+
+    def test_a_missing_file_is_refused_by_name(self):
+        with self.assertRaises(FileNotFoundError) as caught:
+            self.bridge.publish_file(
+                Path(self.temp.dir_path()) / "gone.glb", open_browser=False
+            )
+        self.assertIn("gone.glb", str(caught.exception))
+
+    def test_a_gltf_is_refused_with_the_reason(self):
+        """The server publishes ONE file into its root, so a .gltf's sibling
+        .bin would 404 and the page would show an empty scene with nothing to
+        explain it. Refusing beats previewing nothing."""
+        with self.assertRaises(ValueError) as caught:
+            self.bridge.publish_file(self._glb("authored.gltf"), open_browser=False)
+        self.assertIn(".glb", str(caught.exception))
+
+    def test_a_bridge_that_cannot_publish_says_so(self):
+        """Both shapes: no deliverer at all, and one that is not a preview
+        deliverer -- the skeleton allows any `Deliverer`, and the second would
+        otherwise fail as an AttributeError naming an internal attribute."""
+        for deliverer in (None, Deliverer()):
+            with self.subTest(deliverer=type(deliverer).__name__):
+                bridge = _StubPreviewBridge()
+                bridge.deliverer = deliverer
+                with self.assertRaises(RuntimeError):
+                    bridge.publish_file(self._glb(), open_browser=False)
+
+
 class LightmapSummaryTestCase(unittest.TestCase):
     """`PreviewBridge.lightmap_summary`: the panel's one line on the bake.
 
@@ -2023,6 +2283,33 @@ class LightmapSummaryTestCase(unittest.TestCase):
             {"lightmaps": {"expected": 3, "bound": 3, "unbound": []}}
         )
         self.assertEqual(line, "Lightmaps: 3/3 object(s) bound.")
+
+    def test_a_scoped_push_says_what_it_left_out(self):
+        """ "3/3 bound" over a 50-object bake is only reassuring once the other
+        47 are accounted for.
+
+        The count is SCOPE, never a miss: those objects were not in the push, so
+        they cannot be unlit in it. Silent otherwise -- a whole-scene push leaves
+        nothing out and the clause would be noise.
+        """
+        line = PreviewBridge.lightmap_summary(
+            {
+                "lightmaps": {
+                    "expected": 3,
+                    "bound": 3,
+                    "unbound": [],
+                    "out_of_scope": 47,
+                }
+            }
+        )
+        self.assertIn("3/3", line)
+        self.assertIn("47", line)
+        self.assertNotIn("UNLIT", line)
+
+        whole_scene = PreviewBridge.lightmap_summary(
+            {"lightmaps": {"expected": 3, "bound": 3, "unbound": [], "out_of_scope": 0}}
+        )
+        self.assertEqual(whole_scene, "Lightmaps: 3/3 object(s) bound.")
 
     def test_unbound_objects_are_named_and_called_unlit(self):
         names = [f"wall_{i}" for i in range(7)]
@@ -2109,11 +2396,48 @@ class LightmapReportTestCase(unittest.TestCase):
         result = self._push(lambda src, dst=None, **kw: self._lit_glb(dst, manifest))
 
         self.assertEqual(
-            result["lightmaps"], {"expected": 1, "bound": 0, "unbound": ["room"]}
+            result["lightmaps"],
+            {"expected": 1, "bound": 0, "unbound": ["room"], "out_of_scope": 0},
         )
         line = PreviewBridge.lightmap_summary(result)
         self.assertIn("0/1", line)
         self.assertIn("room", line)
+
+    def test_the_report_counts_only_objects_this_glb_actually_carries(self):
+        """The bake manifest is a SCENE record; a pushed selection is a subset.
+
+        Counting the whole manifest against a selection-scoped GLB reports every
+        object the artist did not select as previewing UNLIT -- dozens of them
+        on a production scene -- so the one line that says whether the preview is
+        lit cries wolf exactly when the preview is correct. An object with no
+        node in the GLB was not exported; it is out of scope, not unbound.
+        """
+        manifest = {
+            "version": 1,
+            "dir": str(self.temp.dir_path()),  # the hint: exists, holds no map
+            "objects": [
+                {
+                    "name": name,
+                    "map": "atlas_LightMap.exr",
+                    "uvIndex": 1,
+                    "intensity": 1.0,
+                    "scaleOffset": [1, 1, 0, 0],
+                }
+                # Only "room" gets a node in the GLB `_lit_glb` writes.
+                for name in ("room", "hallway", "stairwell")
+            ],
+        }
+
+        result = self._push(lambda src, dst=None, **kw: self._lit_glb(dst, manifest))
+
+        self.assertEqual(
+            result["lightmaps"],
+            {"expected": 1, "bound": 0, "unbound": ["room"], "out_of_scope": 2},
+        )
+        line = PreviewBridge.lightmap_summary(result)
+        self.assertIn("0/1", line)
+        for absent in ("hallway", "stairwell"):
+            self.assertNotIn(absent, line)
 
     def test_no_manifest_reports_nothing_expected(self):
         def bare(src, dst=None, **kw):
@@ -2126,6 +2450,221 @@ class LightmapReportTestCase(unittest.TestCase):
 
         self.assertEqual(result["lightmaps"]["expected"], 0)
         self.assertEqual(PreviewBridge.lightmap_summary(result), "")
+
+
+class PreviewSettingsTestCase(unittest.TestCase):
+    """The one route by which the served page writes to a file.
+
+    The page tunes a delivery dial against the loaded model and saves it; the
+    value's home is the glTF's own field, so what this covers is that the write
+    reaches the deliverable, that nothing outside the allow-list can, and that a
+    later push carries the dial instead of silently resetting it.
+    """
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_preview_settings", policy="scoped")
+        self.root = Path(self.temp.dir_path())
+        self.assets = Path(self.temp.dir_path())
+        self.server = None
+
+    def tearDown(self):
+        if self.server is not None:
+            self.server.stop()
+        self.temp.cleanup()
+
+    # -- helpers --------------------------------------------------------
+    def _serve(self, **kwargs):
+        kwargs.setdefault("root", self.root)
+        kwargs.setdefault("port", 0)
+        kwargs.setdefault("viewer", False)
+        self.server = PreviewServer(**kwargs).start()
+        return self.server
+
+    def _glb(self, name="baked.glb"):
+        """A GLB with one BAKED, normal-mapped material -- what the dial acts on."""
+        gltf = {
+            "asset": {"version": "2.0"},
+            "extras": {
+                "lightmap_web": {
+                    "version": 1,
+                    "materials": {"room": {"intensity": 1.0}},
+                }
+            },
+            "materials": [{"name": "room", "normalTexture": {"index": 0}}],
+            "textures": [{"source": 0}],
+            "images": [{"name": "n", "uri": "data:image/png;base64,"}],
+        }
+        payload = json.dumps(gltf).encode("utf-8")
+        payload += b" " * ((4 - len(payload) % 4) % 4)
+        path = self.assets / name
+        with open(path, "wb") as fh:
+            fh.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(payload)))
+            fh.write(struct.pack("<I4s", len(payload), b"JSON") + payload)
+        return path
+
+    def _scale_of(self, path):
+        gltf = MeshConvert._read_glb(str(path)).gltf
+        return gltf["materials"][0]["normalTexture"].get("scale")
+
+    def _post(self, path, data=b"", origin=None):
+        headers = {"Content-Type": "application/json"}
+        if origin:
+            headers["Origin"] = origin
+        request = urllib.request.Request(
+            self.server.url + path, data=data, headers=headers
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read() or b"null")
+
+    # -- tests ----------------------------------------------------------
+    def test_a_setting_reaches_the_served_copy_and_the_file_it_came_from(self):
+        """Both, because "the output" is the exporter's artifact, not our copy."""
+        server = self._serve()
+        source = self._glb()
+        server.publish(source)
+
+        result = server.apply_settings({"normal_scale": 1.5})
+
+        self.assertEqual(result["applied"], {"normal_scale": 1.5})
+        self.assertEqual(result["materials"], {"normal_scale": 1})
+        self.assertEqual(self._scale_of(self.root / "scene.glb"), 1.5)
+        self.assertEqual(self._scale_of(source), 1.5)
+
+    def test_it_reports_what_the_page_is_looking_at_not_the_last_file_written(self):
+        """The source is stamped second and answers 0 for a value it already
+        holds; reporting that would tell the page nothing changed when the
+        model in front of it just did."""
+        server = self._serve()
+        source = self._glb()
+        server.publish(source)
+        MeshConvert.set_glb_normal_scale(str(source), 1.5)  # source already at 1.5
+
+        self.assertEqual(
+            server.apply_settings({"normal_scale": 1.5})["materials"],
+            {"normal_scale": 1},
+        )
+
+    def test_a_name_outside_the_allow_list_is_refused(self):
+        """The allow-list is the whole security boundary of this route."""
+        server = self._serve()
+        server.publish(self._glb())
+        with self.assertRaises(KeyError):
+            server.apply_settings({"alphaMode": "BLEND"})
+
+    def test_a_value_that_will_not_coerce_is_refused(self):
+        server = self._serve()
+        server.publish(self._glb())
+        with self.assertRaises(ValueError):
+            server.apply_settings({"normal_scale": "loud"})
+
+    def test_a_refused_setting_is_not_remembered(self):
+        """A rejected write must not ride along on the next publish."""
+        server = self._serve()
+        with self.assertRaises(KeyError):
+            server.apply_settings({"nope": 1})
+        self.assertEqual(server._settings, {})
+
+    def test_a_setting_that_could_not_be_written_is_not_remembered(self):
+        """The other half: a value that reached the writer and failed there is
+        a failed save, not a dial silently set for every later push."""
+        server = self._serve()
+        server.publish(self._glb())
+
+        def boom(settings, paths):
+            raise OSError("disk full")
+
+        server._stamp = boom
+        with self.assertRaises(OSError):
+            server.apply_settings({"normal_scale": 1.5})
+        self.assertEqual(server._settings, {})
+
+    def test_a_later_publish_carries_the_dial(self):
+        """A dial is a property of the DELIVERY: a re-push must not reset it
+        to the newly exported file's defaults."""
+        server = self._serve()
+        server.publish(self._glb())
+        server.apply_settings({"normal_scale": 2.0})
+
+        server.publish(self._glb("second.glb"))  # a fresh export, scale absent
+
+        self.assertEqual(self._scale_of(self.root / "scene.glb"), 2.0)
+
+    def test_a_dial_that_cannot_be_reapplied_does_not_lose_the_push(self):
+        """The push succeeded; the dial is the lesser fact. Raising here would
+        leave the asset written but never advertised, and report the PUSH as
+        what failed."""
+        server = self._serve()
+        server.publish(self._glb())
+        server.apply_settings({"normal_scale": 2.0})
+
+        def boom(settings, paths):
+            raise OSError("disk full")
+
+        server._stamp = boom
+        with self.assertLogs(server.logger, level="WARNING") as caught:
+            version = server.publish(self._glb("second.glb"))
+
+        self.assertEqual(version, 2)
+        self.assertEqual(server.manifest()["version"], 2)
+        self.assertTrue(any("normal_scale" in m for m in caught.output), caught.output)
+
+    def test_the_dial_is_stamped_before_the_new_version_is_advertised(self):
+        """The manifest version is the page's signal to fetch, so the asset has
+        to be final when it changes -- a poll landing in the gap downloads a
+        GLB mid-rewrite."""
+        server = self._serve()
+        server.apply_settings({"normal_scale": 1.25})  # remembered, nothing published
+        seen = []
+        original = server._stamp
+
+        def spy(settings, paths):
+            seen.append(server.version)
+            return original(settings, paths)
+
+        server._stamp = spy
+        server.publish(self._glb())
+
+        self.assertEqual(seen, [0], "stamped after the version was advertised")
+        self.assertEqual(server.version, 1)
+
+    def test_the_page_can_write_a_dial_over_http(self):
+        server = self._serve()
+        server.publish(self._glb())
+
+        status, body = self._post(
+            "/settings", json.dumps({"normal_scale": 1.5}).encode("utf-8")
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["materials"], {"normal_scale": 1})
+        self.assertEqual(self._scale_of(self.root / "scene.glb"), 1.5)
+
+    def test_a_cross_origin_write_is_refused(self):
+        """Same guard the close beacon carries, and for a stronger reason: this
+        route reaches a file."""
+        server = self._serve()
+        server.publish(self._glb())
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self._post(
+                "/settings",
+                json.dumps({"normal_scale": 1.5}).encode("utf-8"),
+                origin="http://evil.example",
+            )
+        self.assertEqual(caught.exception.code, 403)
+        self.assertIsNone(self._scale_of(self.root / "scene.glb"))
+
+    def test_a_malformed_body_is_a_400_not_a_dropped_connection(self):
+        server = self._serve()
+        server.publish(self._glb())
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self._post("/settings", b"{not json")
+        self.assertEqual(caught.exception.code, 400)
+
+    def test_an_unknown_post_route_is_still_404(self):
+        self._serve()
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self._post("/nope", b"{}")
+        self.assertEqual(caught.exception.code, 404)
 
 
 if __name__ == "__main__":

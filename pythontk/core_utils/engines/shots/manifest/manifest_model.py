@@ -162,8 +162,10 @@ class ManifestModel(_ManifestModelInternal):
         current_step: Optional[BuilderStep] = None
         step_id_aliases = {a.lower() for a in col_map.step_id}
         asset_excludes = {v.upper() for v in col_map.exclude_values.get("assets", ())}
-        # Per-step accumulator for metadata_pass values (first-row-wins)
+        # Per-step accumulators (first-row-wins for metadata_pass; behaviors
+        # are the inherit source for continuation rows without a description)
         step_pass: Dict[str, str] = {}
+        step_behaviors: List[str] = []
 
         rows = _ManifestModelInternal._read_csv_rows(filepath)
         for row in rows:
@@ -273,14 +275,18 @@ class ManifestModel(_ManifestModelInternal):
                     current_step.description += " " + description
 
                 if asset and asset.upper() not in asset_excludes:
-                    # Own description overrides, otherwise inherit from parent step
-                    row_behaviors = (
+                    # A row carrying its own description speaks for itself --
+                    # including when that description implies NO behavior, which
+                    # is how a static prop beside a fading one is expressed.
+                    # Gating on the description's presence (not on whether it
+                    # detected anything) is what makes that sayable.  A row
+                    # without one inherits the parent STEP's behaviors, not
+                    # those of ``current_step.description``, which by this point
+                    # has absorbed earlier continuation rows' text too.
+                    behaviors = (
                         ManifestModel.detect_behaviors(description)
                         if description
-                        else []
-                    )
-                    behaviors = row_behaviors or ManifestModel.detect_behaviors(
-                        current_step.description
+                        else step_behaviors
                     )
                     obj = BuilderObject(
                         name=asset,

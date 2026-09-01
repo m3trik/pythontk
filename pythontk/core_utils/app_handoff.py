@@ -269,6 +269,13 @@ class HandoffBridge(LoggingMixin):
     # same run inheriting a durable Output Dir it would then delete.
     scoped_scratch_modes: Tuple[str, ...] = ()
 
+    # Files/folders an EXPORTER writes beside the payload, named from its stem,
+    # that :meth:`_release_payload` must take with it. ``.fbm`` is Maya's FBX
+    # embedded-media folder -- the textures the FBX embedded, extracted again,
+    # so roughly payload-sized. Declared as data because the set is a property
+    # of the carrier rather than of any one bridge.
+    PAYLOAD_SIDECARS: Tuple[str, ...] = (".fbm",)
+
     # ``HandoffRequest.extras`` keys the run scratch rides on. Underscored and
     # documented as private: no deliverer reads them, and a bridge stamping its
     # own key here would collide with the produce/ingest pair's bookkeeping.
@@ -460,6 +467,45 @@ class HandoffBridge(LoggingMixin):
             self._payload_artifacts = cached
         return cached.path(extension=extension)
 
+    def _release_payload(self, path: Optional[str]) -> bool:
+        """Delete a payload THIS bridge minted, once its consumer is done with it.
+
+        The counterpart of :meth:`_make_payload_path`, for the one hand-off
+        shape the detached policy cannot serve: a blocking round trip that
+        consumes its own payload inside a single call (the WebXR preview
+        converts the FBX to GLB and publishes it, after which nothing reads the
+        FBX again). Every other bridge launches an app that reads the payload
+        AFTER we return, which is why nothing deletes by default.
+
+        Refuses anything this bridge did not allocate, so a deliverer -- a
+        pluggable strategy holding a path it did not create -- cannot delete a
+        producer's durable file. Paired here rather than left to the caller so
+        the store stays this class's business: a bridge that allocates
+        differently overrides both halves together.
+
+        Takes the carrier's own sidecars with it (:attr:`PAYLOAD_SIDECARS`).
+        Maya's FBX plugin writes ``<stem>.fbm`` beside an embedded-media
+        export, holding the textures the FBX embedded EXTRACTED AGAIN -- so it
+        is roughly the size of the payload, and releasing only the ``.fbx``
+        reclaims about half of what the push cost. Measured on a production
+        assembly: the 324 MB payload went and a 314 MB ``.fbm`` stayed. Each is
+        adopted into the store before removal, so the ownership rule still
+        holds -- the path is derived from one this bridge minted, and nothing
+        else can be reached through it.
+
+        Returns:
+            True when the payload was this bridge's and is now gone.
+        """
+        store = getattr(self, "_payload_artifacts", None)
+        if not path or store is None or not store.release(path):
+            return False
+        stem = os.path.splitext(path)[0]
+        for suffix in self.PAYLOAD_SIDECARS:
+            sidecar = stem + suffix
+            if os.path.exists(sidecar):
+                store.release(store.register(sidecar))
+        return True
+
     # ------------------ Run scratch -----------------------------------------
     def _scratch_policy(self, request: HandoffRequest) -> str:
         """Lifetime for what this run stages: a :class:`TempArtifacts` policy.
@@ -612,9 +658,26 @@ class HandoffBridge(LoggingMixin):
     def _scene_objects(self) -> Optional[List[Any]]:
         """Everything a WHOLE-SCENE hand-off should carry, or ``None`` if unsupported.
 
-        Only :meth:`ScriptLaunchBridge.save_as` uses it: "save the scene as ..." means
-        the scene, not whatever happens to be selected. ``None`` (the default) means the
-        host can't enumerate itself, and the caller falls back to the selection.
+        Used by :meth:`ScriptLaunchBridge.save_as` ("save the scene as ..." means the
+        scene, not whatever happens to be selected) and by the ``"all"`` scope of
+        :meth:`PreviewBridge.scope_objects`. ``None`` (the default) means the host
+        can't enumerate itself, and the caller falls back to the selection.
+        """
+        return None
+
+    def _visible_objects(self) -> Optional[List[Any]]:
+        """Everything CURRENTLY VISIBLE, or ``None`` if unsupported.
+
+        The sibling of :meth:`_scene_objects`, and deliberately next to it: both are
+        the same kind of thing -- a host read that widens a hand-off past the
+        selection -- and the scope vocabulary every bridge panel offers
+        (:meth:`uitk.bridge.Parameters.scope_spec`) names exactly these two plus the
+        selection. Split apart, the visible read grew a second copy in each DCC's
+        bridge-slots base while the whole-scene read stayed here.
+
+        ``None`` (the default) means the host can't answer, and the caller falls back
+        to the selection -- never to the whole scene, which would silently WIDEN a
+        hand-off the user deliberately narrowed.
         """
         return None
 

@@ -1,63 +1,137 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 81f3387)._
+_Diff vs the last release (origin/main @ 69ef098)._
 
-## Added (33)
+## Added (116)
 
-- `core_utils/app_installer.py::AppInstaller.consent(prompt: Union[bool, Callable[[str], bool], None], question: str) -> Optional[bool]`
-- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.extract_channels(cls, packed_type: str, packed_path: Optional[str], targets: List[str], config: Dict[str, Any] = None) -> Optional[Dict[str, str]]`
-- `core_utils/naming_convention.py::AffixRule(class)`
-- `core_utils/naming_convention.py::AffixRule.apply(self, name: str, *, default: str = 'suffix') -> str`
-- `core_utils/naming_convention.py::AffixRule.as_dict(self) -> Dict[str, str]`
-- `core_utils/naming_convention.py::AffixRule.parts(self, *, default: str = 'suffix') -> Tuple[str, str]`
-- `core_utils/naming_convention.py::NamingConvention(class)`
-- `core_utils/naming_convention.py::NamingConvention.affix(cls, key: str) -> str`
-- `core_utils/naming_convention.py::NamingConvention.affix_parts(cls, key: str, *, default: str = 'suffix') -> Tuple[str, str]`
-- `core_utils/naming_convention.py::NamingConvention.all_affixes(cls) -> List[str]`
-- `core_utils/naming_convention.py::NamingConvention.apply(cls, name: str, key: str, *, default: str = 'suffix') -> str`
-- `core_utils/naming_convention.py::NamingConvention.bind(cls, bindings: Iterable[Tuple[str, str, str]], overrides: Optional[Dict[str, str]] = None, modes: Optional[Dict[str, str]] = None) -> Dict[str, AffixRule]`
-- `core_utils/naming_convention.py::NamingConvention.config_path(cls)`
-- `core_utils/naming_convention.py::NamingConvention.get(cls, key: str, fallback: Optional[AffixRule] = None) -> AffixRule`
-- `core_utils/naming_convention.py::NamingConvention.items(cls) -> List[Tuple[str, AffixRule]]`
-- `core_utils/naming_convention.py::NamingConvention.keys(cls) -> List[str]`
-- `core_utils/naming_convention.py::NamingConvention.label(cls, key: str) -> str`
-- `core_utils/naming_convention.py::NamingConvention.mode(cls, key: str) -> str`
-- `core_utils/naming_convention.py::NamingConvention.reload(cls) -> Dict[str, AffixRule]`
-- `core_utils/naming_convention.py::NamingConvention.reset(cls, key: Optional[str] = None) -> Dict[str, AffixRule]`
-- `core_utils/naming_convention.py::NamingConvention.resolve(cls, *, refresh: bool = False) -> Dict[str, AffixRule]`
-- `core_utils/naming_convention.py::NamingConvention.set(cls, key: str, text: str, mode: str = 'auto', label: str = '') -> AffixRule`
-- `core_utils/naming_convention.py::NamingConvention.update(cls, mapping: Dict[str, object]) -> Dict[str, AffixRule]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.build_fbx_handoff(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.describe_texture_pass(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.set_glb_alpha_mode(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int`
-- `img_utils/ktx2_encoder.py::Ktx2Encoder.not_installed_error(cls, detail: str = '') -> FileNotFoundError`
-- `net_utils/preview_server.py::PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]`
-- `net_utils/preview_server.py::PreviewBridge.lightmap_summary(result: Optional[Dict[str, Any]]) -> str`
-- `net_utils/preview_server.py::PreviewPassContext.lightmap_search_dirs(self) -> Sequence[str]`
-- `str_utils/_str_utils.py::StrUtils.delimit_affix(text: str, mode: str = 'suffix', *, delimiter: str = '_') -> str`
-- `str_utils/_str_utils.py::StrUtils.strip_any_affix(string: str, known, *, exclude=(), one: bool = True, case_sensitive: bool = True) -> str`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger(class)`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.curves(self) -> set`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.disown_shot(self, shot_id: int) -> int`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.forget_curve(self, curve: str) -> None`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'ShotEditLedger'`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.key_count(self) -> int`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.key_records(self, curve: str) -> List[Tuple[float, int, str]]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.key_times(self, curve: str) -> List[float]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.keyed_curves(self) -> List[str]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.owns_step(self, curve: str, time: float) -> bool`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.record_key(self, curve: str, time: float, owner: int = NO_OWNER, edge: str = '') -> bool`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.record_step(self, curve: str, time: float, in_type: str, out_type: str) -> bool`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.release_key(self, curve: str, time: float) -> bool`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.release_step(self, curve: str, time: float) -> Optional[Tuple[str, str]]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.remap(self, curve: str, pairs) -> int`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.shift(self, curve: str, lo: float, hi: float, delta: float) -> int`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.step_count(self) -> int`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.step_times(self, curve: str) -> List[float]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.stepped_curves(self) -> List[str]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.clear_boundary_snapshots(self) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.discard_boundary_snapshot(self) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.has_boundary_snapshot(self, redo: bool = False) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.peek_boundary_tag(self, redo: bool = False) -> Any`
+- `core_utils/engines/shots/shot_model.py::ShotStore.push_boundary_snapshot(self, tag: Any = None) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.redo_boundary_snapshot(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.restore_boundary_snapshot(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.snapshot_bounds(self) -> list`
+- `core_utils/engines/shots/shot_model.py::ShotStore.tag_boundary_snapshot(self, tag: Any) -> bool`
+- `core_utils/engines/shots/shot_plan.py::GapRetime(class)`
+- `core_utils/engines/shots/shot_plan.py::GapRetime.grows(self) -> bool`
+- `core_utils/engines/shots/shot_plan.py::GapRetime.scale(self) -> float`
+- `core_utils/engines/shots/shot_plan.py::GapRetime.shrinks(self) -> bool`
+- `core_utils/engines/shots/shot_plan.py::GapRetime.width(self) -> float`
+- `core_utils/engines/shots/shot_plan.py::ShotBoundaryConflict(class)`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.boundary_splits(store: ShotStore, plan: MovePlan, eps: float = _EPS) -> List[Tuple[int, int, float, float]]`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.envelope_for(sorted_shots: List, index: int) -> tuple`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.in_window(t: float, lo: float, hi: float, lo_open: bool = False, hi_closed: bool = False, eps: float = _EPS) -> bool`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.key_collisions(windows: Sequence[Tuple[float, float, bool, bool, float]], times: Iterable[float], eps: float = 0.001) -> List[Tuple[float, List[float], List[float]]]`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.move_windows(plan: MovePlan) -> List[Tuple[float, float, bool, bool, float]]`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.objects_to_adopt(keyed: Dict[str, Sequence[float]], owned: Optional[Iterable[str]], lo: float, hi: float, lo_open: bool = False, hi_closed: bool = False, eps: float = _EPS) -> List[str]`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.plan_gap_retimes(store: ShotStore, plan: MovePlan) -> List[GapRetime]`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.plan_pivot_move(store: ShotStore, shot_id: int, new_start: float) -> MovePlan`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_clips(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.build_visibility_tracks(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.clip_spans(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.conversion_timeout(cls, src: str) -> float`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.data_export_channel(cls, gltf: dict, key: str) -> Optional[Any]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.dedupe_glb_images(cls, glb: GlbTarget) -> Dict[str, int]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.lightmap_manifest_coverage(cls, glb: GlbTarget) -> Dict[str, List[str]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.set_glb_normal_scale(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.web_delivery_texture_params(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier(class)`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_baseline_diff(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_clips_vs_takes(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_cross_clips(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_fbx_container(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_fbx_takes(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_animation_integrity(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_container(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_envelope(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_extensions(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_images(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_skins(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.fbx(self) -> Optional[FbxFile]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.gate_names(self) -> List[str]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.reader(self) -> Optional[GlbReader]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.run(self, checks: Optional[Sequence[str]] = None) -> VerificationReport`
+- `file_utils/mesh_convert/export_verify.py::Finding(class)`
+- `file_utils/mesh_convert/export_verify.py::VerificationReport(class)`
+- `file_utils/mesh_convert/export_verify.py::VerificationReport.counts(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/export_verify.py::VerificationReport.ok(self) -> bool`
+- `file_utils/mesh_convert/export_verify.py::VerificationReport.summary(self) -> str`
+- `file_utils/mesh_convert/export_verify.py::VerificationReport.to_json(self) -> str`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile(class)`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.connections(self) -> List[Tuple[str, Any, Any, Optional[str]]]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.is_fbx(path: str) -> bool`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.iter_objects(self) -> Iterator[Dict[str, Any]]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.load(cls, path: str, decode_arrays: bool = False) -> 'FbxFile'`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.object_names(self, kind: str) -> List[str]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.objects_census(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.section(self, name: str) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.take_names(self) -> List[str]`
+- `file_utils/mesh_convert/glb_clips.py::GlbClips(class)`
+- `file_utils/mesh_convert/glb_clips.py::GlbClips.rebuild(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb_fades.py::GlbFades(class)`
+- `file_utils/mesh_convert/glb_fades.py::GlbFades.apply(cls, edit: Any, fades: Dict[str, Sequence[Sequence[float]]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader(class)`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.accessor(self, index: int) -> Optional[List[Tuple[float, ...]]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.animation(self, key: Union[int, str]) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.animations(self) -> List[str]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.channel_table(self, key: Union[int, str]) -> List[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.clip_spans(self, fps: float = 30.0) -> Dict[str, Tuple[float, float, int]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.counts(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.extensions(self) -> Tuple[List[str], List[str]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.image_mimes(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.load(cls, path: str) -> 'GlbReader'`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.local_matrix(self, index: int, time: Optional[float] = None, animation: Union[int, str, None] = None) -> List[List[float]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.nan_findings(self, huge: float = 10000000.0, deep: bool = False) -> List[str]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.node_index(self, name: str) -> Optional[int]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.parent_of(self, index: int) -> Optional[int]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.sample(self, key: Union[int, str], node: Union[int, str], path: str, time: float) -> Optional[Tuple[float, ...]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.skins_summary(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.walk(self) -> Iterator[Tuple[int, Optional[str]]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.world_matrix(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[List[List[float]]]`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.world_position(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[Tuple[float, float, float]]`
+- `file_utils/temp_artifacts.py::TempArtifacts.release(self, path: str) -> bool`
+- `img_utils/_img_utils.py::ImgUtils.ensure_ktx2_encoder(cls, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]`
+- `img_utils/ktx2_encoder.py::Ktx2Encoder.toktx(self) -> str`
+- `net_utils/preview_server.py::PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str] = 'auto', scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]`
+- `net_utils/preview_server.py::PreviewBridge.scope_objects(self, scope: str = 'selected') -> List[Any]`
+- `net_utils/preview_server.py::PreviewDeliverer.publish(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]`
+- `net_utils/preview_server.py::PreviewServer.apply_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]`
 
-## Signature changed (7)
+## Signature changed (4)
 
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_to_glb`
-  - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True) -> str`
-  - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.resolve_binary`
-  - was: `(cls, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]`
-  - now: `(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]`
-- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap.resolve_engine`
-  - was: `(cls, engine: str, required: bool = True, auto_install: bool = False, prompt: bool = True) -> Optional[str]`
-  - now: `(cls, engine: str, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]`
-- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap.unwrap`
-  - was: `(cls, obj_in: str, obj_out: Optional[str] = None, *, engine: str = 'mof', overwrite: bool = False, auto_install: bool = True, prompt: bool = True, timeout: Optional[float] = DEFAULT_TIMEOUT, **params) -> str`
-  - now: `(cls, obj_in: str, obj_out: Optional[str] = None, *, engine: str = 'mof', overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = DEFAULT_TIMEOUT, **params) -> str`
-- `img_utils/_img_utils.py::ImgUtils.resolve_ktx2_encoder`
-  - was: `(cls, required: bool = False)`
-  - now: `(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True)`
-- `img_utils/ktx2_encoder.py::Ktx2Encoder.resolve_toktx`
-  - was: `(cls, required: bool = False) -> Optional[str]`
-  - now: `(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]`
-- `str_utils/_str_utils.py::StrUtils.strip_known_affix`
-  - was: `(string: str, prefix: str = '', suffix: str = '') -> str`
-  - now: `(string: str, prefix: str = '', suffix: str = '', *, case_sensitive: bool = False) -> str`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.optimize_glb_textures`
+  - was: `(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]`
+  - now: `(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]`
+- `img_utils/_img_utils.py::ImgUtils.dilate_image`
+  - was: `(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8) -> 'np.ndarray'`
+  - now: `(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8, return_mask: bool = False) -> 'np.ndarray'`
+- `net_utils/preview_server.py::PreviewBridge.push`
+  - was: `(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]`
+  - now: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, whole_scene: Optional[bool] = None, **params: Any) -> Optional[Dict[str, Any]]`

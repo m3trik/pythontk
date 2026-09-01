@@ -67,7 +67,7 @@ Ownership, because it decides where a fix goes:
 |---|---|
 | `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page **and the active viewer scripts** |
 | `pythontk.PreviewDeliverer` | FBX → GLB → publish, and the ordered **pass registry** (`EDIT_PASSES` / `FILE_PASSES`) that runs between them |
-| `pythontk.PreviewBridge` | the glTF-appropriate export defaults and the `push()` / `url` / `stop()` surface |
+| `pythontk.PreviewBridge` | the glTF-appropriate export defaults and the `push()` / `publish_file()` / `url` / `stop()` surface |
 | `pythontk.MeshConvert` | every GLB edit, the sidecar envelope schema, the lightmap binding, **the published rendering policy** |
 | `preview_viewer.html` | rebinding the carrier slot to a real `lightMap`, scale/framing, and **spending** the rendering policy it reads out of the file |
 | `preview_scripts/*.js` | optional behaviour the page gains by activation, never by being edited |
@@ -90,9 +90,63 @@ preview.stop()      # release the port
 so the port — and the tab pointed at it — survives across pushes and panel reopens for the life of
 the session.
 
+**Scope** is the ecosystem's, not this bridge's — the same `selected` / `all` / `visible`
+vocabulary every other hand-off offers, declared once by `uitk.bridge.Parameters.scope_spec` and
+resolved here through the export mixins' host hooks (`_scene_objects` / `_visible_objects`):
+
+```python
+preview.push(scope="visible")     # every visible mesh — what the artist actually sees
+preview.push(scope="all")         # the whole scene, hidden objects included
+preview.scope_objects("visible")  # what that scope resolves to, without pushing
+```
+
+`scope_objects` is public because a *caller* needs the answer: pushing blind collapses "nothing
+selected", "the scene is empty" and "the export failed" into one failure message, and the first two
+are the user's own next action. An unknown scope resolves to the selection — a scope must never
+silently *widen* a push. `push(whole_scene=True)` remains as a deprecated alias for `scope="all"`,
+for one release.
+
+### Publishing a GLB you already have
+
+```python
+preview.publish_file("C:/assets/vendor_chair.glb")   # no host, no export, no conversion
+```
+
+The one delivery shape with no DCC in it: an authored `.glb` goes straight to the page, on the
+**same** server, port and tab a push already owns — so an outside asset and your own export
+alternate in one viewer instead of needing a second one. It is what makes the preview usable as a
+plain GLB viewer (check what an exporter actually wrote; compare a vendor's asset against your
+push).
+
+Two rules it does not bend. The file is **copied, never moved** — it is your asset, not a scratch
+artifact the bridge minted. And it is published **exactly as authored**: no sidecar, no lightmap
+wiring, no texture re-encode. Those passes exist to repair what a DCC export loses, and a finished
+GLB has already answered them; what you see is the file. A `.gltf` is refused rather than served,
+because the server publishes one file into its root and the sibling `.bin` and textures would
+simply 404 — an empty scene with nothing to explain it.
+
+In the Rendering panel this is the **External GLB** entry on the WebXR Preview option box's scope
+combo. Nothing is wired to the combo itself — pressing the button is what opens the browse
+dialog, so the option box can be configured without a modal interrupting it, and so a restored
+External scope cannot greet the next panel open with a file browser. It asks per push rather than
+remembering: the combo is already sitting on External, so re-picking it could never say "same
+source, different file", and a remembered path goes stale on its own. The folder carries over, so
+the second ask opens where the first one landed. It lives on the panel rather than in `scope_spec`:
+it is a *source*, not a scope, and every other hand-off bridge would inherit a choice it has no way
+to honour. The viewer-script rows still apply — those describe the page, and the page is the same
+one either source publishes to.
+
 In the page: **Scale** toggles fitted (normalized to 1.5 m) vs. true scale, **Frame** re-frames the
 camera, **Light** appears for a lightmapped model and toggles the dim environment on and off
-(`r` / `f` / `l`). Fitted mode exists because exported units are rarely metres — a centimetre scene
+(`r` / `f` / `l`). A fourth slot, `#lookdev`, is the area for dials that tune how the model
+*reads* and write the result back into **the GLB** rather than into the page — the **Normals**
+dial (`normalTexture.scale`, saved through `POST /settings`) is its only occupant so far, and the
+area ships **off** behind `LOOKDEV_ENABLED`: one slider does not earn a permanent seat in a control
+bar that has to survive a phone-sized viewport, and lookdev worth offering is a *set* tuned
+together. Flipping the flag restores it as it was; adding the next dial is markup inside
+`#lookdev`, a sync called from `syncLookdev`, and its element in that function's `controls` list.
+
+Fitted mode exists because exported units are rarely metres — a centimetre scene
 arrives 100× too large, and "my model is invisible because I am standing inside it" is the most
 common first-run failure.
 
@@ -158,7 +212,9 @@ is a headset where the console is not visible.
 
 Two ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push) and
 **`inspect`** (draw calls, materials and *decoded* texture memory read off the renderer — the two
-numbers a GLB's size does not tell you).
+numbers a GLB's size does not tell you). Both are checkboxes on the WebXR Preview option box,
+which passes an explicit list every push: the panel is authoritative, so a script registered on
+the server by other code is cleared by the next push from there.
 
 ## Does WebXR use OpenGL?
 
@@ -457,19 +513,67 @@ authored. Colours are glTF-convention **linear**, and the envelope is a versione
 
 So: a genuine standalone hand-off and audit trail, not a substitute for the DCC file.
 
+## Preview and export are one deliverable
+
+The preview is the approval gate, so the asset a developer receives has to be the asset the artist
+signed off. That is a *shared definition*, not a convention: `MeshConvert.web_delivery_texture_params`
+is the one statement of what a web deliverable's textures are (`WEB_DELIVERY_FORMAT`,
+`WEB_DELIVERY_MAX_SIZE`), and the preview's texture pass and both scene exporters' GLB paths all
+resolve through it. The exporters' panel dials **override** it — Texture File Type the container,
+Optimize Textures the ceiling — rather than being the only thing that turns the pass on.
+
+This is worth stating because the alternative was measured. Running both legs over one production
+assembly in one Maya session and diffing 24 observable properties of the two GLBs: geometry,
+materials, lightmaps and the sidecar matched exactly, and the textures did not — **8.71 MB of WebP
+from the preview against 280.13 MB of full-resolution PNG from the exporter**, with nothing in
+either log saying so. Setting the exporter's dials to WebP still gave 22.06 MB, because its ceiling
+resolved from an absent template budget to "never resample".
+
+After the fix, the same comparison on the same scene reports **full semantic parity — all 24
+properties equal** (8.71 MB vs 8.72 MB, 1925 nodes over 537 instanced meshes, 28 WebP images, 47/47
+lightmaps, 13 clips opening on `Shot_2`), `verify_glb` returns an identical report for both, and
+both render identically in headless WebXR. Two things had to be pinned to get there beyond the
+texture policy: the Maya exporter's FBX write inherits **sticky global plugin state** when no preset
+names a configuration (factory is instancing OFF, smoothing groups OFF, embedded media OFF — a
+clean session would have shipped an untextured, de-instanced GLB), and cameras, which the preview
+mixin drops and the factory keeps.
+
+One property is deliberately **not** shared: `ktx2_fallback` answers "must this open in a stock glTF
+importer?", which is a property of the consumer. The preview streams to a page that wires
+`KTX2Loader` and says `False`; an exporter handing over an asset that must also open in Blender or
+Unreal says `True`.
+
+The other axis to check on a handoff is the **take split**. A scene that declares shots must have
+them realized into FBX AnimStacks before conversion, or the deliverable carries one continuous clip
+where the preview showed twelve. `apply_glb_animations` warns with both counts when the `fbx_takes`
+channel names takes the file has no clips for — that warning is the one to read.
+
 ## Cost and budget
 
-Timings, measured end to end on a 231 MB production FBX carrying 224 MB of embedded PNG:
+Timings, measured end to end on a production assembly (324 MB FBX, 757 mesh transforms over 537
+instanced shapes, 98k triangles, 12 shots, 48 baked objects, ~295 MB of embedded PNG):
 
-| Stage | Cost |
-|---|---|
-| FBX2glTF conversion | **44–57 s** — ~80% of the wall clock, and noisy run to run |
-| Sidecar + lightmap wiring | 8.7 s |
-| Texture optimize | 31.8 s → **7.1 s** (parallelized; byte-identical output) |
-| Publish | 0.03 s |
+| Stage | Cost | Share |
+|---|---|---|
+| FBX write (Maya, 12-take split) | ~18 s | 5% |
+| **FBX2glTF conversion** | **345 s** | **91%** |
+| Scene sidecar (incl. ORM repack) | 17.4 s | 5% |
+| Lightmap wiring | 1.9 s | <1% |
+| Texture optimize | 7.1 s | 2% |
+| Publish | 0.03 s | — |
 
-The external converter dominates, and it is a third-party binary — so the honest statement is that
-the pipeline's own work is now a small fraction of the push.
+**The external converter is the pipeline.** It is a third-party binary and its cost tracks the size
+of the FBX handed to it — which is dominated by embedded textures the pass afterwards throws away:
+295.1 MB of images become **5.9 MB**, a 50× reduction, *after* FBX2glTF has spent five minutes
+copying the full-resolution originals into a GLB. Pre-shrinking the textures before the FBX write is
+therefore the one large lever left (the scene exporters already have the staging machinery for it;
+the preview does not), and it is tracked in `.claude/BACKLOG.md` rather than done casually — it
+means rewriting live file-node paths and restoring them, in a session that may crash.
+
+Cheaper wins already taken: `dedupe_glb_images` collapses the byte-identical copies FBX2glTF emits
+per material (measured: 6 images, 10.2 MB, removed *before* the texture pass pays to encode them),
+and the preview releases its consumed FBX as soon as the GLB exists instead of leaving it for the
+7-day sweep (measured: 324 MB per push, 3.1 GB found accumulated).
 
 **Texture budget is the whole file.** Before the optimize pass a delivery measured 94.7 MB, of which
 87.8 MB (93%) was uncompressed source PNG — a 24 MB normal map, a 20 MB character texture — against
@@ -481,7 +585,8 @@ the wire, 5.97 MB of it images, which decode to ~555 MB of RGBA and ~740 MB with
 one of its 38 images is 2048², because `max_size` is a per-image ceiling and nothing budgets the
 total. On a headset that, not the download, is what limits how large a scene can be previewed.
 
-The fix is opt-in and request-scoped: `bridge.push(texture_format="KTX2")` re-encodes that delivery to
+The fix is opt-in and request-scoped: `bridge.push(texture_format="KTX2")` — the **Texture Format**
+row on the WebXR Preview option box — re-encodes that delivery to
 KTX2/Basis (`KHR_texture_basisu`), which the GPU keeps block-compressed — the viewer's `KTX2Loader`
 transcodes it to ASTC on a standalone headset, BC7 on desktop. It needs KTX-Software's `toktx` on
 the authoring machine (the push raises with the install URL when it is missing, never silently

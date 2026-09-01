@@ -14,14 +14,25 @@ base (no domain model or planner), so it lives in ``core_utils`` beside the othe
 shared infrastructure rather than in ``core_utils/engines/``. Formerly vendored
 byte-identical in mayatk and blendertk; now the single source of truth.
 """
+
 import contextlib
 import time
 from inspect import signature
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, List, Optional, Tuple
 
 
 class TaskFactory:
     """A factory class for managing and executing tasks in a scene export pipeline."""
+
+    #: ``{check_name: (task_name, ...)}`` -- for each check, the tasks whose
+    #: execution can change its verdict.  It is what lets :meth:`_schedule`
+    #: hoist a check ABOVE the tasks it does not depend on, so a gate that was
+    #: always going to fail fails BEFORE the expensive tasks below it have run
+    #: (and, for a check that depends on nothing enabled, before the host is
+    #: mutated at all).  A check with no entry here is treated as depending on
+    #: every task -- the historical run-all-tasks-then-all-checks order -- so a
+    #: subclass that declares nothing behaves exactly as it did.
+    CHECK_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {}
 
     def __init__(self, logger):
         self.logger = logger
@@ -84,9 +95,7 @@ class TaskFactory:
         if key in self._deferred_restores:
             return False
         cm.__enter__()
-        return self.stage_deferred_restore(
-            key, lambda: cm.__exit__(None, None, None)
-        )
+        return self.stage_deferred_restore(key, lambda: cm.__exit__(None, None, None))
 
     def run_deferred_restores(self) -> None:
         """Run + clear every restore staged by :meth:`stage_deferred_restore`.
@@ -111,8 +120,24 @@ class TaskFactory:
         return self._method_cache[method_name]
 
     @contextlib.contextmanager
-    def _manage_context(self, tasks: Dict[str, Any]) -> Dict[str, Any]:
-        """Manage task states by setting them once and reverting after, returning task results."""
+    def _manage_context(
+        self,
+        tasks: Dict[str, Any],
+        gate: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+    ) -> Dict[str, Any]:
+        """Manage task states by setting them once and reverting after, returning task results.
+
+        Parameters:
+            tasks: The run list, in execution order.  Tasks and checks may be
+                interleaved (see :meth:`_schedule`); each entry is labelled by
+                its ``check_`` prefix, so the log still numbers the two kinds
+                separately.
+            gate: ``gate(name, results_so_far) -> bool``, consulted before each
+                entry.  Returning False skips it -- it never runs and never
+                reaches *results*, so a skipped check is not a failed one.
+                Used by :meth:`_execute_tasks_and_checks` to drop the work that
+                a failed check has already made pointless.
+        """
         original_states = {}
         task_results = {}
 
@@ -134,12 +159,54 @@ class TaskFactory:
         # Revert in a finally: a task raising mid-loop, or an exception thrown
         # into the generator at the yield (from the with-body), must not leave
         # set_* state applied to the host scene.
+        # Number tasks and checks in their own sequences: an interleaved run
+        # list would otherwise report "Task #7/12" over a check.
+        totals = {True: 0, False: 0}
+        for name in valid_tasks:
+            totals[name.startswith("check_")] += 1
+        counters = {True: 0, False: 0}
+
         try:
-            for index, (task_name, value) in enumerate(valid_tasks.items(), start=1):
+            for task_name, value in valid_tasks.items():
                 method = self._method_cache[task_name]  # Already cached
-                self.logger.info(
-                    f"Executing Task #{index}/{len(valid_tasks)}: {task_name}"
-                )
+                is_check = task_name.startswith("check_")
+                counters[is_check] += 1
+                label = "Check" if is_check else "Task"
+                index, total = counters[is_check], totals[is_check]
+
+                # An unchecked toggle is not a task that ran. Reported before
+                # the call, because the log is what a user (and anyone
+                # diagnosing a deliverable from it) reads to know what the
+                # export DID: "Executing apply_declared_takes" followed by
+                # "Completed in 0.000s" over a task that was switched off cost
+                # real time during a 2026-08-30 production investigation, since
+                # it reads as a task that ran and did nothing rather than one
+                # that never ran.
+                #
+                # Ahead of the gate deliberately: a task that was switched off
+                # can change no verdict, so counting it among the work an abort
+                # skipped would hold back checks that are still decidable.
+                if self._task_is_disabled(method, value):
+                    self.logger.info(
+                        f"Skipping {label} #{index}/{total}: {task_name} (disabled)"
+                    )
+                    # The value the executor would have returned, so callers
+                    # reading the results see no change in shape.
+                    task_results[task_name] = True
+                    # Deliberately NO revert staged: the task never ran, so
+                    # there is no mutation to undo, and the `True` above is not
+                    # a captured original state -- pairing them would hand
+                    # ``revert_<x>(True)`` to a task that was switched off.
+                    continue
+
+                if gate is not None and not gate(task_name, task_results):
+                    self.logger.info(
+                        f"Skipping {label} #{index}/{total}: {task_name} "
+                        "(a check has already failed)"
+                    )
+                    continue
+
+                self.logger.info(f"Executing {label} #{index}/{total}: {task_name}")
 
                 # Get revert method BEFORE executing the task
                 revert_method = self._get_revert_method(task_name)
@@ -162,7 +229,7 @@ class TaskFactory:
                         )
 
                     # Handle check failures efficiently
-                    if task_name.startswith("check_") and not self._is_success(result):
+                    if is_check and not self._is_success(result):
                         self._log_check_failed(
                             task_name, self._get_log_messages(result)
                         )
@@ -175,17 +242,41 @@ class TaskFactory:
         finally:
             self._revert_states(original_states)
 
+    def _positional_count(self, method) -> int:
+        """How many positional parameters *method* takes.
+
+        The one piece of introspection both the dispatcher and the
+        disabled-task predicate need; split out so they cannot disagree about
+        which shape of task a falsy value switches OFF versus passes THROUGH.
+        """
+        return len(
+            [
+                p
+                for p in signature(method).parameters.values()
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ]
+        )
+
+    def _task_is_disabled(self, method, value: Any) -> bool:
+        """Whether *value* switches this task OFF rather than parameterising it.
+
+        Only a zero-argument task can be disabled: its value is a checkbox and
+        nothing else. A task that TAKES a value is being handed one --
+        ``0``/``""`` may be a legitimate argument, so a falsy value there is
+        never read as "off" (:meth:`_execute_task_method` passes it through).
+        """
+        try:
+            return self._positional_count(method) == 0 and not value
+        except (TypeError, ValueError):
+            # Unintrospectable callable (a builtin, a C extension): treat it as
+            # enabled and let the executor deal with it -- the same thing that
+            # happened before this predicate existed.
+            return False
+
     def _execute_task_method(self, method, value: Any):
         """Execute a task method with proper parameter handling."""
         try:
-            sig = signature(method)
-            param_count = len(
-                [
-                    p
-                    for p in sig.parameters.values()
-                    if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-                ]
-            )
+            param_count = self._positional_count(method)
 
             if param_count == 0:
                 # If the method takes no arguments, treat 'value' as a boolean flag
@@ -249,6 +340,60 @@ class TaskFactory:
                 ordered[key] = tasks[key]
         return ordered
 
+    def _schedule(
+        self, ordered_tasks: Dict[str, Any], ordered_checks: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Merge tasks and checks into ONE ordered run list.
+
+        Tasks keep the sequence :meth:`_order_tasks` gave them, unchanged: that
+        order is load-bearing (a subclass' ``TASK_ORDER`` encodes which task
+        must see another's output) and no dependency graph describes it, so a
+        task is never moved.  Each CHECK is hoisted instead, to the earliest
+        point at which every task it declares in :attr:`CHECK_DEPENDENCIES` has
+        already run -- and a check whose declared dependencies are all absent
+        or switched off for this run is hoisted in front of the first task, so
+        it is decided before the host is touched at all.
+
+        The pay-off is what does NOT happen: a check that fails takes the rest
+        of the run down with it (:meth:`_execute_tasks_and_checks`), and every
+        task below it in the list is work the aborted write would have thrown
+        away.  A check with no entry in the map is scheduled after every task,
+        which is the order the runner had before this existed.
+        """
+        deps = getattr(self, "CHECK_DEPENDENCIES", None) or {}
+        task_names = list(ordered_tasks)
+        legacy_slot = len(task_names) - 1  # after every task
+
+        # A task that will not actually run is not a barrier. Same two
+        # predicates _manage_context filters on, so the scheduler and the
+        # runner cannot disagree about which tasks exist this pass.
+        slot_of = {}
+        for index, name in enumerate(task_names):
+            method = self._get_cached_method(name)
+            if method is None or self._task_is_disabled(method, ordered_tasks[name]):
+                continue
+            slot_of[name] = index
+
+        # slot -> the checks decided once the task at that index has run;
+        # slot -1 holds those decided before the first task.
+        buckets: Dict[int, List[Tuple[str, Any]]] = {}
+        for name, value in ordered_checks.items():
+            if name in deps:
+                # Only dependencies that will actually RUN this pass count: a
+                # task the caller left out, switched off, or has no method for
+                # can change nothing, so it must not hold its dependents back.
+                slots = [slot_of[d] for d in deps[name] if d in slot_of]
+                slot = max(slots) if slots else -1
+            else:
+                slot = legacy_slot
+            buckets.setdefault(slot, []).append((name, value))
+
+        schedule: Dict[str, Any] = dict(buckets.get(-1, ()))
+        for index, name in enumerate(task_names):
+            schedule[name] = ordered_tasks[name]
+            schedule.update(buckets.get(index, ()))
+        return schedule
+
     def _execute_tasks_and_checks(
         self,
         tasks_only: Dict[str, Any],
@@ -258,25 +403,54 @@ class TaskFactory:
         failed_checks = []
         all_checks_passed = True
 
-        # Run tasks first
-        if tasks_only:
-            ordered_tasks = self._order_tasks(tasks_only)
-            self.logger.info(f"Running {len(ordered_tasks)} export tasks...")
-            with self._manage_context(ordered_tasks):
-                pass
-
-        # Run checks second
+        ordered_tasks = self._order_tasks(tasks_only) if tasks_only else {}
+        ordered_checks = {}
         if checks_only:
-            sorted_checks = (
+            ordered_checks = (
                 checks_only
                 if self._is_sorted(checks_only)
                 else dict(sorted(checks_only.items()))
             )
-            self.logger.info(f"Running {len(sorted_checks)} validation checks...")
 
-            with self._manage_context(sorted_checks) as check_results:
+        skipped_tasks: List[str] = []
+        skipped_checks: List[str] = []
+
+        def gate(name: str, results: Dict[str, Any]) -> bool:
+            """Whether *name* is still worth running.
+
+            Everything runs until a check fails.  After that the run is over --
+            its only consumer was a write that will not happen -- so every
+            remaining TASK is dropped, and with it every check that needed one.
+            Checks that were already decidable keep running: they cost nothing
+            more, and reporting every failure the user can act on in one pass
+            is what the old run-all-checks-last order gave for free.
+            """
+            if not any(
+                k.startswith("check_") and not self._is_success(v)
+                for k, v in results.items()
+            ):
+                return True
+            if not name.startswith("check_"):
+                skipped_tasks.append(name)
+                return False
+            if skipped_tasks:  # a task this check reads never ran
+                skipped_checks.append(name)
+                return False
+            return True
+
+        schedule = self._schedule(ordered_tasks, ordered_checks)
+        if schedule:
+            self.logger.info(
+                f"Running {len(ordered_tasks)} export task(s) and "
+                f"{len(ordered_checks)} validation check(s)..."
+            )
+            # ONE context over the merged list: the set_/revert_ pairing still
+            # unwinds when run_tasks returns (its documented contract), and a
+            # check hoisted above a set_ task must not see it already reverted.
+            with self._manage_context(schedule, gate=gate) as results:
                 all_checks_passed = self._process_check_results(
-                    check_results, failed_checks
+                    {k: v for k, v in results.items() if k.startswith("check_")},
+                    failed_checks,
                 )
 
         # Store counts so the caller (SceneExporter) can include them
@@ -288,6 +462,24 @@ class TaskFactory:
         # check that was never made.
         self._last_task_count = self._dispatchable_count(tasks_only)
         self._last_check_count = self._dispatchable_count(checks_only)
+
+        if skipped_tasks or skipped_checks:
+            # Name what the abort bought, and what it cost: an unexplained
+            # gap between the requested task list and the log is the thing
+            # that makes a user suspect the export silently misbehaved.
+            lines = []
+            if skipped_tasks:
+                lines.append(f"Tasks not run: {', '.join(skipped_tasks)}")
+            if skipped_checks:
+                lines.append(
+                    "Checks not evaluated (they read a task that was skipped): "
+                    + ", ".join(skipped_checks)
+                )
+            self.logger.info(
+                f"Stopped after the first failed check — skipped "
+                f"{len(skipped_tasks)} task(s) and {len(skipped_checks)} "
+                f"check(s). " + " ".join(lines)
+            )
 
         self._log_execution_summary(
             failed_checks,
