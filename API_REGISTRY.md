@@ -24,6 +24,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/shots/manifest/range_resolver.py`](#core_utils--engines--shots--manifest--range_resolver) — Range resolution algorithm for the Shot Manifest.
 - [`core_utils/engines/shots/shot_apply.py`](#core_utils--engines--shots--shot_apply) — Commit a resolved :class:`MovePlan` via injected writer callables.
 - [`core_utils/engines/shots/shot_detection.py`](#core_utils--engines--shots--shot_detection) — Pure shot-boundary detection math.
+- [`core_utils/engines/shots/shot_ledger.py`](#core_utils--engines--shots--shot_ledger) — Ledger of the edits the shot system authors on a scene's animation.
 - [`core_utils/engines/shots/shot_model.py`](#core_utils--engines--shots--shot_model) — DCC-agnostic shot data model and persistent store.
 - [`core_utils/engines/shots/shot_plan.py`](#core_utils--engines--shots--shot_plan) — Pure planning layer for multi-shot topology transformations.
 - [`core_utils/engines/textures/map_compositor.py`](#core_utils--engines--textures--map_compositor) — Pure image-compositing engine — alpha-composite layered texture maps
@@ -70,6 +71,11 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
 - [`file_utils/file_naming.py`](#file_utils--file_naming) — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
+- [`file_utils/mesh_convert/export_verify.py`](#file_utils--mesh_convert--export_verify) — Deliverable verification for exported FBX / GLB pairs.
+- [`file_utils/mesh_convert/fbx_file.py`](#file_utils--mesh_convert--fbx_file) — Zero-dependency binary-FBX reader: header, node records, objects, takes.
+- [`file_utils/mesh_convert/glb_clips.py`](#file_utils--mesh_convert--glb_clips) — Rebuild a GLB's shot clips from its one whole-timeline animation.
+- [`file_utils/mesh_convert/glb_fades.py`](#file_utils--mesh_convert--glb_fades) — Write authored opacity ramps into a GLB as ``KHR_animation_pointer`` channels.
+- [`file_utils/mesh_convert/glb_reader.py`](#file_utils--mesh_convert--glb_reader) — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
 - [`file_utils/metadata.py`](#file_utils--metadata)
 - [`file_utils/temp_artifacts.py`](#file_utils--temp_artifacts) — Prefix-scoped temp artifacts with an explicit lifetime policy.
@@ -168,17 +174,17 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.carrier_of(path: str) -> str` *(static)* — The carrier a payload *path* names, by extension (``"fbx"`` / ``"usd"``).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L652)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L677)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L715)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L740)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L826)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L889)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L976)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1039)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1057)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1120)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -359,17 +365,17 @@ Pure Shot Manifest data model + CSV parser.
 - **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L120)** — ManifestModel — module namespace.
   - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
   - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
-- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L315)** — One asset within a step.
-- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L325)** — One step (= one future sequencer shot).
+- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L321)** — One asset within a step.
+- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L331)** — One step (= one future sequencer shot).
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
   - `BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert detection candidates to BuilderSteps + pre-filled ranges.
-- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L395)** — Immutable build instruction computed before any store mutation.
-- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L434)** — Assessment result for one object within a step.
-- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L450)** — Assessment result for one step.
+- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L401)** — Immutable build instruction computed before any store mutation.
+- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L440)** — Assessment result for one object within a step.
+- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L456)** — Assessment result for one step.
   - `StepStatus.status(self) -> str` *(property)* — Worst-of-children rollup.
   - `StepStatus.missing_count(self) -> int` *(property)*
   - `StepStatus.total_count(self) -> int` *(property)*
-- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L502)** — Maps logical fields to CSV header names (case-insensitive).
+- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L508)** — Maps logical fields to CSV header names (case-insensitive).
   - `ColumnMap.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON-safe dict (tuples → lists).
   - `ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'` *(class)* — Reconstruct from a dict produced by :meth:`to_dict`.
 
@@ -409,7 +415,7 @@ Range resolution algorithm for the Shot Manifest.
 
 Commit a resolved :class:`MovePlan` via injected writer callables.
 
-- **[`class ShotApply`](pythontk/pythontk/core_utils/engines/shots/shot_apply.py#L46)** — ShotApply — module namespace.
+- **[`class ShotApply`](pythontk/pythontk/core_utils/engines/shots/shot_apply.py#L54)** — ShotApply — module namespace.
   - `ShotApply.apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None` *(static)* — Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).
 
 <a id="core_utils--engines--shots--shot_detection"></a>
@@ -421,26 +427,61 @@ Pure shot-boundary detection math.
   - `ShotDetection.cluster_segments_by_gap(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]` *(static)* — Cluster per-object animation segments into shot-region candidates.
   - `ShotDetection.boundaries_from_key_entries(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]` *(static)* — Build shot-region candidates from ``(time, value, object)`` key entries.
 
+<a id="core_utils--engines--shots--shot_ledger"></a>
+### `core_utils/engines/shots/shot_ledger.py`
+
+Ledger of the edits the shot system authors on a scene's animation.
+
+- **[`class ShotEditLedger(_ShotEditLedgerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_ledger.py#L74)** — What the shot system wrote on scene curves, and how to take it back.
+  - `ShotEditLedger.step_count(self) -> int` *(property)* — Number of stepped tangents the system currently claims.
+  - `ShotEditLedger.key_count(self) -> int` *(property)* — Number of samples the system currently claims.
+  - `ShotEditLedger.curves(self) -> set` *(property)* — Every curve name either register mentions.
+  - `ShotEditLedger.record_step(self, curve: str, time: float, in_type: str, out_type: str) -> bool` — Claim the step the system is about to write at ``(curve, time)``.
+  - `ShotEditLedger.owns_step(self, curve: str, time: float) -> bool` — True when the system wrote the step at ``(curve, time)``.
+  - `ShotEditLedger.release_step(self, curve: str, time: float) -> Optional[Tuple[str, str]]` — Drop the claim at ``(curve, time)``, returning ``(in, out)`` types.
+  - `ShotEditLedger.step_times(self, curve: str) -> List[float]` — Every time the system stepped on *curve*, ascending.
+  - `ShotEditLedger.stepped_curves(self) -> List[str]` — Curve names carrying at least one claimed step.
+  - `ShotEditLedger.record_key(self, curve: str, time: float, owner: int = NO_OWNER, edge: str = '') -> bool` — Claim a sample the system created for a shot bound.
+  - `ShotEditLedger.release_key(self, curve: str, time: float) -> bool` — Drop the claim on a sample.
+  - `ShotEditLedger.key_times(self, curve: str) -> List[float]` — Every time the system created a sample on *curve*, ascending.
+  - `ShotEditLedger.key_records(self, curve: str) -> List[Tuple[float, int, str]]` — ``(time, owner_shot_id, edge)`` for every claimed sample on *curve*.
+  - `ShotEditLedger.keyed_curves(self) -> List[str]` — Curve names carrying at least one claimed sample.
+  - `ShotEditLedger.disown_shot(self, shot_id: int) -> int` — Re-point every claim owned by *shot_id* at :data:`NO_OWNER`.
+  - `ShotEditLedger.shift(self, curve: str, lo: float, hi: float, delta: float) -> int` — Add *delta* to every claim on *curve* inside ``[lo, hi]``.
+  - `ShotEditLedger.remap(self, curve: str, pairs) -> int` — Move claims from each ``old_time`` to its ``new_time``.
+  - `ShotEditLedger.forget_curve(self, curve: str) -> None` — Drop every claim on *curve* (it was deleted, or is unreachable).
+  - `ShotEditLedger.to_dict(self) -> Dict[str, Any]` — Plain-dict form for the scene payload.
+  - `ShotEditLedger.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'ShotEditLedger'` *(class)* — Rebuild from :meth:`to_dict`.
+
 <a id="core_utils--engines--shots--shot_model"></a>
 ### `core_utils/engines/shots/shot_model.py`
 
 DCC-agnostic shot data model and persistent store.
 
-- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L64)** — Interface for saving / loading ShotStore data.
+- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L66)** — Interface for saving / loading ShotStore data.
   - `ScenePersistence.save(self, data: Dict[str, Any]) -> None`
   - `ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
-- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L101)** — Represents a single shot (contiguous animation range).
+- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L103)** — Represents a single shot (contiguous animation range).
   - `ShotBlock.duration(self) -> float` *(property)*
   - `ShotBlock.classify_objects(self) -> Dict[str, str]` — Return ``{obj_name: status_key}`` using stored metadata.
-- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L183)** — Base class for typed :class:`ShotStore` events.
-- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L195)** — A new shot was created and added to the store.
-- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L203)** — An existing shot's fields were modified.
-- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L211)** — A shot was removed from the store.
-- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L219)** — The active (selected) shot changed.
-- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L227)** — Detection-relevant settings were modified.
-- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L234)** — A :meth:`ShotStore.batch_update` context has exited.
-- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L241)** — The active store was discarded (scene change / new scene).
-- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L269)** — Central store for shot data with pluggable persistence.
+- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L185)** — Base class for typed :class:`ShotStore` events.
+- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L197)** — A new shot was created and added to the store.
+- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L205)** — An existing shot's fields were modified.
+- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L213)** — A shot was removed from the store.
+- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L221)** — The active (selected) shot changed.
+- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L229)** — Detection-relevant settings were modified.
+- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L236)** — A :meth:`ShotStore.batch_update` context has exited.
+- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L243)** — The active store was discarded (scene change / new scene).
+- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L271)** — Central store for shot data with pluggable persistence.
+  - `ShotStore.snapshot_bounds(self) -> list` — Return the current shot state for the boundary ledger.
+  - `ShotStore.push_boundary_snapshot(self, tag: Any = None) -> None` — Record the current bounds as an undo restore point.
+  - `ShotStore.tag_boundary_snapshot(self, tag: Any) -> bool` — Attach *tag* to the newest restore point.
+  - `ShotStore.peek_boundary_tag(self, redo: bool = False) -> Any` — Return the tag of the restore point the next apply would consume.
+  - `ShotStore.has_boundary_snapshot(self, redo: bool = False) -> bool` — True when a restore point is available in that direction.
+  - `ShotStore.discard_boundary_snapshot(self) -> None` — Drop the most recent restore point without applying it.
+  - `ShotStore.restore_boundary_snapshot(self) -> bool` — Apply the most recent restore point (the undo direction).
+  - `ShotStore.redo_boundary_snapshot(self) -> bool` — Re-apply the state a restore stepped back from (the redo direction).
+  - `ShotStore.clear_boundary_snapshots(self) -> None` — Drop both ledger sides (scene swap: colliding shot_ids across
   - `ShotStore.has_animation() -> bool` *(static)* — Return whether the scene contains animation (overridable hook).
   - `ShotStore.detect_regions(self) -> List[Dict[str, Any]]` — Detect shot-region candidates from the scene (overridable hook).
   - `ShotStore.assess(self) -> Dict[int, str]` — Assess whether each shot's objects exist in the scene (hook).
@@ -495,15 +536,29 @@ DCC-agnostic shot data model and persistent store.
 
 Pure planning layer for multi-shot topology transformations.
 
-- **[`class ShotPlanner(_ShotPlannerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L154)** — ShotPlanner — module namespace.
+- **[`class ShotBoundaryConflict(RuntimeError)`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L37)** — Two poses would be forced onto one sample by collapsing a gap.
+- **[`class ShotPlanner(_ShotPlannerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L207)** — ShotPlanner — module namespace.
+  - `ShotPlanner.envelope_for(sorted_shots: List, index: int) -> tuple` *(static)* — ``(env_start, env_end, lo_open, hi_closed)`` for one shot's window.
+  - `ShotPlanner.in_window(t: float, lo: float, hi: float, lo_open: bool = False, hi_closed: bool = False, eps: float = _EPS) -> bool` *(static)* — Is sample *t* inside the window ``[lo, hi)`` as shaped by the flags?
+  - `ShotPlanner.objects_to_adopt(keyed: Dict[str, Sequence[float]], owned: Optional[Iterable[str]], lo: float, hi: float, lo_open: bool = False, hi_closed: bool = False, eps: float = _EPS) -> List[str]` *(static)* — Objects a moving shot may claim over the window it is about to move.
+  - `ShotPlanner.move_windows(plan: MovePlan) -> List[Tuple[float, float, bool, bool, float]]` *(static)* — The windows *plan* will actually move, shaped for :meth:`key_collisions`.
+  - `ShotPlanner.plan_pivot_move(store: ShotStore, shot_id: int, new_start: float) -> MovePlan` *(static)* — A plan that moves one shot to ``new_start``, rippling nothing.
+  - `ShotPlanner.boundary_splits(store: ShotStore, plan: MovePlan, eps: float = _EPS) -> List[Tuple[int, int, float, float]]` *(static)* — Shared samples this plan pulls apart.
+  - `ShotPlanner.key_collisions(windows: Sequence[Tuple[float, float, bool, bool, float]], times: Iterable[float], eps: float = 0.001) -> List[Tuple[float, List[float], List[float]]]` *(static)* — Samples of one curve that a plan would land on the same frame.
   - `ShotPlanner.plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan` *(static)* — Build a plan that lays shots out sequentially with uniform gaps.
+  - `ShotPlanner.plan_gap_retimes(store: ShotStore, plan: MovePlan) -> List[GapRetime]` *(static)* — Every gap in *plan* whose width changes, as a :class:`GapRetime`.
   - `ShotPlanner.plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan` *(static)* — Build a plan that shifts every shot starting at or after
   - `ShotPlanner.plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan` *(static)* — Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.
   - `ShotPlanner.plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan` *(static)* — Build a plan that shifts every shot ending at or before
-- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L343)** — A single shot's source and destination ranges.
+- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L735)** — A single shot's source and destination ranges.
   - `ShotMove.delta(self) -> float` *(property)*
   - `ShotMove.moves(self) -> bool` *(property)*
-- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L371)** — Resolved multi-shot timeline mutation.
+- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L770)** — Resolved multi-shot timeline mutation.
+- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L793)** — One inter-shot gap whose WIDTH changes, and where its content must land.
+  - `GapRetime.width(self) -> float` *(property)*
+  - `GapRetime.scale(self) -> float` *(property)* — Time factor about the gap's left edge (0.0 collapses the gap).
+  - `GapRetime.shrinks(self) -> bool` *(property)*
+  - `GapRetime.grows(self) -> bool` *(property)*
 
 <a id="core_utils--engines--textures--map_compositor"></a>
 ### `core_utils/engines/textures/map_compositor.py`
@@ -1263,7 +1318,7 @@ SymbolRecord - the shared public-API symbol shape.
 
 Generic task/check pipeline primitive -- host- and Qt-free.
 
-- **[`class TaskFactory`](pythontk/pythontk/core_utils/task_factory.py#L23)** — A factory class for managing and executing tasks in a scene export pipeline.
+- **[`class TaskFactory`](pythontk/pythontk/core_utils/task_factory.py#L24)** — A factory class for managing and executing tasks in a scene export pipeline.
   - `TaskFactory.stage_deferred_restore(self, key: str, restore: Callable) -> bool` — Register *restore* to run **after** the caller's real work — once per *key*.
   - `TaskFactory.stage_deferred_context(self, key: str, cm) -> bool` — Enter context manager *cm* now and stage its exit as the deferred restore.
   - `TaskFactory.run_deferred_restores(self) -> None` — Run + clear every restore staged by :meth:`stage_deferred_restore`.
@@ -1362,8 +1417,9 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
 - **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L62)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+  - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
-  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = DEFAULT_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* — Drop the FBX's handoff block from a converted glTF's node extras.
   - `MeshConvert.build_fbx_handoff(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to publish.
@@ -1371,20 +1427,115 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.sidecar_foreign_packings(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* — ``{path: map type}`` for envelope textures authored for another engine.
   - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The scene-sidecar envelope embedded in a GLB, or ``None``.
   - `MeshConvert.verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]` *(class)* — Check a delivered GLB against the envelope it carries.
+  - `MeshConvert.data_export_channel(cls, gltf: dict, key: str) -> Optional[Any]` *(class)* — Decoded value of one ``data_export`` channel in a parsed glTF, or ``None``.
   - `MeshConvert.without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]` *(class)* — Copy of a ``data_export`` snapshot with build-time locate hints removed.
   - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.
+  - `MeshConvert.lightmap_manifest_coverage(cls, glb: GlbTarget) -> Dict[str, List[str]]` *(class)* — Split a GLB's bake manifest by whether this GLB actually carries each object.
   - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
+  - `MeshConvert.apply_glb_clips(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Rebuild the declared shot clips as exact slices of the whole timeline.
+  - `MeshConvert.apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize keyed visibility as STEP ``scale`` channels the file can play.
+  - `MeshConvert.clip_spans(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]` *(class)* — Per take, the first and last authored frame inside its window.
+  - `MeshConvert.build_visibility_tracks(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]` *(class)* — Wrap *tracks* in the versioned ``visibility_tracks`` envelope.
+  - `MeshConvert.apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize authored opacity ramps as animated material alpha.
+  - `MeshConvert.apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish the GLB's clips as ``extras.animation_web``, joined to the shots.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
   - `MeshConvert.describe_texture_pass(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str` *(class)* — Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
-  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = 2048, image_format: str = 'WEBP', quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
+  - `MeshConvert.web_delivery_texture_params(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]` *(class)* — :meth:`optimize_glb_textures` kwargs for a WEB deliverable.
+  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.suspect_orm_materials(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]` *(class)* — Materials whose delivered ORM binding this pipeline never validated.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
+  - `MeshConvert.dedupe_glb_images(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Collapse byte-identical embedded images onto one copy.
   - `MeshConvert.prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop textures no material samples, and the images/bufferViews only they used.
   - `MeshConvert.set_glb_alpha_mode(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.
+  - `MeshConvert.set_glb_normal_scale(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int` *(class)* — Write ``normalTexture.scale`` into a GLB's materials.
   - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
+
+<a id="file_utils--mesh_convert--export_verify"></a>
+### `file_utils/mesh_convert/export_verify.py`
+
+Deliverable verification for exported FBX / GLB pairs.
+
+- **[`class Finding`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L37)** — One verification outcome row.
+- **[`class VerificationReport`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L46)** — Every finding from one :meth:`ExportVerifier.run`.
+  - `VerificationReport.ok(self) -> bool` *(property)* — True when no finding FAILed (WARN and SKIP do not fail a report).
+  - `VerificationReport.counts(self) -> Dict[str, int]`
+  - `VerificationReport.summary(self) -> str` — Human-readable table plus a one-line verdict.
+  - `VerificationReport.to_json(self) -> str`
+- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L104)** — Run file-level gates over an exported GLB and/or FBX.
+  - `ExportVerifier.reader(self) -> Optional[GlbReader]` *(property)*
+  - `ExportVerifier.fbx(self) -> Optional[FbxFile]` *(property)*
+  - `ExportVerifier.gate_names(self) -> List[str]` — Every registered gate, in run order.
+  - `ExportVerifier.run(self, checks: Optional[Sequence[str]] = None) -> VerificationReport` — Run *checks* (default: all) and return the report.
+  - `ExportVerifier.check_glb_container(self) -> List[Finding]` — The GLB parses and carries a scene graph.
+  - `ExportVerifier.check_glb_extensions(self) -> List[Finding]` — ``extensionsRequired`` must be a subset of ``extensionsUsed``.
+  - `ExportVerifier.check_glb_images(self) -> List[Finding]` — Texture sources resolve;
+  - `ExportVerifier.check_glb_skins(self) -> List[Finding]` — Referenced skins must carry inverseBindMatrices;
+  - `ExportVerifier.check_glb_animation_integrity(self) -> List[Finding]` — Channels resolve to real nodes/samplers;
+  - `ExportVerifier.check_glb_envelope(self) -> List[Finding]` — Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides.
+  - `ExportVerifier.check_clips_vs_takes(self) -> List[Finding]` — Each GLB clip's length matches its declared take (±1 frame).
+  - `ExportVerifier.check_fbx_container(self) -> List[Finding]` — The FBX parses;
+  - `ExportVerifier.check_fbx_takes(self) -> List[Finding]` — Declared sidecar takes all exist as AnimationStacks.
+  - `ExportVerifier.check_cross_clips(self) -> List[Finding]` — GLB clip names exist as FBX stacks (the conversion kept them).
+  - `ExportVerifier.check_baseline_diff(self) -> List[Finding]` — Structural drift vs a previous known-good GLB.
+
+<a id="file_utils--mesh_convert--fbx_file"></a>
+### `file_utils/mesh_convert/fbx_file.py`
+
+Zero-dependency binary-FBX reader: header, node records, objects, takes.
+
+- **[`class FbxFile(_FbxFileInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L112)** — A parsed binary FBX, held read-only.
+  - `FbxFile.load(cls, path: str, decode_arrays: bool = False) -> 'FbxFile'` *(class)* — Parse *path*.
+  - `FbxFile.is_fbx(path: str) -> bool` *(static)* — True when *path* starts with the binary-FBX magic.
+  - `FbxFile.section(self, name: str) -> Optional[Dict[str, Any]]` — Top-level record *name* (``"Objects"``, ``"Connections"`` …).
+  - `FbxFile.iter_objects(self) -> Iterator[Dict[str, Any]]` — Yield every child record of the ``Objects`` section.
+  - `FbxFile.objects_census(self) -> Dict[str, int]` — ``{record name: count}`` over the Objects section.
+  - `FbxFile.object_names(self, kind: str) -> List[str]` — Display names of every Objects child whose record name is *kind*.
+  - `FbxFile.take_names(self) -> List[str]` — Animation take names — the ``AnimationStack`` display names.
+  - `FbxFile.connections(self) -> List[Tuple[str, Any, Any, Optional[str]]]` — Every ``C`` record as ``(kind, child_id, parent_id, property)``.
+
+<a id="file_utils--mesh_convert--glb_clips"></a>
+### `file_utils/mesh_convert/glb_clips.py`
+
+Rebuild a GLB's shot clips from its one whole-timeline animation.
+
+- **[`class GlbClips(_GlbClipsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_clips.py#L279)** — Build a GLB's declared shot clips from its whole-timeline animation.
+  - `GlbClips.rebuild(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0) -> Optional[Dict[str, Any]]` *(class)* — Replace the declared clips with exact slices of the source stack.
+
+<a id="file_utils--mesh_convert--glb_fades"></a>
+### `file_utils/mesh_convert/glb_fades.py`
+
+Write authored opacity ramps into a GLB as ``KHR_animation_pointer`` channels.
+
+- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L149)** — Publish authored alpha ramps as animated material channels.
+  - `GlbFades.apply(cls, edit: Any, fades: Dict[str, Sequence[Sequence[float]]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write one alpha channel per faded node per clip.
+
+<a id="file_utils--mesh_convert--glb_reader"></a>
+### `file_utils/mesh_convert/glb_reader.py`
+
+Read-only structured access to a GLB: accessors, animation sampling, worlds.
+
+- **[`class GlbReader(_GlbReaderInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_reader.py#L94)** — Read-only GLB inspector: accessors, animation evaluation, node worlds.
+  - `GlbReader.load(cls, path: str) -> 'GlbReader'` *(class)* — Open *path* read-only and return a reader.
+  - `GlbReader.counts(self) -> Dict[str, int]` — Section lengths for the usual census keys (missing -> 0).
+  - `GlbReader.image_mimes(self) -> Dict[str, int]` — ``{mimeType: count}`` over ``images`` (missing type -> "?").
+  - `GlbReader.extensions(self) -> Tuple[List[str], List[str]]` — ``(extensionsUsed, extensionsRequired)`` (each possibly empty).
+  - `GlbReader.skins_summary(self) -> Dict[str, int]` — Counts the skin checks need: skins, with-IBM, skinned mesh nodes.
+  - `GlbReader.accessor(self, index: int) -> Optional[List[Tuple[float, ...]]]` — Decode accessor *index* into element tuples, or ``None``.
+  - `GlbReader.animations(self) -> List[str]` — Clip names, in file order (unnamed -> ``"<i>"``).
+  - `GlbReader.animation(self, key: Union[int, str]) -> Optional[Dict[str, Any]]` — The animation dict for an index or name, or ``None``.
+  - `GlbReader.clip_spans(self, fps: float = 30.0) -> Dict[str, Tuple[float, float, int]]` — Per clip: ``(min_seconds, max_seconds, end_frame)``.
+  - `GlbReader.channel_table(self, key: Union[int, str]) -> List[Dict[str, Any]]` — One row per channel: node index/name, path, interpolation, keys.
+  - `GlbReader.sample(self, key: Union[int, str], node: Union[int, str], path: str, time: float) -> Optional[Tuple[float, ...]]` — Evaluate one channel at *time* seconds, or ``None`` when absent.
+  - `GlbReader.nan_findings(self, huge: float = 10000000.0, deep: bool = False) -> List[str]` — Animation outputs that are NaN or beyond *huge* world units.
+  - `GlbReader.node_index(self, name: str) -> Optional[int]` — First node index with *name*, or ``None``.
+  - `GlbReader.parent_of(self, index: int) -> Optional[int]` — Parent node index, or ``None`` for a root.
+  - `GlbReader.local_matrix(self, index: int, time: Optional[float] = None, animation: Union[int, str, None] = None) -> List[List[float]]` — Node *index*'s local matrix, animated when *time* is given.
+  - `GlbReader.world_matrix(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[List[List[float]]]` — World matrix of *node* (name or index), or ``None`` when absent.
+  - `GlbReader.world_position(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[Tuple[float, float, float]]` — World-space translation of *node*, or ``None`` when absent.
+  - `GlbReader.walk(self) -> Iterator[Tuple[int, Optional[str]]]` — Yield ``(index, name)`` for every node, in file order.
 
 <a id="file_utils--mesh_ops"></a>
 ### `file_utils/mesh_ops.py`
@@ -1421,12 +1572,13 @@ Prefix-scoped temp artifacts with an explicit lifetime policy.
   - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
   - `TempArtifacts.dir_path(self, name: Optional[str] = None, create: bool = True) -> str` — Return a tracked ``<prefix>_<tag>/`` DIRECTORY path in :attr:`dir`.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
+  - `TempArtifacts.release(self, path: str) -> bool` — Delete ONE tracked *path* now, whatever the policy;
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
-- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L268)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L317)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
   - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
   - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
-- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L406)** — Per-source scratch twins of foreign files, discarded only while untouched.
+- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L455)** — Per-source scratch twins of foreign files, discarded only while untouched.
   - `ScratchTwins.path_for(self, source: str) -> str` — The deterministic twin path for *source* (nothing is created).
   - `ScratchTwins.create(self, source: str, payload: str) -> str` — Copy *payload* to *source*'s twin path, stamp it, and return the path.
   - `ScratchTwins.is_twin(self, path: str) -> bool` — True if *path* is a twin this store created and still tracks.
@@ -1593,6 +1745,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.register_ktx2_encoder(cls, encoder) -> None` *(class)* — Register the KTX2/Basis encoder ``save_image`` uses for ``.ktx2``.
   - `ImgUtils.resolve_ktx2_encoder(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True)` *(class)* — The registered KTX2 encoder, or the built-in ``toktx`` wrapper.
   - `ImgUtils.ktx2_available(cls) -> bool` *(class)* — True when ``.ktx2`` output is currently writable — the capability
+  - `ImgUtils.ensure_ktx2_encoder(cls, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Guarantee a KTX2 encoder, offering the managed install when none is found.
   - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
   - `ImgUtils.list_image_files(cls, directory, exts=None, full_paths=False)` *(class)* — Sorted image file names in a directory (non-recursive).
@@ -1615,7 +1768,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.replace_color(cls, image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None)` *(class)* — Parameters:
   - `ImgUtils.set_contrast(cls, image, level=255)` *(class)* — Parameters:
   - `ImgUtils.gaussian_blur(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']` *(class)* — Apply a Gaussian blur to an image or 2D/3D numpy array.
-  - `ImgUtils.dilate_image(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8) -> 'np.ndarray'` *(static)* — Extend valid pixels outward into empty (background) regions.
+  - `ImgUtils.dilate_image(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8, return_mask: bool = False) -> 'np.ndarray'` *(static)* — Extend valid pixels outward into empty (background) regions.
   - `ImgUtils.fill_empty_texels(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None) -> 'np.ndarray'` *(class)* — Fill EVERY empty texel with its nearest valid texel's color.
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
   - `ImgUtils.atlas_pixel_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]` *(static)* — Convert normalized ``scaleOffset`` rects to integer pixel rects.
@@ -1671,6 +1824,7 @@ Perceptual-hash + sharpness curation for large image sets.
 KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 
 - **[`class Ktx2Encoder`](pythontk/pythontk/img_utils/ktx2_encoder.py#L106)** — Encode images to ``.ktx2`` (Basis Universal) by shelling out to ``toktx``.
+  - `Ktx2Encoder.toktx(self) -> str` *(property)* — The binary this encoder will actually run — bound path, else discovery.
   - `Ktx2Encoder.not_installed_error(cls, detail: str = '') -> FileNotFoundError` *(class)* — The fix-shaped error every "no toktx" outcome raises: install
   - `Ktx2Encoder.resolve_toktx(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the ``toktx`` executable: PATH, conventional install
   - `Ktx2Encoder.available(cls) -> bool` *(class)* — True when a ``toktx`` binary is discoverable.
@@ -1819,7 +1973,7 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview_server.py#L305)** — Serve a directory of preview assets on loopback, with a live manifest.
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview_server.py#L332)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -1833,19 +1987,23 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.start(self) -> 'PreviewServer'` — Bind the port and serve on a daemon thread.
   - `PreviewServer.stop(self) -> None` — Stop serving and release the port.
   - `PreviewServer.publish(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int` — Place an asset in the serve root and bump the manifest version.
+  - `PreviewServer.apply_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]` — Write delivery dials into the published GLB, and remember them.
   - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer in the default browser.
-- **[`class PreviewPassContext`](pythontk/pythontk/net_utils/preview_server.py#L677)** — What a post-conversion preview pass reads, and reports into.
+- **[`class PreviewPassContext`](pythontk/pythontk/net_utils/preview_server.py#L823)** — What a post-conversion preview pass reads, and reports into.
   - `PreviewPassContext.logger(self)` *(property)* — The bridge's logger -- every pass reports through the push's own sink.
   - `PreviewPassContext.sidecar(self) -> Optional[Dict[str, Any]]` *(property)* — The scene-sidecar envelope the producer attached, if any.
   - `PreviewPassContext.lightmap_search_dirs(self) -> Sequence[str]` *(property)* — The host's live texture folders (:meth:`PreviewBridge.lightmap_search_dirs`).
-- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L724)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview_server.py#L870)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
+  - `PreviewDeliverer.publish(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Put *glb* on the server and report what the viewer now sees.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L1085)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview_server.py#L1340)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Extra directories the lightmap pass resolves the manifest's EXRs against.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
-  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, whole_scene: bool = False, open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
+  - `PreviewBridge.scope_objects(self, scope: str = 'selected') -> List[Any]` — The objects *scope* resolves to, through the host hooks.
+  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, whole_scene: Optional[bool] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
+  - `PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str] = 'auto', scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Publish a GLB that already exists on disk, unchanged.
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
   - `PreviewBridge.lightmap_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port.

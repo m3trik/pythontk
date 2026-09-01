@@ -170,6 +170,55 @@ class TempArtifacts(LoggingMixin):
             self._atexit_registered = True
         return path
 
+    def release(self, path: str) -> bool:
+        """Delete ONE tracked *path* now, whatever the policy; did it go?
+
+        The counterpart of :meth:`register`, for the artifact whose consumer is
+        provably finished with it before the store's own lifetime ends. The
+        motivating case is a ``detached`` store: its policy is right in general
+        (a launched app reads the payload after we return, so nothing may
+        delete) yet wrong for one intermediate a BLOCKING run consumes inside
+        itself -- the WebXR preview's FBX, converted to GLB and never read
+        again. Without this it waited out :attr:`max_age_days`: measured on a
+        production assembly, 324 MB per push and 3.1 GB left in the temp dir.
+
+        Only paths this store MINTED (or adopted via :meth:`register`) are
+        removed, and the refusal is silent-and-false rather than an exception.
+        The guarantee matters because the caller is typically a *strategy*
+        object holding a path it did not allocate: a deliverer mounted on a
+        bridge whose producer returns a durable file must not be able to delete
+        it, and an ownership test the caller has to remember is one it can
+        forget. Untracks only on SUCCESS: a path that could not be removed --
+        a file another process still holds open, the ordinary reason this
+        fails -- stays tracked so :meth:`cleanup` still retries it at scope
+        exit. Dropping it on failure would quietly demote a recoverable miss
+        to a leak only the age sweep can reach.
+
+        Parameters:
+            path: The artifact to remove.
+
+        Returns:
+            True when this store owned *path* and it is now gone; False when
+            the path is untracked, was never created, or could not be removed.
+        """
+        if path not in self._tracked:
+            return False
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.remove(path)
+            else:
+                # Allocation only reserves a name, so a path never written has
+                # nothing to remove -- and nothing left to track either.
+                self._tracked.remove(path)
+                return False
+        except OSError as e:
+            self.logger.warning(f"Could not release temp artifact {path}: {e}")
+            return False
+        self._tracked.remove(path)
+        return True
+
     # ------------------------------------------------------------------ lifecycle
     def cleanup(self, force: bool = False) -> List[str]:
         """Remove tracked files per the policy; return the paths removed.

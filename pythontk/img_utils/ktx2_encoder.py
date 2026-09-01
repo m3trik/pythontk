@@ -177,6 +177,29 @@ class Ktx2Encoder:
     # Discovery
     # ------------------------------------------------------------------
 
+    @property
+    def toktx(self) -> str:
+        """The binary this encoder will actually run — bound path, else discovery.
+
+        The read-only accessor for what was previously an inline
+        ``self.resolve_toktx(required=True) if self._toktx is None else
+        self._toktx`` at the one call site that needed it, and a private
+        ``_toktx`` reach for everyone else. It matters that this prefers the
+        BOUND path: an encoder handed back by
+        ``ImgUtils.resolve_ktx2_encoder(auto_install=True)`` carries the path
+        the install just wrote, and a fresh discovery pass can miss a
+        catalog entry written moments earlier — the reason that resolver binds
+        rather than re-discovers in the first place.
+
+        Raises:
+            FileNotFoundError: Nothing is bound and none can be discovered.
+        """
+        return (
+            self._toktx
+            if self._toktx is not None
+            else self.resolve_toktx(required=True)
+        )
+
     @classmethod
     def not_installed_error(cls, detail: str = "") -> FileNotFoundError:
         """The fix-shaped error every "no toktx" outcome raises: install
@@ -364,9 +387,7 @@ class Ktx2Encoder:
                 f"Unknown KTX2 codec {codec!r}: expected one of {self.CODECS}."
             )
 
-        args = [
-            self.resolve_toktx(required=True) if self._toktx is None else self._toktx
-        ]
+        args = [self.toktx]
         args += ["--t2", "--encode", codec_key.lower()]
         if mipmaps:
             args.append("--genmipmap")

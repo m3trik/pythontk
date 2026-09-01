@@ -25,6 +25,68 @@ from pythontk import IterUtils
 from conftest import BaseTestCase
 
 
+class FlatInteriorContractTest(BaseTestCase):
+    """find_flat_interior_indices: flatness is a BAND around the run's first
+    value ("values all fall within value_tolerance"), not an adjacent-diff
+    test. Adjacent-diff creep let a slow excursion that returns to its start
+    read as one flat run -- interior deleted -- which shipped as unit-
+    independent cm-scale joint drift in exported animation (VDATS looms)."""
+
+    TOL = 0.001
+
+    def _assert_contract(self, values, result):
+        removed, seg_starts, seg_lasts = result
+        pairs = list(zip(list(seg_starts), list(seg_lasts)))
+        for r in list(removed):
+            owner = [(s, e) for s, e in pairs if s < r < e]
+            self.assertTrue(owner, f"removed index {r} outside every segment")
+            s, _e = owner[0]
+            self.assertLess(
+                abs(values[int(r)] - values[int(s)]),
+                self.TOL,
+                f"removed key {r} deviates from its run start beyond tolerance",
+            )
+
+    def test_round_trip_excursion_interior_survives(self):
+        """Sub-tolerance steps out to 20x tolerance and back: NOT flat."""
+        values = [0.0005 * min(t, 80 - t) for t in range(81)]  # peak 0.02
+        removed, seg_starts, seg_lasts = IterUtils.find_flat_interior_indices(
+            values, self.TOL
+        )
+        # The old adjacent-diff bug removed ALL 79 interiors, reconstructing
+        # the peak as 0.0 (20x tolerance). Band-compliant trimming of a few
+        # sub-tolerance keys is legal; wholesale collapse is the defect.
+        self.assertLess(
+            len(list(removed)), 40, "wholesale collapse of a round-trip excursion"
+        )
+        self._assert_contract(values, (removed, seg_starts, seg_lasts))
+
+    def test_true_flat_run_still_collapses(self):
+        """Genuinely constant runs keep collapsing to their boundary pair."""
+        values = [0.0, 1e-06, -1e-06, 2e-06, 0.0, 1e-06, 0.0]
+        removed, seg_starts, seg_lasts = IterUtils.find_flat_interior_indices(
+            values, self.TOL
+        )
+        self.assertEqual(list(removed), [1, 2, 3, 4, 5])
+        self.assertEqual((list(seg_starts), list(seg_lasts)), ([0], [6]))
+
+    def test_holds_collapse_but_ramp_survives(self):
+        """Interior keys of two holds go; the ramp between them stays."""
+        values = [0.0] * 5 + [0.0025, 0.005, 0.0075] + [0.01] * 5
+        removed, _s, _e = IterUtils.find_flat_interior_indices(values, self.TOL)
+        self.assertEqual(list(removed), [1, 2, 3, 9, 10, 11])
+
+    def test_monotonic_creep_is_not_flat(self):
+        """Slow one-way creep never collapses (span exceeds tolerance)."""
+        values = [0.0005 * t for t in range(61)]  # 0 .. 0.03
+        result = IterUtils.find_flat_interior_indices(values, self.TOL)
+        # Float rounding lets an occasional 3-key window fit the band; each
+        # such removal is boundary-reproducible within tolerance. What must
+        # NEVER happen is the creep collapsing wholesale.
+        self.assertLess(len(list(result[0])), 21, "creep collapsed wholesale")
+        self._assert_contract(values, result)
+
+
 class IterTest(BaseTestCase):
     """Iterator utilities test class with comprehensive edge case coverage."""
 

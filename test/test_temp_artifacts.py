@@ -139,6 +139,52 @@ class TestAllocation(TempArtifactsBase):
         self.assertFalse(os.path.exists(side))
 
 
+class TestRelease(TempArtifactsBase):
+    """One artifact, deleted early because its consumer is provably done.
+
+    The gap `release` fills: a DETACHED store cannot delete (its payloads
+    outlive the producer by design), so an intermediate a *blocking* run fully
+    consumes -- a preview's FBX, converted to GLB and never read again -- sat
+    for the whole `max_age_days` window. Measured on a production assembly:
+    324 MB per push, 3.1 GB of them left in the system temp dir.
+    """
+
+    def test_release_deletes_a_tracked_path_under_any_policy(self):
+        ta = TempArtifacts("pfx", dir=self.dir, policy="detached")
+        p = self.touch(ta.path(extension=".fbx"))
+        self.assertTrue(ta.release(p))
+        self.assertFalse(os.path.exists(p))
+
+    def test_release_untracks_so_cleanup_does_not_re_report_it(self):
+        ta = TempArtifacts("pfx", dir=self.dir, policy="scoped")
+        p = self.touch(ta.path())
+        ta.release(p)
+        self.assertEqual(ta.cleanup(), [])
+
+    def test_release_refuses_a_path_this_store_never_minted(self):
+        """The ownership guarantee. `release` is called by a *deliverer*, which
+        is a pluggable strategy: mounted on a bridge whose producer hands back
+        a durable path, an unguarded delete would destroy the caller's file."""
+        ta = TempArtifacts("pfx", dir=self.dir, policy="scoped")
+        foreign = self.touch(os.path.join(self.dir, "someone_elses.fbx"))
+        self.assertFalse(ta.release(foreign))
+        self.assertTrue(os.path.exists(foreign))
+
+    def test_release_of_a_never_created_path_is_not_an_error(self):
+        ta = TempArtifacts("pfx", dir=self.dir, policy="scoped")
+        self.assertFalse(ta.release(ta.path()))
+
+    def test_a_path_it_could_not_remove_stays_tracked_for_cleanup_to_retry(self):
+        """A file another process still holds open is the ordinary failure. It
+        must stay in the store's ledger, or the scope-exit cleanup that would
+        have caught it never looks at it again."""
+        ta = TempArtifacts("pfx", dir=self.dir, policy="scoped")
+        p = self.touch(ta.path())
+        with mock.patch("os.remove", side_effect=OSError("locked")):
+            self.assertFalse(ta.release(p))
+        self.assertEqual(ta.cleanup(), [p], "the retry never happened")
+
+
 class TestScopedPolicy(TempArtifactsBase):
     def test_cleanup_removes_tracked_files(self):
         ta = TempArtifacts("pfx", dir=self.dir, policy="scoped")

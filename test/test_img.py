@@ -1276,6 +1276,23 @@ class DilateImageTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ImgUtils.dilate_image(img, np.zeros((2, 2), dtype=bool))
 
+    def test_return_mask_reports_where_the_ring_stopped(self):
+        """``return_mask`` hands back the input mask grown by the passes run."""
+        img = np.zeros((8, 8, 3), dtype=np.float32)
+        img[3:5, 3:5] = 1.0
+        mask = img.any(axis=2)
+        out, filled = ImgUtils.dilate_image(img, mask, iterations=1, return_mask=True)
+        self.assertEqual(out.shape, img.shape)
+        # A 2x2 block grown by one 8-connected ring is the 4x4 around it.
+        expected = np.zeros((8, 8), dtype=bool)
+        expected[2:6, 2:6] = True
+        np.testing.assert_array_equal(filled, expected)
+        self.assertTrue((out[filled] == 1.0).all() and (out[~filled] == 0.0).all())
+        # Default return shape is unchanged: the image alone.
+        self.assertIsInstance(
+            ImgUtils.dilate_image(img, mask, iterations=1), np.ndarray
+        )
+
 
 class ImageFormatCapabilityTest(unittest.TestCase):
     """The per-format capability table is the SSoT for IO routing (read/write/backend)."""
@@ -1531,6 +1548,59 @@ class AtlasLayoutTest(unittest.TestCase):
                 self.assertEqual(len(rects), n)
                 self._assert_tiles_unit_square(rects)
 
+    @staticmethod
+    def _worst_aspect(rects):
+        return max(
+            max(sx, sy) / min(sx, sy)
+            for sx, sy, _ox, _oy in rects
+            if sx > 1e-9 and sy > 1e-9
+        )
+
+    #: The OFFICE_ENV production room's own weight spread, recovered from the
+    #: cell areas of a delivered atlas (46 objects, ~50:1 range). A synthetic
+    #: "one dominant item + N small ones" does NOT stand in for it: the packers
+    #: separate by only 2.09 vs 1.91 there, so a test built on one would have
+    #: passed under the algorithm it was written to replace.
+    ROOM_WEIGHTS = (
+        [59.5, 59.3, 59.3, 59.3, 59.3, 59.0, 59.0, 58.9]
+        + [18.8, 18.8, 18.7, 18.7, 18.7]
+        + [18.6] * 14
+        + [18.5, 18.5, 18.5, 18.4, 18.2, 18.2, 18.2]
+        + [12.5, 12.5, 12.4, 12.4, 9.8, 9.7]
+        + [1.5] * 6
+        + [1.4, 1.2]
+    )
+
+    def test_a_real_room_spread_keeps_every_cell_near_square(self):
+        """A cell's two axes are two independent resolutions, and ``bake_atlas``
+        renders each object AT its cell -- so a 2.6:1 cell spends 2.6x of one
+        axis' resolution for nothing, whatever the cell's area.
+
+        Measured on this spread: weight-balanced bisection (the predecessor)
+        reaches **2.62:1** and squarification **2.02:1**, so the bound below
+        fails under bisection rather than passing vacuously.
+        """
+        rects = ImgUtils.compute_atlas_layout(self.ROOM_WEIGHTS)
+        self._assert_tiles_unit_square(rects)
+        self.assertLess(self._worst_aspect(rects), 2.25, f"{self._worst_aspect(rects)}")
+
+    def test_the_smallest_cell_keeps_a_usable_short_axis(self):
+        """The short axis IS the cell's resolution. On this spread the smallest
+        cell goes 27 px -> 32 px in a 1024 atlas -- before the gutter, which
+        takes a fixed pixel border and so costs a small cell proportionally
+        most."""
+        rects = ImgUtils.compute_atlas_layout(self.ROOM_WEIGHTS)
+        shortest = min(min(sx, sy) for sx, sy, _ox, _oy in rects) * 1024
+        self.assertGreaterEqual(shortest, 30.0, f"{shortest:.1f}px")
+
+    def test_area_stays_exactly_proportional_to_weight(self):
+        """The squarification changes each cell's SHAPE, never its share."""
+        weights = [7.0, 3.0, 3.0, 1.0, 0.5, 0.25]
+        total = sum(weights)
+        rects = ImgUtils.compute_atlas_layout(weights)
+        for weight, (sx, sy, _ox, _oy) in zip(weights, rects):
+            self.assertAlmostEqual(sx * sy, weight / total, places=9)
+
 
 class AtlasPixelRectsTest(unittest.TestCase):
     """ImgUtils.atlas_pixel_rects — SSoT UV-rect → pixel-rect mapping (with flip)."""
@@ -1713,8 +1783,71 @@ class FillEmptyTexelsTest(unittest.TestCase):
                 np.zeros((4, 4), dtype=np.float32), mask=np.ones((2, 2), dtype=bool)
             )
 
+    # ---- the cv2-less path (Blender's Python ships no cv2) ------------------
+    # ``sys.modules[name] = None`` makes ``import cv2`` raise ImportError, which
+    # is exactly the condition the fallback exists for.
 
-class FlipRectVTest(unittest.TestCase):
+    def test_without_cv2_every_texel_is_filled_from_nearby_content(self):
+        """No background survives, the ring next to an island is exact, and no
+        colour is invented -- every filled texel lies within the valid range."""
+        import sys
+        from unittest import mock
+
+        img = np.zeros((70, 45, 3), dtype=np.float32)
+        img[5:20, 5:15] = (1.0, 2.0, 3.0)
+        img[50:66, 30:41] = (9.0, 8.0, 7.0)
+        mask = img.any(axis=2)
+        with mock.patch.dict(sys.modules, {"cv2": None}):
+            out = ImgUtils.fill_empty_texels(img, mask=mask)
+        self.assertEqual(out.shape, img.shape)
+        self.assertTrue(np.isfinite(out).all())
+        self.assertTrue((out > 0).all(), "background texels survived the fill")
+        np.testing.assert_array_equal(out[mask], img[mask])  # valid untouched
+        # The texels a bilinear tap can reach take their own island's colour.
+        np.testing.assert_allclose(
+            out[20:23, 5:15], np.broadcast_to((1.0, 2.0, 3.0), (3, 10, 3))
+        )
+        np.testing.assert_allclose(
+            out[47:50, 30:41], np.broadcast_to((9.0, 8.0, 7.0), (3, 11, 3))
+        )
+        lo, hi = img[mask].min(axis=0), img[mask].max(axis=0)
+        self.assertTrue((out >= lo - 1e-5).all() and (out <= hi + 1e-5).all())
+
+    def test_without_cv2_odd_sizes_2d_and_integer_dtypes_round_trip(self):
+        import sys
+        from unittest import mock
+
+        img = np.zeros((37, 53), dtype=np.uint8)
+        img[10:14, 20:30] = 200
+        with mock.patch.dict(sys.modules, {"cv2": None}):
+            out = ImgUtils.fill_empty_texels(img)
+        self.assertEqual(out.dtype, np.uint8)
+        self.assertEqual(out.shape, img.shape)
+        self.assertTrue((out == 200).all())
+
+    def test_without_cv2_matches_the_exact_fill_where_it_matters(self):
+        """Against cv2's exact nearest fill, the two agree on every texel within
+        the ring of an island; only the far field (mip fodder) may differ."""
+        import sys
+        from unittest import mock
+
+        rng = np.random.default_rng(7)
+        img = np.zeros((96, 96, 3), dtype=np.float32)
+        for _ in range(6):
+            y, x = rng.integers(0, 80, size=2)
+            img[y : y + 12, x : x + 12] = rng.random(3) + 0.1
+        mask = img.any(axis=2)
+        exact = ImgUtils.fill_empty_texels(img, mask=mask)
+        with mock.patch.dict(sys.modules, {"cv2": None}):
+            approx = ImgUtils.fill_empty_texels(img, mask=mask)
+        _, ring = ImgUtils.dilate_image(
+            mask.astype(np.float32), mask, iterations=1, return_mask=True
+        )
+        near = ring & ~mask
+        # One texel out, a neighbour average of a single island IS that island.
+        single = np.isclose(approx[near], exact[near], atol=1e-5).all(axis=-1)
+        self.assertGreater(float(single.mean()), 0.9)
+        self.assertTrue((approx > 0).all())
     """ImgUtils.flip_rect_v — bottom-left UV rect <-> top-down glTF texture space."""
 
     def test_known_value(self):
@@ -1778,6 +1911,40 @@ class AtlasAssembleTest(unittest.TestCase):
         atlas = ImgUtils.assemble_atlas([img], rects, 4)
         self.assertEqual(atlas.ndim, 2)  # 2D in -> 2D out
         self.assertTrue((atlas == 0.25).all())
+
+    def test_a_rect_overhanging_the_canvas_places_what_fits(self):
+        """A rect that rounds past the frame must not cost the whole atlas.
+
+        The destination slice clips at the canvas edge while the resized source
+        keeps its full size, so the assignment is a shape mismatch -- and the
+        exception kills every OTHER item's placement too. mayatk's own mask
+        builder clamps for exactly this reason, so the possibility is real
+        upstream; the primitive has to survive it.
+        """
+        img = np.ones((8, 8, 3), np.float32)
+        # Straddling each edge, plus a rect entirely outside (which must not
+        # produce a negative slice stop -- that wraps and mismatches again).
+        for rect in [
+            (0.5, 0.5, -0.25, 0.25),  # off the left
+            (0.5, 0.5, 0.75, 0.25),  # off the right
+            (0.5, 0.5, 0.25, -0.25),  # off the bottom
+            (0.5, 0.5, 0.25, 0.75),  # off the top
+            (0.4, 0.4, 1.3, -0.6),  # wholly past two edges
+            (1.5, 1.5, -0.25, -0.25),  # larger than the canvas
+        ]:
+            with self.subTest(rect=rect):
+                atlas = ImgUtils.assemble_atlas([img], [rect], 16)
+                self.assertEqual(atlas.shape, (16, 16, 3))
+
+    def test_an_overhanging_rect_does_not_lose_its_neighbours(self):
+        """One bad rect used to take the whole atlas down with it."""
+        a = np.full((8, 8, 3), 1.0, np.float32)
+        b = np.full((8, 8, 3), 2.0, np.float32)
+        atlas = ImgUtils.assemble_atlas(
+            [a, b], [(0.5, 1.0, 0.0, 0.0), (0.5, 1.0, 0.9, 0.0)], 16
+        )
+        self.assertTrue((atlas[:, :8] == 1.0).all())  # the in-bounds item landed
+        self.assertTrue((atlas[:, 8:] == 2.0).any())  # so did the overhanging part
 
 
 class RasterizeSilhouetteTest(unittest.TestCase):
@@ -2417,6 +2584,58 @@ class ImgKtx2RoutingTest(BaseTestCase):
         resolve.assert_called_once_with(
             required=True, auto_install=True, prompt=consent
         )
+
+    def test_ensure_returns_none_when_an_encoder_is_already_available(self):
+        """``None`` is the contract's "nothing was installed" — the value every
+        caller branches on to decide whether to report a path. It must not
+        offer an install, or a user with toktx already on PATH is asked to
+        download it."""
+        from unittest import mock
+
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        ImgUtils.register_ktx2_encoder(None)
+        with mock.patch.object(Ktx2Encoder, "available", return_value=True):
+            with mock.patch.object(Ktx2Encoder, "resolve_toktx") as resolve:
+                self.assertIsNone(ImgUtils.ensure_ktx2_encoder())
+        resolve.assert_not_called()
+
+    def test_ensure_returns_the_path_it_installed(self):
+        """The other half of the contract, and the reason it is a path rather
+        than a bool: the caller reports WHAT answered."""
+        from unittest import mock
+
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        ImgUtils.register_ktx2_encoder(None)
+
+        def consent(question):
+            return True
+
+        with mock.patch.object(Ktx2Encoder, "available", return_value=False):
+            with mock.patch.object(
+                Ktx2Encoder, "resolve_toktx", return_value=r"C:\managed\toktx.exe"
+            ):
+                installed = ImgUtils.ensure_ktx2_encoder(prompt=consent)
+        self.assertEqual(installed, r"C:\managed\toktx.exe")
+
+    def test_ensure_raises_the_fix_shaped_error_when_declined(self):
+        """Callers surface this verbatim, so it has to keep naming the install.
+
+        Also pins the ``auto_install`` backstop: ``resolve_toktx`` returning a
+        falsy path without raising (mocked here; a partial install or a future
+        signature change for real) must NOT become a silent "nothing to
+        install" -- ``required=True`` promises an encoder or an exception."""
+        from unittest import mock
+
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        ImgUtils.register_ktx2_encoder(None)
+        with mock.patch.object(Ktx2Encoder, "available", return_value=False):
+            with mock.patch.object(Ktx2Encoder, "resolve_toktx", return_value=None):
+                with self.assertRaises(FileNotFoundError) as ctx:
+                    ImgUtils.ensure_ktx2_encoder(prompt=lambda _q: False)
+        self.assertIn("register_ktx2_encoder", str(ctx.exception))
 
 
 class OptionalPILGuardTest(unittest.TestCase):

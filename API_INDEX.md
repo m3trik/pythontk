@@ -112,6 +112,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ShotDetection`
   - methods: cluster_segments_by_gap, boundaries_from_key_entries
 
+### `core_utils/engines/shots/shot_ledger.py` — Ledger of the edits the shot system authors on a scene's animation.
+- `class ShotEditLedger(_ShotEditLedgerInternal)`
+  - methods: step_count, key_count, curves, record_step, owns_step, release_step, step_times, stepped_curves, record_key, release_key, key_times, key_records, keyed_curves, disown_shot, shift, remap, forget_curve, to_dict, from_dict
+
 ### `core_utils/engines/shots/shot_model.py` — DCC-agnostic shot data model and persistent store.
 - `class ScenePersistence(Protocol)`
   - methods: save, load
@@ -126,14 +130,17 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class BatchComplete(StoreEvent)`
 - `class StoreInvalidated(StoreEvent)`
 - `class ShotStore(_ShotStoreInternal)`
-  - methods: has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs
+  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs
 
 ### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
+- `class ShotBoundaryConflict(RuntimeError)`
 - `class ShotPlanner(_ShotPlannerInternal)`
-  - methods: plan_respace, plan_ripple_downstream, plan_reorder, plan_ripple_upstream
+  - methods: envelope_for, in_window, objects_to_adopt, move_windows, plan_pivot_move, boundary_splits, key_collisions, plan_respace, plan_gap_retimes, plan_ripple_downstream, plan_reorder, plan_ripple_upstream
 - `class ShotMove`
   - methods: delta, moves
 - `class MovePlan`
+- `class GapRetime`
+  - methods: width, scale, shrinks, grows
 
 ### `core_utils/engines/textures/map_compositor.py` — Pure image-compositing engine — alpha-composite layered texture maps
 - `class BatchResult(Enum)`
@@ -383,7 +390,30 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, without_locate_hints, read_glb_lightmap_manifest, apply_glb_lightmaps, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_base_color
+  - methods: conversion_timeout, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, apply_glb_lightmaps, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, apply_glb_fades, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+
+### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
+- `class Finding`
+- `class VerificationReport`
+  - methods: ok, counts, summary, to_json
+- `class ExportVerifier(_ExportVerifierInternal)`
+  - methods: reader, fbx, gate_names, run, check_glb_container, check_glb_extensions, check_glb_images, check_glb_skins, check_glb_animation_integrity, check_glb_envelope, check_clips_vs_takes, check_fbx_container, check_fbx_takes, check_cross_clips, check_baseline_diff
+
+### `file_utils/mesh_convert/fbx_file.py` — Zero-dependency binary-FBX reader: header, node records, objects, takes.
+- `class FbxFile(_FbxFileInternal)`
+  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, connections
+
+### `file_utils/mesh_convert/glb_clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
+- `class GlbClips(_GlbClipsInternal)`
+  - methods: rebuild
+
+### `file_utils/mesh_convert/glb_fades.py` — Write authored opacity ramps into a GLB as ``KHR_animation_pointer`` channels.
+- `class GlbFades(_GlbFadesInternal)`
+  - methods: apply
+
+### `file_utils/mesh_convert/glb_reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
+- `class GlbReader(_GlbReaderInternal)`
+  - methods: load, counts, image_mimes, extensions, skins_summary, accessor, animations, animation, clip_spans, channel_table, sample, nan_findings, node_index, parent_of, local_matrix, world_matrix, world_position, walk
 
 ### `file_utils/mesh_ops.py` — File-level mesh processing via PyMeshLab (optional dependency).
 - `class OpSpec`
@@ -397,7 +427,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/temp_artifacts.py` — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - `class TempArtifacts(LoggingMixin)`
-  - methods: path, dir_path, register, cleanup, sweep_stale
+  - methods: path, dir_path, register, release, cleanup, sweep_stale
 - `class CachedArtifact(LoggingMixin)`
   - methods: key, get
 - `class ScratchTwins(LoggingMixin)`
@@ -451,7 +481,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -463,7 +493,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `img_utils/ktx2_encoder.py` — KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 - `class Ktx2Encoder`
-  - methods: not_installed_error, resolve_toktx, available, read_header, args_for, encode
+  - methods: toktx, not_installed_error, resolve_toktx, available, read_header, args_for, encode
 
 ### `img_utils/mask_generator.py` — Background mask generation via rembg (optional dependency).
 - `class MaskGenerator`
@@ -499,13 +529,13 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/preview_server.py` — Localhost static-file server for live browser / WebXR previews.
 - `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
-  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, open_in_browser
+  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, apply_settings, open_in_browser
 - `class PreviewPassContext`
   - methods: logger, sidecar, lightmap_search_dirs
 - `class PreviewDeliverer(Deliverer)`
-  - methods: ensure_server, deliver
+  - methods: ensure_server, publish, deliver
 - `class PreviewBridge(HandoffBridge)`
-  - methods: lightmap_search_dirs, params_defaults, url, push, sidecar_summary, lightmap_summary, stop
+  - methods: lightmap_search_dirs, params_defaults, url, scope_objects, push, publish_file, sidecar_summary, lightmap_summary, stop
 
 ### `net_utils/rpc/client.py` — Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 - `class RpcClient`

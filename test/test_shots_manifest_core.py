@@ -79,6 +79,67 @@ class TestManifestParse(unittest.TestCase):
         steps = ManifestModel.parse_csv(self.path)
         self.assertEqual(steps[0].audio, "Narrator intro")
 
+    def test_continuation_row_own_description_overrides_to_no_behaviors(self):
+        """A row describing itself as static must not inherit the step's fades.
+
+        Gating the override on *detected behaviors* rather than on the
+        description's presence made "no behaviors" unsayable: a static prop
+        listed beside a fading one silently picked up the fades and got keyed.
+        """
+        path = _write_csv(
+            """SECTION A: T
+Step,Step Contents,Asset Names,Voice Support
+A01.),Aileron fades in then fades out,aileron_geo,vo
+,static support bracket does not move,bracket_geo,
+"""
+        )
+        try:
+            objs = ManifestModel.parse_csv(path)[0].objects
+            self.assertEqual([o.name for o in objs], ["aileron_geo", "bracket_geo"])
+            self.assertEqual(objs[0].behaviors, ["fade_in", "fade_out"])
+            self.assertEqual(objs[1].behaviors, [])
+        finally:
+            os.remove(path)
+
+    def test_continuation_row_without_description_inherits_step_behaviors(self):
+        path = _write_csv(
+            """SECTION A: T
+Step,Step Contents,Asset Names,Voice Support
+A01.),The table fades in,table_geo,vo
+,,unit_geo,
+"""
+        )
+        try:
+            objs = ManifestModel.parse_csv(path)[0].objects
+            self.assertEqual(objs[1].name, "unit_geo")
+            self.assertEqual(objs[1].behaviors, ["fade_in"])
+        finally:
+            os.remove(path)
+
+    def test_continuation_inherit_ignores_sibling_row_text(self):
+        """Inheritance reads the parent STEP, not the accumulated description.
+
+        Continuation descriptions are merged into ``current_step.description``
+        before the next row is read, so inheriting from it let one asset's text
+        leak onto every later blank row -- making the result order-dependent.
+        """
+        path = _write_csv(
+            """SECTION A: T
+Step,Step Contents,Asset Names,Voice Support
+A01.),Static setup with no motion,obj_a,vo
+,the panel fades in,obj_b,
+,,obj_c,
+"""
+        )
+        try:
+            objs = ManifestModel.parse_csv(path)[0].objects
+            self.assertEqual([o.name for o in objs], ["obj_a", "obj_b", "obj_c"])
+            self.assertEqual(objs[0].behaviors, [])
+            self.assertEqual(objs[1].behaviors, ["fade_in"])
+            self.assertEqual(objs[2].behaviors, [])
+        finally:
+            os.remove(path)
+
     def test_metadata_pass_first_row_wins(self):
         cm = ColumnMap(metadata_pass={"priority": ("Priority",)})
         steps = ManifestModel.parse_csv(self.path, columns=cm)

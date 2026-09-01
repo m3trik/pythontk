@@ -24,7 +24,7 @@ models the topology, :mod:`shot_plan` resolves transformations, and
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 
@@ -32,6 +32,31 @@ from pythontk.core_utils.engines.shots.shot_model import ShotStore
 # Sentinel used for an unbounded envelope edge on the last shot.
 _INF = 1.0e9
 _EPS = 1.0e-6
+
+
+class ShotBoundaryConflict(RuntimeError):
+    """Two poses would be forced onto one sample by collapsing a gap.
+
+    A frame holds one key per curve, so when shots become contiguous the
+    preceding shot's closing sample and the following shot's opening sample
+    have to become the same key.  That is lossless only if they already
+    agree; a hard cut between the shots does not, and no ownership rule can
+    make one frame hold both poses.  The operation is refused before it
+    writes anything rather than silently dropping a pose.
+
+    ``conflicts`` is ``[(curve, frame, [value, ...]), ...]`` — enough for a
+    caller to name the curves and let the user widen the gap instead.
+    """
+
+    def __init__(self, conflicts: Sequence[Tuple[str, float, Sequence[float]]]):
+        self.conflicts = list(conflicts)
+        names = sorted({str(c[0]) for c in self.conflicts})
+        shown = ", ".join(names[:5]) + (" ..." if len(names) > 5 else "")
+        super().__init__(
+            f"Collapsing this gap would force {len(self.conflicts)} pair(s) of "
+            f"different poses onto one frame ({shown}). Use a gap of at least "
+            "1 frame so each shot keeps its own opening and closing pose."
+        )
 
 
 class _ShotPlannerInternal(object):
@@ -137,22 +162,332 @@ class _ShotPlannerInternal(object):
 
     @staticmethod
     def _envelope_for(sorted_shots: List, index: int) -> tuple:
-        """Return ``(env_start, env_end)`` for the shot at ``sorted_shots[index]``.
+        """Return ``(env_start, env_end, lo_open, hi_closed)`` for a shot.
 
         Envelope rule: ``env_start`` is the shot's own ``start``; ``env_end``
         is the next shot's ``start`` if one exists, otherwise ``+INF`` so a
         final shot's trailing content (including fade tails) travels with it.
+
+        **Fencepost rule.**  A shot spans the samples ``start..end``, so two
+        contiguous shots SHARE one sample: the preceding shot's closing
+        sample IS the following shot's opening sample (it is the same frame
+        number).  That sample belongs to the PRECEDING shot — the convention
+        every other site already follows (the drag path treats
+        ``t > shot.end`` as outside, ``scaleKey`` lands the last key ON
+        ``end``, cluster detection sets ``end`` to the last key, and
+        ``fbx_takes`` bake ``[start, end]`` inclusive).  The two returned
+        flags carry that decision to every consumer:
+
+        ``hi_closed``
+            The next shot starts exactly on this shot's ``end`` — the upper
+            bound is INCLUSIVE, so the shared sample moves with this shot.
+        ``lo_open``
+            The previous shot ends exactly on this shot's ``start`` — the
+            lower bound is EXCLUSIVE, because that shared sample is the
+            previous shot's closing fencepost, not this shot's to move.
+
+        Adjacent shots always agree (both flags derive from one test on the
+        same pair), so every whole frame is inside exactly one envelope —
+        none is claimed twice and none falls between.  (Strictly, that holds
+        outside the writers' float tolerance: a key authored within an
+        epsilon of a bound sits in the tolerance band both sides pad by.
+        Whole-frame snapping, the default, keeps keys out of it.)  With a gap
+        the bounds keep their old half-open shape: ``[start, next.start)``
+        still carries trailing-gap fade tails with the shot they belong to.
         """
         shot = sorted_shots[index]
         env_start = shot.start
-        env_end = (
-            sorted_shots[index + 1].start if index + 1 < len(sorted_shots) else _INF
-        )
-        return env_start, env_end
+        has_next = index + 1 < len(sorted_shots)
+        env_end = sorted_shots[index + 1].start if has_next else _INF
+        hi_closed = has_next and abs(env_end - shot.end) <= _EPS
+        lo_open = index > 0 and abs(sorted_shots[index - 1].end - shot.start) <= _EPS
+        return env_start, env_end, lo_open, hi_closed
 
 
 class ShotPlanner(_ShotPlannerInternal):
     """ShotPlanner — module namespace."""
+
+    @staticmethod
+    def envelope_for(sorted_shots: List, index: int) -> tuple:
+        """``(env_start, env_end, lo_open, hi_closed)`` for one shot's window.
+
+        Public entry point to the fencepost rule, for callers that move a
+        single shot outside a :class:`MovePlan` and still have to agree with
+        the planner about which shot owns a shared sample.
+
+        Parameters:
+            sorted_shots: Shots in timeline order.
+            index: Position of the shot in *sorted_shots*.
+
+        Returns:
+            The shot's owned key window and its two boundary-closure flags.
+        """
+        return _ShotPlannerInternal._envelope_for(sorted_shots, index)
+
+    @staticmethod
+    def in_window(
+        t: float,
+        lo: float,
+        hi: float,
+        lo_open: bool = False,
+        hi_closed: bool = False,
+        eps: float = _EPS,
+    ) -> bool:
+        """Is sample *t* inside the window ``[lo, hi)`` as shaped by the flags?
+
+        The single definition of envelope membership.  ``lo_open`` makes the
+        lower bound exclusive and ``hi_closed`` makes the upper bound
+        inclusive — see :meth:`_ShotPlannerInternal._envelope_for` for the
+        fencepost rule that sets them.  Because adjacent shots always set
+        them consistently, this predicate partitions the timeline: every
+        sample is in exactly one shot's window.
+
+        Parameters:
+            t: The sample (frame) to test.
+            lo: Window start.
+            hi: Window end.
+            lo_open: Exclude a sample sitting exactly on *lo*.
+            hi_closed: Include a sample sitting exactly on *hi*.
+            eps: Float tolerance on both bounds.
+
+        Returns:
+            ``True`` when *t* belongs to this window.
+        """
+        if lo_open:
+            if t <= lo + eps:
+                return False
+        elif t < lo - eps:
+            return False
+        return t <= hi + eps if hi_closed else t < hi - eps
+
+    @staticmethod
+    def objects_to_adopt(
+        keyed: Dict[str, Sequence[float]],
+        owned: Optional[Iterable[str]],
+        lo: float,
+        hi: float,
+        lo_open: bool = False,
+        hi_closed: bool = False,
+        eps: float = _EPS,
+    ) -> List[str]:
+        """Objects a moving shot may claim over the window it is about to move.
+
+        A mover shifts a shot's OWN object list within a window, so anything
+        keyed inside that window but missing from the list is left behind:
+        the shot moves and part of its animation does not.  Membership goes
+        stale for ordinary reasons invisible beforehand — a renamed object
+        leaves an entry that resolves to nothing, and an object animated
+        after the shots were authored belongs to no shot at all.
+
+        Adoption is purely the mover's own window: a key inside it is going
+        to be moved, so the object holding it must be listed or it is left
+        behind.  No ownership exemption is needed — :meth:`in_window`
+        partitions the timeline, so a key at a shared boundary is inside
+        exactly one shot's window and can never be claimed twice.
+
+        Parameters:
+            keyed: ``{object_name: [key_time, ...]}`` for every candidate.
+            owned: Names the shot already lists (adopted objects exclude these).
+            lo: Window start.
+            hi: Window end.
+            lo_open: Exclude a key sitting exactly on *lo* (the preceding
+                shot's closing fencepost).
+            hi_closed: Include a key sitting exactly on *hi* (this shot's own
+                closing fencepost, shared with the next shot's start).
+            eps: Float tolerance on the window bounds.
+
+        Returns:
+            Sorted names to add to the shot.
+        """
+        owned = set(owned or ())
+        add = []
+        for name, times in keyed.items():
+            if name in owned:
+                continue
+            if any(
+                ShotPlanner.in_window(t, lo, hi, lo_open, hi_closed, eps) for t in times
+            ):
+                add.append(name)
+        return sorted(add)
+
+    @staticmethod
+    def move_windows(
+        plan: MovePlan,
+    ) -> List[Tuple[float, float, bool, bool, float]]:
+        """The windows *plan* will actually move, shaped for :meth:`key_collisions`.
+
+        Keeps the tuple's shape an engine detail instead of a contract each
+        DCC re-spells; a field added here reaches both writers at once.
+
+        Parameters:
+            plan: The resolved plan about to be applied.
+
+        Returns:
+            ``[(lo, hi, lo_open, hi_closed, delta), ...]`` — one per shot
+            that moves.  Non-moving shots are omitted: their keys stay put,
+            which is what a collision test means by "stationary".
+        """
+        return [
+            (m.env_start, m.env_end, m.env_lo_open, m.env_hi_closed, m.delta)
+            for m in plan.moves.values()
+            if m.moves
+        ]
+
+    @staticmethod
+    def plan_pivot_move(
+        store: ShotStore,
+        shot_id: int,
+        new_start: float,
+    ) -> MovePlan:
+        """A plan that moves one shot to ``new_start``, rippling nothing.
+
+        For the movers that shift a single shot outside a multi-shot plan:
+        they still need that shot's envelope — fencepost flags included —
+        and a plan to reconcile boundaries against.  Deriving those
+        separately per DCC is how the two key movers drifted apart in the
+        first place, so the derivation lives here.
+
+        The envelope comes from the layout as it stands NOW, which is the
+        point: when a ripple has already moved a neighbour away there is no
+        shared sample left to decline, and when it has not, the neighbour
+        still owns its own fencepost.
+
+        Parameters:
+            store: Store holding the current layout.
+            shot_id: The shot to move.
+            new_start: Desired first frame (snapped by the store).
+
+        Returns:
+            A :class:`MovePlan` with that single move, or an empty plan when
+            the store does not hold the shot.
+        """
+        shots = store.sorted_shots()
+        idx = next((i for i, s in enumerate(shots) if s.shot_id == shot_id), None)
+        if idx is None:
+            return MovePlan()
+        shot = shots[idx]
+        env_start, env_end, lo_open, hi_closed = _ShotPlannerInternal._envelope_for(
+            shots, idx
+        )
+        start = store.snap(new_start)
+        move = ShotMove(
+            shot_id=shot_id,
+            old_start=shot.start,
+            old_end=shot.end,
+            new_start=start,
+            new_end=store.snap(start + (shot.end - shot.start)),
+            env_start=env_start,
+            env_end=env_end,
+            env_lo_open=lo_open,
+            env_hi_closed=hi_closed,
+        )
+        return MovePlan(moves={shot_id: move}, sequence=[shot_id] if move.moves else [])
+
+    @staticmethod
+    def boundary_splits(
+        store: ShotStore,
+        plan: MovePlan,
+        eps: float = _EPS,
+    ) -> List[Tuple[int, int, float, float]]:
+        """Shared samples this plan pulls apart.
+
+        Two contiguous shots share one sample, which the fencepost rule gives
+        to the PRECEDING shot.  When a plan opens a gap between them that
+        sample stops being shared: it stays with the preceding shot, and the
+        following shot — whose opening pose it also was — is left starting on
+        nothing.  Each entry names both shots, the frame the shared sample
+        sat on, and the frame the following shot now opens at, so the caller
+        can carry an opening pose across.  The inverse, two samples
+        converging onto one, is :meth:`key_collisions`.
+
+        Both ids are reported because the split is only a *split* on curves
+        BOTH shots animate.  Where only the following shot has keys, that
+        sample was never shared — it is that shot's opening pose alone and
+        should travel with it, not stay behind on a curve its neighbour has
+        no stake in.  The caller decides that per curve; this reports the
+        boundary.
+
+        Shots absent from the plan are treated as stationary.
+
+        Parameters:
+            store: Store holding the pre-move layout.
+            plan: The resolved plan about to be applied.
+            eps: Float tolerance for contiguity and gap tests.
+
+        Returns:
+            ``[(preceding_id, following_id, boundary_frame, new_start), ...]``
+        """
+        shots = store.sorted_shots()
+        out: List[Tuple[int, int, float, float]] = []
+        for i in range(len(shots) - 1):
+            prev, nxt = shots[i], shots[i + 1]
+            if abs(nxt.start - prev.end) > eps:
+                continue  # not sharing a sample to begin with
+            prev_mv, next_mv = plan.moves.get(prev.shot_id), plan.moves.get(nxt.shot_id)
+            new_prev_end = prev_mv.new_end if prev_mv else prev.end
+            new_next_start = next_mv.new_start if next_mv else nxt.start
+            if new_next_start - new_prev_end > eps:
+                out.append(
+                    (
+                        prev.shot_id,
+                        nxt.shot_id,
+                        float(nxt.start),
+                        float(new_next_start),
+                    )
+                )
+        return out
+
+    @staticmethod
+    def key_collisions(
+        windows: Sequence[Tuple[float, float, bool, bool, float]],
+        times: Iterable[float],
+        eps: float = 1.0e-3,
+    ) -> List[Tuple[float, List[float], List[float]]]:
+        """Samples of one curve that a plan would land on the same frame.
+
+        Two keys cannot share a frame: a mover that lands on an occupied one
+        neither refuses nor overwrites, it stacks a near-duplicate a
+        fraction of a frame away (measured in Maya), which then travels as a
+        pair forever.  Collapsing a gap to zero does exactly that — the
+        preceding shot's closing sample and the following shot's opening
+        sample converge — so callers pre-flight with this and either merge
+        (the samples agree, one survives) or refuse (they disagree: a hard
+        cut cannot live at gap 0).
+
+        Each window is ``(lo, hi, lo_open, hi_closed, delta)``.  Windows
+        partition the timeline, so a key matches at most one; keys in none
+        are stationary.
+
+        Parameters:
+            windows: The plan's move windows for this curve's owners.
+            times: The curve's key times.
+            eps: Frames within which two destinations count as the same.
+
+        Returns:
+            ``[(destination, moving_sources, stationary_sources), ...]`` for
+            every frame that would end up holding more than one key, ordered
+            by destination.  A group always has at least one moving source.
+        """
+        landings: List[Tuple[float, float, bool]] = []
+        for t in times:
+            delta = 0.0
+            for lo, hi, lo_open, hi_closed, d in windows:
+                # Same tolerance the writer will use, so what this predicts
+                # a key does is what the writer actually does to it.
+                if ShotPlanner.in_window(t, lo, hi, lo_open, hi_closed, eps):
+                    delta = d
+                    break
+            landings.append((float(t) + delta, float(t), abs(delta) > _EPS))
+
+        groups: List[Tuple[float, List[float], List[float]]] = []
+        for dest, src, moving in sorted(landings):
+            for dst, movers, still in groups:
+                if abs(dst - dest) <= eps:
+                    (movers if moving else still).append(src)
+                    break
+            else:
+                groups.append((dest, [src] if moving else [], [] if moving else [src]))
+        return [g for g in groups if len(g[1]) + len(g[2]) > 1 and g[1]]
 
     @staticmethod
     def plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan:
@@ -177,7 +512,9 @@ class ShotPlanner(_ShotPlannerInternal):
             duration = shot.end - shot.start
             new_start = store.snap(cursor)
             new_end = store.snap(new_start + duration)
-            env_start, env_end = _ShotPlannerInternal._envelope_for(shots, i)
+            env_start, env_end, lo_open, hi_closed = _ShotPlannerInternal._envelope_for(
+                shots, i
+            )
             moves[shot.shot_id] = ShotMove(
                 shot_id=shot.shot_id,
                 old_start=shot.start,
@@ -186,11 +523,56 @@ class ShotPlanner(_ShotPlannerInternal):
                 new_end=new_end,
                 env_start=env_start,
                 env_end=env_end,
+                env_lo_open=lo_open,
+                env_hi_closed=hi_closed,
             )
             effective_gap = locked_widths.get(i, gap)
             cursor = new_end + effective_gap
 
         return _ShotPlannerInternal._finalize_plan(moves)
+
+    @staticmethod
+    def plan_gap_retimes(store: ShotStore, plan: MovePlan) -> List[GapRetime]:
+        """Every gap in *plan* whose width changes, as a :class:`GapRetime`.
+
+        Derived from a finished plan rather than built alongside one, so every
+        constructor here (respace, ripple, slide, reorder) gets the same answer
+        from the same rule and a pure translation -- where each gap keeps its
+        width -- correctly yields nothing.
+
+        A shot the plan does not mention does not move, which is exactly the
+        ``delta = 0`` this reads: an unmoved neighbour is what makes a gap
+        change width in the first place.
+
+        Returns them in timeline order; the caller decides when to run each,
+        which matters because the safe moment differs (see the two-stage rule
+        in ``mayatk.anim_utils.shots._shot_apply``).
+        """
+        shots = store.sorted_shots()
+        retimes: List[GapRetime] = []
+        for left, right in zip(shots, shots[1:]):
+            lo, hi = left.end, right.start
+            if hi - lo <= _EPS:
+                continue  # contiguous: no gap, and nothing in one to retime
+            left_move = plan.moves.get(left.shot_id)
+            right_move = plan.moves.get(right.shot_id)
+            left_delta = left_move.delta if left_move else 0.0
+            new_lo = left_move.new_end if left_move else left.end
+            new_hi = right_move.new_start if right_move else right.start
+            new_width = max(0.0, new_hi - new_lo)
+            if abs(new_width - (hi - lo)) <= _EPS:
+                continue
+            retimes.append(
+                GapRetime(
+                    left_id=left.shot_id,
+                    right_id=right.shot_id,
+                    lo=lo,
+                    hi=hi,
+                    new_width=new_width,
+                    left_delta=left_delta,
+                )
+            )
+        return retimes
 
     @staticmethod
     def plan_ripple_downstream(
@@ -215,7 +597,9 @@ class ShotPlanner(_ShotPlannerInternal):
                 continue
             if shot.start < after_frame:
                 continue
-            env_start, env_end = _ShotPlannerInternal._envelope_for(shots, i)
+            env_start, env_end, lo_open, hi_closed = _ShotPlannerInternal._envelope_for(
+                shots, i
+            )
             moves[shot.shot_id] = ShotMove(
                 shot_id=shot.shot_id,
                 old_start=shot.start,
@@ -224,6 +608,8 @@ class ShotPlanner(_ShotPlannerInternal):
                 new_end=store.snap(shot.end + delta),
                 env_start=env_start,
                 env_end=env_end,
+                env_lo_open=lo_open,
+                env_hi_closed=hi_closed,
             )
 
         return _ShotPlannerInternal._finalize_plan(moves)
@@ -285,7 +671,7 @@ class ShotPlanner(_ShotPlannerInternal):
             duration = shot.end - shot.start
             new_start = store.snap(cursor)
             new_end = store.snap(new_start + duration)
-            env_start, env_end = old_env[shot.shot_id]
+            env_start, env_end, lo_open, hi_closed = old_env[shot.shot_id]
             moves[shot.shot_id] = ShotMove(
                 shot_id=shot.shot_id,
                 old_start=shot.start,
@@ -294,6 +680,8 @@ class ShotPlanner(_ShotPlannerInternal):
                 new_end=new_end,
                 env_start=env_start,
                 env_end=env_end,
+                env_lo_open=lo_open,
+                env_hi_closed=hi_closed,
             )
             if i < len(new_order) - 1:
                 pair = (shot.shot_id, new_order[i + 1].shot_id)
@@ -325,7 +713,9 @@ class ShotPlanner(_ShotPlannerInternal):
                 continue
             if shot.end > before_frame + _EPS:
                 continue
-            env_start, env_end = _ShotPlannerInternal._envelope_for(shots, i)
+            env_start, env_end, lo_open, hi_closed = _ShotPlannerInternal._envelope_for(
+                shots, i
+            )
             moves[shot.shot_id] = ShotMove(
                 shot_id=shot.shot_id,
                 old_start=shot.start,
@@ -334,6 +724,8 @@ class ShotPlanner(_ShotPlannerInternal):
                 new_end=store.snap(shot.end + delta),
                 env_start=env_start,
                 env_end=env_end,
+                env_lo_open=lo_open,
+                env_hi_closed=hi_closed,
             )
 
         return _ShotPlannerInternal._finalize_plan(moves)
@@ -348,6 +740,11 @@ class ShotMove:
     window to the next shot's start ensures fade tails that live in
     the trailing gap travel with their owning shot rather than being
     stranded by a tight ``[old_start, old_end]`` key window.
+
+    ``env_lo_open`` / ``env_hi_closed`` carry the fencepost decision for a
+    SHARED sample — see :meth:`_ShotPlannerInternal._envelope_for`.  Both
+    default to the plain half-open window, so a move built by hand (rather
+    than from a shot's neighbours) behaves exactly as before.
     """
 
     shot_id: int
@@ -357,6 +754,8 @@ class ShotMove:
     new_end: float
     env_start: float
     env_end: float
+    env_lo_open: bool = False
+    env_hi_closed: bool = False
 
     @property
     def delta(self) -> float:
@@ -388,6 +787,52 @@ class MovePlan:
     sequence: List[int] = field(default_factory=list)
     parked: List[int] = field(default_factory=list)
     park_offset: float = 0.0
+
+
+@dataclass
+class GapRetime:
+    """One inter-shot gap whose WIDTH changes, and where its content must land.
+
+    A shot move is rigid: the shot keeps its duration, so its content can
+    travel with it unchanged.  A gap is the opposite -- respacing is defined by
+    changing its width -- and content living in one therefore has to be
+    RETIMED, not carried.  Moving it rigidly is what breaks a respace: measured
+    on a 12-shot production assembly, collapsing a 135-frame gap to 15 left the
+    gap's own key sitting 13 frames PAST the following shot's content, and the
+    preceding shot -- which had not moved at all -- lost 42 of its 109 frames
+    to the tangent change that key's new neighbour caused.
+
+    The retime is anchored at the gap's LEFT edge, because that edge is the
+    preceding shot's end and travels with it: content at ``lo + d`` lands at
+    ``lo + d * scale``.
+
+    Fields are in the ORIGINAL timeline; :attr:`left_delta` is how far the
+    preceding shot moves, which is also how far this gap's left edge moves.
+    """
+
+    left_id: int
+    right_id: int
+    lo: float
+    hi: float
+    new_width: float
+    left_delta: float
+
+    @property
+    def width(self) -> float:
+        return self.hi - self.lo
+
+    @property
+    def scale(self) -> float:
+        """Time factor about the gap's left edge (0.0 collapses the gap)."""
+        return 0.0 if self.width <= _EPS else self.new_width / self.width
+
+    @property
+    def shrinks(self) -> bool:
+        return self.new_width < self.width - _EPS
+
+    @property
+    def grows(self) -> bool:
+        return self.new_width > self.width + _EPS
 
 
 # ---------------------------------------------------------------------------

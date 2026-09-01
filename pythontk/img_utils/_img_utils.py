@@ -646,7 +646,18 @@ class ImgUtils(HelpMixin):
             toktx = Ktx2Encoder.resolve_toktx(
                 required=required, auto_install=True, prompt=prompt
             )
-            return Ktx2Encoder(toktx=toktx) if toktx else None
+            if toktx:
+                return Ktx2Encoder(toktx=toktx)
+            if required:
+                # The same backstop the non-auto_install branch below spells
+                # out, and it was missing here: `resolve_toktx(required=True)`
+                # is EXPECTED to raise, but relying on a delegate to always
+                # raise is what turns `required=True` -- a promise of a usable
+                # encoder or an exception -- into a silent None handed to a
+                # caller who asked for a guarantee. It then fails much later,
+                # inside the encode, with no mention of the missing tool.
+                raise Ktx2Encoder.not_installed_error()
+            return None
         if required:
             # `Ktx2Encoder.resolve_toktx(required=True)` is expected to raise
             # this same FileNotFoundError -- but relying on the delegate to
@@ -663,6 +674,58 @@ class ImgUtils(HelpMixin):
         """True when ``.ktx2`` output is currently writable — the capability
         gate a UI checks before offering :attr:`DELIVERY_FORMATS`."""
         return cls.resolve_ktx2_encoder() is not None
+
+    @classmethod
+    def ensure_ktx2_encoder(
+        cls, prompt: Union[bool, Callable[[str], bool]] = True
+    ) -> Optional[str]:
+        """Guarantee a KTX2 encoder, offering the managed install when none is found.
+
+        The **panel-side** counterpart of :meth:`resolve_ktx2_encoder`: a user
+        who picks KTX2 in a UI must be offered the install, never handed a URL
+        and an abort. Every such panel was writing the same four steps — probe,
+        announce, resolve with consent, then re-discover the binary to report
+        it — and by the third copy (Maya's Scene Exporter, Blender's, the WebXR
+        preview) the re-discovery had no owner. It lives here because it is a
+        property of the ENCODER, not of any host: nothing in it is Maya-, Blender-
+        or Qt-specific, and mayatk and blendertk cannot import each other.
+
+        Parameters:
+            prompt: Consent policy for the download -- ``True`` asks on the
+                console, ``False`` needs none, a callable ``(question) -> bool``
+                is asked instead (a panel passes its dialog). See
+                :meth:`AppInstaller.consent`.
+
+        Returns:
+            The ``toktx`` path this call INSTALLED, or ``None`` when an encoder
+            was already available. That distinction is the whole return value:
+            a caller reports "installed <path>" only for the first, and both
+            answers are one call rather than a flag the caller has to carry
+            past its own try/except.
+
+        Raises:
+            FileNotFoundError: There is still no encoder -- declined, or the
+                install failed. It is the fix-shaped error naming the manual
+                install, so a caller can surface it verbatim.
+        """
+        if cls.ktx2_available():
+            return None
+        # `required=True` is what makes a decline raise rather than return
+        # None -- the caller asked for a guaranteed encoder.
+        encoder = cls.resolve_ktx2_encoder(
+            required=True, auto_install=True, prompt=prompt
+        )
+        # The path off the encoder the resolver just BOUND, never a second
+        # discovery pass: the install may have written a catalog entry a fresh
+        # `resolve_toktx()` would miss, which is the same reason the resolver
+        # binds rather than re-discovers.
+        #
+        # getattr: a CUSTOM encoder registered through `register_ktx2_encoder`
+        # need not be a `Ktx2Encoder` and so need not name a binary. It cannot
+        # reach here today -- one would have made `ktx2_available()` true above
+        # -- so this is about not turning a future seam into an AttributeError
+        # in the middle of a consent flow.
+        return getattr(encoder, "toktx", None)
 
     @classmethod
     def save_image(
@@ -706,6 +769,10 @@ class ImgUtils(HelpMixin):
                 linear data maps must say so. Ignored by the PIL/cv2 paths.
             **kwargs: Additional arguments forwarded to PIL.Image.save (e.g.,
                 optimize=True, compress_level=9). Ignored for OpenCV-backed formats.
+
+        Raises:
+            ValueError: *name* names a format this class can read but not write.
+            OSError: an EXR/HDR write failed (see :meth:`_save_via_cv2`).
         """
         im = cls.ensure_image(image, mode)  # Now allows optional mode conversion
 
@@ -979,6 +1046,12 @@ class ImgUtils(HelpMixin):
         Pillow cannot encode these. The source PIL image is 8-bit, so values
         are normalized to 0-1 float32 (the inverse of :meth:`_load_via_cv2`).
         OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``).
+
+        Raises:
+            ImportError: cv2 unavailable (it is the only writer for these).
+            OSError: the write failed -- cv2 reports that by RETURNING False
+                (no exception), so an unchecked call leaves the caller believing
+                a file exists that was never created.
         """
         try:
             import cv2
@@ -995,7 +1068,18 @@ class ImgUtils(HelpMixin):
         # "L" (grayscale) passes through unchanged.
 
         img_np = img_np.astype(np.float32) / 255.0
-        cv2.imwrite(name, img_np)
+        # Half float for EXR: the source is 8-bit, and half's 11-bit mantissa
+        # already exceeds that -- cv2's FP32 default would double the bytes for
+        # no precision. cv2 RETURNS False rather than raising when the codec is
+        # missing or the path is bad, so an unchecked call reports success with
+        # no file on disk.
+        params = (
+            [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF]
+            if os.path.splitext(name)[1].lower() == ".exr"
+            else []
+        )
+        if not cv2.imwrite(name, img_np, params):
+            raise OSError(f"Failed to write image: {name}")
 
     @classmethod
     def load_image(cls, filepath):
@@ -1831,6 +1915,7 @@ class ImgUtils(HelpMixin):
         mask: Optional["np.ndarray"] = None,
         iterations: int = -1,
         connectivity: int = 8,
+        return_mask: bool = False,
     ) -> "np.ndarray":
         """Extend valid pixels outward into empty (background) regions.
 
@@ -1852,9 +1937,13 @@ class ImgUtils(HelpMixin):
                 empty and overwrites them.
             iterations: Max passes (≈ gutter width in px). -1 = until filled.
             connectivity: 4 or 8 neighbor connectivity.
+            return_mask: Also return the HxW bool mask of the texels that are
+                valid AFTER the passes (the input mask grown by the ring), so a
+                caller continuing the fill another way knows where this stopped.
 
         Returns:
-            Image with empty regions filled; same shape and dtype as input.
+            Image with empty regions filled; same shape and dtype as input --
+            or ``(image, mask)`` with *return_mask*.
         """
         arr = np.asarray(image)
         out = arr.astype(np.float32, copy=True)
@@ -1887,8 +1976,14 @@ class ImgUtils(HelpMixin):
         else:
             raise ValueError("connectivity must be 4 or 8")
 
-        def shift(a: "np.ndarray", dy: int, dx: int) -> "np.ndarray":
-            s = np.zeros_like(a)
+        # Source/destination slice pair per neighbor offset, precomputed: the
+        # accumulators are filled by IN-PLACE slice adds, never through a
+        # freshly zeroed full-size shift buffer. A shift temporary per offset
+        # is 16 whole-image allocations per pass (8 colour + 8 count) -- at a
+        # 4096 atlas with an 18px gutter that is tens of GB of pure alloc and
+        # zero-fill traffic for an answer the slices give directly.
+        windows = []
+        for dy, dx in offsets:
             ys, yd = (
                 slice(max(dy, 0), h + min(dy, 0)),
                 slice(max(-dy, 0), h + min(-dy, 0)),
@@ -1897,20 +1992,22 @@ class ImgUtils(HelpMixin):
                 slice(max(dx, 0), w + min(dx, 0)),
                 slice(max(-dx, 0), w + min(-dx, 0)),
             )
-            s[yd, xd] = a[ys, xs]
-            return s
+            windows.append((ys, xs, yd, xd))
 
+        color_acc = np.empty_like(out)
+        count_acc = np.empty((h, w), dtype=np.float32)
+        vf = np.empty((h, w), dtype=np.float32)
         it = 0
         while not valid.all() and (iterations < 0 or it < iterations):
-            color_acc = np.zeros_like(out)
-            count_acc = np.zeros((h, w), dtype=np.float32)
-            vf = valid.astype(np.float32)
+            color_acc[...] = 0.0
+            count_acc[...] = 0.0
+            np.copyto(vf, valid)
             # `out` is already zero at every invalid pixel (and stays so until
             # the pass that fills it also flips it valid), so out == out*vf --
             # accumulate `out` directly; only the count needs the validity mask.
-            for dy, dx in offsets:
-                color_acc += shift(out, dy, dx)
-                count_acc += shift(vf, dy, dx)
+            for ys, xs, yd, xd in windows:
+                color_acc[yd, xd] += out[ys, xs]
+                count_acc[yd, xd] += vf[ys, xs]
             fillable = (~valid) & (count_acc > 0)
             if not fillable.any():
                 break  # remaining empties are unreachable from any valid pixel
@@ -1920,7 +2017,13 @@ class ImgUtils(HelpMixin):
 
         if squeeze:
             out = out[..., 0]
-        return out.astype(arr.dtype, copy=False)
+        if np.issubdtype(arr.dtype, np.integer):
+            # A neighbour average is fractional; truncating it on the way back
+            # to an integer dtype biases every gutter texel dark by up to one
+            # LSB, systematically (127.9 -> 127).
+            np.rint(out, out=out)
+        result = out.astype(arr.dtype, copy=False)
+        return (result, valid) if return_mask else result
 
     @classmethod
     def fill_empty_texels(
@@ -1941,8 +2044,11 @@ class ImgUtils(HelpMixin):
 
         Nearest-neighbor via cv2's distance transform when available (one
         O(n) pass -- flood-filling a 2048 map by iteration is hundreds of
-        full-image passes); falls back to :meth:`dilate_image`
-        ``iterations=-1`` without cv2.
+        full-image passes). Without cv2 (Blender's Python ships none) the
+        near ring is neighbour-averaged and the far field is filled from an
+        image pyramid (:meth:`_fill_pyramid`) -- O(log n) passes, where the
+        previous iterate-until-filled fallback paid one full-image pass per
+        texel of distance.
 
         Parameters:
             image: HxW or HxWxC array. Not modified -- a copy is returned.
@@ -1968,7 +2074,7 @@ class ImgUtils(HelpMixin):
         try:
             import cv2
         except ImportError:
-            return cls.dilate_image(arr, mask=valid, iterations=-1)
+            return cls._fill_pyramid(arr, valid)
 
         # Distance transform on the EMPTY set with pixel-index labels: each
         # empty texel's label is its nearest VALID texel, one pass, exact.
@@ -1981,10 +2087,90 @@ class ImgUtils(HelpMixin):
         valid_flat = np.flatnonzero(valid.ravel())
         out = arr.copy()
         flat = out.reshape(-1, arr.shape[2]) if arr.ndim == 3 else out.reshape(-1)
-        src = valid_flat[labels.ravel() - 1]
         empty_flat = ~valid.ravel()
-        flat[empty_flat] = flat[src[empty_flat]]
+        # Gather only the empty texels' labels: indexing the whole label image
+        # would materialize a full-size int array to use a fraction of it.
+        src = valid_flat[labels.ravel()[empty_flat] - 1]
+        flat[empty_flat] = flat[src]
         return out
+
+    @classmethod
+    def _fill_pyramid(
+        cls, image: "np.ndarray", valid: "np.ndarray", ring: int = 4
+    ) -> "np.ndarray":
+        """cv2-less :meth:`fill_empty_texels`: a near ring by neighbour averaging,
+        the far field from an image pyramid.
+
+        The previous fallback, :meth:`dilate_image` ``iterations=-1``, costs one
+        full-image pass per texel of distance to the nearest valid texel, so a
+        map's cost is set by its FARTHEST background texel: a 1024 lightmap whose
+        corners sit ~60 texels from any island paid ~60 passes -- measured 1.8 s
+        per per-object map inside Blender (which ships no cv2), 48% of the whole
+        bake loop, and it quadruples with each doubling of resolution.
+
+        Only the texels within *ring* of valid content are ever sampled by a
+        bilinear tap or a fine mip level, and those are filled exactly as before
+        (neighbour averaging at full resolution). Everything beyond takes its
+        value from a pyramid: each level is 2x2 valid-only averaged from the one
+        below, filled with the same ring, and its leftovers take the next-coarser
+        level's value on the way back up, so the far field costs O(log n) passes
+        over shrinking images instead of O(distance) passes over the full one
+        (measured 0.2 s on the same map). A far texel feeds nothing but coarse
+        mips, and a pooled average is what the GPU would compute there anyway.
+
+        Parameters:
+            image: HxW or HxWxC array (any dtype; float32 internally).
+            valid: HxW bool mask, at least one True.
+            ring: Neighbour-averaging passes per level before the pyramid
+                takes over -- the width, in texels, of the exact border.
+
+        Returns:
+            Image with every invalid texel filled; same shape/dtype as input.
+        """
+        arr = np.asarray(image)
+        squeeze = arr.ndim == 2
+        cur = arr.astype(np.float32, copy=True)
+        if squeeze:
+            cur = cur[..., None]
+        cur_valid = np.asarray(valid).astype(bool)
+        cur[~cur_valid] = 0.0
+
+        levels = []  # (image, filled mask) per level, fine to coarse
+        while not cur_valid.all() and min(cur_valid.shape) > 2:
+            cur, filled = cls.dilate_image(
+                cur, mask=cur_valid, iterations=ring, return_mask=True
+            )
+            if filled.all():
+                cur_valid = filled
+                break
+            levels.append((cur, filled))
+            # 2x2 valid-only average pooling; an odd edge is padded with an
+            # empty row/column so it pools rather than drops.
+            h, w, c = cur.shape
+            ph, pw = h + (h & 1), w + (w & 1)
+            pooled = np.zeros((ph, pw, c), dtype=np.float32)
+            pooled[:h, :w] = cur  # invalid texels are zero, so a plain sum is masked
+            count = np.zeros((ph, pw), dtype=np.float32)
+            count[:h, :w] = filled
+            pooled = pooled.reshape(ph // 2, 2, pw // 2, 2, c).sum(axis=(1, 3))
+            count = count.reshape(ph // 2, 2, pw // 2, 2).sum(axis=(1, 3))
+            cur_valid = count > 0
+            cur = pooled / np.maximum(count, 1.0)[..., None]
+        if not cur_valid.all():
+            # The coarsest level is a handful of texels: flood it outright.
+            cur = cls.dilate_image(cur, mask=cur_valid, iterations=-1)
+
+        for fine, fine_valid in reversed(levels):
+            up = np.repeat(np.repeat(cur, 2, axis=0), 2, axis=1)
+            missing = ~fine_valid
+            fine[missing] = up[: fine.shape[0], : fine.shape[1]][missing]
+            cur = fine
+
+        if squeeze:
+            cur = cur[..., 0]
+        if np.issubdtype(arr.dtype, np.integer):
+            np.rint(cur, out=cur)  # see dilate_image: never truncate toward dark
+        return cur.astype(arr.dtype, copy=False)
 
     @staticmethod
     def compute_atlas_layout(
@@ -2002,19 +2188,41 @@ class ImgUtils(HelpMixin):
         proportional to its weight, so a large object can be given more atlas
         texels than a small one.
 
-        Shelf packing: items are balanced into ``rows`` shelves (longest-
-        processing-time, to keep aspect ratios sane); each shelf's height is its
-        share of the total weight, and within a shelf each item's width is its
-        share of that shelf's weight. Rows cover the full height and items cover
-        each row's full width, so the rects tile [0, 1]^2 with no gaps or
-        overlaps. Pure Python -- no numpy/PIL.
+        **Squarified treemap** (the default): rows are grown along the remaining
+        rect's SHORTER side, admitting the next item only while that does not
+        worsen the row's worst aspect ratio. This is what a resampled bake needs
+        -- a rect's two axes are two independent resolutions and the cell is only
+        as good as the SMALLER one, and ``bake_atlas`` renders each object AT its
+        cell, so a 9:1 cell is a 9x anisotropic loss for that object.
+
+        Neither predecessor bounds aspect. Shelf packing (the ``rows`` path
+        below) balances items into shelves whose HEIGHT is a weight share, so
+        one dominant item drives every other shelf thin -- and a thin shelf's
+        cells are thin at any width (measured: a room of weight 200 among 30
+        props of 0.5 gives each prop 341x29 px in a 2048 atlas, 11.9:1).
+        Weight-balanced bisection, which replaced it, always cuts the longer
+        axis -- provably optimal for TWO items -- but a two-item subtree with
+        lopsided weights still hands the lighter one a sliver of the full
+        extent, and when that child is a leaf the sliver is final. Measured on
+        a production room scene, same bake one algorithm apart, on the
+        **delivered** atlas (46 objects, 1024 px): worst cell **101x11 px
+        (9.18:1) -> 145x62 (2.34:1)**, the smallest cell's short axis
+        **11 px -> 29 px**, median aspect 1.42 -> 1.27, atlas area used 89.1%
+        -> 89.3%. Cell-edge uniformity improved with it (the border-vs-interior
+        excess halved, 0.051 -> 0.029 median) -- squarer cells are also less
+        likely to run a lighting gradient the short way across a few texels.
+
+        Exact tiling, area proportionality and input order are identical under
+        all three -- only the shapes differ. Pure Python -- no numpy/PIL.
 
         Parameters:
             weights: One non-negative importance value per item, in caller order.
                 All-zero (or empty-after-clamp) weights fall back to equal
                 shares; negative values are clamped to 0.
-            rows: Number of shelves. Defaults to ``round(sqrt(n))`` for roughly
-                square cells. Clamped to ``1..n``.
+            rows: Opt in to the legacy shelf packing with this many shelves
+                (items balanced across them longest-processing-time first, each
+                shelf's height its weight share). ``None`` (default) uses the
+                bisection above, which needs no row count.
 
         Returns:
             One ``(scaleX, scaleY, offsetX, offsetY)`` tuple per input weight, in
@@ -2032,8 +2240,71 @@ class ImgUtils(HelpMixin):
             w = [1.0] * n
             total = float(n)
 
-        r = round(math.sqrt(n)) if rows is None else int(rows)
-        r = max(1, min(r, n))
+        rects: List[Tuple[float, float, float, float]] = [(1.0, 1.0, 0.0, 0.0)] * n
+
+        if rows is None:
+            # Squarified treemap (Bruls/Huizing/van Wijk): rows are grown along
+            # the remaining rect's SHORTER side, admitting the next item only
+            # while doing so does not make the row's worst aspect ratio worse.
+            # When it would, the row is closed and the next starts in what is
+            # left. Areas stay exactly proportional; what changes is the SHAPE
+            # each area is delivered in.
+            eps = 1e-12
+            order = sorted(range(n), key=lambda k: (-w[k], k))
+            areas = [w[i] / total for i in order]
+
+            def worst(
+                a_max: float, a_min: float, row_area: float, side: float
+            ) -> float:
+                """Worst aspect in a row of *row_area* laid along *side*.
+
+                The row occupies a strip ``t = row_area / side`` thick, in which
+                an item of area ``a`` gets an extent of ``a / t``. Areas arrive
+                descending, so the row's largest and smallest items are the only
+                two that can hold the worst ratio.
+                """
+                t2 = max((row_area / max(side, eps)) ** 2, eps)
+                return max(a_max / t2, t2 / max(a_min, eps))
+
+            x, y, bw, bh = 0.0, 0.0, 1.0, 1.0
+            pos = 0
+            while pos < n:
+                horizontal = bw >= bh  # a wide rect takes a VERTICAL strip
+                side = bh if horizontal else bw
+                end, row_area = pos + 1, areas[pos]
+                best = worst(areas[pos], areas[pos], row_area, side)
+                while end < n:
+                    trial_area = row_area + areas[end]
+                    trial = worst(areas[pos], areas[end], trial_area, side)
+                    if trial > best:
+                        break
+                    row_area, best, end = trial_area, trial, end + 1
+
+                # The last row takes the whole remaining extent, so float drift
+                # can never leave an unassigned seam down the atlas edge.
+                span = bw if horizontal else bh
+                thick = span if end >= n else min(row_area / max(side, eps), span)
+                # Cells run cumulatively along `side`, and the last one is
+                # derived from the row's far edge rather than from its own area
+                # -- the same "one shared coordinate" discipline that makes the
+                # tiling exact rather than merely close.
+                cur, far = (y, y + bh) if horizontal else (x, x + bw)
+                for j in range(pos, end):
+                    nxt = far if j == end - 1 else cur + areas[j] / max(thick, eps)
+                    nxt = min(max(nxt, cur), far)
+                    if horizontal:
+                        rects[order[j]] = (thick, nxt - cur, x, cur)
+                    else:
+                        rects[order[j]] = (nxt - cur, thick, cur, y)
+                    cur = nxt
+                if horizontal:
+                    x, bw = x + thick, bw - thick
+                else:
+                    y, bh = y + thick, bh - thick
+                pos = end
+            return rects
+
+        r = max(1, min(int(rows), n))
 
         # Balance items across `r` shelves by weight (LPT): assign the heaviest
         # remaining item to the currently-lightest shelf. Keeps shelf weight-sums
@@ -2312,6 +2583,17 @@ class ImgUtils(HelpMixin):
             tw, th = col1 - col0, row1 - row0
             if tw <= 0 or th <= 0:
                 continue  # degenerate (e.g. zero-weight) rect -- nothing to place
+            # A rect that rounds past the canvas clips the DESTINATION slice
+            # while the resized source keeps its full size -- a shape-mismatch
+            # ValueError that would lose a whole atlas. Clamp the destination
+            # first and crop the source to match it, so the two agree by
+            # construction (deriving the crop from the overhang instead lets a
+            # rect that lies ENTIRELY off-canvas produce a negative slice stop,
+            # which silently wraps and mismatches again).
+            dst_r0, dst_r1 = max(row0, 0), min(row1, h_px)
+            dst_c0, dst_c1 = max(col0, 0), min(col1, w_px)
+            if dst_r1 <= dst_r0 or dst_c1 <= dst_c0:
+                continue  # entirely outside the canvas
 
             a = np.asarray(img, dtype=np.float32)
             if a.ndim == 2:
@@ -2330,7 +2612,11 @@ class ImgUtils(HelpMixin):
             resized = cv2.resize(a, (tw, th), interpolation=interp)
             if resized.ndim == 2:
                 resized = resized[..., None]
-            canvas[row0:row1, col0:col1, :] = resized
+            if (dst_r1 - dst_r0, dst_c1 - dst_c0) != (th, tw):
+                resized = resized[
+                    dst_r0 - row0 : dst_r1 - row0, dst_c0 - col0 : dst_c1 - col0, :
+                ]
+            canvas[dst_r0:dst_r1, dst_c0:dst_c1, :] = resized
 
         if squeeze:
             canvas = canvas[..., 0]
@@ -3096,6 +3382,13 @@ class ImgUtils(HelpMixin):
         if arr.ndim == 2:
             arr = arr[:, :, None].repeat(3, axis=2)
         bgr = arr[:, :, :3]  # lightmaps are opaque; drop any alpha
+        # A renderer's fireflies survive into the file, and both non-finite
+        # kinds poison the encode SILENTLY: `inf > 0` is True, so enough of
+        # them make the percentile itself inf and the whole map encodes BLACK
+        # against an inf scalar; NaN passes the percentile's own filter but
+        # propagates through np.clip and casts to uint8 as undefined garbage.
+        if not np.isfinite(bgr).all():
+            bgr = np.nan_to_num(bgr, nan=0.0, posinf=0.0, neginf=0.0)
 
         lit = bgr[bgr > 0.0]
         scalar = float(np.percentile(lit, percentile)) if lit.size else 1.0
@@ -3103,7 +3396,9 @@ class ImgUtils(HelpMixin):
 
         srgb = cls._linear_to_srgb_np(np.clip(bgr / scalar, 0.0, 1.0))
         out = np.clip(srgb * 255.0 + 0.5, 0, 255).astype(np.uint8)
-        ok, buf = cv2.imencode(".png", out)  # cv2 reads AND writes BGR: no swap needed
+        # cv2 reads AND writes BGR: no swap needed. Max compression -- the
+        # bytes go straight into a GLB, where they are the file size.
+        ok, buf = cv2.imencode(".png", out, [cv2.IMWRITE_PNG_COMPRESSION, 9])
         if not ok:
             raise ValueError(f"PNG encode failed for {path}")
         return buf.tobytes(), scalar

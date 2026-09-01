@@ -381,7 +381,7 @@ class IterUtils(HelpMixin):
                     - "*.ma, *.mb; *.fbx" with delimiter=(',', ';') becomes ["*.ma", "*.mb", "*.fbx"]
             match_all (bool, optional): If True, an item must match ALL inclusion patterns to be included
                 (AND logic). If False (default), an item is included if it matches ANY pattern (OR logic).
-                This is useful for filtering with multiple criteria like "*_module.ma" AND "C130*".
+                This is useful for filtering with multiple criteria like "*_module.ma" AND "ASSET*".
             negate_prefix (str, optional): If set, any *string* inclusion pattern beginning with this
                 prefix is treated as an exclusion: the prefix is stripped and the remainder is appended
                 to `exc`. This lets a single query stream carry both include and exclude terms — e.g. with
@@ -686,7 +686,7 @@ class IterUtils(HelpMixin):
 
         Parameters:
             values: Array-like of numeric values (converted to numpy array).
-            value_tolerance: Max value difference to consider elements equal.
+            value_tolerance: Max deviation from the run's FIRST value for a key to belong to that flat segment.
 
         Returns:
             Tuple of ``(remove_indices, seg_starts, seg_lasts)`` where
@@ -705,21 +705,35 @@ class IterUtils(HelpMixin):
         if len(values) < 3:
             return empty
 
-        diffs = np.abs(np.diff(values))
-        is_flat = diffs < value_tolerance
+        # Flatness is measured against the RUN'S FIRST VALUE, exactly as
+        # documented -- NOT against the previous sample. Adjacent-diff
+        # flatness let values CREEP: a slow excursion that returns to its
+        # start (sub-tolerance per step, endpoints equal) read as one flat
+        # run while its interior wandered far past the tolerance, and
+        # every interior key was deleted. Being a ratio-free value test,
+        # the creep was unit-independent -- degrees and meters alike --
+        # and compounded down joint chains into centimetre-scale drift in
+        # shipped exports. Banding from the first value subsumes the old
+        # endpoint-span guard (the last member is checked like any other).
+        seg_start_list = []
+        seg_last_list = []
+        i = 0
+        n = len(values)
+        while i < n - 2:
+            # First index whose value leaves the band around values[i];
+            # vectorized scan, O(run length) per run.
+            out = np.abs(values[i + 1 :] - values[i]) >= value_tolerance
+            j = int(np.argmax(out)) if out.any() else n - 1 - i
+            # Run covers keys i .. i+j (all within the band of values[i]).
+            if j >= 2:
+                seg_start_list.append(i)
+                seg_last_list.append(i + j)
+                i += j  # the run's last key may start the next run
+            else:
+                i += 1
 
-        padded = np.concatenate(([False], is_flat, [False]))
-        transitions = np.diff(padded.astype(np.int8))
-        run_starts = np.where(transitions == 1)[0]
-        run_ends = np.where(transitions == -1)[0]
-
-        lengths = run_ends - run_starts
-        mask = lengths >= 2
-        span = np.abs(values[run_ends] - values[run_starts])
-        mask &= span < value_tolerance
-
-        seg_starts = run_starts[mask]
-        seg_lasts = run_ends[mask]
+        seg_starts = np.asarray(seg_start_list, dtype=int)
+        seg_lasts = np.asarray(seg_last_list, dtype=int)
 
         if len(seg_starts) == 0:
             return empty

@@ -45,12 +45,13 @@ import os
 import shutil
 import threading
 import time
+import warnings
 import webbrowser
 from dataclasses import dataclass, field
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from pythontk.core_utils.app_handoff import (
     Deliverer,
@@ -67,6 +68,11 @@ from pythontk.net_utils._net_utils import NetUtils
 #: rather than after :attr:`PreviewServer.VIEWER_TIMEOUT`. Shared by the
 #: handler and the served page (which is checked against it by test).
 VIEWER_CLOSED_PATH = "viewer-closed"
+
+#: Path the viewer posts a delivery dial to, to have it written into the GLB
+#: itself. Only :attr:`PreviewServer.WRITABLE_SETTINGS` may be posted, and each
+#: one names the ``MeshConvert`` writer that applies it.
+SETTINGS_PATH = "settings"
 
 
 def _mesh_convert():
@@ -129,13 +135,14 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):  # noqa: N802 (BaseHTTPRequestHandler API)
-        """Accept the viewer's ``sendBeacon`` close notice; 404 anything else."""
-        if self.path.split("?", 1)[0] != f"/{VIEWER_CLOSED_PATH}":
+        """Accept the viewer's close notice and its setting writes; 404 else."""
+        route = self.path.split("?", 1)[0].lstrip("/")
+        if route not in (VIEWER_CLOSED_PATH, SETTINGS_PATH):
             self.send_error(404)
             return
         # Drain the body: sendBeacon always sends one, and leaving it in the
         # socket desynchronises the next request on a keep-alive connection.
-        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         # This is the one request that *changes* server state, and a beacon is
         # a CORS-simple request -- no preflight -- so without this any page the
         # user happens to be browsing could tell us the viewer had closed and
@@ -150,14 +157,34 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         # Matching on the server's spelling would 403 the real viewer's beacon
         # whenever it was opened by name -- and silently, since the fallback is
         # simply waiting out VIEWER_TIMEOUT.
+        #
+        # The settings route is held to the same check for a stronger reason:
+        # it is the one request that writes to a FILE, so a page the user
+        # happens to have open must not be able to restyle the deliverable.
         origin, host = self.headers.get("Origin"), self.headers.get("Host")
         if origin and host and origin.split("//", 1)[-1] != host:
             self.send_error(403, "Cross-origin post rejected")
             return
-        if self._owner is not None:
+        if self._owner is None:
+            self.send_response(204)
+            self.end_headers()
+            return
+        if route == VIEWER_CLOSED_PATH:
             self._owner._clear_viewer()
-        self.send_response(204)
-        self.end_headers()
+            self.send_response(204)
+            self.end_headers()
+            return
+        try:
+            payload = json.loads(body or b"{}")
+            if not isinstance(payload, dict):
+                raise ValueError("expected a JSON object")
+            self._send_json(self._owner.apply_settings(payload))
+        except (ValueError, TypeError, KeyError) as error:
+            # 400, not 500: every one of these is the page saying something
+            # this server does not accept, and the page shows the reason.
+            self.send_error(400, f"Settings rejected: {error}")
+        except OSError as error:
+            self.send_error(500, f"Settings write failed: {error}")
 
     def _send_json(self, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -338,6 +365,13 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         "inspect": "inspect.js",
     }
 
+    #: Delivery dials the served page may write into the published GLB:
+    #: name -> (:class:`MeshConvert` writer, coercion). An allow-list, because
+    #: this is the only route by which the page reaches a file on disk.
+    WRITABLE_SETTINGS: Dict[str, Tuple[str, Callable]] = {
+        "normal_scale": ("set_glb_normal_scale", float),
+    }
+
     #: Seconds a manifest poll counts as proof that a viewer is still open.
     #:
     #: It has to clear 60s, and by a margin. Chrome and Edge throttle
@@ -365,6 +399,11 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         self._lock = threading.Lock()
         self._version = 0
         self._asset: Optional[str] = None
+        #: The file the current asset was published FROM, so a setting the page
+        #: writes can reach the caller's own deliverable and not only the copy.
+        self._source: Optional[Path] = None
+        #: Delivery dials the page has set, re-applied to each later publish.
+        self._settings: Dict[str, Any] = {}
         self._updated: Optional[float] = None
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -642,12 +681,119 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         name = name or f"scene{src.suffix}"
         self._write_asset(src, self.root / name, move)
         with self._lock:
+            settings = dict(self._settings)
+        if settings:
+            # A dial set in the page is a property of the DELIVERY, not of the
+            # file that happened to be open when it was set, so a re-push
+            # carries it instead of silently resetting to the file's defaults.
+            # The SERVED copy only: re-stamping the source would edit a file
+            # the caller just handed us and may still be writing.
+            #
+            # BEFORE the version bump, which is the page's signal to fetch:
+            # advertising a version while the asset is still being rewritten
+            # hands a poller a torn GLB.
+            #
+            # A failure here is logged, not raised: the push itself succeeded
+            # and the model must still reach the page. Raising would leave the
+            # asset written but never advertised, and report the PUSH as the
+            # failure to whoever called -- a dial that could not be re-applied
+            # is the lesser fact, and the page shows the file's own value.
+            try:
+                self._stamp(settings, [self.root / name])
+            except (OSError, ValueError) as error:
+                self.logger.warning(
+                    "Published %s without re-applying %s: %s",
+                    name,
+                    ", ".join(settings),
+                    error,
+                )
+        with self._lock:
             self._version += 1
             self._asset = name
+            self._source = src
             self._updated = time.time()
             version = self._version
         self.logger.info("Published %s as %r (v%s)", src.name, name, version)
         return version
+
+    def apply_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Write delivery dials into the published GLB, and remember them.
+
+        The page tunes a value live against the loaded model; this is what
+        makes that value part of the DELIVERABLE rather than of the session
+        looking at it. Each dial is written into the glTF's own field (see
+        :meth:`MeshConvert.set_glb_normal_scale`), so the file states it once,
+        every runtime honours it, and the next load reads it back with nothing
+        to re-apply.
+
+        Both the served copy and -- when it still exists and is not the served
+        copy itself -- the file it was published FROM are written, so previewing
+        an exporter's GLB and saving from the page lands the value in the
+        artifact the exporter produced. A moved temp export is neither, and is
+        simply skipped.
+
+        Parameters:
+            settings: ``{name: value}``, names from :attr:`WRITABLE_SETTINGS`.
+
+        Returns:
+            ``{"applied": {name: coerced value}, "materials": {name: count}}``.
+
+        Raises:
+            KeyError: A name outside :attr:`WRITABLE_SETTINGS`.
+            ValueError: A value that will not coerce, or a GLB the writer
+                refuses.
+            OSError: The write itself failed. The value is then NOT
+                remembered -- see below.
+        """
+        unknown = sorted(set(settings) - set(self.WRITABLE_SETTINGS))
+        if unknown:
+            raise KeyError(f"no such setting: {', '.join(unknown)}")
+        resolved = {
+            name: self.WRITABLE_SETTINGS[name][1](value)
+            for name, value in settings.items()
+        }
+        with self._lock:
+            targets = self._setting_targets()
+        # Written BEFORE it is remembered: a value that could not reach the file
+        # must not ride along on the next publish either, which is what makes a
+        # failed save simply a failed save rather than a dial silently set.
+        counts = self._stamp(resolved, targets)
+        with self._lock:
+            self._settings.update(resolved)
+        self.logger.info(
+            "Wrote %s into %s.",
+            ", ".join(f"{k}={v:g}" for k, v in resolved.items()),
+            ", ".join(t.name for t in targets) or "nothing (no asset published)",
+        )
+        return {"applied": resolved, "materials": counts}
+
+    def _setting_targets(self) -> List[Path]:
+        """Files a setting write lands in: the served copy, then its source."""
+        targets: List[Path] = []
+        served = (self.root / self._asset) if self._asset else None
+        if served is not None and served.is_file():
+            targets.append(served)
+        source = self._source
+        if source is not None and source.is_file() and source != served:
+            targets.append(source)
+        return targets
+
+    def _stamp(self, settings: Dict[str, Any], paths: Sequence[Path]) -> Dict[str, int]:
+        """Apply *settings* to each of *paths*; materials changed, by name.
+
+        The count reported is the FIRST path's -- the served copy, which is
+        what the page is looking at. A later path is the same content and
+        answers the same, except when it has already been stamped, where it
+        rightly answers zero; reporting that would tell the page nothing
+        changed when the model in front of it just did.
+        """
+        convert = _mesh_convert()
+        counts: Dict[str, int] = {}
+        for path in paths:
+            for name, value in settings.items():
+                writer = getattr(convert, self.WRITABLE_SETTINGS[name][0])
+                counts.setdefault(name, writer(str(path), value))
+        return counts
 
     def open_in_browser(self) -> bool:
         """Open the viewer in the default browser. Starts the server if needed."""
@@ -833,16 +979,31 @@ class PreviewDeliverer(Deliverer):
     # `context.results`.
 
     def _pass_scene_sidecar(self, context: "PreviewPassContext") -> None:
-        """Apply the producer's scene-sidecar envelope, if it attached one.
+        """Record the scene-sidecar outcome, applying the envelope only if the
+        conversion did not.
 
         The apply itself lives on the converter (``MeshConvert`` owns the
-        applier registry, the embed, and the outcome summary); this pass only
-        threads the envelope through and records what happened. Called here
-        rather than inside ``fbx_to_glb`` because the panel wants the
-        per-section summary back -- the exporters, which don't, pass
-        ``sidecar=`` into the conversion instead.
+        applier registry, the embed, and the outcome summary). ``deliver()``
+        hands the envelope to ``fbx_to_glb`` exactly as the exporters do, so
+        in the normal run this pass finds the outcome already recorded in the
+        file and only threads it back to the panel; the apply below is the
+        fallback for a conversion that recorded nothing.
         """
         if not context.sidecar:
+            return
+        # `deliver()` hands the envelope to the CONVERSION as well, because
+        # the conversion's own chain clones materials (one per faded subtree)
+        # and a clone copies its source AS IT STANDS -- the same trap the
+        # lightmap pass fell into once, which is why it runs after this. So
+        # the repairs have to land before the fade pass, i.e. inside
+        # `fbx_to_glb`, and what this pass then does is read the outcome back:
+        # applying the envelope a second time here would write the authored
+        # alpha mode over the fade clones' BLEND and pop every fade.
+        applied = (context.edit.gltf.get("extras") or {}).get(
+            _mesh_convert().SIDECAR_APPLIED_KEY
+        )
+        if applied is not None:
+            context.results["sidecar"] = dict(applied)
             return
         context.results["sidecar"] = _mesh_convert().apply_scene_sidecar(
             context.edit, context.sidecar
@@ -881,15 +1042,15 @@ class PreviewDeliverer(Deliverer):
         same reason -- see ``lightmaps=False`` in :meth:`deliver`.)
         """
         MeshConvert = _mesh_convert()
-        # What the manifest ASKED for, read before the bind from the same open
-        # session -- so the result can say how many objects came back unlit,
-        # which the bound records alone cannot (a miss leaves no record).
-        manifest = MeshConvert._lightmap_manifest(context.edit.gltf) or {}
-        wanted = [
-            str(entry.get("name"))
-            for entry in (manifest.get("objects") or [])
-            if entry.get("name")
-        ]
+        # What the manifest asked for OF THIS GLB, read before the bind from the
+        # same open session -- so the result can say how many objects came back
+        # unlit, which the bound records alone cannot (a miss leaves no record).
+        # Scoped, because the bake manifest is a SCENE record that every export
+        # carries whole: counting it against a pushed selection reported every
+        # unselected object as unlit, crying wolf on a correct preview. An
+        # ambiguous leaf stays in scope -- it IS in the file and did not bind.
+        coverage = MeshConvert.lightmap_manifest_coverage(context.edit)
+        wanted = coverage["present"] + coverage["ambiguous"]
         bound = MeshConvert.apply_glb_lightmaps(
             # The host's live texture folders, so a manifest whose recorded
             # authoring directory has since moved still finds its EXRs --
@@ -906,6 +1067,10 @@ class PreviewDeliverer(Deliverer):
             "expected": len(wanted),
             "bound": len([name for name in wanted if name in bound_objects]),
             "unbound": [name for name in wanted if name not in bound_objects],
+            # Kept rather than dropped: "3 of 3 lit" over a 50-object scene is
+            # only reassuring once you can see the other 47 were never in the
+            # push. Reported as scope, never as a miss.
+            "out_of_scope": len(coverage["absent"]),
         }
 
     def _pass_optimize_textures(self, context: "PreviewPassContext") -> None:
@@ -916,14 +1081,91 @@ class PreviewDeliverer(Deliverer):
         94.7 MB -> ~15 MB, and its failure must cost quality, never the push --
         which is what the runner's per-pass guard buys.
         """
+        # The shared web-delivery policy, named rather than inherited: this
+        # pass used to pass a container and let `max_size` fall through to
+        # `optimize_glb_textures`' own default, so the resolution the preview
+        # approves was set by a signature default two packages away -- and the
+        # scene exporters, reading their own dials, could not see it to agree
+        # with it. Measured on a production assembly: 8.71 MB here against
+        # 280.13 MB from the exporter, same scene, same session.
+        #
         # ktx2_fallback=False: this GLB exists to be streamed to the viewer
         # page, never re-imported -- the core-readable fallback twins the
         # optimizer embeds by default would spend the very bytes this pass
         # exists to reclaim (the bundled page wires KTX2Loader, so basisu-only
-        # is safe here).
-        _mesh_convert().optimize_glb_textures(
-            context.glb, image_format=context.texture_format, ktx2_fallback=False
+        # is safe here). Deliberately not part of the shared policy: it is a
+        # property of the consumer, and an exporter's deliverable must stay
+        # importable.
+        MeshConvert = _mesh_convert()
+        MeshConvert.optimize_glb_textures(
+            context.glb,
+            **MeshConvert.web_delivery_texture_params(
+                image_format=context.texture_format
+            ),
+            ktx2_fallback=False,
         )
+
+    def publish(
+        self,
+        glb: Union[str, Path],
+        move: bool = False,
+        open_browser: Union[bool, str, None] = None,
+        scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
+    ) -> Dict[str, Any]:
+        """Put *glb* on the server and report what the viewer now sees.
+
+        The tail every delivery shares -- activate the script set, bump the
+        version, decide whether a tab needs opening -- factored out of
+        :meth:`deliver` so the OTHER way an asset reaches the page
+        (:meth:`PreviewBridge.publish_file`, a GLB already on disk) cannot
+        answer those three questions differently. A second copy of this is
+        exactly how a push and a publish end up disagreeing about whether an
+        unticked script box turns a script off.
+
+        Parameters:
+            glb: The file to serve.
+            move: Move rather than copy. True only for an artifact the caller
+                minted -- a file the *user* chose is never moved out from
+                under them.
+            open_browser: ``True`` / ``False`` / ``"auto"``; ``None`` falls
+                back to the deliverer's own setting. ``False`` is meaningful,
+                which is why the fallback tests for ``None`` rather than for
+                falsiness.
+            scripts: The viewer-script set for this publish. ``None`` means
+                "leave whatever the server has alone" -- after falling back to
+                the deliverer's own default -- so a script registered directly
+                on a long-lived server survives a publish that says nothing;
+                ``[]`` clears them.
+
+        Returns:
+            ``{"url", "version", "asset", "opened_browser"}``.
+        """
+        server = self.ensure_server()
+        if scripts is None:
+            scripts = self.scripts
+        if scripts is not None:
+            server.set_scripts(scripts)
+
+        version = server.publish(glb, move=move)
+
+        # Asked after publishing, so the freshest possible poll counts.
+        if open_browser is None:
+            open_browser = self.open_browser
+        should_open = open_browser is True or (
+            open_browser == "auto" and not server.has_viewer()
+        )
+        # The decision and the outcome are reported separately on purpose:
+        # `open_in_browser` says whether a browser actually launched, and
+        # returning the decision would claim a tab exists on the one machine
+        # where none does.
+        opened = should_open and server.open_in_browser()
+
+        return {
+            "url": server.url,
+            "version": version,
+            "asset": server.manifest()["asset"],
+            "opened_browser": opened,
+        }
 
     def deliver(
         self, bridge, payload: Payload, request: HandoffRequest
@@ -936,7 +1178,10 @@ class PreviewDeliverer(Deliverer):
             bridge.logger.error("Preview delivery got no exported file to convert.")
             return None
 
-        server = self.ensure_server()
+        # Eagerly, though `publish` below ensures it too: binding the port is
+        # the one failure here that has nothing to do with the model, and it
+        # should not arrive after a multi-minute conversion has been paid for.
+        self.ensure_server()
         # Allocate the GLB through the bridge's own payload artifacts rather
         # than deriving a path from the FBX: that keeps it inside the prefix
         # namespace every other bridge artifact joins, so the age-gated sweep
@@ -954,16 +1199,43 @@ class PreviewDeliverer(Deliverer):
             # production room: the 46 clones the walls actually wear missed
             # the emissive and metallic-roughness repairs, and the room
             # rendered black in its own preview.
+            # sidecar=: applied INSIDE the conversion, ahead of its fade pass,
+            # for the reason the lightmap note above gives -- a material clone
+            # copies its source as it stands. Measured on a production
+            # assembly with the envelope applied afterwards instead: the
+            # metallic-roughness repair reached one fade clone of
+            # SCREENS_TEST_CMPTS and the eleven-primitive original kept
+            # FBX2glTF's packing, roughness and metalness 255 everywhere.
+            # `_pass_scene_sidecar` reads the outcome back rather than
+            # applying twice.
             MeshConvert.fbx_to_glb(
                 payload.primary,
                 dst=glb,
                 overwrite=True,
                 prompt=False,
                 lightmaps=False,
+                sidecar=(payload.extras or {}).get("scene_sidecar"),
             )
         except (OSError, RuntimeError, ValueError) as error:
             bridge.logger.error("Preview conversion to GLB failed: %s", error)
             return None
+
+        # The FBX has been fully consumed -- the GLB exists and nothing reads
+        # the payload again. Released HERE rather than left to the store's
+        # age-gated sweep because this bridge is the one shape that store
+        # cannot serve: its ``detached`` policy is right for a hand-off whose
+        # target app reads the file AFTER we return (no completion signal, so
+        # nothing may delete), and wrong for a blocking round trip that
+        # converts and publishes inside one call. Measured on a production
+        # assembly: 324 MB per push, 3.1 GB of them waiting out ``max_age_days``
+        # in the system temp dir. Before the passes, so the peak footprint is
+        # one deliverable rather than two. ``_release_payload`` deletes only
+        # what the bridge itself minted, which is what keeps this safe on a
+        # bridge whose producer hands back a durable path.
+        if bridge._release_payload(payload.primary):
+            bridge.logger.debug(
+                "Released the consumed FBX payload: %s", payload.primary
+            )
 
         # Request-scoped exactly like `open_browser` below. A deliverer is
         # bound once per bridge *class*, so a format written onto the instance
@@ -1035,39 +1307,22 @@ class PreviewDeliverer(Deliverer):
                 else "requested",
             )
 
-        # Request-scoped like `texture_format`, but `None` means "leave the
-        # server's own set alone" rather than "use the default": a caller who
-        # registered a script directly on the server (or a long-lived session
-        # that set one up once) must not have it silently dropped by the next
-        # push that says nothing about scripts. An explicit empty list is still
-        # a real instruction -- it clears them for this push.
-        # `.get`'s default is not enough: `push()` names the knob explicitly,
-        # so the key is PRESENT and None whenever the caller said nothing --
-        # read with a default the deliverer's own setting could never apply.
-        scripts = request.get("scripts")
-        if scripts is None:
-            scripts = self.scripts
-        if scripts is not None:
-            server.set_scripts(scripts)
-
-        version = server.publish(glb, move=True)
-
-        # Asked after publishing, so the freshest possible poll counts.
-        open_browser = request.get("open_browser", self.open_browser)
-        should_open = open_browser is True or (
-            open_browser == "auto" and not server.has_viewer()
+        published = self.publish(
+            glb,
+            # The GLB is this bridge's own scratch artifact and nothing reads
+            # it again once the server owns a copy.
+            move=True,
+            # Request-scoped like `texture_format`. `.get`'s default is not
+            # enough: `push()` names both knobs explicitly, so the keys are
+            # PRESENT and None whenever the caller said nothing -- read with a
+            # default here, the deliverer's own settings could never apply.
+            # `publish` owns that fallback for both entry points.
+            open_browser=request.get("open_browser", self.open_browser),
+            scripts=request.get("scripts"),
         )
-        # The decision and the outcome are reported separately on purpose:
-        # `open_in_browser` says whether a browser actually launched, and
-        # returning the decision would claim a tab exists on the one machine
-        # where none does.
-        opened = should_open and server.open_in_browser()
 
         return {
-            "url": server.url,
-            "version": version,
-            "asset": server.manifest()["asset"],
-            "opened_browser": opened,
+            **published,
             "sidecar": applied,
             # ``{"expected", "bound", "unbound": [names]}`` from the lightmap
             # pass, or ``None`` when it never ran (a pass failure, a
@@ -1197,20 +1452,52 @@ class PreviewBridge(HandoffBridge):
         server = getattr(self.deliverer, "server", None)
         return server.url if server is not None else None
 
+    def scope_objects(self, scope: str = "selected") -> List[Any]:
+        """The objects *scope* resolves to, through the host hooks.
+
+        The scope vocabulary is the ecosystem's, not this bridge's:
+        ``"selected"`` / ``"all"`` / ``"visible"``, as declared by
+        :meth:`uitk.bridge.Parameters.scope_spec` and resolved identically by
+        every other hand-off. Public rather than private because a *caller*
+        needs the answer too -- a panel that pushes blind cannot tell "nothing
+        selected" from "the scene is empty" from "the export failed", and those
+        three want three different messages.
+
+        ``"selected"`` is the default AND the fallback for any unknown value:
+        an unrecognised scope must never silently WIDEN a push to the whole
+        scene. A host that cannot answer a widening hook (either returns
+        ``None``) falls back to the selection for the same reason.
+        """
+        if scope == "all":
+            objects = self._scene_objects()
+        elif scope == "visible":
+            objects = self._visible_objects()
+        else:
+            objects = None
+        # ``None`` from either hook means "this host can't enumerate itself",
+        # which the skeleton defines as fall back to the selection -- NOT as an
+        # empty scene, which would report a populated scene as nothing to push.
+        return self._resolve_objects(objects)
+
     def push(
         self,
         objects: Optional[List[Any]] = None,
-        whole_scene: bool = False,
+        scope: str = "selected",
         open_browser: Union[bool, str] = "auto",
         texture_format: Optional[str] = None,
         scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
+        whole_scene: Optional[bool] = None,
         **params: Any,
     ) -> Optional[Dict[str, Any]]:
         """Export and publish, returning the deliverer's result (``None`` on failure).
 
         Parameters:
-            objects: What to preview; ``None`` uses the host's current selection.
-            whole_scene: Preview the whole scene instead of the selection.
+            objects: What to preview; ``None`` resolves *scope* against the host.
+            scope: ``"selected"`` (default) / ``"all"`` / ``"visible"`` -- the
+                shared bridge vocabulary (see :meth:`scope_objects`). Also
+                travels to the exporter as the ``SCOPE`` param, which is how
+                ``BlenderExportMixin`` knows not to re-add a hidden child of a
+                visible parent and defeat the scope.
             open_browser: ``"auto"`` (default) opens a tab only when no page is
                 already watching -- so the first push and any push after the
                 tab was closed, but not one that an open page will pick up.
@@ -1228,13 +1515,34 @@ class PreviewBridge(HandoffBridge):
                 *texture_format*: ``**params`` is the *export* bag, and swept
                 up there it would be handed to the exporter and never reach the
                 deliverer.
+            whole_scene: **Deprecated** alias for ``scope="all"``, kept one
+                release. ``True`` maps to ``"all"``; ``False`` is ignored rather
+                than forced to ``"selected"``, so it cannot override an explicit
+                *scope* passed alongside it.
             **params: Export param overrides (see :meth:`params_defaults`).
         """
-        if whole_scene and objects is None:
-            # ``None`` here means the host cannot enumerate itself, which the
-            # skeleton defines as "fall back to the selection" -- so pass it
-            # through rather than treating it as an empty scene.
-            objects = self._scene_objects()
+        # *scope* took the second positional slot *whole_scene* used to hold, so
+        # a legacy ``push(objs, True)`` would otherwise land a bool here -- and
+        # an unrecognised scope resolves to the SELECTION, silently narrowing
+        # exactly the call that asked for the whole scene. A bool in this slot
+        # can only have come from that call, so it IS the alias.
+        if isinstance(scope, bool):
+            scope, whole_scene = "selected", scope
+        if whole_scene is not None:
+            warnings.warn(
+                "PreviewBridge.push(whole_scene=...) is deprecated; "
+                'use scope="all" / "visible" / "selected".',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if whole_scene:
+                scope = "all"
+        if objects is None:
+            objects = self.scope_objects(scope)
+        # setdefault, not assignment: an explicit SCOPE in the param bag is a
+        # caller who resolved the objects themselves and is naming what they
+        # mean, which must outrank the convenience default.
+        params.setdefault("SCOPE", scope)
         return self.send(
             objects,
             params=params,
@@ -1242,6 +1550,73 @@ class PreviewBridge(HandoffBridge):
             texture_format=texture_format,
             scripts=scripts,
         )
+
+    def publish_file(
+        self,
+        path: Union[str, Path],
+        open_browser: Union[bool, str] = "auto",
+        scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
+    ) -> Dict[str, Any]:
+        """Publish a GLB that already exists on disk, unchanged.
+
+        The one delivery shape with no host in it: nothing is selected,
+        exported or converted -- an authored ``.glb`` goes straight to the
+        page. That makes the live preview usable as a plain viewer (compare a
+        vendor's asset against your own push, or re-open the GLB an exporter
+        just wrote) on the very server, port and tab a push already owns, so
+        the two alternate in one page rather than needing a second viewer.
+
+        The file is COPIED, never moved: it is the user's own asset, not a
+        scratch artifact this bridge minted. It is also published exactly as
+        authored -- no sidecar, no lightmap wiring, no texture re-encode --
+        because those passes exist to repair what a DCC export loses, and a
+        finished GLB has already answered them. What you see is the file.
+
+        Parameters:
+            path: The ``.glb`` to serve.
+            open_browser: As :meth:`push` -- ``"auto"`` (default) opens a tab
+                only when no page is already watching.
+            scripts: Viewer scripts for this publish (see
+                :attr:`PreviewServer.SCRIPTS`); ``None`` leaves the server's
+                set alone.
+
+        Returns:
+            ``{"url", "version", "asset", "opened_browser", "source"}``.
+
+        Raises:
+            RuntimeError: The bridge has no deliverer to publish through.
+            FileNotFoundError: *path* is not an existing file.
+            ValueError: *path* is not a ``.glb``.
+        """
+        # The METHOD, not just the attribute: `deliverer` is typed as a
+        # PreviewDeliverer but the skeleton lets any Deliverer be mounted, and
+        # a plain one would fail here as an AttributeError naming an internal
+        # attribute rather than saying what the bridge cannot do.
+        if not callable(getattr(self.deliverer, "publish", None)):
+            raise RuntimeError(
+                f"{type(self).__name__} has no preview deliverer to publish "
+                f"through; publish_file needs a PreviewDeliverer."
+            )
+        path = Path(path)
+        if not path.is_file():
+            raise FileNotFoundError(f"No such file to preview: {path}")
+        if path.suffix.lower() != ".glb":
+            # Not fussiness: the server publishes ONE file into its serve root,
+            # so a .gltf's sibling .bin and textures would simply 404 and the
+            # page would show an empty scene with nothing to explain it.
+            raise ValueError(
+                f"The preview serves a single self-contained file, so it needs "
+                f"a binary .glb rather than {path.suffix or 'an extensionless file'}: "
+                f"{path.name}"
+            )
+
+        record = self.deliverer.publish(
+            path, move=False, open_browser=open_browser, scripts=scripts
+        )
+        self.logger.info(
+            "Published %s to the preview as v%s.", path.name, record["version"]
+        )
+        return {**record, "source": str(path)}
 
     @staticmethod
     def sidecar_summary(result: Optional[Dict[str, Any]]) -> str:
@@ -1291,15 +1666,27 @@ class PreviewBridge(HandoffBridge):
             return ""
         bound = int(report.get("bound") or 0)
         unbound = [str(name) for name in report.get("unbound") or []]
+        # SCOPE, never a miss: the bake manifest covers the whole scene, so a
+        # pushed selection leaves objects out by definition and they cannot be
+        # unlit in a preview they are not in. Said only when there ARE some --
+        # a whole-scene push leaves nothing out and the clause would be noise --
+        # because "3/3 bound" over a 50-object bake reads as suspiciously few
+        # until the other 47 are accounted for.
+        left_out = int(report.get("out_of_scope") or 0)
+        scope = (
+            f" {left_out} more object(s) in the scene's bake were not in this push."
+            if left_out
+            else ""
+        )
         if not unbound:
-            return f"Lightmaps: {bound}/{expected} object(s) bound."
+            return f"Lightmaps: {bound}/{expected} object(s) bound.{scope}"
         listed = ", ".join(unbound[:5])
         if len(unbound) > 5:
             listed += f", +{len(unbound) - 5} more"
         return (
             f"Lightmaps: {bound}/{expected} object(s) bound - {len(unbound)} "
             f"preview UNLIT ({listed}). Their maps were not found where the "
-            "bake markers point; see the log for the folders searched."
+            f"bake markers point; see the log for the folders searched.{scope}"
         )
 
     def stop(self) -> None:

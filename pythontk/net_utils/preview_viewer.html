@@ -19,6 +19,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Live Preview</title>
+<!--
+  Inline, so the browser never issues its automatic /favicon.ico request. The
+  serve root holds the deliverable and nothing else, so that request 404s, and
+  a red "Failed to load resource" in the console of every preview session is a
+  false lead for anyone opening devtools because something IS wrong.
+-->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2315171a'/%3E%3Cpath d='M8 2.6l4.6 2.7v5.4L8 13.4 3.4 10.7V5.3z' fill='none' stroke='%237cc3ff' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -39,13 +46,50 @@
   }
   #status.live::before { background: #34d058; }
   #status.error::before { background: #f2504b; }
-  #controls { position: fixed; bottom: 12px; left: 12px; display: flex; gap: 8px; }
-  button.ui {
+  /* Wraps: the row carries the lookdev panel, and a narrow viewport (a phone
+     holding a headset preview) would otherwise push the last control off. */
+  #controls {
+    position: fixed; bottom: 12px; left: 12px; display: flex; gap: 8px;
+    flex-wrap: wrap; max-width: calc(100vw - 24px);
+  }
+  /* Above the button row, and only while the model has clips. Its own row
+     because a scrubber needs width the button bar has no room for. */
+  #anim {
+    position: fixed; bottom: 56px; left: 12px; display: flex; gap: 8px;
+    align-items: center; max-width: calc(100vw - 24px);
+  }
+  #anim[hidden] { display: none; }
+  button.ui, select.ui {
     font: inherit; color: #e8eaed; background: rgba(20, 22, 26, .82);
     border: 1px solid rgba(255, 255, 255, .16); border-radius: 8px;
     padding: 8px 14px; cursor: pointer;
   }
-  button.ui:hover { border-color: rgba(255, 255, 255, .34); }
+  button.ui:hover, select.ui:hover { border-color: rgba(255, 255, 255, .34); }
+  select.ui { max-width: 30ch; }
+  #scrub { width: 220px; accent-color: #6fb3ff; cursor: pointer; }
+  #clipTime { color: #9aa0a6; font-size: 12px; font-variant-numeric: tabular-nums; }
+  /* Lookdev -- the area for dials that tune how the model READS and write the
+     result back into the GLB (see LOOKDEV_ENABLED). A transparent row rather
+     than one chrome box: each dial wears its own, so the second and third land
+     beside the first without any of them being restyled. */
+  #lookdev { display: flex; align-items: center; gap: 8px; }
+  #lookdev[hidden] { display: none; }
+  /* A dial rather than a toggle, so it wears the button chrome without the
+     pointer affordance -- only the slider inside it is grabbable. The chrome is
+     restated because `button.ui, select.ui` does not match a span, and without
+     it the control renders as bare text over the model. */
+  #normals {
+    display: flex; align-items: center; gap: 8px; cursor: default;
+    color: #9aa0a6; font: inherit;
+    background: rgba(20, 22, 26, .82);
+    border: 1px solid rgba(255, 255, 255, .16); border-radius: 8px;
+    padding: 4px 8px 4px 14px;
+  }
+  #normals[hidden] { display: none; }
+  #normalScale { width: 110px; accent-color: #6fb3ff; cursor: pointer; }
+  #normalValue { font-variant-numeric: tabular-nums; color: #e8eaed; min-width: 3ch; }
+  #normalSave { padding: 4px 10px; }
+  #normalSave:disabled { opacity: .45; cursor: default; border-color: rgba(255, 255, 255, .16); }
   /* VRButton positions itself bottom-center with inline styles; leave it be. */
 </style>
 <script type="importmap">
@@ -66,11 +110,30 @@
   <div id="hint"></div>
 </div>
 
+<div id="anim" hidden>
+  <select class="ui" id="clipSelect" title="Which animation clip to play. Shots declared in the DCC are listed first; a clip marked (full range) is the whole timeline the exporter kept alongside them."></select>
+  <button class="ui" id="playToggle" title="Play / pause (space)">Pause</button>
+  <input id="scrub" type="range" min="0" max="1000" value="0" step="1"
+         title="Scrub the current clip">
+  <span id="clipTime"></span>
+</div>
+
 <div id="controls">
   <button class="ui" id="scaleToggle" title="Toggle between a fitted preview size and the model's true scale">Scale: fit</button>
   <button class="ui" id="frameBtn" title="Re-frame the camera on the model">Frame</button>
   <button class="ui" id="lightToggle" hidden
           title="Baked lighting plus a dim environment (which is what makes normal maps and specular visible), or the bake on its own">Light: bake + env</button>
+  <div id="lookdev" hidden>
+    <span class="ui" id="normals" hidden
+          title="How strongly the normal maps read on the baked materials. A lightmap carries no direction, so on its own it cannot show a normal map; the preview relieves the bake along the key-light direction so the map reads the way it would under a runtime light. 0 is the pure bake. Save writes the value into the GLB itself as normalTexture.scale.">
+      Normals
+      <input id="normalScale" type="range" min="0" max="4" step="0.05" value="1"
+             title="Normal map strength on baked materials">
+      <span id="normalValue">1.00</span>
+      <button class="ui" id="normalSave" disabled
+              title="Write this strength into the GLB as normalTexture.scale, so it ships with the file">Save</button>
+    </span>
+  </div>
 </div>
 
 <script>
@@ -116,6 +179,16 @@ const el = {
   scaleToggle: document.getElementById('scaleToggle'),
   frameBtn: document.getElementById('frameBtn'),
   lightToggle: document.getElementById('lightToggle'),
+  anim: document.getElementById('anim'),
+  clipSelect: document.getElementById('clipSelect'),
+  playToggle: document.getElementById('playToggle'),
+  scrub: document.getElementById('scrub'),
+  clipTime: document.getElementById('clipTime'),
+  lookdev: document.getElementById('lookdev'),
+  normals: document.getElementById('normals'),
+  normalScale: document.getElementById('normalScale'),
+  normalValue: document.getElementById('normalValue'),
+  normalSave: document.getElementById('normalSave'),
 };
 
 /* ---------------------------------------------------------------- scene --- */
@@ -201,6 +274,28 @@ const POLICY_FALLBACK = Object.freeze({
 });
 let policy = { ...POLICY_FALLBACK };
 
+// One `extras` block, wherever it rides. Three holders are real: the first
+// scene's extras (a native DCC export writes there), the glTF ROOT's (where
+// every MeshConvert applier writes), and `scene.userData` (GLTFLoader's parsed
+// copy of the scene's). A value can also be a JSON string rather than an
+// object, depending on the producer. This page reads three such blocks
+// (`scene_sidecar`, `lightmap_web`, `animation_web`) and hand-rolling the probe
+// per block is how one of them ends up missing a holder and going silently
+// inert on a deliverable the others handle.
+function readExtras(gltf, key) {
+  for (const holder of [
+    gltf.parser?.json?.scenes?.[0]?.extras,
+    gltf.parser?.json?.extras,
+    gltf.scene?.userData,
+  ]) {
+    const raw = holder && holder[key];
+    if (!raw) continue;
+    if (typeof raw !== 'string') return raw;
+    try { return JSON.parse(raw); } catch { /* keep looking */ }
+  }
+  return null;
+}
+
 // Reads `extras.scene_sidecar.handoff.rendering`, written by
 // MeshConvert.apply_scene_sidecar. Every field is taken only if it is a finite
 // NUMBER: the published policy is documentation as much as data, so some of its
@@ -209,17 +304,7 @@ let policy = { ...POLICY_FALLBACK };
 // would render black with nothing in the file looking wrong. An older GLB, or
 // one from another producer, simply keeps the fallbacks.
 function readRenderingPolicy(gltf) {
-  let published = null;
-  for (const holder of [gltf.parser?.json?.extras, gltf.scene?.userData]) {
-    const raw = holder && holder.scene_sidecar;
-    if (!raw) continue;
-    let envelope = raw;
-    if (typeof raw === 'string') {
-      try { envelope = JSON.parse(raw); } catch { continue; }
-    }
-    published = envelope?.handoff?.rendering;
-    if (published) break;
-  }
+  const published = readExtras(gltf, 'scene_sidecar')?.handoff?.rendering;
   const num = (value, fallback) =>
     (typeof value === 'number' && isFinite(value) ? value : fallback);
   // Falling back through POLICY_FALLBACK rather than through the constants
@@ -396,14 +481,70 @@ function frameCamera() {
 // refusal below. Map.get answers only for keys actually in the table.
 const CARRIER_SLOTS = new Map([['occlusion', 'aoMap'], ['emissive', 'emissiveMap']]);
 
+// Let the normal map show on a BAKED surface.
+//
+// A lightmap is irradiance with no direction in it: three.js adds the texel
+// to the diffuse term and never consults the normal, so on a baked material
+// the normal map reaches the picture only through the environment -- which
+// applyLighting dims to a quarter, because that surface's lighting is already
+// in its bake. Measured on a production room: normalScale 1 -> 4 moved ~1% of
+// pixels by ~0.4/255. A normal map that cannot be seen is the same as one that
+// is missing, which is how it was reported ("no normal effect at all").
+//
+// The fix modulates the bake by the map. The baked light is taken to arrive
+// along the page's own key-light direction, and the lightmap texel is scaled
+// by how the PERTURBED normal faces that direction relative to how the flat
+// one does -- half-Lambert wrapped so the ratio is well-behaved on a surface
+// facing away, and exactly 1 wherever the map is flat, so normalScale 0 (and a
+// material with no normal map) renders the pure bake. Not a second bake and
+// not physically derived: it is the single-direction reduction of the
+// directional-lightmap trick, chosen because it is one uniform and five lines
+// of GLSL, and because it makes `normalTexture.scale` -- the value the file
+// carries -- do in this preview what it does in a runtime that lights.
+//
+// Patched at `irradiance += lightMapIrradiance;`, the one line in three.js
+// 0.169's `lights_fragment_maps` chunk that adds the bake; `normal` is the
+// perturbed normal there and `nonPerturbedNormal` the geometry's own. The
+// key light is a world direction and the shader works in view space, so it
+// is turned per fragment with the `viewMatrix` three.js already provides.
+//
+// The hook receives the source with its `#include <...>` directives still
+// UNEXPANDED (the renderer resolves them afterwards), so the line cannot be
+// matched in what the hook is handed: the directive is replaced with the
+// chunk itself, edited. A replace aimed at the line directly is a silent
+// no-op -- measured, the "patched" render moved the same ~1% of pixels as
+// the unpatched one.
+const bakeLightDir = { value: new THREE.Vector3() };
+const RELIEF_GLSL = [
+  '{',
+  '  vec3 bakeL = normalize( ( viewMatrix * vec4( bakeLightDir, 0.0 ) ).xyz );',
+  // `flat` is a reserved word in GLSL (an interpolation qualifier).
+  '  float bumpLit = dot( normal, bakeL ) * 0.5 + 0.5;',
+  '  float baseLit = dot( nonPerturbedNormal, bakeL ) * 0.5 + 0.5;',
+  '  irradiance += lightMapIrradiance * clamp( bumpLit / max( baseLit, 0.05 ), 0.0, 2.0 );',
+  '}',
+].join('\n');
+
+function reliefFromNormalMap(material) {
+  bakeLightDir.value.copy(keyLight.position).normalize();
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.bakeLightDir = bakeLightDir;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 bakeLightDir;')
+      .replace(
+        '#include <lights_fragment_maps>',
+        THREE.ShaderChunk.lights_fragment_maps.replace(
+          'irradiance += lightMapIrradiance;', RELIEF_GLSL,
+        ),
+      );
+  };
+  // A distinct program from a plain lightmapped material's, or the renderer
+  // would hand one of them the other's shader.
+  material.customProgramCacheKey = () => 'lightmap-relief';
+}
+
 function applyLightmaps(gltf) {
-  let manifest = null;
-  for (const holder of [gltf.parser?.json?.scenes?.[0]?.extras, gltf.parser?.json?.extras, gltf.scene?.userData]) {
-    const raw = holder && holder.lightmap_web;
-    if (!raw) continue;
-    try { manifest = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { /* keep looking */ }
-    if (manifest) break;
-  }
+  const manifest = readExtras(gltf, 'lightmap_web');
   if (!manifest || !manifest.materials) return 0;
 
   // An unknown carrier is REFUSED rather than defaulted. The previous form special-cased
@@ -446,6 +587,7 @@ function applyLightmaps(gltf) {
       // own) is what makes the per-material dimming in applyLighting stick.
       // disposeModel is guarded against freeing it.
       material.envMap = scene.environment;
+      if (material.normalMap) reliefFromNormalMap(material);
       material.userData.lightmapBound = true;
       material.needsUpdate = true;
       lightmappedMaterials.push(material);
@@ -551,6 +693,369 @@ function describe(root) {
   return `${meshes} mesh${meshes === 1 ? '' : 'es'} · ${Math.round(triangles).toLocaleString()} tris · ${dims} source units`;
 }
 
+/* --------------------------------------------------------------- lookdev --- */
+
+// Lookdev is the area for dials that tune how the model READS in the preview
+// and then write the result back into the GLB, rather than into this page --
+// the normals dial below is its first and, for now, only occupant.
+//
+// Held back behind one flag instead of deleted. The dial works and its file
+// side ships (`normalTexture.scale`, written by MeshConvert.set_glb_normal_scale
+// through POST /settings), but a lone slider does not earn a permanent seat in
+// a control bar that has to survive a phone-sized viewport, and lookdev worth
+// exposing is a SET -- exposure, environment rotation, tone mapping -- tuned
+// together. So the area stays wired and untested-by-eye rather than rotting:
+// flip this to true and it returns exactly as it was.
+//
+// Adding the next dial: markup inside #lookdev, its own sync called from
+// syncLookdev, and its element in that function's `controls` list so the panel
+// keeps following its contents. Nothing else here counts the dials.
+const LOOKDEV_ENABLED = false;
+
+// Each dial hides itself when the model gives it nothing to do (the normals
+// dial on a model with no baked normal map), and the panel follows them: an
+// empty chrome row over the model is worse than no row.
+function syncLookdev() {
+  syncNormalScale();
+  const controls = [el.normals];
+  el.lookdev.hidden = !LOOKDEV_ENABLED || controls.every((control) => control.hidden);
+}
+
+// How strongly the normal maps read on the BAKED materials, and only those.
+//
+// A lightmap contributes irradiance with no direction in it -- three.js adds
+// `lightMapTexel * intensity` to the diffuse term and never consults the
+// normal -- so on a baked surface the normal map survives only through the
+// environment, which applyLighting deliberately dims to a quarter because that
+// surface's lighting is already in its bake. Correct, and flat-looking: the
+// detail is there and barely lit. This is the dial that brings it back without
+// touching the bake or re-lighting the room, which is why it is offered beside
+// the bake-only toggle and hidden entirely when nothing is baked.
+//
+// Its home is the FILE, not this page: `normalTexture.scale` is core glTF, so
+// GLTFLoader has already read the model's own value into `material.normalScale`
+// and the save button writes the new one back the same way. Hence a sync FROM
+// the model on every load rather than a value the page remembers -- open a GLB
+// saved at 1.8 and the slider says 1.8, in this viewer and in any other.
+// Keyed on a baked material that actually HAS a normal map, not merely on the
+// model being baked: `normalScale` exists on every MeshStandardMaterial, so
+// reading the first baked material would show 1.00 for a file saved at 1.8
+// whenever that first material happens to carry no normal map -- and offering
+// the dial at all on a bake with no normal maps anywhere is a control that
+// cannot change the render.
+function normalCarriers() {
+  return lightmappedMaterials.filter((material) => material.normalMap);
+}
+
+function syncNormalScale() {
+  const carriers = normalCarriers();
+  const value = carriers.length ? carriers[0].normalScale.x : 1;
+  el.normals.hidden = !carriers.length;
+  el.normalScale.value = String(value);
+  el.normalValue.textContent = value.toFixed(2);
+  el.normalSave.disabled = true;
+  el.normalSave.textContent = 'Save';
+}
+
+function applyNormalScale(value) {
+  for (const material of normalCarriers()) material.normalScale.set(value, value);
+  el.normalValue.textContent = value.toFixed(2);
+  el.normalSave.disabled = false;
+  el.normalSave.textContent = 'Save';
+}
+
+// Hands the value to the server, which writes it into the GLB with
+// MeshConvert.set_glb_normal_scale. No reload follows: the page is already
+// showing the value, and the write deliberately leaves the manifest version
+// alone so saving does not bounce the model out from under the user.
+async function saveNormalScale() {
+  el.normalSave.disabled = true;
+  el.normalSave.textContent = 'Saving…';
+  try {
+    const response = await fetch('settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ normal_scale: Number(el.normalScale.value) }),
+    });
+    if (!response.ok) throw new Error(response.statusText);
+    const result = await response.json();
+    el.normalSave.textContent = `Saved · ${result.materials?.normal_scale ?? 0}`;
+  } catch (error) {
+    // Left ENABLED on failure: the value is still only in the page, so the
+    // one useful thing the user can do is try again.
+    el.normalSave.textContent = 'Save failed';
+    el.normalSave.disabled = false;
+    console.warn('Normal scale not saved:', error);
+  }
+}
+
+/* ------------------------------------------------------------- animation --- */
+
+// A shot-split deliverable ships one clip per shot AND, on the Maya route, the
+// whole-timeline take its FBX exporter keeps alongside them — so `animations[0]`
+// is routinely the entire timeline rather than the first shot, and every clip's
+// own keyframe times are rebased to zero, which loses where each shot sat.
+// `extras.animation_web` (MeshConvert.apply_glb_animations) is the file's own
+// answer: it marks the clips a shot declared, carries their authoring frame
+// ranges, and names the one to open on. Without the block this still plays —
+// the clips are listed in file order under their own names — it just cannot say
+// which of them are shots.
+let mixer = null;
+let clips = [];        // [{clip, meta}] in PICKER order — declared shots first
+let action = null;
+let clipIndex = -1;
+// Autoplay, deliberately: in an immersive session the DOM overlay is not
+// rendered at all, so a headset user has no transport to press. A preview that
+// arrives paused would look like a preview with no animation in it.
+let playing = true;
+let scrubbing = false;
+let lastTick = -1;   // last playhead position written to the DOM (0-1000)
+
+// The frame range is what makes two clips that both start at t=0 tellable
+// apart. "(full range)" is only said when something else IS a shot — with no
+// shots at all, every clip is the full range and the label would be noise.
+//
+// "empty" is said whenever the deliverable says so: a declared shot whose range
+// holds still bakes no curve, so it arrives named and carrying nothing. Picking
+// it plays 0.00s, which reads as broken animation unless the label admits the
+// clip itself is empty.
+function clipLabel(entry, anyDeclared) {
+  const meta = entry.meta;
+  const empty = meta?.empty ? ', empty' : '';
+  if (meta?.declared && typeof meta.start_frame === 'number') {
+    return `${entry.clip.name}  (${meta.start_frame}–${meta.end_frame}${empty})`;
+  }
+  if (anyDeclared && !meta?.declared) return `${entry.clip.name}  (full range)`;
+  return meta?.empty ? `${entry.clip.name}  (empty)` : entry.clip.name;
+}
+
+// --- authored alpha ramps (KHR_animation_pointer) ---------------------------
+// glTF animates translation, rotation, scale and morph weights -- and nothing
+// else. A material fade rides in `animations` only through KHR_animation_pointer,
+// which lets a channel target any property by JSON pointer; the deliverable
+// writes each authored ramp that way (MeshConvert.apply_glb_fades), on a
+// material cloned per faded subtree so nothing else sampling it fades too.
+// three.js does not implement the extension (checked against 0.180, well past
+// the 0.169 pinned above): GLTFLoader SKIPS a channel with no `target.node`, so
+// the clips arrive playable but silently minus their fades.
+//
+// This is the shim, and it is deliberately small: it translates the file's own
+// pointer channels into native keyframe tracks on the loaded clips, and from
+// then on the mixer plays a fade exactly the way it plays a translation -- same
+// playhead, same scrub, same pause, no per-frame code and no frame arithmetic.
+// The GLB is the single statement of the fade; the day three.js ships support,
+// this function deletes and nothing else changes.
+const ALPHA_POINTER = /^\/materials\/(\d+)\/pbrMetallicRoughness\/baseColorFactor$/;
+
+// A blended surface writes depth only while it is OPAQUE.
+//
+// glTF says nothing about depth, so GLTFLoader derives it: `alphaMode: BLEND`
+// becomes `transparent = true, depthWrite = false`. That is right for a window
+// and wrong for a solid object that merely happens to fade, and alphaMode is a
+// property of the MATERIAL, not of the clip -- so an object that fades in
+// during one shot renders with depth writes off in all twelve. With no depth
+// written, a closed mesh draws its far faces over its near ones in index
+// order, which reads exactly like inverted normals (measured on the production
+// assembly: 15 materials, every one of them depthWrite false at full alpha).
+//
+// Restoring it wholesale would be the opposite bug -- an object at alpha 0.2
+// would punch a hole in whatever is drawn behind it -- so the state follows
+// the alpha the mixer is currently driving. This is DERIVED state, not a
+// second copy of the fade: it reads whatever opacity the mixer set, so
+// scrubbing, pausing and clip switches are all covered without any of them
+// being named here. `onBeforeRender` runs before the draw's GL state is set,
+// so the change lands on the same frame; `this` is the mesh, and it is one
+// shared function rather than a closure per mesh.
+function depthFromOpacity() {
+  this.material.depthWrite = this.material.opacity >= 0.999;
+}
+
+// The rule is per MATERIAL but has to be installed on every MESH wearing one.
+// The track binding needs a single representative mesh per material instance
+// (two would drive the same property twice a frame), and a faded subtree can
+// hold several meshes sharing its cloned material -- so installing only on the
+// representative leaves the rule stale the moment that one is frustum-culled
+// and another is not.
+function installDepthRule(scene, materials) {
+  if (!materials.size) return;
+  scene.traverse((node) => {
+    if (node.isMesh && !Array.isArray(node.material) && materials.has(node.material)) {
+      node.onBeforeRender = depthFromOpacity;
+    }
+  });
+}
+
+async function wirePointerTracks(gltf) {
+  const parser = gltf.parser;
+  const defs = parser.json.animations || [];
+  if (!defs.length) return 0;
+
+  // glTF material index -> the three.js materials the loader built from it.
+  // Through the loader's own association map, which it carries onto the
+  // variants it clones (vertex colours, flat shading), rather than by name:
+  // the cloned fade material keeps its source's NAME on purpose, so the
+  // lightmap pass -- which binds by name -- still recognises it.
+  const byIndex = new Map();
+  gltf.scene.traverse((node) => {
+    // A multi-material mesh has no `.material.opacity` to bind; the loader
+    // never builds one from a GLB (each primitive becomes its own Mesh), so
+    // this is a foreign-file guard rather than a path the pipeline takes.
+    if (!node.isMesh || Array.isArray(node.material)) return;
+    for (const material of materialsOf(node)) {
+      const index = parser.associations.get(material)?.materials;
+      if (index === undefined) continue;
+      if (!byIndex.has(index)) byIndex.set(index, new Map());
+      // One binding per distinct material INSTANCE: two meshes sharing an
+      // instance would otherwise drive the same property twice a frame.
+      if (!byIndex.get(index).has(material)) byIndex.get(index).set(material, node);
+    }
+  });
+
+  let wired = 0;
+  const blended = new Set();
+  for (let i = 0; i < defs.length; i += 1) {
+    const clip = gltf.animations[i];
+    if (!clip) continue;
+    for (const channel of defs[i].channels || []) {
+      const target = channel.target || {};
+      if (target.path !== 'pointer') continue;
+      const pointer = target.extensions?.KHR_animation_pointer?.pointer || '';
+      const match = ALPHA_POINTER.exec(pointer);
+      if (!match) continue;
+      const owners = byIndex.get(Number(match[1]));
+      if (!owners) continue;
+      const sampler = defs[i].samplers[channel.sampler];
+      const [input, output] = await Promise.all([
+        parser.getDependency('accessor', sampler.input),
+        parser.getDependency('accessor', sampler.output),
+      ]);
+      // The whole VEC4 is animated (glTF has no pointer to one component); the
+      // alpha is its fourth lane. RGB is the material's own and is left to it.
+      const alphas = new Float32Array(input.count);
+      for (let k = 0; k < input.count; k += 1) alphas[k] = output.getW(k);
+      for (const [material, mesh] of owners) {
+        // Bound by uuid rather than name: glTF names are not unique (the
+        // production assembly ships two `vdat533`), and a name binding would
+        // drive the first match and leave the rest at full alpha.
+        clip.tracks.push(new THREE.NumberKeyframeTrack(
+          `${mesh.uuid}.material.opacity`, Array.from(input.array), alphas,
+        ));
+        // alphaMode BLEND already set transparent + depthWrite off at load;
+        // stated here too so a file whose clone lost it still fades.
+        material.transparent = true;
+        blended.add(material);
+        wired += 1;
+      }
+    }
+    clip.resetDuration();
+  }
+  installDepthRule(gltf.scene, blended);
+  return wired;
+}
+
+function setupAnimation(gltf) {
+  // Reset FIRST: a model swap must not leave the previous model's mixer driving
+  // the frame loop, nor its clip names in the picker.
+  if (mixer) mixer.stopAllAction();
+  mixer = null;
+  action = null;
+  clips = [];
+  clipIndex = -1;
+
+  const animations = gltf.animations || [];
+  if (!animations.length) {
+    el.anim.hidden = true;
+    return 0;
+  }
+
+  const manifest = readExtras(gltf, 'animation_web');
+  // Joined on the glTF animation INDEX, which is what the block carries it by —
+  // names are what a user reads, not a key: nothing stops two AnimStacks from
+  // sharing one, and a name join would then hand one clip the other's frame
+  // range. The block is written from this same file, so the indices agree.
+  const byIndex = new Map((manifest?.clips || []).map((entry) => [entry.animation, entry]));
+  const entries = animations.map((clip, index) => ({ clip, meta: byIndex.get(index) || null }));
+  const anyDeclared = entries.some((entry) => entry.meta?.declared);
+  // Declared shots first in the PICKER only. The glTF's own `animations` order
+  // is left exactly as written, so a consumer keying on animation index still
+  // reads the file the way every other reader does.
+  clips = anyDeclared
+    ? [...entries.filter((e) => e.meta?.declared), ...entries.filter((e) => !e.meta?.declared)]
+    : entries;
+
+  mixer = new THREE.AnimationMixer(gltf.scene);
+  el.clipSelect.replaceChildren(...clips.map((entry, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = clipLabel(entry, anyDeclared);
+    return option;
+  }));
+  el.clipSelect.hidden = clips.length < 2;
+  el.anim.hidden = false;
+
+  // The file's own answer to "which one first", falling back to the picker's
+  // first entry — which is already a declared shot whenever there is one.
+  // Resolved through the manifest entry rather than by comparing the glTF
+  // clip's name, so it lands on the same clip the index join above did.
+  const named = (manifest?.clips || []).find((entry) => entry.name === manifest.default_clip);
+  const wanted = named ? clips.findIndex((entry) => entry.meta === named) : -1;
+  selectClip(wanted >= 0 ? wanted : 0);
+  return clips.length;
+}
+
+function selectClip(index) {
+  if (!mixer || !clips[index]) return;
+  if (action) action.stop();
+  clipIndex = index;
+  el.clipSelect.value = String(index);
+  action = mixer.clipAction(clips[index].clip);
+  action.reset();
+  action.play();
+  // Play then pause, rather than not playing: a paused action still poses the
+  // model at its current time, so a preview opened paused shows frame one of
+  // the clip instead of the model's authored rest pose.
+  action.paused = !playing;
+  mixer.update(0);
+  lastTick = -1; // the readout beside the playhead changed with the clip
+  updateTransport();
+}
+
+function stepClip(delta) {
+  if (clips.length < 2) return;
+  selectClip((clipIndex + delta + clips.length) % clips.length);
+}
+
+function togglePlay() {
+  playing = !playing;
+  if (action) action.paused = !playing;
+  el.playToggle.textContent = playing ? 'Pause' : 'Play';
+}
+
+function seek(fraction) {
+  if (!action) return;
+  const duration = action.getClip().duration;
+  action.time = THREE.MathUtils.clamp(fraction * duration, 0, duration);
+  mixer.update(0); // apply the new time without advancing it
+  updateTransport();
+}
+
+function updateTransport() {
+  if (!action) return;
+  const duration = action.getClip().duration || 0;
+  const tick = duration ? Math.round((action.time / duration) * 1000) : 0;
+  // This runs once per rendered frame — 120 times a second in a headset — and
+  // the playhead only moves a VISIBLE amount 1000 times per clip. Writing the
+  // same two DOM values on every other frame is pure cost on the device least
+  // able to afford it. `lastTick` is reset by selectClip, so a clip swap that
+  // lands on the same tick still redraws (the duration beside it changed).
+  if (tick === lastTick) return;
+  lastTick = tick;
+  // Not while the user owns the slider: writing the playhead back into the
+  // control being dragged fights the drag.
+  if (!scrubbing) el.scrub.value = String(tick);
+  el.clipTime.textContent = `${action.time.toFixed(2)} / ${duration.toFixed(2)}s`;
+}
+
 // Loads can outlive the poll interval — a multi-megabyte GLB takes seconds to
 // fetch and parse — and setInterval keeps polling meanwhile, so two loads can
 // be in flight at once after a quick pair of pushes. Completion order is not
@@ -590,6 +1095,9 @@ async function load(url, version) {
   // that failed or was superseded above must not leave the previous model's materials
   // being driven by the toggle.
   lightmappedMaterials = [];
+  // Before setupAnimation: the mixer binds a clip's tracks when its action is
+  // created, so tracks added afterwards would never be played.
+  const fadeCount = await wirePointerTracks(gltf);
   materialCount = countMaterials(gltf.scene);
   // Read before applying: the deliverable's own policy is what applyLighting
   // then spends, so a load that read nothing must fall back BEFORE the lights
@@ -597,6 +1105,8 @@ async function load(url, version) {
   readRenderingPolicy(gltf);
   lightmapped = applyLightmaps(gltf);
   applyLighting();
+  syncLookdev();
+  const clipCount = setupAnimation(gltf);
 
   const box = new THREE.Box3().setFromObject(current);
   modelBounds = {
@@ -608,9 +1118,15 @@ async function load(url, version) {
   // decides whether the viewer's own lighting is in play, and it is invisible
   // from the render -- a mostly-baked room and a fully-baked one look alike
   // until the difference is blamed on the baker.
+  // The fade count is stated for the same reason the lightmapped fraction is:
+  // it is invisible from the render. A pointer channel that is NOT being driven
+  // looks exactly like an object that simply pops, which is how the fades went
+  // unnoticed for as long as they did.
   el.stats.textContent = describe(current)
-    + (lightmapped ? ` · ${lightmapped}/${materialCount} lightmapped materials` : '');
-  emit('load', { model: current, gltf, lightmapped, materialCount });
+    + (lightmapped ? ` · ${lightmapped}/${materialCount} lightmapped materials` : '')
+    + (clipCount ? ` · ${clipCount} clip${clipCount === 1 ? '' : 's'}` : '')
+    + (fadeCount ? ` · ${fadeCount} fade${fadeCount === 1 ? '' : 's'}` : '');
+  emit('load', { model: current, gltf, lightmapped, materialCount, clips: clipCount });
   setStatus(`v${version} · updated ${new Date().toLocaleTimeString()}`, 'live');
   layout();
   return true;
@@ -651,9 +1167,20 @@ const viewer = {
   get bounds() { return modelBounds; },
   /** The live rendering policy, as read from the deliverable. */
   get policy() { return policy; },
+  /** The AnimationMixer driving the current model's clips, or null. */
+  get mixer() { return mixer; },
+  /**
+   * Play a clip by name (the names `extras.animation_web` lists, which are the
+   * DCC's shot names on a shot-split deliverable). Returns whether it matched.
+   */
+  playClip(name) {
+    const index = clips.findIndex((entry) => entry.clip.name === name);
+    if (index >= 0) selectClip(index);
+    return index >= 0;
+  },
   /**
    * Subscribe to a page event.
-   *  'load'  ({model, gltf, lightmapped, materialCount}) after each model swap
+   *  'load'  ({model, gltf, lightmapped, materialCount, clips}) after each model swap
    *  'frame' ({delta, time}) once per rendered frame
    *  'key'   (KeyboardEvent) for keydown, after the page's own shortcuts
    */
@@ -765,10 +1292,31 @@ addEventListener('pagehide', () => { navigator.sendBeacon('viewer-closed', ''); 
 el.scaleToggle.addEventListener('click', () => { realScale = !realScale; layout(); });
 el.frameBtn.addEventListener('click', frameCamera);
 el.lightToggle.addEventListener('click', toggleBakeOnly);
+el.normalScale.addEventListener('input', () => applyNormalScale(Number(el.normalScale.value)));
+el.normalSave.addEventListener('click', saveNormalScale);
+el.clipSelect.addEventListener('change', () => selectClip(Number(el.clipSelect.value)));
+el.playToggle.addEventListener('click', togglePlay);
+// `input` fires throughout the drag (and on every arrow key), `change` at the
+// end of one — which is what hands the playhead back to the frame loop.
+el.scrub.addEventListener('input', () => { scrubbing = true; seek(Number(el.scrub.value) / 1000); });
+el.scrub.addEventListener('change', () => { scrubbing = false; });
 addEventListener('keydown', (event) => {
+  // A letter typed into the clip picker is that control's own type-ahead, so
+  // the page's single-letter shortcuts must not fire on top of it -- reaching
+  // for "(full range)" would otherwise re-frame the camera on the way. Only
+  // the picker: the sliders use arrows, which this page has no shortcut for,
+  // and excluding them would cost Space-to-pause after a scrub.
+  if (event.target === el.clipSelect) return;
   if (event.key === 'r') { realScale = !realScale; layout(); }
   if (event.key === 'f') frameCamera();
   if (event.key === 'l') toggleBakeOnly();
+  // Guarded on there being a mixer: with no clips these keys mean nothing, and
+  // Space would otherwise flip a play state the next animated push inherits.
+  if (mixer) {
+    if (event.code === 'Space') { event.preventDefault(); togglePlay(); }
+    if (event.key === '[') stepClip(-1);
+    if (event.key === ']') stepClip(1);
+  }
   // Last, so the page's own shortcuts can never be shadowed by a script.
   emit('key', event);
 });
@@ -786,7 +1334,14 @@ const frameClock = new THREE.Clock();
 
 renderer.setAnimationLoop((time) => {
   controls.update();
-  emit('frame', { delta: frameClock.getDelta(), time });
+  const delta = frameClock.getDelta();
+  // Before the hook, so a script's 'frame' callback sees the model posed for
+  // THIS frame rather than the previous one.
+  if (mixer) {
+    mixer.update(delta);
+    updateTransport();
+  }
+  emit('frame', { delta, time });
   renderer.render(scene, camera);
 });
 </script>

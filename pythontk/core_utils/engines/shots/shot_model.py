@@ -33,6 +33,7 @@ from typing import (
 )
 from contextlib import contextmanager
 
+from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
 
 _log = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ __all__ = [
     "BatchComplete",
     "StoreInvalidated",
     "ScenePersistence",
+    "ShotEditLedger",
 ]
 
 
@@ -316,6 +318,11 @@ class ShotStore(_ShotStoreInternal):
         self.select_on_load: bool = False
         self.frame_on_shot_change: bool = True
         self.locked_gaps: set = set()  # {(left_shot_id, right_shot_id), ...}
+        # What the shot system itself wrote on the scene's curves (gap holds,
+        # boundary samples).  Persisted with the store because the writes it
+        # tracks are persisted with the scene -- a claim that did not survive a
+        # reopen would leave its edit behind permanently.
+        self.edit_ledger: ShotEditLedger = ShotEditLedger()
         self.locked_objects: set = set()  # object names locked in the sequencer
         self.scene_fps: float = self._scene_fps()
         # Source CSV path (when the store was populated from a manifest CSV).
@@ -331,6 +338,190 @@ class ShotStore(_ShotStoreInternal):
         self._batch_depth: int = 0
         self._batch_events: List[tuple] = []
         self._dirty: bool = False
+        # Boundary-snapshot ledger (session-only, never persisted).  One
+        # stack per store — i.e. per scene — shared by every panel that
+        # mutates shot boundaries, so an undo after ANY panel's edit
+        # restores the right snapshot.  See push_boundary_snapshot().
+        # Entries are ``(state, tag)`` — see push_boundary_snapshot().
+        self._boundary_undo: List[tuple] = []
+        self._boundary_redo: List[tuple] = []
+        # Redo branch cleared by the newest push, held so a discard can put
+        # it back (see :meth:`discard_boundary_snapshot`).  None = nothing to
+        # restore; anything that consumes the redo branch invalidates it.
+        self._boundary_redo_stash: Optional[List[tuple]] = None
+
+    # ---- boundary-snapshot ledger ----------------------------------------
+    #
+    # Scene keyframes ride the DCC's native undo queue; shot BOUNDS live in
+    # this store, outside it.  Consumers therefore snapshot bounds before a
+    # boundary-mutating edit and restore them when the DCC's undo fires.
+    # The ledger lives here — not on a UI controller — because more than one
+    # panel mutates boundaries, and per-controller stacks desync from each
+    # other and from the DCC queue.
+
+    _BOUNDARY_LEDGER_CAP = 50
+
+    def snapshot_bounds(self) -> list:
+        """Return the current shot state for the boundary ledger.
+
+        One record per shot — the FULL identity, not just bounds, so a
+        restore can faithfully re-create a shot the mutation removed (redo
+        of an insert, undo of a delete).  A shot's keys live in the scene
+        and survive both, so reconstruction loses nothing.
+        """
+        return [
+            {
+                "shot_id": s.shot_id,
+                "name": s.name,
+                "start": s.start,
+                "end": s.end,
+                "objects": list(s.objects),
+                "description": s.description,
+                "locked": s.locked,
+                "metadata": dict(s.metadata),
+            }
+            for s in self.shots
+        ]
+
+    def push_boundary_snapshot(self, tag: Any = None) -> None:
+        """Record the current bounds as an undo restore point.
+
+        Call BEFORE mutating (a snapshot taken after records the post-edit
+        bounds, so undo would re-apply the very edit it should reverse).
+        A new edit invalidates any redo branch, mirroring every undo queue.
+
+        *tag* is an opaque marker the DCC layer may attach (usually via
+        :meth:`tag_boundary_snapshot`, once the edit has run and its effect
+        on the native queue is known) — see the pairing note below.
+        """
+        self._boundary_undo.append((self.snapshot_bounds(), tag))
+        if len(self._boundary_undo) > self._BOUNDARY_LEDGER_CAP:
+            self._boundary_undo.pop(0)
+        self._boundary_redo_stash = list(self._boundary_redo)
+        self._boundary_redo.clear()
+
+    # ---- pairing with the DCC's own undo queue ---------------------------
+    #
+    # A restore point and the native undo step that accompanies it live in
+    # two different stacks, and they do NOT always come in pairs: an edit
+    # that moved only BOUNDS (a bounds-only resize, a shot delete) touches
+    # no scene data, so the DCC records nothing — and a consumer that then
+    # fires a native undo unconditionally pops the user's PREVIOUS,
+    # unrelated operation.  The store cannot see the DCC's queue, so it
+    # stores whatever opaque marker the DCC layer hands it and gives it
+    # back at undo time; interpreting it is that layer's job.
+
+    def tag_boundary_snapshot(self, tag: Any) -> bool:
+        """Attach *tag* to the newest restore point.  False if there is none."""
+        if not self._boundary_undo:
+            return False
+        state, _old = self._boundary_undo[-1]
+        self._boundary_undo[-1] = (state, tag)
+        return True
+
+    def peek_boundary_tag(self, redo: bool = False) -> Any:
+        """Return the tag of the restore point the next apply would consume."""
+        stack = self._boundary_redo if redo else self._boundary_undo
+        return stack[-1][1] if stack else None
+
+    def has_boundary_snapshot(self, redo: bool = False) -> bool:
+        """True when a restore point is available in that direction."""
+        return bool(self._boundary_redo if redo else self._boundary_undo)
+
+    def discard_boundary_snapshot(self) -> None:
+        """Drop the most recent restore point without applying it.
+
+        For an edit that pushed up front and then turned out to be a no-op:
+        leaving the entry would hand the next undo a restore point for an
+        operation that never happened.
+
+        The push also cleared the redo branch — correct for a real edit, but
+        a no-op must not cost the user their redo — so this puts it back.
+        """
+        if self._boundary_undo:
+            self._boundary_undo.pop()
+        if self._boundary_redo_stash is not None:
+            self._boundary_redo = self._boundary_redo_stash
+            self._boundary_redo_stash = None
+
+    def restore_boundary_snapshot(self) -> bool:
+        """Apply the most recent restore point (the undo direction).
+
+        The pre-restore state moves to the redo side.  Membership is
+        restored SYMMETRICALLY: a shot absent from the snapshot is removed
+        (undoing an insert must not leave a phantom overlapping the
+        restored layout), and a shot the snapshot names but the store no
+        longer holds is re-created from its record (undoing a delete —
+        the keys were never deleted with the store entry).
+
+        Returns ``True`` when a snapshot was applied.
+        """
+        if not self._boundary_undo:
+            return False
+        state, tag = self._boundary_undo.pop()
+        # The tag rides across: redoing this edit re-applies the same DCC
+        # step (or, when unpaired, again touches nothing).
+        self._boundary_redo.append((self.snapshot_bounds(), tag))
+        self._boundary_redo_stash = None
+        self._apply_boundary_snapshot(state)
+        return True
+
+    def redo_boundary_snapshot(self) -> bool:
+        """Re-apply the state a restore stepped back from (the redo direction).
+
+        Without this, a DCC redo re-applies the scene keys while the bounds
+        stay restored — resurrecting the keys-outside-their-shot state.
+        Returns ``True`` when a snapshot was applied.
+        """
+        if not self._boundary_redo:
+            return False
+        state, tag = self._boundary_redo.pop()
+        self._boundary_undo.append((self.snapshot_bounds(), tag))
+        self._boundary_redo_stash = None
+        self._apply_boundary_snapshot(state)
+        return True
+
+    def clear_boundary_snapshots(self) -> None:
+        """Drop both ledger sides (scene swap: colliding shot_ids across
+        scenes would write one scene's boundaries onto another's shots)."""
+        self._boundary_undo.clear()
+        self._boundary_redo.clear()
+        self._boundary_redo_stash = None
+
+    def _apply_boundary_snapshot(self, state: list) -> None:
+        snap_ids = {rec["shot_id"] for rec in state}
+        with self.batch_update():
+            for shot in list(self.shots):
+                if shot.shot_id not in snap_ids:
+                    self.remove_shot(shot.shot_id)
+            for rec in state:
+                if self.shot_by_id(rec["shot_id"]) is None:
+                    # Re-create a shot the mutation removed — its keys live
+                    # in the scene and were never deleted with it.
+                    block = ShotBlock(
+                        shot_id=rec["shot_id"],
+                        name=rec["name"],
+                        start=rec["start"],
+                        end=rec["end"],
+                        objects=list(rec["objects"]),
+                        metadata=dict(rec["metadata"]),
+                        locked=rec["locked"],
+                        description=rec["description"],
+                    )
+                    self.shots.append(block)
+                    self._notify(ShotDefined(shot=block))
+                    self.mark_dirty()
+                else:
+                    self.update_shot(
+                        rec["shot_id"],
+                        start=rec["start"],
+                        end=rec["end"],
+                        objects=rec["objects"],
+                        name=rec["name"],
+                        description=rec["description"],
+                        locked=rec["locked"],
+                        metadata=rec["metadata"],
+                    )
 
     # ---- scene hooks (overridable; pure defaults) ------------------------
 
@@ -983,6 +1174,7 @@ class ShotStore(_ShotStoreInternal):
             "source_csv": self.source_csv,
             "auto_publish_export": self.auto_publish_export,
             "clip_name_strategy": self.clip_name_strategy,
+            "edit_ledger": self.edit_ledger.to_dict(),
         }
 
     def to_export_view(self, strategy: str = "name") -> Dict[str, Any]:
@@ -993,6 +1185,13 @@ class ShotStore(_ShotStoreInternal):
         name and the metadata ``clip`` join-key cannot drift.  Minimal overlap:
         ranges live only in ``fbx_takes``; ``shot_metadata`` carries the extras
         a clip can't (description, objects, section), keyed by clip.
+
+        ``fps`` rides on the metadata envelope rather than per shot: the ranges
+        it qualifies are the store's, not any one shot's, and without it every
+        frame number in this view is unitless to a consumer that did not author
+        the scene (``MeshConvert.apply_glb_animations`` is one -- it reads the
+        published view back out of the deliverable).  Additive, so the schema
+        version stands: a reader that does not know the key is unaffected.
         """
         sorted_s = self.sorted_shots()
         specs = ShotStore.resolve_clip_specs(sorted_s, strategy=strategy)
@@ -1008,7 +1207,11 @@ class ShotStore(_ShotStoreInternal):
         ]
         return {
             "fbx_takes": fbx_takes,
-            "shot_metadata": {"version": 1, "shots": shots_meta},
+            "shot_metadata": {
+                "version": 1,
+                "fps": self.scene_fps,
+                "shots": shots_meta,
+            },
         }
 
     @classmethod
@@ -1137,6 +1340,7 @@ class ShotStore(_ShotStoreInternal):
         strat = data.get("clip_name_strategy")
         if strat in CLIP_NAME_STRATEGIES:
             store.clip_name_strategy = str(strat)
+        store.edit_ledger = ShotEditLedger.from_dict(data.get("edit_ledger"))
         return store
 
     # ---- persistence convenience -----------------------------------------

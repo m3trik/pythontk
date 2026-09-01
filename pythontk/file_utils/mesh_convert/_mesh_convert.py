@@ -73,7 +73,46 @@ class MeshConvert(HelpMixin):
     """
 
     TOOL_NAME = "fbx2gltf"
-    DEFAULT_TIMEOUT = 300  # 5 minutes — enough for very large FBX files
+    #: FLOOR for a conversion, in seconds. Kept at the historical value so no
+    #: small file converts on a shorter leash than before; the effective budget
+    #: for a large one is derived by :meth:`conversion_timeout`.
+    DEFAULT_TIMEOUT = 300
+    #: Seconds of conversion budget allowed per MB of input FBX. Measured on a
+    #: production assembly (250 MB FBX, 757 meshes, 98k triangles, 30 embedded
+    #: textures): ~0.8 s/MB with the machine otherwise idle. 3 s/MB was that
+    #: with room for a workstation doing something else -- and a second
+    #: incident (2026-08-31: a 173 MB assembly timed out at 495s while a test
+    #: suite shared the machine) blew through it, discarding another finished
+    #: export's GLB. The asymmetry only sharpens with margin: a generous
+    #: budget merely delays the report of a genuinely hung process, a tight
+    #: one discards a deliverable.
+    TIMEOUT_SECONDS_PER_MB = 10.0
+    #: ``timeout=AUTO_TIMEOUT`` (the default) derives the budget from the input.
+    #: Negative because no real timeout can be, so it cannot collide with a
+    #: caller's value -- and unlike ``None`` it is not already meaningful to
+    #: ``subprocess.run``, where None means "wait forever".
+    AUTO_TIMEOUT = -1.0
+
+    @classmethod
+    def conversion_timeout(cls, src: str) -> float:
+        """Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
+
+        A flat budget cannot fit both a prop and a production assembly, and the
+        cost of getting it wrong is asymmetric: too generous only delays the
+        report of a genuinely hung process, while too tight discards a finished
+        export's whole deliverable ("produced no file") on a scene that was
+        converting normally. It also fails by wall-clock rather than by content,
+        so it passes on a quiet machine and fails mid-workday -- which is how it
+        reached production unnoticed.
+
+        An unreadable size falls back to the floor: a budget must never be the
+        reason a conversion is not attempted.
+        """
+        try:
+            megabytes = os.path.getsize(src) / (1024 * 1024)
+        except OSError:
+            return float(cls.DEFAULT_TIMEOUT)
+        return float(max(cls.DEFAULT_TIMEOUT, megabytes * cls.TIMEOUT_SECONDS_PER_MB))
 
     #: Schema version of the scene-sidecar envelope
     #: (:meth:`build_scene_sidecar`). Bump on any change to the envelope's
@@ -136,7 +175,14 @@ class MeshConvert(HelpMixin):
         "TEXCOORD_1 rather than ambient occlusion, sRGB-encoded, and its "
         "'intensity' is the multiplier that restores the bake's original range; "
         "a reader that does not rebind it renders a plausible greyscale "
-        "occlusion instead. 'handoff.rendering' records the lighting setup the "
+        "occlusion instead. When 'extras.animation_web' is present it names "
+        "every animation in this file by its index, says which ones a shot "
+        "declared, and gives the frame range and 'offset' (seconds) each "
+        "declared clip occupied on the authoring timeline, since every clip's "
+        "own keyframe times are rebased to zero; 'default_clip' is the one a "
+        "player opens on, which is not necessarily animations[0] -- an FBX "
+        "interchange step can retain a whole-timeline take alongside the split "
+        "ones. 'handoff.rendering' records the lighting setup the "
         "reference viewer used to produce the look this asset was approved in: "
         "the asset carries no lights of its own, so a viewer that lights it "
         "differently renders something different without either side being "
@@ -170,6 +216,10 @@ class MeshConvert(HelpMixin):
         "audio_manifest": "audio events with the frames they fire on",
         "shadow_metadata": "shadow-proxy geometry pairing",
         "emissive_groups": "named emissive material groups and their weights",
+        "visibility_tracks": (
+            "keyed visibility per node, as stepped on/off frames, with the "
+            "authored opacity ramp and each take's first/last authored frame"
+        ),
     }
 
     #: The standalone-reader contract for an **FBX** deliverable -- the twin of
@@ -286,6 +336,12 @@ class MeshConvert(HelpMixin):
     #: routinely runs inside a DCC already holding the exported scene.
     OPTIMIZE_WORKERS = 8
 
+    #: Longest edge a web deliverable's textures keep, and the container they
+    #: are re-encoded to. See :meth:`web_delivery_texture_params` for why these
+    #: are named constants rather than each producer's own literal.
+    WEB_DELIVERY_MAX_SIZE = 2048
+    WEB_DELIVERY_FORMAT = "WEBP"
+
     #: Slot semantic -> (Basis codec, sRGB transfer) for KTX2 mode. The glTF
     #: structural twin of ``MapOptimizer.resolve_compression``'s registry rule:
     #: ETC1S only where a lossy codec is safe (perceptual sRGB color), UASTC
@@ -301,6 +357,26 @@ class MeshConvert(HelpMixin):
     #: Semantic precedence when one image is sampled by several slots: the
     #: quality/correctness-critical use wins the encode.
     _SEMANTIC_RANK: Dict[str, int] = {"color": 0, "data": 1, "normal": 2}
+
+    #: Slot semantics a chroma-subsampled codec may be used on. The WebP twin of
+    #: :attr:`BASIS_BY_SEMANTIC`'s ETC1S row, and deliberately the same rule --
+    #: lossy only where the channels ARE colour and the eye is the judge. An
+    #: image nothing samples (semantic ``None``) is off the list for the reason
+    #: the ``None`` row above takes UASTC: a mislabel should cost bytes, not
+    #: pixels.
+    #:
+    #: The glTF-structural twin of ``MapRegistry.is_lossy_safe``, which decides
+    #: the same question for a map on DISK by its filename type. Neither can
+    #: stand in for the other: a GLB image has no filename, only the slots that
+    #: sample it, and the registry rule cannot see a slot. The registry's own
+    #: measurement stands for both -- a 4K normal at WebP q95 deviates by
+    #: 122/255 against 9/255 for a base colour.
+    LOSSY_SAFE_SEMANTICS = frozenset({"color"})
+
+    #: WebP save kwargs for everything else. Lossless WebP still comes in well
+    #: under the source PNG, so this is a container win rather than a size cost
+    #: against the authored map.
+    LOSSLESS_WEBP: Dict[str, Any] = {"lossless": True, "quality": 100}
 
     #: Extensions that reference ``images`` from outside the material tree
     #: (root-level ``specularImages`` here). :meth:`prune_glb_unreferenced_textures`
@@ -323,6 +399,10 @@ class MeshConvert(HelpMixin):
         "metallic_roughness": "set_glb_metallic_roughness",
         "alpha_mode": "set_glb_alpha_mode",
     }
+    #: Root-extras key holding :meth:`apply_scene_sidecar`'s per-section
+    #: outcome. Its presence is also the fact "the envelope has been applied
+    #: to this file", which a later stage reads to avoid applying it twice.
+    SIDECAR_APPLIED_KEY = "scene_sidecar_applied"
     # Image types glTF 2.0 accepts natively. Anything else (TIFF, EXR, TGA —
     # all common in a DCC source tree) is re-encoded to PNG via Pillow when
     # available (see `_reencode_as_png`), and otherwise rejected by name
@@ -576,7 +656,7 @@ class MeshConvert(HelpMixin):
             texture = textures[texture_index]
             extensions = texture.get("extensions") or {}
             source = texture.get("source")
-            for binding in ("KHR_texture_basisu", "EXT_texture_webp"):
+            for binding in MeshConvert.TEXTURE_CONTAINER_EXTENSIONS:
                 shadow = (extensions.get(binding) or {}).get("source")
                 if shadow is not None:
                     source = shadow
@@ -818,7 +898,7 @@ class MeshConvert(HelpMixin):
         overwrite: bool = False,
         auto_install: bool = True,
         prompt: Union[bool, Callable[[str], bool]] = True,
-        timeout: Optional[float] = DEFAULT_TIMEOUT,
+        timeout: Optional[float] = AUTO_TIMEOUT,
         extra_args: Optional[List[str]] = None,
         sidecar: Optional[Dict[str, Any]] = None,
         lightmaps: bool = True,
@@ -834,7 +914,11 @@ class MeshConvert(HelpMixin):
             auto_install:  Download FBX2glTF if missing.
             prompt:        Consent policy for that download (see
                            :meth:`resolve_binary`).
-            timeout:       Subprocess timeout in seconds. None disables.
+            timeout:       Subprocess timeout in seconds. The default derives
+                it from the input's size (:meth:`conversion_timeout`), because
+                a flat budget that suits a prop discards a production
+                assembly's finished deliverable. An explicit number is used
+                as given; ``None`` disables the limit.
             extra_args:    Extra CLI flags forwarded to FBX2glTF
                            (e.g. ``["--draco"]``, ``["-v"]``).
             sidecar:       A scene-sidecar envelope (:meth:`build_scene_sidecar`)
@@ -909,6 +993,11 @@ class MeshConvert(HelpMixin):
         if extra_args:
             cmd.extend(extra_args)
 
+        if timeout is not None and timeout < 0:
+            # The default. An explicit number wins outright (a caller that says
+            # 60 means 60) and ``None`` still means no limit.
+            timeout = cls.conversion_timeout(src_abs)
+
         logger.debug("FBX2glTF: %s", shlex.join(cmd))
         try:
             result = subprocess.run(
@@ -956,6 +1045,16 @@ class MeshConvert(HelpMixin):
                         fx["new_alpha"],
                         fx["image"],
                     )
+                # Before every pass that reads or rewrites images, because it
+                # RENUMBERS them: the sidecar's texture map and the optimizer's
+                # per-image work both describe indices, and both would then
+                # describe a file that no longer exists. Also the cheapest
+                # point at which to remove work -- an image collapsed here is
+                # one the texture pass never decodes.
+                try:
+                    cls.dedupe_glb_images(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("dedupe_glb_images skipped: %s", exc)
                 # Before the sidecar writes the GLB's OWN handoff, so the
                 # file never holds both accounts at once.
                 try:
@@ -971,7 +1070,15 @@ class MeshConvert(HelpMixin):
                             dropped,
                         )
                 if sidecar:
-                    cls.apply_scene_sidecar(edit, sidecar)
+                    # Guarded like every other pass in this chain: the apply
+                    # handles its own per-section and container failures, and
+                    # anything past those must cost the repairs, never the
+                    # conversion -- the preview routes its envelope through
+                    # here now, and a push must not fail on a sidecar.
+                    try:
+                        cls.apply_scene_sidecar(edit, sidecar)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Scene sidecar skipped: %s", exc)
                 if lightmaps:
                     # Guarded like the alpha repair: a lightmap failure must
                     # never cost the sidecar or the conversion.
@@ -985,6 +1092,55 @@ class MeshConvert(HelpMixin):
                                 "Lightmaps wired into %d material binding(s).",
                                 len(bound),
                             )
+                # FIRST of the three animation passes: it REPLACES the declared
+                # clips, so a gate or a manifest entry written before it would
+                # describe clips that no longer exist.
+                try:
+                    cls.apply_glb_clips(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB clip rebuild skipped: %s", exc)
+                # BEFORE the animation manifest, which reports what each clip
+                # holds: a shot whose only content is visibility is empty until
+                # this has run, and would be reported empty and passed over as
+                # the file's default clip.
+                try:
+                    cls.apply_glb_visibility(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB visibility skipped: %s", exc)
+                # After the gate (which makes a fading node present) and before
+                # the manifest (which reports a clip carrying only a fade as
+                # having content rather than as an empty shot).
+                try:
+                    faded = cls.apply_glb_fades(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB fades skipped: %s", exc)
+                else:
+                    if faded:
+                        logger.info(
+                            "Fades: %d ramp(s) on %d material(s) written as "
+                            "%d KHR_animation_pointer channel(s).",
+                            faded["nodes"],
+                            faded["materials"],
+                            faded["channels"],
+                        )
+                # Unconditional and self-feeding, like the lightmap pass: it
+                # reads the take list out of the file and no-ops on a GLB with
+                # no animation, so there is no flag for a caller to forget.
+                try:
+                    animation = cls.apply_glb_animations(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB animation manifest skipped: %s", exc)
+                else:
+                    if animation:
+                        declared = sum(1 for c in animation["clips"] if c["declared"])
+                        logger.info(
+                            "Animation: %d clip(s) named in extras.%s (%d from "
+                            "declared shots); opens on %r.",
+                            len(animation["clips"]),
+                            cls.ANIMATION_WEB_KEY,
+                            declared,
+                            animation["default_clip"],
+                        )
         except Exception as exc:  # noqa: BLE001 — never let post-process kill a successful conversion
             logger.warning("GLB post-process skipped: %s", exc)
 
@@ -1061,6 +1217,24 @@ class MeshConvert(HelpMixin):
                     f"extras.{cls.LIGHTMAP_WEB_KEY}": (
                         "materials whose occlusion carrier is a baked lightmap"
                     ),
+                    f"extras.{cls.ANIMATION_WEB_KEY}": (
+                        "the file's animation clips: which are declared shots, "
+                        "their authoring frame ranges, and which to open on. "
+                        "A clip's STEP 'scale' channels driving a node to zero "
+                        "are its VISIBILITY, not authored scale -- glTF has no "
+                        "visibility channel, so keyed visibility is carried "
+                        "that way and plays with no extension. Each clip's "
+                        "'zero_frame' is the authored frame its t=0 sits on "
+                        "(NOT 'start_frame': a take is rebased to its first "
+                        "key, so the two differ by the lead-in) -- it is what "
+                        "converts a playhead to the frame numbers this block "
+                        "quotes. Authored alpha fades are KHR_animation_pointer "
+                        "channels on each faded subtree's own material "
+                        "(extensionsUsed, never required); a runtime without "
+                        "the extension can play them by binding each channel "
+                        "to that material's alpha, which is what the preview "
+                        "page does"
+                    ),
                 },
                 "sections": sorted(cls.SIDECAR_APPLIERS),
                 # How to LIGHT what the sections describe. The rest of this
@@ -1135,7 +1309,7 @@ class MeshConvert(HelpMixin):
                 channel itself is dropped if passed (it does not describe
                 itself).
             source: Producer identity and provenance, e.g. ``{"application":
-                "maya", "version": "2025", "scene": "OFFICE_ENV.ma"}``. No
+                "maya", "version": "2025", "scene": "PROD_ROOM.ma"}``. No
                 asset name is carried: this is stamped before any FBX path is
                 chosen, so the only name available would be the scene's.
 
@@ -1167,6 +1341,23 @@ class MeshConvert(HelpMixin):
             # it arrived in.
             "rendering": copy.deepcopy(cls.RENDERING_POLICY),
         }
+
+    @staticmethod
+    def _sidecar_section_scope(present: Set[str], data: Any) -> Optional[int]:
+        """How many of *data*'s entries name a material *present* in the GLB.
+
+        ``None`` when the section is not a map keyed by material name -- the
+        registry is an extension point, so a future section may be keyed on
+        anything, and reporting every entry of one as "not in this export"
+        would be worse than not scoping it at all. The test is an intersection
+        rather than a type check: a material-keyed section on a GLB that
+        carries none of its names is indistinguishable from a section keyed on
+        something else, and both want the same answer -- do not scope this.
+        """
+        if not isinstance(data, dict):
+            return None
+        overlap = len(present.intersection(map(str, data)))
+        return overlap or None
 
     @classmethod
     def apply_scene_sidecar(
@@ -1201,7 +1392,9 @@ class MeshConvert(HelpMixin):
                 to carry) — the distinction is a real envelope vs no envelope.
 
         Returns:
-            ``{section: outcome}`` — ``"N of M"``, ``"0 of M matched"`` or
+            ``{section: outcome}`` — ``"N of M"`` (with a
+            ``" (K not in this export)"`` clause when the envelope names
+            materials this GLB does not carry), ``"0 of M matched"`` or
             ``"failed (...)"`` per offered section; empty when none offered.
         """
         if not sidecar:
@@ -1210,6 +1403,11 @@ class MeshConvert(HelpMixin):
         summary: Dict[str, str] = {}
         try:
             with cls.open_glb(glb) as edit:
+                present = {
+                    str(m.get("name"))
+                    for m in (edit.gltf.get("materials") or [])
+                    if m.get("name")
+                }
                 for section, method in cls.SIDECAR_APPLIERS.items():
                     data = sections.get(section)
                     if not data:
@@ -1221,10 +1419,48 @@ class MeshConvert(HelpMixin):
                         logger.warning("Sidecar %r not applied: %s", section, error)
                         summary[section] = f"failed ({error})"
                         continue
-                    if not applied:
+                    # The envelope describes the SCENE and the GLB carries the
+                    # exported subset, so entries naming a material that is not
+                    # in this file were never in scope. Counting them made a
+                    # correct deliverable read "10 of 23" on a production
+                    # assembly -- 13 reference/ID materials that never
+                    # exported, reported as if 13 repairs had failed. The same
+                    # distinction ``apply_glb_lightmaps`` draws with
+                    # ``out_of_scope``; ``None`` means the section is not keyed
+                    # by material name and the plain count is all there is.
+                    in_scope = cls._sidecar_section_scope(present, data)
+                    # Counted by NAME, not by record: a by-name writer lands
+                    # on every material carrying the name (fade clones, the
+                    # converter's own duplicates), and each landing is a
+                    # record. The outcome the panel reads is "how many of the
+                    # scene's materials were repaired", which is names. A
+                    # record without a name -- or not a record at all, from a
+                    # writer that reports differently -- counts as one.
+                    landed = len(
+                        {
+                            record.get("material", index)
+                            if isinstance(record, dict)
+                            else index
+                            for index, record in enumerate(applied)
+                        }
+                    )
+                    if in_scope is not None and landed > in_scope:
+                        # More landed than the exact-name scope allows, so this
+                        # applier does not match on the name alone (a
+                        # namespace-tolerant or fuzzy resolver would do this).
+                        # The scope model does not describe it, and "12 of 10"
+                        # is worse than the plain count -- fall back rather
+                        # than print a number that cannot be true.
+                        in_scope = None
+                    out_of_scope = len(data) - in_scope if in_scope is not None else 0
+                    scope = (
+                        f" ({out_of_scope} not in this export)" if out_of_scope else ""
+                    )
+                    if not applied and (in_scope is None or in_scope):
                         # The section was read but nothing landed — almost
                         # always a name mismatch, which the applier has just
-                        # logged in full.
+                        # logged in full. Only reported as a miss when
+                        # something WAS in scope to match.
                         logger.warning(
                             "Sidecar %r matched none of its %s entr(ies) in the GLB.",
                             section,
@@ -1232,8 +1468,17 @@ class MeshConvert(HelpMixin):
                         )
                         summary[section] = f"0 of {len(data)} matched"
                         continue
-                    logger.info("Sidecar %r applied to %s.", section, len(applied))
-                    summary[section] = f"{len(applied)} of {len(data)}"
+                    denominator = len(data) if in_scope is None else in_scope
+                    logger.info(
+                        "Sidecar %r applied to %s of %s in this export%s.",
+                        section,
+                        landed,
+                        denominator,
+                        f"; {out_of_scope} scene material(s) not in it"
+                        if scope
+                        else "",
+                    )
+                    summary[section] = f"{landed} of {denominator}{scope}"
                 # Sweep what the writers above unbound (FBX2glTF's converted
                 # ORM after the repack, most often) BEFORE the texture map
                 # below records image indices -- pruning renumbers them.
@@ -1271,7 +1516,7 @@ class MeshConvert(HelpMixin):
                     "textures": len(embedded["textures"]),
                 }
                 extras["scene_sidecar"] = embedded
-                extras["scene_sidecar_applied"] = dict(summary)
+                extras[cls.SIDECAR_APPLIED_KEY] = dict(summary)
                 cls._stamp_asset_generator(edit, sidecar)
                 # The materials this envelope did NOT cover still carry the
                 # converter's own packing, which is the one measured to arrive
@@ -1627,7 +1872,11 @@ class MeshConvert(HelpMixin):
             ``verified``, ``mismatched``, ``unresolved``), ``sections``
             (declared vs applied), ``orm`` (per
             :meth:`suspect_orm_materials`, when anything was found),
-            ``lightmap`` and ``generator``. ``problems`` and ``ok`` are kept
+            ``animation`` (clip counts, rate and default clip, when the file
+            carries that block), ``extensions`` (``required`` / ``used`` --
+            what a reader must SUPPORT to open the file at all), ``lightmap``
+            and ``generator``.
+            ``problems`` and ``ok`` are kept
             strictly in step: an empty ``problems`` always means ``ok``. A GLB
             with no envelope is reported, not raised -- an asset from another
             producer is a legitimate thing to point this at.
@@ -1643,6 +1892,97 @@ class MeshConvert(HelpMixin):
             envelope = extras.get("scene_sidecar")
             report["generator"] = (edit.gltf.get("asset") or {}).get("generator")
             report["lightmap"] = bool(extras.get(cls.LIGHTMAP_WEB_KEY))
+            # What a reader must SUPPORT to open this at all. `extensionsRequired`
+            # is not advice: the spec says a reader that does not implement one
+            # of these must refuse the file. A web-delivery GLB requires
+            # `EXT_texture_webp` (nothing core-readable survives that pass) and
+            # a pure-delivery KTX2 one requires `KHR_texture_basisu`, so the
+            # deliverable most likely to reach a third party is exactly the one
+            # with a hard prerequisite -- and this report, which exists to tell
+            # a recipient what they are holding, did not mention it. Reported
+            # rather than failed: the requirement is correct, it just has to be
+            # readable without parsing the JSON chunk by hand.
+            required = sorted(edit.gltf.get("extensionsRequired") or [])
+            report["extensions"] = {
+                "required": required,
+                "used": sorted(edit.gltf.get("extensionsUsed") or []),
+            }
+            if required:
+                report["notes"].append(
+                    "requires a reader supporting "
+                    + ", ".join(required)
+                    + " -- a viewer without it must refuse this file"
+                )
+            # The spec's own subset rule, and a real failure rather than a note:
+            # a file demanding a capability it never declares is invalid glTF
+            # and stock validators reject it outright.
+            undeclared = sorted(set(required) - set(report["extensions"]["used"]))
+            if undeclared:
+                fail(
+                    f"extensionsRequired names {', '.join(undeclared)}, which "
+                    "extensionsUsed does not declare -- invalid glTF"
+                )
+            # Reported before the envelope gate below: an asset can carry
+            # clips and no sidecar (another producer's file, or one converted
+            # before the envelope existed), and "how many clips, how many of
+            # them shots" is exactly what a recipient asks first of an animated
+            # deliverable.
+            animation = extras.get(cls.ANIMATION_WEB_KEY)
+            if isinstance(animation, dict):
+                clips = animation.get("clips") or []
+                report["animation"] = {
+                    "clips": len(clips),
+                    "declared": sum(1 for c in clips if c.get("declared")),
+                    "default_clip": animation.get("default_clip"),
+                    "fps": animation.get("fps"),
+                }
+            elif edit.gltf.get("animations"):
+                # Not a failure -- the block is only written by our own
+                # conversion -- but a note, because a consumer that went
+                # looking for shot names here found none.
+                report["notes"].append(
+                    f"{len(edit.gltf['animations'])} animation(s) with no "
+                    f"extras.{cls.ANIMATION_WEB_KEY}: clip identity is names only"
+                )
+
+            hollow = [
+                str(a.get("name") or f"animations[{i}]")
+                for i, a in enumerate(edit.gltf.get("animations") or [])
+                if not (a.get("channels") and a.get("samplers"))
+            ]
+            if hollow:
+                # glTF requires BOTH arrays to carry at least one entry, so this
+                # is not a quality note -- the file fails validation. Measured
+                # on a production deliverable: a take split emits a named
+                # AnimStack for a shot whose content is entirely visibility,
+                # and the converter writes it out with neither channel nor
+                # sampler. A strict reader is entitled to reject the whole file.
+                fail(
+                    f"{len(hollow)} animation(s) carry no channels or samplers "
+                    f"({', '.join(hollow)}) -- glTF requires at least one of "
+                    "each, so this file does not validate"
+                )
+
+            # The file's own handoff promising clips the file does not carry.
+            # Measured on a production deliverable (2026-08-30):
+            # the export wrote `data_export.fbx_takes` naming 12 shots while the
+            # FBX itself was written with animation disarmed, so the GLB shipped
+            # 12 declared clips and ZERO animations -- and every check here
+            # passed, because textures, sections and envelope were all sound.
+            # A recipient reading the handoff plans for clips that do not exist,
+            # which makes this a defect of the artifact, not a note.
+            declared_takes = cls.data_export_channel(edit.gltf, cls.FBX_TAKES_KEY)
+            if (
+                isinstance(declared_takes, list)
+                and declared_takes
+                and not (edit.gltf.get("animations") or [])
+            ):
+                fail(
+                    f"the handoff declares {len(declared_takes)} take(s) "
+                    f"(data_export.{cls.FBX_TAKES_KEY}) but the file carries no "
+                    "animations -- the FBX was written with animation off "
+                    "(bake/takes disarmed at export)"
+                )
             if not isinstance(envelope, dict):
                 report["envelope"] = None
                 fail("no scene-sidecar envelope: nothing here declares itself")
@@ -1671,7 +2011,7 @@ class MeshConvert(HelpMixin):
                 # green this method exists to end.
                 fail("envelope 'sections' is not an object")
                 declared = {}
-            applied = extras.get("scene_sidecar_applied")
+            applied = extras.get(cls.SIDECAR_APPLIED_KEY)
             report["sections"] = {
                 "declared": {
                     name: len(entries)
@@ -1774,9 +2114,28 @@ class MeshConvert(HelpMixin):
                     # `problems` would make the obvious `if report["problems"]`
                     # read as a defect on a sound deliverable. It is said at all
                     # because nothing here can vouch for its channel layout.
+                    #
+                    # Grouped BY IMAGE, because the finding is a property of the
+                    # image and the lightmap pass clones a material per
+                    # instance: on a production room one unvalidated ORM
+                    # produced 46 identical lines naming 46 clones of one
+                    # material, which is the length that stops a note being
+                    # read at all. The per-material detail stays in
+                    # ``report["orm"]`` for anything that wants it.
+                    by_image: Dict[str, List[str]] = {}
+                    for material in unvalidated:
+                        image = str((suspect[material] or {}).get("image") or "?")
+                        by_image.setdefault(image, []).append(material)
+                    described = []
+                    for image, names in sorted(by_image.items()):
+                        shown = ", ".join(sorted(names)[:3])
+                        more = ", ..." if len(names) > 3 else ""
+                        described.append(
+                            f"{image} ({len(names)} material(s): {shown}{more})"
+                        )
                     report["notes"].append(
-                        "ORM binding not described by the envelope on: "
-                        + ", ".join(unvalidated)
+                        "ORM binding not described by the envelope on "
+                        + "; ".join(described)
                         + " -- its channel layout is unverified (a mask map "
                         "packed for another engine reads as ORM here)"
                     )
@@ -1804,15 +2163,54 @@ class MeshConvert(HelpMixin):
     #: :meth:`_reconcile_node_markers`); it is machine-specific, so shipping it leaks
     #: the authoring drive layout and tells the recipient nothing they can use.
     LOCATE_HINT_KEY = "dir"
+    #: EVERY build-time locate hint, so a scrub cannot know about one and
+    #: miss another. ``dirs`` (plural) joined it when a single folder proved
+    #: too weak a hint -- a scene with maps in two places published nothing
+    #: and the consumer then found a map by basename alone, binding a stale
+    #: atlas. Both are absolute authoring paths and both must come out.
+    LOCATE_HINT_KEYS = ("dir", "dirs")
+    #: Joins a lightmap clone's name to the material it was cloned from. The
+    #: lightmap pass makes one material per INSTANCE (each needs its own atlas
+    #: rect), so a base material becomes ``<base>~lm<N>``. Named because the
+    #: convention has two ends: whoever writes the clone and whoever has to
+    #: recognise one -- an envelope section names the BASE materials, and a
+    #: check matching clone names against it literally finds nothing and
+    #: reports every clone as undescribed (measured: 46 spurious notes on one
+    #: production room, from a single base material's clones).
+    LIGHTMAP_CLONE_SUFFIX = "~lm"
 
     @classmethod
-    def _lightmap_manifest(cls, gltf: dict) -> Optional[Dict[str, Any]]:
-        """Parse the ``lightmap_metadata`` manifest out of a parsed glTF, or ``None``.
+    def _lightmap_clone_base(cls, name: str) -> str:
+        """The material *name* was cloned from, or *name* when it is not a clone.
 
-        Split from :meth:`read_glb_lightmap_manifest` so the applier can read it from
-        the session it is ALREADY holding -- a second ``open_glb`` on the path would
-        re-read and re-parse the file, which is exactly what :class:`GlbEdit` exists to
-        avoid.
+        Only a ``~lm`` followed by digits is a clone marker: the suffix is legal
+        in an authored material name, and stripping at a bare ``~lm`` would
+        rewrite one.
+        """
+        text = str(name)
+        base, sep, tail = text.rpartition(cls.LIGHTMAP_CLONE_SUFFIX)
+        return base if sep and base and tail.isdigit() else text
+
+    @classmethod
+    def data_export_channel(cls, gltf: dict, key: str) -> Optional[Any]:
+        """Decoded value of one ``data_export`` channel in a parsed glTF, or ``None``.
+
+        Every in-band metadata system publishes onto the same carrier -- the
+        lightmap manifest, the shot definitions, the take list, the audio events
+        -- so reading one is the same puzzle every time, and the puzzle is the
+        two on-disk SHAPES, not the channel. Hand-rolled per channel, the second
+        copy is the one that probes only the nested shape and turns its whole
+        feature into a silent no-op on a natively exported GLB.
+
+        Split from :meth:`read_glb_lightmap_manifest` so an applier can read from
+        the session it is ALREADY holding -- a second ``open_glb`` on the path
+        would re-read and re-parse the file, which is exactly what
+        :class:`GlbEdit` exists to avoid.
+
+        Returns whatever the channel decodes to (the producers publish JSON, so
+        in practice a dict or a list); a caller wanting one shape checks. An
+        unparsable channel is warned and read as absent -- a half-decoded
+        manifest is worse than none.
         """
         for node in gltf.get("nodes", []) or []:
             extras = node.get("extras") or {}
@@ -1829,23 +2227,34 @@ class MeshConvert(HelpMixin):
                 (extras.get("fromFBX") or {}).get("userProperties") or {},
                 extras,
             ):
-                entry = props.get(cls.LIGHTMAP_METADATA_KEY)
+                entry = props.get(key)
                 if entry is None:
                     continue
                 # FBX2glTF wraps each property as {"type": ..., "value": ...}.
                 raw = entry.get("value") if isinstance(entry, dict) else entry
                 try:
-                    data = json.loads(raw) if isinstance(raw, str) else raw
+                    return json.loads(raw) if isinstance(raw, str) else raw
                 except (TypeError, ValueError) as error:
                     logger.warning(
                         "Unparsable %s on node %r: %s",
-                        cls.LIGHTMAP_METADATA_KEY,
+                        key,
                         node.get("name"),
                         error,
                     )
                     return None
-                return data if isinstance(data, dict) else None
         return None
+
+    @classmethod
+    def _lightmap_manifest(cls, gltf: dict) -> Optional[Dict[str, Any]]:
+        """The ``lightmap_metadata`` manifest in a parsed glTF, or ``None``.
+
+        The channel read is :meth:`data_export_channel`; this adds only the
+        applier's own expectation that the manifest is an OBJECT, so a channel
+        holding anything else reads as absent rather than reaching the walk as
+        something without ``.get``.
+        """
+        data = cls.data_export_channel(gltf, cls.LIGHTMAP_METADATA_KEY)
+        return data if isinstance(data, dict) else None
 
     @classmethod
     def without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]:
@@ -1875,7 +2284,9 @@ class MeshConvert(HelpMixin):
         # A snapshot taken WITHOUT decode=True leaves the manifest a JSON string;
         # no production caller does that, and re-serializing one here would
         # silently change the shape the sidecar records, so leave it alone.
-        if not isinstance(section, dict) or cls.LOCATE_HINT_KEY not in section:
+        if not isinstance(section, dict) or not any(
+            k in section for k in cls.LOCATE_HINT_KEYS
+        ):
             # Nothing to strip: hand the snapshot straight back rather than
             # churning a copy of a payload that is already clean (pinned by
             # test_without_locate_hints_passes_clean_snapshots_through). Note
@@ -1885,7 +2296,7 @@ class MeshConvert(HelpMixin):
             return data_export
         scrubbed = dict(data_export)
         scrubbed[cls.LIGHTMAP_METADATA_KEY] = {
-            k: v for k, v in section.items() if k != cls.LOCATE_HINT_KEY
+            k: v for k, v in section.items() if k not in cls.LOCATE_HINT_KEYS
         }
         return scrubbed
 
@@ -1974,10 +2385,11 @@ class MeshConvert(HelpMixin):
                             ):
                                 data[field] = committed[field]
                                 corrected = True
-                    had_hint = cls.LOCATE_HINT_KEY in data
+                    had_hint = any(k in data for k in cls.LOCATE_HINT_KEYS)
                     if not had_hint and not corrected:
                         continue
-                    data.pop(cls.LOCATE_HINT_KEY, None)
+                    for hint_key in cls.LOCATE_HINT_KEYS:
+                        data.pop(hint_key, None)
                     # Re-serialize in the shape it arrived in, so a reader that does
                     # not know about this scrub sees no structural change.
                     new = json.dumps(data) if isinstance(raw, str) else data
@@ -2008,6 +2420,96 @@ class MeshConvert(HelpMixin):
         """
         with cls.open_glb(glb) as edit:
             return cls._lightmap_manifest(edit.gltf)
+
+    @classmethod
+    def _lightmap_node_index(cls, gltf: dict):
+        """Index a glTF's MESH nodes for manifest lookup.
+
+        Returns ``(nodes_by_name, leaf_index, mesh_users)``: nodes grouped by
+        their exact name, the namespace-stripped leaf of each of those names
+        mapped back to the full names carrying it, and how many nodes reference
+        each mesh (which is what identifies an instanced mesh needing its own
+        clone before a per-instance rect can bind to it).
+        """
+        nodes_by_name: Dict[str, List[dict]] = {}
+        mesh_users: Dict[int, int] = {}  # mesh index -> node reference count
+        for node in gltf.get("nodes", []) or []:
+            if "mesh" in node:
+                nodes_by_name.setdefault(node.get("name", ""), []).append(node)
+                mesh_users[node["mesh"]] = mesh_users.get(node["mesh"], 0) + 1
+        leaf_index: Dict[str, List[str]] = {}
+        for full in nodes_by_name:
+            leaf_index.setdefault(full.rsplit(":", 1)[-1], []).append(full)
+        return nodes_by_name, leaf_index, mesh_users
+
+    @classmethod
+    def _resolve_lightmap_node(
+        cls,
+        name: Optional[str],
+        nodes_by_name: Dict[str, List[dict]],
+        leaf_index: Dict[str, List[str]],
+    ) -> Tuple[Optional[List[dict]], str, List[str]]:
+        """Resolve one manifest object name to the GLB's mesh nodes.
+
+        The single owner of the match rule, because two readers of it is how
+        the binder and the report came to disagree about what "missing" means.
+        Exact first, then namespace-tolerant: manifests and exports can
+        disagree about namespaces without either being wrong (an older
+        publisher stripped them, some exporters flatten them), but a leaf
+        matching several nodes is never guessed at -- that would put one
+        object's lighting on another.
+
+        Returns ``(nodes, status, leaves)`` where *status* is one of
+        ``"exact"``, ``"leaf"``, ``"ambiguous"`` (in the file, unbindable) or
+        ``"absent"`` (no such node -- on a selection-scoped export, simply not
+        part of it). *leaves* carries the candidates behind an ambiguous match.
+        """
+        nodes = nodes_by_name.get(name or "")
+        if nodes:
+            return nodes, "exact", []
+        if name:
+            leaves = leaf_index.get(name.rsplit(":", 1)[-1]) or []
+            if len(leaves) == 1:
+                return nodes_by_name[leaves[0]], "leaf", leaves
+            if len(leaves) > 1:
+                return None, "ambiguous", leaves
+        return None, "absent", []
+
+    @classmethod
+    def lightmap_manifest_coverage(cls, glb: GlbTarget) -> Dict[str, List[str]]:
+        """Split a GLB's bake manifest by whether this GLB actually carries each object.
+
+        The manifest is a **scene** record -- the bake commits to the scene, and
+        every export of any subset of it carries the whole thing -- so the
+        manifest's length is not the number of objects a given deliverable was
+        supposed to light. Reading it as one makes a selection export report
+        every unselected object as unlit, which is a false alarm raised
+        precisely when the deliverable is correct.
+
+        Returns ``{"present", "ambiguous", "absent"}`` name lists, where
+        *present* is in scope and bindable, *ambiguous* is in scope but matched
+        several nodes by leaf name (a real failure), and *absent* has no node in
+        this GLB at all (out of scope -- or, if it was meant to be exported, a
+        name mismatch this cannot tell apart from a scope boundary).
+        """
+        with cls.open_glb(glb) as edit:
+            manifest = cls._lightmap_manifest(edit.gltf) or {}
+            nodes_by_name, leaf_index, _ = cls._lightmap_node_index(edit.gltf)
+            buckets: Dict[str, List[str]] = {
+                "present": [],
+                "ambiguous": [],
+                "absent": [],
+            }
+            for entry in manifest.get("objects") or []:
+                name = entry.get("name")
+                if not name:
+                    continue
+                _, status, _ = cls._resolve_lightmap_node(
+                    name, nodes_by_name, leaf_index
+                )
+                bucket = "present" if status in ("exact", "leaf") else status
+                buckets[bucket].append(str(name))
+            return buckets
 
     @classmethod
     def apply_glb_lightmaps(
@@ -2137,27 +2639,40 @@ class MeshConvert(HelpMixin):
             if not entries:
                 return []
 
-            dirs = [d for d in [manifest.get("dir"), *search_dirs] if d]
+            # The manifest's OWN folders first, then the caller's search paths.
+            # ``dirs`` (plural) is the publisher's full set: a scene whose maps
+            # do not all live in one folder -- the moment ANY object keeps a
+            # marker from an earlier bake -- has no single ``dir`` to state, and
+            # publishing nothing there dropped the hint for every object that
+            # did agree. What followed was silent and severe: the basename
+            # search reached the workspace's texture folder and bound a
+            # 17-day-old atlas of the same name, so 46 objects sampled a stale
+            # map through rects computed for the current bake.
+            # ``isinstance`` rather than a bare truthiness test: this reads a
+            # manifest out of whatever GLB the caller points at, and a ``dirs``
+            # that arrived as a STRING would splat into one bogus directory per
+            # character -- a silent, unbounded stat storm rather than an error.
+            plural = manifest.get("dirs")
+            authored = [
+                d
+                for d in [
+                    manifest.get("dir"),
+                    *(plural if isinstance(plural, (list, tuple)) else []),
+                ]
+                if isinstance(d, str) and d
+            ]
+            dirs = [d for d in [*authored, *search_dirs] if d]
             dirs.append(os.path.dirname(os.path.abspath(edit.path)))
+            authored_norm = {os.path.normcase(os.path.abspath(d)) for d in authored}
 
-            nodes_by_name: Dict[str, List[dict]] = {}
-            mesh_users: Dict[int, int] = {}  # mesh index -> node reference count
-            for node in gltf.get("nodes", []) or []:
-                if "mesh" in node:
-                    nodes_by_name.setdefault(node.get("name", ""), []).append(node)
-                    mesh_users[node["mesh"]] = mesh_users.get(node["mesh"], 0) + 1
-            # Namespace-tolerant fallback index (Maya ``NS:leaf``). The manifest
-            # and the export can disagree about namespaces without either being
-            # wrong -- an older publisher stripped them, some exporters flatten
-            # them -- and an exact-only match then silently unbinds every
-            # namespaced object (a delivered room whose referenced racks all
-            # rendered black). Match exact first; fall back to comparing with
-            # the namespace stripped from BOTH sides, but only when that leaf
-            # is unambiguous among the GLB's nodes -- a guessed bind on a
-            # duplicate leaf would put one object's lighting on another.
-            leaf_index: Dict[str, List[str]] = {}
-            for full in nodes_by_name:
-                leaf_index.setdefault(full.rsplit(":", 1)[-1], []).append(full)
+            nodes_by_name, leaf_index, mesh_users = cls._lightmap_node_index(gltf)
+            #: Manifest entries with no node in this GLB. The manifest is a
+            #: SCENE record and every export carries all of it, so on a
+            #: selection export these are simply the objects that were not
+            #: selected -- counted for one summary line, never warned per
+            #: object (which turned a correct 3-object push of a 50-object
+            #: scene into 47 warnings saying it shipped unlit).
+            out_of_scope: List[str] = []
 
             # exr abspath -> encode scalar; ``None`` records a failed encode so a map
             # shared by several objects is not retried (and re-logged) per object.
@@ -2171,6 +2686,9 @@ class MeshConvert(HelpMixin):
             #: the one thing that says how bad it is, is not known until the
             #: walk is over.
             missing: Dict[Optional[str], int] = {}
+            #: map basename -> the path it resolved to OUTSIDE the manifest's
+            #: own folders (found by basename alone; see the bind site).
+            fallback_binds: Dict[Optional[str], str] = {}
             claimed: Dict[int, str] = {}  # material index -> exr abspath
             # Source material indices whose authored carrier map was already
             # reported (displaced, or kept under replace_authored=False) -- so the
@@ -2189,21 +2707,24 @@ class MeshConvert(HelpMixin):
                 name, basename = entry.get("name"), entry.get("map")
                 rect = [float(v) for v in (entry.get("scaleOffset") or identity)]
                 has_rect = rect != identity
-                nodes = nodes_by_name.get(name or "")
-                if not nodes and name:
-                    leaves = leaf_index.get(name.rsplit(":", 1)[-1]) or []
-                    if len(leaves) == 1:
-                        nodes = nodes_by_name[leaves[0]]
-                    elif len(leaves) > 1:
-                        logger.warning(
-                            "Lightmap for %r: leaf name matches several GLB "
-                            "nodes (%s) -- ambiguous, not bound.",
-                            name,
-                            ", ".join(sorted(leaves)),
-                        )
-                        continue
-                if not nodes:
+                nodes, status, leaves = cls._resolve_lightmap_node(
+                    name, nodes_by_name, leaf_index
+                )
+                if status == "ambiguous":
+                    # In the file, and genuinely unbindable: still loud.
                     logger.warning(
+                        "Lightmap for %r: leaf name matches several GLB "
+                        "nodes (%s) -- ambiguous, not bound.",
+                        name,
+                        ", ".join(sorted(leaves)),
+                    )
+                    continue
+                if status == "absent":
+                    # Not in this export. Kept at debug because it is also what
+                    # a genuine name mismatch looks like, and the node list is
+                    # what tells the two apart.
+                    out_of_scope.append(str(name))
+                    logger.debug(
                         "Lightmap for %r: no mesh node by that name in the GLB "
                         "(nodes: %s).",
                         name,
@@ -2223,6 +2744,20 @@ class MeshConvert(HelpMixin):
                     missing[basename] = missing.get(basename, 0) + 1
                     continue
                 src = os.path.abspath(src)
+                # A map found OUTSIDE every folder the manifest names was found
+                # by basename alone, and a basename is not an identity: the
+                # workspace's texture folder routinely holds an atlas from an
+                # earlier bake under the same name (and, on a case-insensitive
+                # filesystem, under a differently-cased one). Binding it pairs
+                # THIS bake's rects with THAT bake's pixels -- every object
+                # sampling someone else's lighting, with nothing in the log to
+                # say so. Legitimate whenever the maps have simply moved, so it
+                # is a warning and not a refusal; named once per map.
+                if (
+                    authored_norm
+                    and os.path.normcase(os.path.dirname(src)) not in authored_norm
+                ):
+                    fallback_binds.setdefault(basename, src)
 
                 png_name = os.path.splitext(basename)[0] + ".png"
 
@@ -2315,7 +2850,10 @@ class MeshConvert(HelpMixin):
                             if scalar is None:  # encode failed, already logged
                                 continue
                             clone = copy.deepcopy(base)
-                            clone["name"] = f"{base_name}~lm{len(gltf['materials'])}"
+                            clone["name"] = (
+                                f"{base_name}{cls.LIGHTMAP_CLONE_SUFFIX}"
+                                f"{len(gltf['materials'])}"
+                            )
                             g_rect = ImgUtils.flip_rect_v(rect)
                             clone[slot] = {
                                 "index": edit.embedded[src],
@@ -2424,6 +2962,17 @@ class MeshConvert(HelpMixin):
                             }
                         )
 
+            for basename, resolved in fallback_binds.items():
+                logger.warning(
+                    "Lightmap %r was not in the folder(s) the manifest names "
+                    "(%s); bound %s, found by name alone. If that is an atlas "
+                    "from an earlier bake, its rects do not match this one and "
+                    "every object on it samples the wrong patch.",
+                    basename,
+                    ", ".join(authored) or "<none published>",
+                    resolved,
+                )
+
             for basename, wanted in missing.items():
                 # Deliberately does NOT advise passing ``search_dirs``: every
                 # shipped caller already does (the DCC exporters and the preview
@@ -2468,20 +3017,1278 @@ class MeshConvert(HelpMixin):
                 # unrounded where the published one is round(., 6).
                 cls._reconcile_node_markers(edit.gltf, marker_updates)
                 edit.dirty = True
-            elif entries:
+            elif len(entries) > len(out_of_scope):
                 # The one outcome silence gets wrong. Every miss above is warned
                 # individually, but each reads as a per-object detail; a caller
                 # -- and an exporter's log -- needs the TOTAL said once, because
                 # "the scene was never baked" (a clean no-op, returned far
                 # above) and "the bake exists and none of it reached the file"
                 # are the same empty list and wildly different deliverables.
+                # Counted over what this GLB CARRIES: a selection export holds a
+                # subset of a scene-wide manifest, so measuring against the
+                # whole of it called a correct push unlit.
                 logger.warning(
-                    "Lightmaps NOT wired: the manifest lists %d object(s) and "
-                    "none bound -- the GLB ships unlit. Searched %s.",
-                    len(entries),
+                    "Lightmaps NOT wired: %d object(s) in this GLB are baked "
+                    "and none bound -- it ships unlit. Searched %s.",
+                    len(entries) - len(out_of_scope),
                     dirs,
                 )
+            if out_of_scope:
+                logger.info(
+                    "Lightmap manifest covers %d object(s) not in this export "
+                    "(scene-wide manifest, exported subset); ignored.",
+                    len(out_of_scope),
+                )
         return records
+
+    # ------------------------------------------------------------------ #
+    # Animation: say which clip is which in a shot-split deliverable
+    # ------------------------------------------------------------------ #
+
+    #: ``data_export`` channels the shot system publishes (mayatk/blendertk
+    #: ``ShotStore.publish_export_view``): the take list the FBX exporter splits
+    #: its AnimStacks by, and the per-shot extras a take NAME cannot carry.
+    FBX_TAKES_KEY = "fbx_takes"
+    SHOT_METADATA_KEY = "shot_metadata"
+    #: Root-extras key the web viewer reads to choose and place clips
+    #: (``preview_viewer.html``) -- the animation twin of
+    #: :attr:`LIGHTMAP_WEB_KEY`, and written by the same kind of applier:
+    #: derived from the in-band channels at conversion time, so the decoded,
+    #: index-bound view exists in one place instead of in every consumer.
+    ANIMATION_WEB_KEY = "animation_web"
+    #: Schema version of that block.
+    ANIMATION_WEB_VERSION = 1
+    #: ``data_export`` channel carrying the animated visibility that glTF has no
+    #: channel for (mayatk/blendertk ``RenderOpacity.refresh_export_metadata``).
+    #: See :meth:`apply_glb_visibility` for why it cannot ride the FBX.
+    VISIBILITY_TRACKS_KEY = "visibility_tracks"
+    #: Highest ``visibility_tracks`` schema this applier knows how to read.
+    VISIBILITY_TRACKS_VERSION = 1
+
+    @staticmethod
+    def _animation_span(gltf: dict, animation: dict) -> Optional[Tuple[float, float]]:
+        """``(first, last)`` keyframe time of *animation*, in seconds, or ``None``.
+
+        Read off the sampler INPUT accessors' ``min``/``max``, which glTF
+        requires an animation sampler input to carry -- so this costs no buffer
+        decode, and a file that omits them (not a legal one, but this is public
+        API pointed at whatever it is handed) reports no span rather than a
+        wrong one.
+        """
+        accessors = gltf.get("accessors") or []
+        lo: Optional[float] = None
+        hi: Optional[float] = None
+        for sampler in animation.get("samplers") or []:
+            index = sampler.get("input")
+            if not isinstance(index, int) or not 0 <= index < len(accessors):
+                continue
+            accessor = accessors[index] or {}
+            low, high = accessor.get("min"), accessor.get("max")
+            # Shape-checked, not just truthiness: this is public API pointed at
+            # whatever GLB it is handed, and an accessor whose min is a bare
+            # number rather than the spec's array would raise out of a pass
+            # whose whole contract is that it degrades to "no span".
+            if not (isinstance(low, list) and isinstance(high, list)):
+                continue
+            if not low or not high:
+                continue
+            if not isinstance(low[0], (int, float)) or not isinstance(
+                high[0], (int, float)
+            ):
+                continue
+            lo = low[0] if lo is None else min(lo, low[0])
+            hi = high[0] if hi is None else max(hi, high[0])
+        return None if lo is None or hi is None else (float(lo), float(hi))
+
+    @staticmethod
+    def _numeric_pairs(keys: Any) -> List[Sequence[Any]]:
+        """The ``[frame, value]`` entries of *keys* that are actually numbers.
+
+        The tracks arrive as JSON decoded out of a string channel on a node in
+        the deliverable, so their shape is whatever a producer wrote -- and a
+        non-numeric entry would otherwise raise out of a pass whose whole
+        contract is that a malformed channel degrades to "no tracks". Same rule
+        :meth:`_animation_span` applies to accessor bounds, for the same reason.
+        """
+        out: List[Sequence[Any]] = []
+        for key in keys if isinstance(keys, (list, tuple)) else ():
+            if not isinstance(key, (list, tuple)) or len(key) < 2:
+                continue
+            # bool passes the int check, which is correct: a JSON ``true`` is a
+            # legitimate way to write a visibility value.
+            if isinstance(key[0], (int, float)) and isinstance(key[1], (int, float)):
+                out.append(key)
+        return out
+
+    @classmethod
+    def _presence_keys(cls, track: Dict[str, Any]) -> List[Sequence[float]]:
+        """The on/off timeline to GATE this track on -- the fade's, when it has one.
+
+        A DCC that keys opacity as a custom attribute (mayatk's ``RenderOpacity``
+        in its recommended "attribute" mode is one) drives nothing with it: the
+        attribute is metadata for the engine downstream, and the viewport shows
+        only the boolean ``visibility`` mirrored from it. That mirror is
+        ``opacity > 0``, evaluated at the KEYS -- so a fade-in keyed 0 at frame
+        8 and 1 at frame 23 mirrors to visibility 0 at 8 and 1 at 23, and a
+        stepped boolean holds 0 across the whole ramp. Gate on that and the
+        object is ABSENT for the entire fade-in and fully opaque for the entire
+        fade-out: the fade cannot be seen, in Maya or in anything reading the
+        mirror, which is why an authored fade has always arrived as a pop.
+
+        So a track carrying a real ramp is gated on the ramp instead: present
+        wherever the alpha is, or is about to become, non-zero. The object is
+        then there to BE faded, and the ``KHR_animation_pointer`` channels
+        :meth:`apply_glb_fades` writes supply the alpha.
+
+        A track whose "ramp" only ever holds 0 or 1 is not a fade and keeps the
+        mirrored boolean exactly as before -- same predicate as
+        :meth:`_authored_fades`, so the two cannot disagree about what a fade is.
+        """
+        keys = cls._numeric_pairs(track.get("opacity") or [])
+        pairs = [(float(k[0]), float(k[1])) for k in keys]
+        if len(pairs) < 2 or not cls._is_fade(pairs):
+            return track.get("visibility") or []
+        runs: List[Sequence[float]] = []
+        for (t0, v0), (_t1, v1) in zip(pairs, pairs[1:]):
+            # A segment is PRESENT when either end is non-zero: that covers the
+            # ramp out of zero (which is the frame the object has to appear on)
+            # as well as every fully-visible stretch.
+            runs.append([t0, 1.0 if (v0 > 0.0 or v1 > 0.0) else 0.0])
+        runs.append([pairs[-1][0], 1.0 if pairs[-1][1] > 0.0 else 0.0])
+        if runs[0][1] and pairs[0][1] <= 0.0:
+            # BEFORE the ramp begins the object is not there, and a stepped
+            # track is read by holding its first key BACKWARDS -- so a rising
+            # ramp whose first key says "present" would make the object present
+            # for the whole file up to it. Measured: seven nodes turned up in
+            # every shot before the one they fade into. The extra key sits on
+            # the same frame and loses to it (ties resolve to the LAST value),
+            # so it changes nothing from the ramp onward and everything before.
+            runs.insert(0, [pairs[0][0], 0.0])
+        return runs
+
+    @staticmethod
+    def _is_fade(pairs: Sequence[Sequence[float]]) -> bool:
+        """Does this ramp actually fade, or is it a boolean in float clothing?
+
+        Either an intermediate alpha exists, or two keys differ in BOTH time
+        and value -- an endpoint-only ramp still fades when its endpoints
+        straddle time. What makes one a STEP is both keys landing on the same
+        frame.
+        """
+        if any(0.0 < value < 1.0 for _t, value in pairs):
+            return True
+        return any(a[0] != b[0] and a[1] != b[1] for a, b in zip(pairs, pairs[1:]))
+
+    @classmethod
+    def _visibility_runs(
+        cls, keys: Sequence[Sequence[float]], window: Tuple[float, float]
+    ) -> List[Tuple[float, float]]:
+        """Sample a stepped on/off track across *window*, as ``(frame, value)``.
+
+        Three rules, and the last is the one that matters most:
+
+        * The value at the window's first frame is the one HELD there -- the
+          last key at or before it, or the first key's value when the window
+          opens before the track does (a DCC holds the first key backwards).
+        * Keys strictly inside the window follow, in order.
+        * Consecutive equal values collapse, so a track that never switches
+          inside a clip costs one key rather than one per key authored.
+
+        The held-value rule is what stops an object switched off in shot 5 from
+        reappearing in shot 7: shot 7's window contains no key at all, and the
+        naive reading of "no keys here" is "nothing to write", which leaves the
+        node at its full authored scale for the whole clip.
+        """
+        ordered = sorted((float(k[0]), float(k[1])) for k in cls._numeric_pairs(keys))
+        if not ordered:
+            return []
+        start, end = window
+        held = ordered[0][1]
+        for time, value in ordered:
+            if time <= start:
+                held = value
+            else:
+                break
+        samples = [(start, held)]
+        samples.extend((t, v) for t, v in ordered if start < t <= end)
+        runs: List[Tuple[float, float]] = []
+        for time, value in samples:
+            if not runs or runs[-1][1] != value:
+                runs.append((time, value))
+        return runs
+
+    @staticmethod
+    def _strictly_increasing(
+        samples: Sequence[Tuple[float, float]],
+    ) -> List[Tuple[float, float]]:
+        """Collapse *samples* onto strictly increasing times, then onto runs.
+
+        glTF requires an animation sampler's input times to strictly increase,
+        and clamping negative times to zero (a key authored before the clip's
+        own zero) is exactly what produces a tie. The LAST value at a repeated
+        time wins, because it is the later state; the run-collapse then drops
+        any key that changes nothing.
+        """
+        merged: List[Tuple[float, float]] = []
+        for time, value in samples:
+            if merged and merged[-1][0] >= time:
+                merged[-1] = (merged[-1][0], value)
+            else:
+                merged.append((time, value))
+        runs: List[Tuple[float, float]] = []
+        for time, value in merged:
+            if not runs or runs[-1][1] != value:
+                runs.append((time, value))
+        return runs
+
+    @classmethod
+    def apply_glb_clips(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        """Rebuild the declared shot clips as exact slices of the whole timeline.
+
+        Maya's take split is lossy in a way that does not announce itself: it
+        restricts each curve to the take's window and bakes what is left, so a
+        curve with no key inside a shot contributes NO channel to it and the
+        node plays its rest pose for the shot's whole duration. Measured on a
+        12-shot production assembly (358 keys over 2635 frames), Shot_1 through
+        Shot_11 were wrong on EVERY frame -- by up to 3.73 m -- while the
+        whole-timeline stack the same export retains was right on all 2629.
+
+        So the shots are cut here, from that stack, on the deliverable: no scene
+        to reach into, nothing mutated, and the exporter and the preview push
+        get identical clips because they run the same pass.
+        :mod:`~pythontk.file_utils.mesh_convert.glb_clips` does the cutting;
+        this half reads the file (which takes, which rate, which origin).
+
+        Runs FIRST, before :meth:`apply_glb_visibility` writes the presence
+        gates -- the gates belong to the rebuilt clips, and a gate written into
+        a clip this pass then replaces would be discarded with it.
+
+        Needs to know the authoring frame the source stack places at its own
+        ``t=0``, because the converter rebases every stack onto its first key.
+        Three ways, in order: the stack's own ``extras`` (there after this pass
+        has run once, which is what makes a second run exact rather than
+        merely harmless); the producer's published ``clip_span`` for the whole
+        timeline; and otherwise nothing -- a guessed origin would slide every
+        shot by the same wrong amount, which is worse than the split this
+        replaces, so the clips are left as exported.
+
+        Returns:
+            ``{"clips", "channels", "source", "bytes"}``, or ``None`` when
+            there was nothing to rebuild.
+        """
+        from pythontk.file_utils.mesh_convert.glb_clips import GlbClips
+
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            takes = cls.data_export_channel(gltf, cls.FBX_TAKES_KEY)
+            if not isinstance(takes, list) or not takes:
+                return None
+            metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
+            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+            fps = cls._resolve_clip_fps(
+                metadata if isinstance(metadata, dict) else {}, []
+            )
+            if not fps and isinstance(channel, dict):
+                try:
+                    fps = float(channel.get("fps") or 0.0)
+                except (TypeError, ValueError):
+                    fps = 0.0
+            if not fps:
+                logger.warning(
+                    "Clips: the declared takes are quoted in frames and the "
+                    "file carries no frame rate, so they cannot be placed in "
+                    "time -- clips left as exported."
+                )
+                return None
+
+            windows = cls._take_windows(gltf)
+            animations = gltf.get("animations") or []
+            if not animations:
+                # Loud, because the combination is wrong in BOTH deliverables at
+                # once: the handoff names shots a consumer will plan for, and
+                # the file cannot play any of them. Measured on a production
+                # assembly: the FBX was written with bake/takes disarmed, so
+                # the conversion arrived animationless and this pass -- the one
+                # place that knows both halves -- said nothing.
+                logger.warning(
+                    "Clips: the scene declares %d take(s) but the file carries "
+                    "no animations at all -- the FBX was written with animation "
+                    "off (bake/takes disarmed at export), so there is nothing "
+                    "to cut the shots from.",
+                    len(takes),
+                )
+                return None
+            index = GlbClips._source_stack(animations, list(windows))
+            if index is None:
+                return None
+            source = animations[index]
+
+            zero = (source.get("extras") or {}).get(GlbClips.ZERO_FRAME_KEY)
+            if not isinstance(zero, (int, float)):
+                spans = (channel or {}).get("clip_span")
+                span = cls._numeric_pairs(
+                    [
+                        spans.get(cls.DEFAULT_CLIP_SPAN)
+                        if isinstance(spans, dict)
+                        else None
+                    ]
+                )
+                if not span:
+                    logger.warning(
+                        "Clips: nothing says which authored frame %r puts at "
+                        "t=0 (no %r span published), and the converter rebases "
+                        "every stack onto its first key -- clips left as "
+                        "exported.",
+                        source.get("name"),
+                        cls.DEFAULT_CLIP_SPAN,
+                    )
+                    return None
+                zero = float(span[0][0])
+
+            return GlbClips.rebuild(edit, takes, float(fps), float(zero))
+
+    @classmethod
+    def apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        """Realize keyed visibility as STEP ``scale`` channels the file can play.
+
+        glTF animates four things -- translation, rotation, scale and morph
+        weights -- and visibility is none of them. So a DCC's keyed visibility
+        survives the FBX (which has a ``Visibility`` property) and dies at the
+        glTF hop, silently: the objects are all present, all visible, all the
+        time. Measured on a production assembly, that one gap produced three
+        separate-looking complaints -- shots that arrived EMPTY (their only
+        content was visibility), objects that never left after their shot, and
+        "broken" animation in the shots that mixed both.
+
+        The repair writes the one presence channel every glTF viewer already
+        plays. Each gated node gets a ``scale`` channel with ``STEP``
+        interpolation, driving the node between its authored scale and zero; a
+        zero-scale node collapses to a point and rasterizes nothing, which is
+        the established glTF idiom for boolean visibility precisely because it
+        needs no extension. Nothing here is optional for the consumer, so the
+        deliverable a developer loads in their own viewer behaves like the
+        preview without being told anything.
+
+        Smooth *fades* are the other half, and they belong to
+        :meth:`apply_glb_fades` -- alpha is a material property, so it needs
+        ``KHR_animation_pointer`` rather than a node channel. The two have to
+        agree about WHEN, and this pass is where that is decided: a node
+        carrying a real ramp is gated on the ramp instead of on the DCC's
+        mirrored boolean, because the mirror hides it for exactly the frames it
+        should be fading over (see :meth:`_presence_keys`). A node without a
+        ramp steps exactly where the DCC's own playback steps.
+
+        Runs BEFORE :meth:`apply_glb_animations`, which reports on what the
+        clips hold: a shot whose content is entirely visibility is empty until
+        this pass has run, and would otherwise be reported empty and skipped
+        as the file's default clip.
+
+        Reads its inputs out of the deliverable itself -- the
+        :attr:`VISIBILITY_TRACKS_KEY` channel on the ``data_export`` carrier,
+        joined to :attr:`FBX_TAKES_KEY` for the clip windows -- so it is
+        self-feeding and needs no argument from a caller that may not know the
+        scene.
+
+        Parameters:
+            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
+
+        Returns:
+            ``{"nodes": n, "channels": n, "clips": n}`` describing what was
+            written, or ``None`` when the file carries no tracks to apply.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+            if not isinstance(channel, dict):
+                return None
+            version = channel.get("version")
+            if isinstance(version, int) and version > cls.VISIBILITY_TRACKS_VERSION:
+                logger.warning(
+                    "Visibility: the file declares %s schema v%d and this reader "
+                    "knows v%d -- skipped rather than half-applied.",
+                    cls.VISIBILITY_TRACKS_KEY,
+                    version,
+                    cls.VISIBILITY_TRACKS_VERSION,
+                )
+                return None
+            tracks = [
+                t
+                for t in (channel.get("tracks") or [])
+                if isinstance(t, dict) and t.get("node") and t.get("visibility")
+            ]
+            animations = gltf.get("animations") or []
+            if not tracks or not animations:
+                return None
+
+            metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
+            fps = channel.get("fps")
+            if not fps and isinstance(metadata, dict):
+                fps = metadata.get("fps")
+            try:
+                fps = float(fps)
+            except (TypeError, ValueError):
+                fps = 0.0
+            if fps <= 0:
+                # Every key here is a FRAME number, and without the rate it was
+                # authored at there is no time to place it at. Refusing beats
+                # guessing 24 and stepping every gate at the wrong moment.
+                logger.warning(
+                    "Visibility: %d track(s) carry no frame rate, so their frame "
+                    "numbers cannot be placed in time -- visibility not applied.",
+                    len(tracks),
+                )
+                return None
+
+            windows = cls._take_windows(gltf)
+            # A clip that is not a declared take -- the exporter's retained
+            # whole-timeline stack -- spans every take, which is the range the
+            # bake covered. With no takes at all (an animated prop that was
+            # never cut into shots) the tracks' own extent is the only window
+            # there is, and it is the right one: gating still has to happen.
+            if windows:
+                union = (
+                    min(s for s, _ in windows.values()),
+                    max(e for _, e in windows.values()),
+                )
+            else:
+                frames = [
+                    float(key[0])
+                    for track in tracks
+                    for key in cls._numeric_pairs(track["visibility"])
+                ]
+                union = (min(frames), max(frames)) if frames else None
+
+            by_name: Dict[str, List[int]] = {}
+            for index, node in enumerate(gltf.get("nodes") or []):
+                name = node.get("name")
+                if name is not None:
+                    by_name.setdefault(str(name), []).append(index)
+
+            spans = channel.get("clip_span")
+            return cls._write_visibility_channels(
+                edit,
+                tracks,
+                animations,
+                windows,
+                union,
+                by_name,
+                fps,
+                spans if isinstance(spans, dict) else {},
+            )
+
+    #: ``clip_span`` entry describing the clip a take split does NOT name -- the
+    #: converter's retained whole-timeline stack. Not a legal take name, so it
+    #: cannot collide with one.
+    DEFAULT_CLIP_SPAN = "*"
+
+    @classmethod
+    def clip_spans(
+        cls,
+        frames: Iterable[float],
+        takes: Iterable[Any],
+        stack_range: Optional[Sequence[float]] = None,
+    ) -> Dict[str, List[float]]:
+        """Per take, the first and last authored frame inside its window.
+
+        The producer half of what :meth:`_clip_zero` reads back, kept here
+        rather than in each DCC package so the two cannot write the schema
+        differently -- the same reason :meth:`build_scene_sidecar` owns the
+        sidecar envelope. Each toolkit keeps only the part that needs a scene:
+        collecting *frames* (every animated channel's key times, transforms and
+        visibility alike, because the converter sizes a take from all of them).
+
+        The :attr:`DEFAULT_CLIP_SPAN` entry is the whole timeline, for the
+        full-range stack a take split does not name.
+
+        Parameters:
+            frames: Every authored key time in the scene, in frames.
+            takes: ``fbx_takes`` entries -- ``{"name", "start", "end"}``.
+            stack_range: ``(first, last)`` frame the SOURCE STACK will
+                actually carry -- the exported/baked range. Pass it whenever
+                the caller knows it. The converter rebases every stack onto
+                its first key, so the whole-timeline zero must be the first
+                frame the FILE holds, not the first frame the SCENE holds: a
+                key authored before the exported range never reaches the FBX,
+                and letting it set the zero slides every clip cut from that
+                stack by the difference. Measured on a production assembly as
+                a 33-frame slide (first take at 33, scene's first key at 0),
+                which reads as up to 90 cm of apparent distortion while the
+                geometry is exact. Also why a bake matters: it writes a key on
+                every frame of the range, so the stack's first key IS the
+                range start even when the pre-bake scene had none there.
+
+        Returns:
+            ``{take name: [first, last]}``, empty when nothing is animated.
+        """
+        every = sorted(float(f) for f in frames if isinstance(f, (int, float)))
+        bounds = None
+        if stack_range is not None:
+            try:
+                lo, hi = float(stack_range[0]), float(stack_range[1])
+                bounds = [lo, hi]
+            except (TypeError, ValueError, IndexError):
+                bounds = None
+        if not every:
+            return {cls.DEFAULT_CLIP_SPAN: bounds} if bounds else {}
+        spans: Dict[str, List[float]] = {
+            cls.DEFAULT_CLIP_SPAN: bounds if bounds else [every[0], every[-1]]
+        }
+        for take in takes or ():
+            if not isinstance(take, dict):
+                continue
+            try:
+                name = str(take["name"])
+                start, end = float(take["start"]), float(take["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            inside = [t for t in every if start <= t <= end]
+            if inside:
+                spans[name] = [inside[0], inside[-1]]
+        return spans
+
+    @classmethod
+    def build_visibility_tracks(
+        cls,
+        tracks: Sequence[Dict[str, Any]],
+        fps: Optional[float] = None,
+        clip_spans: Optional[Dict[str, List[float]]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Wrap *tracks* in the versioned ``visibility_tracks`` envelope.
+
+        The one place that schema exists. Both DCC packages publish through it
+        rather than shaping the dict themselves, so the channel
+        :meth:`apply_glb_visibility` reads cannot fork between the toolkit that
+        wrote it and the one that did not -- and the two cannot import each
+        other to share it.
+
+        Returns ``None`` when there is nothing to publish, which is the
+        producers' signal to CLEAR the channel rather than stamp an empty one.
+        """
+        if not tracks:
+            return None
+        payload: Dict[str, Any] = {
+            "version": cls.VISIBILITY_TRACKS_VERSION,
+            "tracks": list(tracks),
+        }
+        if fps:
+            payload["fps"] = float(fps)
+        if clip_spans:
+            payload["clip_span"] = clip_spans
+        return payload
+
+    @classmethod
+    def _take_windows(cls, gltf: Dict[str, Any]) -> Dict[str, Tuple[float, float]]:
+        """``{take name: (start frame, end frame)}`` from the ``fbx_takes`` channel.
+
+        Shared by the visibility gate and the clip manifest so a take whose
+        bounds one of them cannot read is skipped by BOTH -- the alternative
+        being a clip that publishes an origin the gates were never placed
+        against.
+        """
+        windows: Dict[str, Tuple[float, float]] = {}
+        for take in cls.data_export_channel(gltf, cls.FBX_TAKES_KEY) or []:
+            if not isinstance(take, dict) or take.get("name") is None:
+                continue
+            try:
+                windows[str(take["name"])] = (
+                    float(take.get("start")),
+                    float(take.get("end")),
+                )
+            except (TypeError, ValueError):
+                continue
+        return windows
+
+    @classmethod
+    def _clip_span_for(
+        cls,
+        name: str,
+        spans: Dict[str, Any],
+        windows: Dict[str, Any],
+    ) -> Optional[Sequence[float]]:
+        """The authored span that applies to the clip called *name*.
+
+        One rule, in one place, because both readers of it place a clip against
+        the frame it returns: the visibility gate and the manifest's
+        ``zero_frame``. Two copies that disagree would put a node's switch and
+        the clip's own published origin at different instants in the same file.
+
+        :attr:`DEFAULT_CLIP_SPAN` describes the converter's retained
+        whole-timeline stack ONLY. Letting a DECLARED take fall back to it
+        would place that take against the whole timeline's zero -- measured at
+        42.5s of drift on a shot 42.5s into the sequence.
+        """
+        span = spans.get(name)
+        if span is None and name not in windows:
+            span = spans.get(cls.DEFAULT_CLIP_SPAN)
+        return span
+
+    @classmethod
+    def _clip_zero(
+        cls,
+        gltf: Dict[str, Any],
+        animation: Dict[str, Any],
+        window: Tuple[float, float],
+        span: Optional[Sequence[float]],
+        fps: float,
+        verify: bool = True,
+    ) -> float:
+        """The authored frame the converter placed at this clip's ``t=0``.
+
+        Not the take's start frame, which is the intuitive answer and the wrong
+        one. Measured against FBX2glTF 0.13.1: a take is emitted spanning its
+        authored keys, not its declared window, and rebased so the FIRST of
+        them lands at zero -- counting the VISIBILITY keys, which size the take
+        even though no channel is emitted for them. A gate placed against the
+        window start therefore drifts by the take's lead-in, which on a
+        production assembly ran to 43 frames.
+
+        The producer publishes that span (it is the only party that can see the
+        curves), and this VERIFIES it against the clip actually in the file:
+        the two agree when the producer's view of the export set matched the
+        converter's. A clip with no channels has nothing to check against and
+        nothing to be misaligned with -- its zero is whatever this returns.
+
+        Parameters:
+            verify: Compare the published span against the clip in the file.
+                Only meaningful BEFORE the gate pass writes, because a gate
+                holds its final state to the end of the shot's window and so
+                legitimately makes the clip longer than the keys the producer
+                measured. A caller reading the zero back out of a finished file
+                (the clip manifest) would otherwise report that growth as a
+                mismatch on every clip it succeeded on.
+        """
+        # A clip built by :meth:`apply_glb_clips` was cut to its window, so it
+        # KNOWS its origin and says so. Everything below is the inference for a
+        # clip that came straight off the converter, where nobody does.
+        from pythontk.file_utils.mesh_convert.glb_clips import GlbClips
+
+        declared = (animation.get("extras") or {}).get(GlbClips.ZERO_FRAME_KEY)
+        if isinstance(declared, (int, float)):
+            return float(declared)
+
+        pair = cls._numeric_pairs([span])
+        if not pair:
+            return window[0]
+        first, last = float(pair[0][0]), float(pair[0][1])
+        if not verify:
+            return first
+        measured = cls._animation_span(gltf, animation)
+        if measured is None:
+            return first  # empty clip: this pass alone defines its zero
+        # One frame of tolerance: the span arrives as authored frames and comes
+        # back as seconds through the converter's own rounding.
+        if abs((last - first) - measured[1] * fps) > 1.0:
+            logger.warning(
+                "Visibility: clip %r spans %.3fs in the file but the scene "
+                "reports frames %g-%g (%.3fs) -- the export set the gate was "
+                "computed against is not the one that shipped, so its switches "
+                "may sit up to %.2fs off.",
+                animation.get("name"),
+                measured[1],
+                first,
+                last,
+                (last - first) / fps,
+                abs((last - first) / fps - measured[1]),
+            )
+        return first
+
+    @classmethod
+    def _write_visibility_channels(
+        cls,
+        edit: "MeshConvert.GlbEdit",
+        tracks: List[Dict[str, Any]],
+        animations: List[Dict[str, Any]],
+        windows: Dict[str, Tuple[float, float]],
+        union: Optional[Tuple[float, float]],
+        by_name: Dict[str, List[int]],
+        fps: float,
+        spans: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Sample every track into every clip and write the channels. One BIN append.
+
+        Split from :meth:`apply_glb_visibility` so the reading of the file
+        (which channel, which schema, which rate) stays separate from the
+        writing of it, and because the write is the half with the ordering
+        constraint: the samples for EVERY clip are computed first, so the
+        buffer grows once rather than once per clip.
+        """
+        nodes = edit.gltf.get("nodes") or []
+        # What each track is GATED on -- its fade's timeline where it has one,
+        # its mirrored boolean where it does not (see :meth:`_presence_keys`).
+        # Paired with the track and resolved once, rather than per clip: the
+        # answer is a property of the track, and deriving it inside the clip
+        # loop would redo the same work once per clip per node.
+        to_gate = [(track, cls._presence_keys(track)) for track in tracks]
+        # (times, values) -> payload slot, so the three nodes that switch on the
+        # same frame with the same authored scale share one accessor pair.
+        payloads: List[bytes] = []
+        slots: Dict[bytes, int] = {}
+
+        def payload_slot(values: Sequence[float]) -> int:
+            raw = struct.pack(f"<{len(values)}f", *values)
+            if raw not in slots:
+                slots[raw] = len(payloads)
+                payloads.append(raw)
+            return slots[raw]
+
+        planned: List[Tuple[Dict[str, Any], int, int, int, float, float, int]] = []
+        missing: Set[str] = set()
+        conflicted: Set[str] = set()
+        baked: Set[str] = set()
+        gated: Set[str] = set()
+        clips: Set[str] = set()
+
+        def report_skips() -> None:
+            """Name every node that asked for a gate and did not get one.
+
+            Runs on BOTH exits -- a pass that wrote nothing has exactly the
+            same thing to report as one that wrote something, and the first
+            draft of this only said it on the way out of the second.
+            """
+            if missing:
+                logger.warning(
+                    "Visibility: %d keyed node(s) are not in this GLB (%s) -- "
+                    "they will be visible for the whole deliverable.",
+                    len(missing),
+                    ", ".join(sorted(missing)),
+                )
+            if conflicted:
+                logger.warning(
+                    "Visibility: %d node(s) already carry a scale animation "
+                    "(%s), so their visibility gate was NOT written -- they "
+                    "stay visible.",
+                    len(conflicted),
+                    ", ".join(sorted(conflicted)),
+                )
+            if baked:
+                logger.warning(
+                    "Visibility: %d node(s) carry a baked matrix (%s), which "
+                    "glTF forbids animating -- their gate was NOT written. "
+                    "Re-export with separate translation/rotation/scale.",
+                    len(baked),
+                    ", ".join(sorted(baked)),
+                )
+
+        for animation in animations:
+            name = str(animation.get("name") or "")
+            window = windows.get(name) or union
+            if window is None:
+                continue
+            zero = cls._clip_zero(
+                edit.gltf,
+                animation,
+                window,
+                cls._clip_span_for(name, spans, windows),
+                fps,
+            )
+            # Nodes this clip already scales: a second channel on the same
+            # node/path is undefined behaviour, so the gate stands down rather
+            # than corrupt an authored scale animation.
+            taken = {
+                (c.get("target") or {}).get("node")
+                for c in (animation.get("channels") or [])
+                if (c.get("target") or {}).get("path") == "scale"
+            }
+            for track, presence in to_gate:
+                target = str(track["node"])
+                indices = by_name.get(target)
+                if not indices:
+                    missing.add(target)
+                    continue
+                runs = cls._visibility_runs(presence, window)
+                if not runs or (len(runs) == 1 and runs[0][1]):
+                    # Visible for the whole clip: the default, so no channel.
+                    continue
+                for index in indices:
+                    if index in taken:
+                        conflicted.add(target)
+                        continue
+                    node = nodes[index]
+                    if node.get("matrix"):
+                        # glTF forbids animating a node that carries a matrix;
+                        # TRS is required. Never seen from FBX2glTF, but this is
+                        # public API pointed at whatever it is handed. Reported
+                        # apart from a scale collision: the two need different
+                        # things done to them, and one warning naming both would
+                        # send the reader looking for the wrong thing.
+                        baked.add(target)
+                        continue
+                    # glTF requires three components; a file that carries fewer
+                    # would raise on the axis walk below rather than degrade.
+                    scale = node.get("scale")
+                    base = (
+                        scale
+                        if isinstance(scale, (list, tuple))
+                        and len(scale) >= 3
+                        and all(isinstance(v, (int, float)) for v in scale[:3])
+                        else [1.0, 1.0, 1.0]
+                    )
+                    # Clamped, because a run can open before the clip's zero --
+                    # and then deduplicated, because clamping is what ties two
+                    # keys to the same instant.
+                    placed = cls._strictly_increasing(
+                        [(max(0.0, (f - zero) / fps), v) for f, v in runs]
+                    )
+                    if not placed or (len(placed) == 1 and placed[0][1]):
+                        continue
+                    # Hold the final state to the END of the shot's window. A
+                    # clip is only as long as its longest sampler, and the
+                    # converter sizes a take from its authored KEYS -- so a
+                    # shot whose content is one object appearing would arrive
+                    # as a clip that ends the instant it appears (measured:
+                    # Shot_1, 93 authored frames, a 0.5s clip). The extra key
+                    # changes nothing on screen and makes the clip last as long
+                    # as the shot it is named after.
+                    tail = max(0.0, (window[1] - zero) / fps)
+                    if tail > placed[-1][0]:
+                        placed.append((tail, placed[-1][1]))
+                    times = [t for t, _ in placed]
+                    output: List[float] = []
+                    for _, value in placed:
+                        on = 1.0 if value else 0.0
+                        output.extend(float(base[axis]) * on for axis in range(3))
+                    planned.append(
+                        (
+                            animation,
+                            index,
+                            payload_slot(times),
+                            payload_slot(output),
+                            times[0],
+                            times[-1],
+                            len(times),
+                        )
+                    )
+                    gated.add(target)
+                    clips.add(name)
+
+        if not planned:
+            report_skips()
+            return None
+
+        views = cls._append_bin_views(edit, payloads)
+        if not views:
+            logger.warning(
+                "Visibility: this GLB's buffer is external, so the tracks have "
+                "nowhere to live -- visibility not applied."
+            )
+            return None
+
+        accessors = edit.gltf.setdefault("accessors", [])
+        # accessor index per (payload slot, kind), so a shared payload is also a
+        # shared accessor -- the same three nodes again.
+        built: Dict[Tuple[int, str], int] = {}
+
+        def accessor(slot: int, kind: str, count: int, span=None) -> int:
+            key = (slot, kind)
+            if key not in built:
+                entry: Dict[str, Any] = {
+                    "bufferView": views[slot],
+                    "componentType": 5126,  # FLOAT
+                    "count": count,
+                    "type": kind,
+                }
+                if span is not None:  # required on an animation sampler input
+                    entry["min"], entry["max"] = [span[0]], [span[1]]
+                accessors.append(entry)
+                built[key] = len(accessors) - 1
+            return built[key]
+
+        for animation, index, in_slot, out_slot, first, last, count in planned:
+            samplers = animation.setdefault("samplers", [])
+            samplers.append(
+                {
+                    "input": accessor(in_slot, "SCALAR", count, (first, last)),
+                    "output": accessor(out_slot, "VEC3", count),
+                    "interpolation": "STEP",
+                }
+            )
+            animation.setdefault("channels", []).append(
+                {
+                    "sampler": len(samplers) - 1,
+                    "target": {"node": index, "path": "scale"},
+                }
+            )
+        edit.dirty = True
+
+        report_skips()
+        logger.info(
+            "Visibility: %d node(s) gated across %d clip(s) via %d STEP scale "
+            "channel(s) -- keyed visibility now plays in any glTF viewer.",
+            len(gated),
+            len(clips),
+            len(planned),
+        )
+        return {"nodes": len(gated), "channels": len(planned), "clips": len(clips)}
+
+    @classmethod
+    def _authored_fades(cls, gltf: Dict[str, Any]) -> Dict[str, List[List[float]]]:
+        """Per-node alpha ramps from the visibility channel, or ``{}``.
+
+        Only ramps that actually ramp: a track whose ``opacity`` merely mirrors
+        its on/off keys says nothing the stepped scale channel does not already
+        say, and writing it as an alpha channel would animate a "fade" that
+        was never authored as one.
+        """
+        channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+        if not isinstance(channel, dict):
+            return {}
+        fades: Dict[str, List[List[float]]] = {}
+        for track in channel.get("tracks") or []:
+            if not isinstance(track, dict) or not track.get("node"):
+                continue
+            keys = [
+                [float(k[0]), float(k[1])]
+                for k in cls._numeric_pairs(track.get("opacity") or [])
+            ]
+            if len(keys) < 2:
+                continue
+            # One predicate, in one place: the gate that makes a node PRESENT
+            # for its fade reads the same answer, and a node gated as fading
+            # whose ramp was not published (or the reverse) would be a node
+            # visible with no alpha to apply.
+            if cls._is_fade(keys):
+                fades[str(track["node"])] = keys
+        return fades
+
+    @classmethod
+    def apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        """Realize authored opacity ramps as animated material alpha.
+
+        The other half of :meth:`apply_glb_visibility`. That pass answers
+        "is it there", which glTF can express as a scale channel every viewer
+        already plays; this one answers "how solid is it", which glTF cannot
+        express at all without ``KHR_animation_pointer`` -- so the ramp is
+        written through that extension, declared in ``extensionsUsed``, and the
+        file fades by itself anywhere the extension is implemented.
+
+        Runs AFTER the gate, and the order is load-bearing in both directions:
+        a node has to be PRESENT during its ramp for the ramp to be visible
+        (see :meth:`_presence_keys`), and the clip has to end up with a channel
+        so it is not reported as an empty shot -- for a shot whose only content
+        was a fade, this pass is that channel.
+
+        Reads its inputs out of the deliverable itself, like its neighbours.
+        :mod:`~pythontk.file_utils.mesh_convert.glb_fades` does the writing.
+
+        Returns:
+            ``{"nodes", "materials", "channels"}``, or ``None`` when the file
+            carries no authored ramp.
+        """
+        from pythontk.file_utils.mesh_convert.glb_fades import GlbFades
+
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            fades = cls._authored_fades(gltf)
+            if not fades:
+                return None
+            metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
+            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+            fps = cls._resolve_clip_fps(
+                metadata if isinstance(metadata, dict) else {}, []
+            )
+            if not fps and isinstance(channel, dict):
+                try:
+                    fps = float(channel.get("fps") or 0.0)
+                except (TypeError, ValueError):
+                    fps = 0.0
+            if not fps:
+                logger.warning(
+                    "Fades: %d authored ramp(s) carry no frame rate, so their "
+                    "frame numbers cannot be placed in time -- not applied.",
+                    len(fades),
+                )
+                return None
+
+            windows = cls._take_windows(gltf)
+            spans = (channel or {}).get("clip_span")
+            if not isinstance(spans, dict):
+                spans = {}
+            union = (
+                (
+                    min(s for s, _ in windows.values()),
+                    max(e for _, e in windows.values()),
+                )
+                if windows
+                else None
+            )
+            # Each clip's own window and origin, resolved exactly the way the
+            # gate resolves them -- a ramp placed against a different zero than
+            # the gate it accompanies would fade at a different instant than
+            # the object appears.
+            clip_windows: Dict[str, Tuple[float, float]] = {}
+            zeros: Dict[str, float] = {}
+            for animation in gltf.get("animations") or []:
+                name = str(animation.get("name") or "")
+                window = windows.get(name) or union
+                if window is None:
+                    continue
+                clip_windows[name] = window
+                zeros[name] = cls._clip_zero(
+                    gltf,
+                    animation,
+                    window,
+                    cls._clip_span_for(name, spans, windows),
+                    float(fps),
+                    verify=False,
+                )
+            if not clip_windows:
+                return None
+            return GlbFades.apply(edit, fades, clip_windows, zeros, float(fps))
+
+    @classmethod
+    def apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        """Publish the GLB's clips as ``extras.animation_web``, joined to the shots.
+
+        The GLB consumer half of the shots contract, and the answer to three
+        things a shot-split deliverable cannot say for itself (all measured on
+        Maya 2025 -> FBX2glTF 0.13.1):
+
+        * **Which clip is a shot.** Maya's exporter keeps its whole-timeline
+          ``Take 001`` AnimStack alongside the takes it was asked to split out,
+          and it converts to ``animations[0]`` -- so the naive
+          ``clipAction(animations[0])`` plays the entire timeline rather than
+          the first shot. Each clip here carries ``declared`` -- whether a shot
+          asked for it -- and ``default_clip`` names the one to open on.
+        * **Where a clip sits on the timeline.** The converter rebases every
+          clip to t=0, which is right for playback and loses the sequence: a
+          shot authored at frames 20-30 and one at 1-10 both start at zero.
+          The declared frame range rides on each clip, with ``offset`` (its
+          first DECLARED frame in seconds) and ``zero_frame`` -- the authored
+          frame the converter actually put at t=0. The two differ, and only
+          the second one converts a playhead: a take is rebased to its first
+          authored KEY rather than to its window, so a clip whose motion
+          starts late carries a lead-in (measured at 43 frames on a production
+          assembly). ``zero_frame`` is what maps clip time back to the frame
+          numbers every other field here is quoted in.
+        * **What the frames MEAN.** Frame numbers need the rate they were
+          authored at; ``fps`` carries it.
+
+        Reads its inputs out of the deliverable itself (the ``fbx_takes`` and
+        ``shot_metadata`` channels on the ``data_export`` carrier) rather than
+        from the host, so it is self-feeding: it runs unconditionally after
+        every conversion, is a clean no-op on a GLB with no animation, and
+        needs no argument from a caller that may not know the scene. A GLB with
+        animation but no declared shots still gets the block -- names, spans
+        and rate are what a player needs whether or not shots exist.
+
+        Also the one place the double encoding is undone. The channels arrive
+        as JSON *strings* nested under ``extras.fromFBX.userProperties`` (a
+        consumer has to parse the JSON it just parsed), and they are left there
+        as provenance; this block is the decoded reading, and it cannot drift
+        from them because it is derived from them in the same pass.
+
+        Parameters:
+            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
+
+        Returns:
+            The published manifest, or ``None`` when the file has no animation.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            animations = gltf.get("animations") or []
+            if not animations:
+                return None
+
+            takes = cls.data_export_channel(gltf, cls.FBX_TAKES_KEY) or []
+            metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY) or {}
+            if not isinstance(takes, list):
+                takes = []
+            if not isinstance(metadata, dict):
+                metadata = {}
+            by_name = {
+                str(t.get("name")): t
+                for t in takes
+                if isinstance(t, dict) and t.get("name") is not None
+            }
+            by_clip = {
+                str(s.get("clip")): s
+                for s in (metadata.get("shots") or [])
+                if isinstance(s, dict) and s.get("clip") is not None
+            }
+
+            clips: List[Dict[str, Any]] = []
+            for index, animation in enumerate(animations):
+                name = animation.get("name") or f"animation_{index}"
+                clip: Dict[str, Any] = {"name": name, "animation": index}
+                if not (animation.get("channels") or []):
+                    # Named, listed, and carrying nothing. Maya's split emits an
+                    # AnimStack per declared range but bakes no curve for a range
+                    # in which nothing moves (a hold, or a shot whose motion
+                    # belongs to objects outside the export), so this is a normal
+                    # authoring outcome rather than a conversion failure -- and
+                    # it is invisible from the clip list, which is what made it
+                    # read as broken animation instead of an empty shot.
+                    clip["empty"] = True
+                span = cls._animation_span(gltf, animation)
+                if span:
+                    clip["duration"] = round(span[1] - span[0], 6)
+                take = by_name.get(name)
+                # "declared", not "is a shot": a clip the shot system asked for
+                # is the one a player should offer; the rest (Maya's retained
+                # full-range stack, anything authored outside the Shots panel)
+                # is playable but unnamed by the pipeline.
+                clip["declared"] = take is not None
+                if take is not None:
+                    clip["start_frame"] = take.get("start")
+                    clip["end_frame"] = take.get("end")
+                shot = by_clip.get(name)
+                if shot is not None:
+                    for key in ("description", "objects", "section"):
+                        if shot.get(key):
+                            clip[key] = shot[key]
+                clips.append(clip)
+
+            fps = cls._resolve_clip_fps(metadata, clips)
+            if fps:
+                windows = cls._take_windows(gltf)
+                union = (
+                    (
+                        min(s for s, _ in windows.values()),
+                        max(e for _, e in windows.values()),
+                    )
+                    if windows
+                    else None
+                )
+                channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+                spans = (channel or {}).get("clip_span")
+                if not isinstance(spans, dict):
+                    spans = {}
+                for index, clip in enumerate(clips):
+                    start = clip.get("start_frame")
+                    if isinstance(start, (int, float)):
+                        # Where this clip's first frame sits on the AUTHORING
+                        # timeline, in seconds. The clip's own times start at
+                        # zero, so without this a sequence cannot be rebuilt
+                        # from the file.
+                        clip["offset"] = round(start / fps, 6)
+                    window = windows.get(clip["name"]) or union
+                    span = cls._clip_span_for(clip["name"], spans, windows)
+                    if window is None and span is None:
+                        # Neither a declared window nor a published span: there
+                        # is nothing to place this clip against, and a guessed
+                        # origin is worse than an absent one.
+                        continue
+                    # NOT start_frame, and that is the whole point: the
+                    # converter rebases a take to its first authored KEY, not
+                    # to its declared window, so t=0 sits at the take's lead-in
+                    # -- measured at 43 frames (1.43s) into Shot_5 of a
+                    # production assembly. Every frame number published
+                    # elsewhere in this block is an AUTHORING frame, so this is
+                    # the one value that lets a
+                    # consumer convert between the two:
+                    #
+                    #     authoring_frame = zero_frame + clip_time * fps
+                    #
+                    # Falls back to the window start when the scene published
+                    # no spans -- the best available answer, and the one a
+                    # consumer would have assumed anyway.
+                    clip["zero_frame"] = round(
+                        cls._clip_zero(
+                            gltf,
+                            animations[index],
+                            # ``_clip_zero`` reads the window ONLY when there is
+                            # no span, and the guard above has ruled out both
+                            # being absent -- so this placeholder can never be
+                            # the answer it returns.
+                            window or (0.0, 0.0),
+                            span,
+                            fps,
+                            # The gate pass already checked this span against
+                            # the file, and has since extended these clips to
+                            # their window ends; re-checking here would report
+                            # its own tail-hold as a misalignment on every clip.
+                            verify=False,
+                        ),
+                        6,
+                    )
+
+            declared = [c for c in clips if c["declared"]]
+            # The clip to open on: the first DECLARED one that can actually
+            # PLAY, because a deliverable that went to the trouble of splitting
+            # shots means the shots -- but opening on an empty one shows 0.00s
+            # of nothing and reads as broken animation rather than as a shot
+            # that holds. Measured on a production assembly whose Shot_1 was a
+            # hold: the preview opened dead with 11 populated clips behind it.
+            # Each fallback is narrower than the last, and the final one is
+            # unconditional: a file where every clip is empty still gets a
+            # default, since naming no clip at all is worse than naming a
+            # quiet one.
+            playable = [c for c in declared if not c.get("empty")] or [
+                c for c in clips if not c.get("empty")
+            ]
+            manifest: Dict[str, Any] = {
+                "version": cls.ANIMATION_WEB_VERSION,
+                "clips": clips,
+                "default_clip": (playable or declared or clips)[0]["name"],
+            }
+            if fps:
+                manifest["fps"] = fps
+
+            hollow = [c["name"] for c in declared if c.get("empty")]
+            if hollow:
+                # Not an error -- a declared range can legitimately hold still --
+                # but the one thing a reviewer needs told, because the clip is
+                # in the list, in the player's dropdown, and plays as nothing.
+                logger.info(
+                    "Animation: %d declared shot(s) carry no keyframes (%s); "
+                    "listed and marked empty, and not opened on.",
+                    len(hollow),
+                    ", ".join(hollow),
+                )
+
+            missing = sorted(set(by_name) - {c["name"] for c in clips})
+            if missing:
+                # Loud, like every lightmap miss: the takes were declared and
+                # the file does not carry them, which means the split did not
+                # run (the exporter's task is off) or the names disagree. Both
+                # ship a deliverable whose metadata describes clips it lacks.
+                #
+                # The CONSEQUENCE is spelled out because the bare fact reads as
+                # bookkeeping: measured on a production assembly, the WebXR
+                # preview of the same scene carried 12 named shots and this
+                # deliverable carried one continuous clip -- the reviewer's
+                # only clue that they were not looking at the same thing.
+                logger.warning(
+                    "Animation: %d declared take(s) have no clip in the GLB "
+                    "(%s) -- the take split did not reach this file, so it "
+                    "carries %d clip(s) where the scene declares %d shot(s). "
+                    "A consumer that plays a named shot will not find one.",
+                    len(missing),
+                    ", ".join(missing),
+                    len(clips),
+                    len(by_name),
+                )
+
+            gltf.setdefault("extras", {})[cls.ANIMATION_WEB_KEY] = manifest
+            edit.dirty = True
+            return manifest
+
+    @staticmethod
+    def _resolve_clip_fps(
+        metadata: Dict[str, Any], clips: List[Dict[str, Any]]
+    ) -> Optional[float]:
+        """The rate the frame numbers were authored at, or ``None``.
+
+        Published by the shot system (``shot_metadata.fps``) and taken from
+        there when present. Older producers did not publish it, so it is
+        derived from the first declared clip that carries both a frame range
+        and a measured span -- the two describe the same interval, one in
+        frames and one in seconds, so their ratio IS the rate. Derivation needs
+        at least two frames: a single-frame take spans zero seconds and would
+        divide by nothing.
+        """
+        published = metadata.get("fps")
+        if isinstance(published, (int, float)) and published > 0:
+            return round(float(published), 6)
+        for clip in clips:
+            start, end = clip.get("start_frame"), clip.get("end_frame")
+            duration = clip.get("duration")
+            if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                continue
+            if not duration or end <= start:
+                continue
+            return round((end - start) / duration, 6)
+        return None
 
     # ------------------------------------------------------------------ #
     # Post-conversion material sanity check
@@ -2779,7 +4586,64 @@ class MeshConvert(HelpMixin):
         edit.json_len = len(new_json)
 
     @staticmethod
-    def _relocate_embedded_images(edit: "MeshConvert.GlbEdit") -> int:
+    def _append_bin_views(
+        edit: "MeshConvert.GlbEdit", payloads: Sequence[bytes]
+    ) -> List[int]:
+        """Append *payloads* to the BIN as new bufferViews; return their indices.
+
+        The one place bytes are added to a GLB's buffer, shared by the image
+        relocator and the visibility writer. Append-only by construction: the
+        existing BIN is copied verbatim and the new payloads land past its end,
+        so every prior bufferView keeps its index, its ``byteOffset`` and its
+        bytes, and no accessor is touched. Each payload is padded to a 4-byte
+        boundary, which is what an accessor reading it requires.
+
+        Returns ``[]`` without touching the file when there is nothing to
+        append, or when buffer 0 is EXTERNAL (declares a ``uri``): such a GLB
+        has no BIN to append to, and writing one would strand the appended
+        views on bytes the file does not carry while overwriting that buffer's
+        ``byteLength``. Callers treat the empty list as "not possible here" and
+        leave their payload wherever it already is.
+        """
+        if not payloads:
+            return []
+        gltf = edit.gltf
+        buffers = gltf.setdefault("buffers", [])
+        if buffers and buffers[0].get("uri"):
+            return []
+
+        # The existing BIN joins in as a memoryview rather than a `bytes` copy:
+        # on a production GLB that copy is the entire geometry, and `join`
+        # reads the view directly, so peak memory is one BIN, not two.
+        blob = edit.bin_data
+        chunks: List[Any] = [] if blob is None else [blob]
+        offset = 0 if blob is None else len(blob)
+        pad = (4 - (offset % 4)) % 4
+        if pad:  # the appended views must start 4-byte aligned
+            chunks.append(b"\x00" * pad)
+            offset += pad
+
+        views = gltf.setdefault("bufferViews", [])
+        added: List[int] = []
+        for raw in payloads:
+            views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(raw)})
+            added.append(len(views) - 1)
+            chunks.append(raw)
+            offset += len(raw)
+            tail = (4 - (len(raw) % 4)) % 4
+            if tail:
+                chunks.append(b"\x00" * tail)
+                offset += tail
+
+        new_bin = b"".join(chunks)
+        if not buffers:  # a GLB that carried no BIN at all now has one
+            buffers.append({})
+        buffers[0]["byteLength"] = len(new_bin)
+        edit.replace_rest(new_bin)
+        return added
+
+    @classmethod
+    def _relocate_embedded_images(cls, edit: "MeshConvert.GlbEdit") -> int:
         """Move this session's embedded images from the JSON chunk into the BIN.
 
         Every channel writer embeds as a ``data:`` URI, which keeps its edit
@@ -2791,10 +4655,8 @@ class MeshConvert(HelpMixin):
         before a loader can draw. This pays the JSON back down once, on close,
         after every writer has had its say.
 
-        Safe because it only ever **appends**: the existing BIN is copied
-        verbatim and the new payloads land past its end, so every prior
-        bufferView keeps its index, its ``byteOffset`` and its bytes, and no
-        accessor is touched. That is the whole difference from
+        Safe because it only ever **appends** (see :meth:`_append_bin_views`,
+        which does the appending). That is the whole difference from
         ``optimize_glb_textures``, which rewrites payloads in place and so must
         recompute the offsets this pass leaves alone.
 
@@ -2821,44 +4683,16 @@ class MeshConvert(HelpMixin):
         ]
         if not live:
             return 0
-        # Buffer 0 is the BIN chunk only when it declares no ``uri``. A GLB
-        # whose first buffer is EXTERNAL has no BIN to append to, and writing
-        # one would strand the appended views on bytes the file does not carry
-        # while overwriting that buffer's byteLength. Leave the payloads in the
-        # JSON: base64 is a size cost, corrupting the buffer table is not.
-        buffers = gltf.setdefault("buffers", [])
-        if buffers and buffers[0].get("uri"):
+        # Leave the payloads in the JSON when there is no BIN to append to:
+        # base64 is a size cost, corrupting the buffer table is not.
+        views = cls._append_bin_views(
+            edit, [base64.b64decode(image["uri"].split(",", 1)[1]) for image in live]
+        )
+        if not views:
             return 0
-
-        # The existing BIN joins in as a memoryview rather than a `bytes` copy:
-        # on a production GLB that copy is the entire geometry, and `join`
-        # reads the view directly, so peak memory is one BIN, not two.
-        blob = edit.bin_data
-        chunks = [] if blob is None else [blob]
-        offset = 0 if blob is None else len(blob)
-        pad = (4 - (offset % 4)) % 4
-        if pad:  # the appended views must start 4-byte aligned
-            chunks.append(b"\x00" * pad)
-            offset += pad
-
-        views = gltf.setdefault("bufferViews", [])
-        for image in live:
-            raw = base64.b64decode(image["uri"].split(",", 1)[1])
-            views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(raw)})
-            image["bufferView"] = len(views) - 1
+        for image, view in zip(live, views):
+            image["bufferView"] = view
             image.pop("uri", None)
-            chunks.append(raw)
-            offset += len(raw)
-            tail = (4 - (len(raw) % 4)) % 4
-            if tail:
-                chunks.append(b"\x00" * tail)
-                offset += tail
-
-        new_bin = b"".join(chunks)
-        if not buffers:  # a GLB that carried no BIN at all now has one
-            buffers.append({})
-        buffers[0]["byteLength"] = len(new_bin)
-        edit.replace_rest(new_bin)
         return len(live)
 
     @classmethod
@@ -2932,10 +4766,21 @@ class MeshConvert(HelpMixin):
                 f"GLB texture pass ({image_format}) changed nothing: no "
                 "embedded image improved on its original bytes."
             )
+        resized = summary.get("resized") or 0
         if not max_size:
-            did = "container only, pixels untouched"
-        elif summary.get("resized"):
-            did = f"{summary['resized']} resampled down to fit {max_size}px"
+            # "Never CLAMP", which is not "never resample": KTX2 snaps every
+            # non-exempt image down to a power of two whatever the ceiling
+            # (KHR_texture_basisu needs multiple-of-4 edges and a full mip
+            # pyramid), so an unconditional "pixels untouched" here is the same
+            # false claim this method exists to remove -- over the delivery mode
+            # where a silently halved map is what someone would go looking for.
+            did = (
+                f"{resized} snapped down to power-of-two for {image_format}"
+                if resized
+                else "container only, pixels untouched"
+            )
+        elif resized:
+            did = f"{resized} resampled down to fit {max_size}px"
         else:
             did = f"none resampled - all were already within {max_size}px"
         return (
@@ -2945,12 +4790,124 @@ class MeshConvert(HelpMixin):
             f"{summary['bytes_after'] / 1e6:.1f} MB ({did})."
         )
 
+    #: Texture-container extensions this class binds, and therefore owns the
+    #: declarations for. Anything else in ``extensionsUsed`` (material
+    #: extensions, ``KHR_texture_transform`` from the lightmap pass) is another
+    #: writer's claim and is never touched by the reconciliation below.
+    #:
+    #: Also the complete list of places a texture can name its image BESIDE the
+    #: core ``source``, which is why `GlbEdit.image_for_texture` (resolving a
+    #: binding) and `dedupe_glb_images` (rewriting one) both read it: three
+    #: hand-written copies of these two names is exactly how one of them ends
+    #: up not knowing about the next container added here.
+    #:
+    #: Ordered by RESOLUTION PRECEDENCE, basisu first, for `image_for_texture`,
+    #: which takes the first binding it finds. The KTX2 encode pops any webp
+    #: binding before writing its own, so the two provably never coexist today
+    #: and the order is moot -- but that guarantee lives in a distant method,
+    #: and a set whose iteration order is load-bearing somewhere should not
+    #: depend on it. `_reconcile_texture_extensions` handles each name
+    #: independently and is order-free.
+    TEXTURE_CONTAINER_EXTENSIONS = ("KHR_texture_basisu", "EXT_texture_webp")
+
+    @classmethod
+    def _reconcile_texture_extensions(cls, gltf: Dict[str, Any]) -> None:
+        """Re-derive the texture-container extension declarations from the bindings.
+
+        ``extensionsUsed`` and ``extensionsRequired`` are claims about what a
+        file's textures ACTUALLY carry, and every re-encode can invalidate
+        them. Declaring them incrementally -- each pass appending what it just
+        did -- cannot retract a superseded pass's claim: a WebP delivery
+        requires ``EXT_texture_webp`` (nothing core-readable survives it), a
+        later KTX2 pass re-encodes past those bindings, and the requirement
+        outlived the last binding needing it. glTF 2.0 makes
+        ``extensionsRequired`` a **subset** of ``extensionsUsed``, so that
+        leftover did not merely warn -- it shipped a file demanding a
+        capability it no longer declared, which stock validators reject.
+
+        Derived instead, from the only place the truth lives (the textures):
+
+        - **used** when some texture binds the extension;
+        - **required** only when some binding of it has no core-readable
+          ``source`` for a stock reader to degrade to -- by construction a
+          ``source`` survives beside a container extension only when it points
+          at a real PNG/JPEG twin.
+
+        Both arrays carry ``minItems: 1``, so one emptied of this class's
+        extensions is removed rather than shipped as ``[]``. Idempotent, and
+        self-healing on a file that arrives with stale declarations.
+        """
+        textures = gltf.get("textures") or []
+        for name in cls.TEXTURE_CONTAINER_EXTENSIONS:
+            bindings = [t for t in textures if name in (t.get("extensions") or {})]
+            claims = (
+                ("extensionsUsed", bool(bindings)),
+                ("extensionsRequired", any("source" not in t for t in bindings)),
+            )
+            for key, holds in claims:
+                declared = gltf.get(key) or []
+                if holds and name not in declared:
+                    declared.append(name)
+                    gltf[key] = declared
+                elif name in declared and not holds:
+                    declared.remove(name)
+                if key in gltf and not gltf[key]:
+                    del gltf[key]
+
+    @classmethod
+    def web_delivery_texture_params(
+        cls,
+        image_format: Optional[str] = None,
+        max_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """:meth:`optimize_glb_textures` kwargs for a WEB deliverable.
+
+        The one definition of "finished for the web", so the producers of that
+        deliverable cannot each hold their own. They did, and it showed:
+        measured on one production assembly, in one session, from one scene --
+        the WebXR preview shipped 8.71 MB of WebP, the scene exporter with its
+        panel dials untouched shipped 280.13 MB of full-resolution PNG, and the
+        same exporter with the dials set to WebP shipped 22.06 MB because its
+        size ceiling resolved from an absent template budget to "never
+        resample". An artist approves the first and hands a developer the
+        second; nothing in either log says they differ.
+
+        Both parameters distinguish *unspecified* from *chosen*: ``None`` takes
+        the policy, and any other value -- ``0`` for "keep every pixel"
+        included -- is the caller's decision. That matters because the callers
+        pass values resolved from UI dials whose own "unset" is falsy, and a
+        falsy default reaching :meth:`optimize_glb_textures` as an explicit
+        argument stops inheriting anything and starts meaning something.
+
+        Deliberately NOT covering ``ktx2_fallback``: it answers "must this open
+        in a stock glTF importer?", which is a property of the CONSUMER rather
+        than of the delivery. The preview streams to a page that wires
+        ``KTX2Loader`` and says ``False``; an exporter handing a developer an
+        asset that must also open in Blender or Unreal says ``True``. A shared
+        default there would silently make one of them wrong.
+
+        Parameters:
+            image_format: Container override; ``None``/empty takes
+                :attr:`WEB_DELIVERY_FORMAT`.
+            max_size: Longest-edge ceiling in pixels; ``None`` takes
+                :attr:`WEB_DELIVERY_MAX_SIZE`, ``0`` skips resizing.
+
+        Returns:
+            ``{"image_format": str, "max_size": int}``.
+        """
+        return {
+            "image_format": image_format or cls.WEB_DELIVERY_FORMAT,
+            "max_size": (
+                cls.WEB_DELIVERY_MAX_SIZE if max_size is None else int(max_size)
+            ),
+        }
+
     @classmethod
     def optimize_glb_textures(
         cls,
         glb: GlbTarget,
-        max_size: int = 2048,
-        image_format: str = "WEBP",
+        max_size: int = WEB_DELIVERY_MAX_SIZE,
+        image_format: str = WEB_DELIVERY_FORMAT,
         quality: int = 85,
         workers: Optional[int] = None,
         ktx2_fallback: bool = True,
@@ -2976,13 +4933,20 @@ class MeshConvert(HelpMixin):
         core permits image/jpeg and image/png only, does not allow. WebP is
         alpha-capable, universally decoded by WebXR-class browsers, and roughly
         an order of magnitude smaller than PNG at visually equal quality.
-        Lightmaps are exempt from the resize (the bake sized them
-        deliberately) and re-encode LOSSLESS (lossy WebP's 4:2:0 chroma
-        blotches magenta/green on near-black texels); exemption is both by
-        the names the ``lightmap_web`` manifest lists and structurally, by
-        texCoord-1 occlusion/emissive binding, so a digest-deduped image
-        whose name lies is still protected. A re-encode that comes out
-        larger keeps the original bytes.
+
+        The lossy encoder is used only where the channels ARE colour -- base
+        colour and emissive (:attr:`LOSSY_SAFE_SEMANTICS`). Normal and
+        metallic-roughness/occlusion maps re-encode LOSSLESS, because WebP's
+        lossy mode is YUV 4:2:0 and their X/Z and metalness/occlusion channels
+        sit in the half-resolution chroma planes, where they are resampled as
+        if the eye were judging them; the same split
+        :attr:`BASIS_BY_SEMANTIC` makes for KTX2. Lightmaps are additionally
+        exempt from the resize (the bake sized them deliberately) and lossless
+        whatever they are sampled as; that exemption is both by the names the
+        ``lightmap_web`` manifest lists and structurally, by texCoord-1
+        occlusion/emissive binding, so a digest-deduped image whose name lies
+        is still protected. A re-encode that comes out larger keeps the
+        original bytes.
 
         The BIN chunk is repacked -- image payloads replaced, former data-URI
         images relocated into it (dropping base64's 33%), every other
@@ -3127,19 +5091,29 @@ class MeshConvert(HelpMixin):
                     if src is not None:
                         exempt_indices.add(src)
 
-            # KTX2 mode encodes per SLOT semantic (codec + colorspace), so the
+            # Both non-core containers encode per SLOT semantic -- KTX2 picks
+            # the codec and transfer, WebP picks lossy or lossless -- so the
             # classification has to happen while the glTF structure is in hand.
-            semantic_by_image = cls._image_semantics(edit) if is_ktx2 else {}
+            semantic_aware = is_ktx2 or image_format == "WEBP"
+            semantic_by_image = cls._image_semantics(edit) if semantic_aware else {}
+            #: Whether this pass hands a non-exempt image a container glTF core
+            #: cannot read. Both are legal only through a TEXTURE-level
+            #: extension (``KHR_texture_basisu`` / ``EXT_texture_webp``), which
+            #: needs a texture to bind -- so the question "may this image take
+            #: the new container" is the same question for both, and gating
+            #: only the basisu one left a WebP delivery re-encoding every
+            #: orphan it found into a mime nothing in the file enables.
+            non_core_output = is_ktx2 or image_format == "WEBP"
             # The images some texture actually samples -- resolved through the
             # shadow-aware walk, so a re-run over an already-optimized GLB sees
-            # the EFFECTIVE binding rather than a stale plain ``source``. In
-            # KTX2 mode this gates the encode itself (below).
+            # the EFFECTIVE binding rather than a stale plain ``source``. Gates
+            # the encode itself (below) whenever the output is non-core.
             sampled: Set[Optional[int]] = (
                 {
                     edit.image_for_texture(t_index)
                     for t_index in range(len(gltf.get("textures") or []))
                 }
-                if is_ktx2
+                if non_core_output
                 else set()
             )
 
@@ -3149,8 +5123,9 @@ class MeshConvert(HelpMixin):
             # a source texture and as a lightmap must not share the resized
             # encoding; the semantic for the same reason -- bytes sampled as a
             # normal map in one material and as base color in another need a
-            # UASTC and an ETC1S encode respectively. (Outside KTX2 mode the
-            # semantic is a constant None and the key degenerates to the pair.)
+            # UASTC and an ETC1S encode respectively, and in WebP mode a
+            # lossless and a lossy one. (In PNG mode the semantic is a constant
+            # None and the key degenerates to the pair.)
             before = after = 0
             jobs: Dict[Tuple[str, bool, Optional[str]], bytes] = {}
             #: job key -> did its pixels actually get resampled. Reported so a
@@ -3169,25 +5144,24 @@ class MeshConvert(HelpMixin):
                 is_exempt = (
                     index in exempt_indices or (image.get("name") or "") in exempt
                 )
-                if is_ktx2 and not is_exempt and index not in sampled:
+                if non_core_output and not is_exempt and index not in sampled:
                     # No texture samples this image, so nothing can rebind it
-                    # through KHR_texture_basisu -- and that declaration is
-                    # gated on an actual rebind *deliberately*: it lands in
-                    # extensionsREQUIRED, which would hard-require a
-                    # basisu-capable viewer for a binding no texture has.
-                    # Encoding anyway left the other half of that pair
-                    # ungated: the mime rewrite below is driven by
-                    # ``replacements``, so a GLB whose textures resolve to
-                    # none of them shipped ``image/ktx2`` with no extension
-                    # enabling it -- and glTF 2.0 core permits image/jpeg and
+                    # through the container's texture extension -- and that
+                    # declaration is gated on an actual rebind *deliberately*:
+                    # it can land in extensionsREQUIRED, which would hard-require
+                    # a capable viewer for a binding no texture has. Encoding
+                    # anyway left the other half of that pair ungated: the mime
+                    # rewrite below is driven by ``replacements``, so a GLB
+                    # whose textures resolve to none of them shipped
+                    # ``image/ktx2`` -- or ``image/webp`` -- with no extension
+                    # enabling it, and glTF 2.0 core permits image/jpeg and
                     # image/png only. Keeping the bytes as found is valid
-                    # either way, and an image no texture reads is dead
-                    # payload whichever format it is in. (Exempt lightmaps
-                    # take the WebP path, whose declaration is unconditional,
-                    # so they are safe unsampled.)
+                    # either way, and an image no texture reads is dead payload
+                    # whichever format it is in. Exempt lightmaps are bound by
+                    # the pass that marks them, so they are never orphans.
                     after += len(payload)
                     continue
-                semantic = semantic_by_image.get(index) if is_ktx2 else None
+                semantic = semantic_by_image.get(index) if semantic_aware else None
                 key = (hashlib.sha256(payload).hexdigest(), is_exempt, semantic)
                 key_by_index[index] = key
                 jobs.setdefault(key, payload)
@@ -3313,13 +5287,27 @@ class MeshConvert(HelpMixin):
                     pil_format = image_format
                 if pil_format == "PNG":
                     save_kwargs = {}
-                elif is_exempt and pil_format == "WEBP":
-                    # Lightmaps must round-trip pixel-exact. Lossy WebP is
-                    # YUV 4:2:0 -- chroma at half resolution, quantized --
-                    # which on near-black lightmap texels shows as magenta/
-                    # green blotching and smears color across atlas rect
-                    # borders. Lossless WebP still beats the source PNG.
-                    save_kwargs = {"lossless": True, "quality": 100}
+                elif pil_format == "WEBP" and (
+                    is_exempt or semantic not in cls.LOSSY_SAFE_SEMANTICS
+                ):
+                    # Lossy WebP is YUV 4:2:0 -- chroma at half resolution,
+                    # quantized -- so it is only safe where the channels ARE
+                    # colour (:attr:`LOSSY_SAFE_SEMANTICS`).
+                    #
+                    # A lightmap (*is_exempt*) must round-trip pixel-exact: on
+                    # near-black texels the subsampling shows as magenta/green
+                    # blotching and smears colour across atlas rect borders.
+                    # A normal or ORM map is worse off still, because its
+                    # channels are not colour at all -- X and Z of a normal,
+                    # and occlusion/metalness of an ORM, sit in the chroma
+                    # planes and get resampled as if the eye were judging them.
+                    # Measured on this pipeline's own maps, 4K sources through
+                    # the 2K ceiling at quality 85: base colour holds 37.6 dB,
+                    # while normal X falls to 31.7 dB and ORM metalness to
+                    # 30.8 dB. That reads as smeared normals and flat, uniform
+                    # roughness -- the deliverable looking like it shipped
+                    # without those maps rather than with damaged ones.
+                    save_kwargs = dict(cls.LOSSLESS_WEBP)
                 else:
                     save_kwargs = {"quality": quality}
                 buffer = io.BytesIO()
@@ -3506,9 +5494,6 @@ class MeshConvert(HelpMixin):
             ktx2_images = {
                 i for i in replacements if images[i].get("mimeType") == "image/ktx2"
             }
-            bound_basisu = False
-            basisu_without_fallback = False
-            webp_without_fallback = False
             if webp_images or ktx2_images:
                 for t_index, texture in enumerate(gltf.get("textures") or []):
                     # Resolved through the shadow-aware walk so a re-run of
@@ -3531,10 +5516,8 @@ class MeshConvert(HelpMixin):
                         fb_index = fallback_image_of.get(src)
                         if fb_index is None:
                             texture.pop("source", None)
-                            basisu_without_fallback = True
                         else:
                             texture["source"] = fb_index
-                        bound_basisu = True
                     elif src in webp_images:
                         # Same fallback rule as the basisu branch above, and it
                         # has to be: this previously left ``source`` pointing at
@@ -3552,50 +5535,12 @@ class MeshConvert(HelpMixin):
                         fb_index = fallback_image_of.get(src)
                         if fb_index is None:
                             texture.pop("source", None)
-                            webp_without_fallback = True
                         else:
                             texture["source"] = fb_index
-            if webp_images:
-                used = gltf.setdefault("extensionsUsed", [])
-                if "EXT_texture_webp" not in used:
-                    used.append("EXT_texture_webp")
-                if webp_without_fallback:
-                    # Same escalation the basisu binding makes, for the same
-                    # reason: a binding with no core-readable ``source`` is one
-                    # a stock importer cannot degrade to, so the file must say
-                    # it needs the extension instead of silently failing in it.
-                    required = gltf.setdefault("extensionsRequired", [])
-                    if "EXT_texture_webp" not in required:
-                        required.append("EXT_texture_webp")
-            elif bound_basisu:
-                # A KTX2 pass over a previously WebP-optimized GLB strips the
-                # EXT_texture_webp bindings it re-encodes past; a declaration
-                # with no remaining user is a validator warning shipped for
-                # nothing.
-                used = gltf.get("extensionsUsed") or []
-                if "EXT_texture_webp" in used and not any(
-                    "EXT_texture_webp" in (t.get("extensions") or {})
-                    for t in gltf.get("textures") or []
-                ):
-                    used.remove("EXT_texture_webp")
-            if bound_basisu:
-                # Equivalent to ``if ktx2_images`` by construction -- the encode
-                # gate above skips every image no texture samples -- so no
-                # ``image/ktx2`` can ship without this declaration. It escalates
-                # to ``extensionsRequired`` only when some binding has no
-                # core-readable fallback ``source`` (pure-delivery mode, or a
-                # fallback encode failed): with every binding backed by one,
-                # a stock importer reads the fallbacks and the file must not
-                # demand a capability it can degrade without. Never removed if
-                # already present -- a prior pure-delivery pass's bindings are
-                # still fallback-less.
-                used = gltf.setdefault("extensionsUsed", [])
-                if "KHR_texture_basisu" not in used:
-                    used.append("KHR_texture_basisu")
-                if basisu_without_fallback:
-                    required = gltf.setdefault("extensionsRequired", [])
-                    if "KHR_texture_basisu" not in required:
-                        required.append("KHR_texture_basisu")
+            # Declarations are DERIVED from the bindings above rather than
+            # accumulated by whichever branch ran, which is what kept a
+            # superseded pass's claim alive (see the method's own docstring).
+            cls._reconcile_texture_extensions(gltf)
 
             edit.replace_rest(new_bin)
             # Re-encoding invalidated every content address the sidecar
@@ -3837,6 +5782,13 @@ class MeshConvert(HelpMixin):
                 than from the converter, so they are exempt from both findings
                 (any whiteness in them is a source question
                 :meth:`MapFactory.pack_orm_texture` already logs per map).
+                A described material covers its LIGHTMAP CLONES too (see
+                :attr:`LIGHTMAP_CLONE_SUFFIX`): the envelope was written before
+                they existed, so matching literally reports the whole set. Safe
+                by construction rather than by assumption -- a clone is a deep
+                copy of its base that rebinds only the lightmap slot, and the
+                sidecar repair runs BEFORE the lightmap pass, so the binding
+                being exempted here is the repaired one the base was checked on.
                 ``None`` means "nothing is known to be described", which
                 suppresses the ``unvalidated`` finding rather than reporting
                 every material.
@@ -3850,7 +5802,10 @@ class MeshConvert(HelpMixin):
         with cls.open_glb(glb) as edit:
             for mat in edit.materials:
                 name = mat.get("name")
-                if not name or (known is not None and name in known):
+                if not name or (
+                    known is not None
+                    and (name in known or cls._lightmap_clone_base(name) in known)
+                ):
                     continue
                 pbr = mat.get("pbrMetallicRoughness") or {}
                 tex = (pbr.get("metallicRoughnessTexture") or {}).get("index")
@@ -3888,14 +5843,25 @@ class MeshConvert(HelpMixin):
         renamed makes the write a total no-op and "my emissive is missing" is
         indistinguishable from "the channel was never read" unless the
         mismatch says so.
+
+        EVERY material carrying the name is paired, not one of them. glTF does
+        not require unique material names and this pipeline relies on that:
+        the fade pass clones a material per faded subtree and keeps its name
+        (the lightmap manifest binds by name), and FBX2glTF itself emits two
+        ``ITA_Extras_MAT`` from one production scene. A ``{name: material}``
+        dict here silently kept the LAST copy only, so the sidecar's
+        metallic-roughness repair landed on a one-primitive fade clone while
+        the eleven-primitive original kept the converter's own packing --
+        roughness and metalness at 255 everywhere, a fully metallic screen.
         """
-        by_name = {
-            m.get("name"): m for m in gltf.get("materials", []) or [] if m.get("name")
-        }
+        by_name: Dict[str, List[dict]] = {}
+        for material in gltf.get("materials", []) or []:
+            if material.get("name"):
+                by_name.setdefault(material["name"], []).append(material)
         matched = [
-            (name, spec, by_name[name])
+            (name, spec, material)
             for name, spec in entries.items()
-            if name in by_name
+            for material in by_name.get(name, ())
         ]
         unmatched = sorted(set(entries) - set(by_name))
         if unmatched:
@@ -4016,6 +5982,137 @@ class MeshConvert(HelpMixin):
         return records
 
     @classmethod
+    def _image_prune_refusal(cls, gltf: Dict[str, Any]) -> Optional[str]:
+        """Why images may NOT be dropped from *gltf*, or ``None`` when they may.
+
+        Shared by :meth:`prune_glb_unreferenced_textures`, which enforces it,
+        and :meth:`dedupe_glb_images`, which must ask the SAME question before
+        it rebinds anything: its rebind is only sound if the orphans it creates
+        can then be collected, so a dedupe that rebinds into a prune that
+        refuses leaves permanently unreachable payload behind and reports
+        having removed nothing.
+
+        Both refusals are "bail whole rather than guess" — dead payload beats a
+        broken file:
+
+        * an extension that names images DIRECTLY from the root
+          (:attr:`_IMAGE_REFERRING_EXTENSIONS`) holds indices the material walk
+          cannot see, and renumbering would break them;
+        * a ``bufferView`` on any buffer but the embedded BIN (0) would keep
+          its ``buffer`` and get an offset into the rebuilt one — garbage
+          reads. The same single-buffer assumption `optimize_glb_textures`
+          makes.
+        """
+        foreign = cls._IMAGE_REFERRING_EXTENSIONS & set(
+            gltf.get("extensionsUsed") or []
+        )
+        if foreign:
+            return (
+                f"{', '.join(sorted(foreign))} references images outside the "
+                "material tree."
+            )
+        if any(v.get("buffer", 0) != 0 for v in gltf.get("bufferViews") or []):
+            return "the file has bufferViews outside the embedded BIN (buffer 0)."
+        return None
+
+    @classmethod
+    def dedupe_glb_images(cls, glb: GlbTarget) -> Dict[str, int]:
+        """Collapse byte-identical embedded images onto one copy.
+
+        FBX2glTF embeds per MATERIAL, so two DCC materials wiring one texture
+        file arrive as two images with identical bytes -- and glTF has no
+        reason to keep both, since a texture names an image by index and any
+        number may name the same one. The session's ``image_digests`` dedupe
+        cannot reach this: it is write-side, stopping a WRITER from appending a
+        payload already embedded, and by the time it runs the converter's own
+        pair is already in the file. Measured on a production assembly: two
+        duplicate pairs, 154.7 KB of a delivered 5.9 MB -- and, because this
+        runs before :meth:`optimize_glb_textures`, two full-size decodes,
+        resizes and re-encodes that bought nothing.
+
+        Content-addressed, never name-addressed, for the same reason
+        ``image_digests`` is: the copies arrive by different routes and their
+        names are the one thing that may lie in either direction -- two
+        different maps can share a name, and one map can carry two.
+
+        Every texture pointing at a dropped image is rebound to the survivor
+        (``source`` and every entry of :attr:`TEXTURE_CONTAINER_EXTENSIONS`,
+        the same set `image_for_texture` resolves a binding through), then
+        the orphaned images and their exclusive bufferViews are reclaimed by
+        :meth:`prune_glb_unreferenced_textures` -- which already owns index
+        remapping and BIN repacking, so this pass only has to decide WHAT is
+        redundant. Textures themselves are kept: two textures sampling one
+        image may still differ by sampler, and collapsing them is a separate
+        question this pass does not answer.
+
+        Parameters:
+            glb: Path to a ``.glb``, modified in place, or an open session.
+
+        Returns:
+            ``{"images": n, "bytes": n}`` -- images dropped and BIN payload
+            reclaimed. A file with nothing to collapse is not rewritten.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            images = gltf.get("images") or []
+            if len(images) < 2:
+                return {"images": 0, "bytes": 0}
+            # BEFORE touching anything: the rebind below is only sound if the
+            # orphans it creates can then be collected, and the prune that
+            # collects them has two refusals. Rebinding into one of those would
+            # strand payload no later pass can ever reach.
+            refusal = cls._image_prune_refusal(gltf)
+            if refusal:
+                logger.info("dedupe_glb_images: skipped, %s", refusal)
+                return {"images": 0, "bytes": 0}
+
+            # digest -> the index that keeps the payload, first occurrence
+            # wins: the numbering a reader already saw stays as stable as
+            # dropping anything allows. Computed here rather than read off the
+            # session's ``image_digests``, which holds the same rule but only
+            # the SURVIVING index per digest -- it cannot say which other
+            # indices carried those bytes, which is the whole question here,
+            # and looking each one up would mean hashing the set twice.
+            survivor: Dict[str, int] = {}
+            replacement: Dict[int, int] = {}
+            for index, image in enumerate(images):
+                payload = edit.image_bytes(image)
+                if not payload:
+                    continue
+                first = survivor.setdefault(hashlib.sha256(payload).hexdigest(), index)
+                if first != index:
+                    replacement[index] = first
+            if not replacement:
+                return {"images": 0, "bytes": 0}
+
+            for texture in gltf.get("textures") or []:
+                source = texture.get("source")
+                if source in replacement:
+                    texture["source"] = replacement[source]
+                extensions = texture.get("extensions") or {}
+                for name in cls.TEXTURE_CONTAINER_EXTENSIONS:
+                    binding = extensions.get(name)
+                    if (
+                        isinstance(binding, dict)
+                        and binding.get("source") in replacement
+                    ):
+                        binding["source"] = replacement[binding["source"]]
+            edit.dirty = True
+            # The duplicates are now unreferenced; the prune owns dropping them
+            # (and their exclusive views), remapping every surviving index and
+            # rebuilding the BIN.
+            dropped = cls.prune_glb_unreferenced_textures(edit)
+
+        if dropped["images"]:
+            logger.info(
+                "dedupe_glb_images: collapsed %d duplicate image(s), %.1f MB of "
+                "BIN payload.",
+                dropped["images"],
+                dropped["bytes"] / (1024 * 1024),
+            )
+        return {"images": dropped["images"], "bytes": dropped["bytes"]}
+
+    @classmethod
     def prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]:
         """Drop textures no material samples, and the images/bufferViews only they used.
 
@@ -4061,31 +6158,9 @@ class MeshConvert(HelpMixin):
             images = gltf.get("images") or []
             if not textures and not images:
                 return {"textures": 0, "images": 0, "bytes": 0}
-            # Image references the material walk cannot see. Every core and
-            # KHR_materials_* binding goes through a texture, but this
-            # extension names images DIRECTLY from the root -- pruning under
-            # it would renumber indices it holds. Bail whole rather than
-            # guess: dead payload beats a broken file.
-            foreign = cls._IMAGE_REFERRING_EXTENSIONS & set(
-                gltf.get("extensionsUsed") or []
-            )
-            if foreign:
-                logger.info(
-                    "prune_glb_unreferenced_textures: skipped, %s references "
-                    "images outside the material tree.",
-                    ", ".join(sorted(foreign)),
-                )
-                return {"textures": 0, "images": 0, "bytes": 0}
-            # The BIN rebuild below re-slices every kept view out of the single
-            # GLB-embedded buffer (0). A view on any other buffer (external
-            # URI) would keep its ``buffer`` but get a byteOffset into the
-            # rebuilt BIN -- garbage reads. Same single-buffer assumption as
-            # optimize_glb_textures; bail rather than guess.
-            if any(v.get("buffer", 0) != 0 for v in gltf.get("bufferViews") or []):
-                logger.info(
-                    "prune_glb_unreferenced_textures: skipped, the file has "
-                    "bufferViews outside the embedded BIN (buffer 0)."
-                )
+            refusal = cls._image_prune_refusal(gltf)
+            if refusal:
+                logger.info("prune_glb_unreferenced_textures: skipped, %s", refusal)
                 return {"textures": 0, "images": 0, "bytes": 0}
 
             # --- what the materials actually sample --------------------------
@@ -4495,6 +6570,76 @@ class MeshConvert(HelpMixin):
                     }
                 )
         return records
+
+    @classmethod
+    def set_glb_normal_scale(
+        cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True
+    ) -> int:
+        """Write ``normalTexture.scale`` into a GLB's materials.
+
+        How strongly a normal map reads is a DELIVERY decision, not an
+        authoring one, and it is felt hardest on baked geometry: a lightmap
+        contributes irradiance with no direction in it, so on a lightmapped
+        surface the normal map survives only through the environment term --
+        which the viewer deliberately dims, because that surface's lighting is
+        already in its bake. The result is a correct but flat-looking room, and
+        the dial that brings the detail back without touching the bake is this
+        one.
+
+        Written as ``normalTexture.scale`` because glTF already has the field:
+        it is core (no extension), every runtime honours it, and three.js reads
+        it straight into ``material.normalScale``. So the preview's slider and
+        the delivered file say the same thing in the same place, and a value
+        saved here comes back on the next load with nothing to re-apply it.
+
+        Parameters:
+            glb: Path to a binary glTF (.glb), modified in place, or an open
+                :class:`GlbEdit` session whose owner will write it.
+            scale: The multiplier. ``1.0`` is glTF's default and REMOVES the
+                key rather than writing it, so a reset leaves the file as it
+                would have been had the dial never moved.
+            lightmapped_only: Restrict to the materials
+                ``extras.lightmap_web`` names -- the ones the flattening
+                applies to. ``False`` writes every material carrying a normal
+                map. A file with no manifest matches nothing under ``True``.
+
+        Returns:
+            How many materials were changed.
+        """
+        scale = float(scale)
+        changed = 0
+        with cls.open_glb(glb) as edit:
+            named = None
+            if lightmapped_only:
+                manifest = (edit.gltf.get("extras") or {}).get(cls.LIGHTMAP_WEB_KEY)
+                named = set((manifest or {}).get("materials") or ())
+            for material in edit.materials:
+                if named is not None and material.get("name") not in named:
+                    continue
+                normal = material.get("normalTexture")
+                # No normal map means nothing to scale -- writing the key
+                # anyway would be a claim about a texture the material does
+                # not have.
+                if not isinstance(normal, dict) or normal.get("index") is None:
+                    continue
+                current = normal.get("scale", 1.0)
+                if scale == 1.0:
+                    if normal.pop("scale", None) is None:
+                        continue
+                elif current == scale:
+                    continue
+                else:
+                    normal["scale"] = scale
+                edit.dirty = True
+                changed += 1
+        if changed:
+            logger.info(
+                "Normal scale %.3g written to %d material(s)%s.",
+                scale,
+                changed,
+                " (lightmapped only)" if lightmapped_only else "",
+            )
+        return changed
 
     @classmethod
     def set_glb_base_color(
