@@ -3,7 +3,6 @@
 import hashlib
 import array as _array
 import os
-import shutil
 import struct
 import subprocess
 import wave as _wave
@@ -25,46 +24,31 @@ class AudioUtils(HelpMixin):
     def resolve_ffmpeg(
         cls, required: bool = True, auto_install: bool = False
     ) -> Optional[str]:
-        """Resolve ffmpeg executable from PATH or managed installs.
+        """Resolve the ffmpeg executable from PATH or a managed install.
+
+        Delegates to :meth:`VidUtils.resolve_ffmpeg`. Both names stay
+        published because they have different callers -- the audio side passes
+        ``auto_install=True`` -- but there is one implementation: these were
+        statement-for-statement identical apart from a single error string,
+        and only the video copy is reachable as ``ptk.resolve_ffmpeg`` (
+        ``vid_utils`` is a wildcard root), so a fix applied to the bare name
+        silently missed this one.
 
         Parameters:
-            required:      If True, raises when ffmpeg is unavailable.
-            auto_install:  If True, downloads and installs ffmpeg when
-                           it cannot be found on the system PATH.
+            required: Raise when ffmpeg cannot be resolved.
+            auto_install: Download and install it when it is not found.
 
         Returns:
-            Path to ffmpeg executable, or None when not found and
-            ``required`` is False.
+            Path to the executable, or None when not found and *required* is
+            False.
+
+        Raises:
+            FileNotFoundError: Not resolved and *required* is True. The
+                message names the auto-install failure when there was one.
         """
-        ffmpeg_path = shutil.which("ffmpeg")
-        if ffmpeg_path:
-            return ffmpeg_path
+        from pythontk.vid_utils._vid_utils import VidUtils
 
-        # Check managed installs from a previous session.
-        from pythontk.core_utils.app_installer import (
-            AppInstaller,
-            FFMPEG_PLATFORMS,
-        )
-
-        managed = AppInstaller.get_path("ffmpeg", executable="ffmpeg", add_to_path=True)
-        if managed:
-            return managed
-
-        if auto_install:
-            try:
-                return AppInstaller.ensure(
-                    "ffmpeg",
-                    platforms=FFMPEG_PLATFORMS,
-                    executable="ffmpeg",
-                )
-            except Exception:
-                pass  # Fall through to required/None logic below
-
-        if required:
-            raise FileNotFoundError(
-                "FFmpeg is required but was not found in the system PATH."
-            )
-        return None
+        return VidUtils.resolve_ffmpeg(required=required, auto_install=auto_install)
 
     @classmethod
     def is_playable_extension(cls, file_path: str) -> bool:
@@ -208,8 +192,7 @@ class AudioUtils(HelpMixin):
                     elif sr != sample_rate:
                         if logger:
                             logger.warning(
-                                f"Skipping '{path}': sample rate "
-                                f"{sr} != {sample_rate}"
+                                f"Skipping '{path}': sample rate {sr} != {sample_rate}"
                             )
                         continue
                     elif ch != channels:

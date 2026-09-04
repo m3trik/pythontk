@@ -20,7 +20,7 @@
               "qualname": "AudioUtils.resolve_ffmpeg",
               "kind": "classmethod",
               "signature": "(cls, required: bool = True, auto_install: bool = False) -> Optional[str]",
-              "summary": "Resolve ffmpeg executable from PATH or managed installs.",
+              "summary": "Resolve the ffmpeg executable from PATH or a managed install.",
               "line": 25,
               "deprecated": false
             },
@@ -30,7 +30,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: str) -> bool",
               "summary": "Return True if extension is already timeline-playable.",
-              "line": 70,
+              "line": 55,
               "deprecated": false
             },
             {
@@ -39,7 +39,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: str) -> bool",
               "summary": "Return True if extension is accepted as conversion source.",
-              "line": 75,
+              "line": 60,
               "deprecated": false
             },
             {
@@ -48,7 +48,7 @@
               "kind": "classmethod",
               "signature": "(cls, audio_path: str, cache_dir: Optional[str] = None) -> str",
               "summary": "Return a playable audio path, converting with ffmpeg if required.",
-              "line": 80,
+              "line": 65,
               "deprecated": false
             },
             {
@@ -57,7 +57,7 @@
               "kind": "classmethod",
               "signature": "(cls, events: list, audio_map: dict, fps: float, output_path: str, logger=None) -> Optional[str]",
               "summary": "Mix source WAV clips into one composite WAV.",
-              "line": 157,
+              "line": 142,
               "deprecated": false
             },
             {
@@ -66,7 +66,7 @@
               "kind": "classmethod",
               "signature": "(cls, audio_path: str, cache_dir: Optional[str] = None, logger=None) -> Optional[str]",
               "summary": "Return a playable path, converting to WAV when required.",
-              "line": 282,
+              "line": 266,
               "deprecated": false
             },
             {
@@ -75,7 +75,7 @@
               "kind": "classmethod",
               "signature": "(cls, search_dir: str, extensions: Optional[Set[str]] = None, cache_dir: Optional[str] = None, logger=None) -> Dict[str, str]",
               "summary": "Recursively scan a directory for audio files.",
-              "line": 319,
+              "line": 303,
               "deprecated": false
             },
             {
@@ -84,7 +84,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_map: Dict[str, str], cache_dir: Optional[str] = None, logger=None) -> Dict[str, str]",
               "summary": "Build an audio map from a ``{stem: path}`` dict.",
-              "line": 368,
+              "line": 352,
               "deprecated": false
             },
             {
@@ -93,7 +93,7 @@
               "kind": "classmethod",
               "signature": "(cls, audio_files: List[str], cache_dir: Optional[str] = None, logger=None) -> Dict[str, str]",
               "summary": "Build an audio map from an explicit list of file paths.",
-              "line": 402,
+              "line": 386,
               "deprecated": false
             },
             {
@@ -102,7 +102,7 @@
               "kind": "classmethod",
               "signature": "(cls, wav_path: str, output_path: Optional[str] = None, threshold: int = 8) -> str",
               "summary": "Trim leading and trailing silence from a 16-bit PCM WAV file.",
-              "line": 442,
+              "line": 426,
               "deprecated": false
             },
             {
@@ -111,7 +111,7 @@
               "kind": "staticmethod",
               "signature": "(wav_path: str, num_bins: int = 512) -> List[tuple]",
               "summary": "Read a WAV file and return a downsampled min/max envelope.",
-              "line": 520,
+              "line": 504,
               "deprecated": false
             }
           ]
@@ -9613,7 +9613,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize keyed visibility as STEP ``scale`` channels the file can play.",
-              "line": 3993,
+              "line": 3988,
               "deprecated": false
             },
             {
@@ -9622,7 +9622,7 @@
               "kind": "classmethod",
               "signature": "(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]",
               "summary": "Per take, the first and last authored frame inside its window.",
-              "line": 4127,
+              "line": 4125,
               "deprecated": false
             },
             {
@@ -9631,7 +9631,7 @@
               "kind": "classmethod",
               "signature": "(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]",
               "summary": "Wrap *tracks* in the versioned ``visibility_tracks`` envelope.",
-              "line": 4192,
+              "line": 4190,
               "deprecated": false
             },
             {
@@ -9640,7 +9640,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize authored opacity ramps as animated material alpha.",
-              "line": 4596,
+              "line": 4594,
               "deprecated": false
             },
             {
@@ -9649,7 +9649,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Drop every animation that carries no channels or no samplers.",
-              "line": 4681,
+              "line": 4674,
               "deprecated": false
             },
             {
@@ -9658,7 +9658,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Publish the GLB's clips as ``extras.animation_web``, joined to the shots.",
-              "line": 4755,
+              "line": 4748,
               "deprecated": false
             },
             {
@@ -9667,7 +9667,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 5018,
+              "line": 5042,
               "deprecated": false
             },
             {
@@ -9676,7 +9676,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 5103,
+              "line": 5127,
               "deprecated": false
             },
             {
@@ -9685,7 +9685,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget)",
               "summary": "Yield an open :class:`GlbEdit` for *glb*, writing once on close.",
-              "line": 5190,
+              "line": 5214,
               "deprecated": false
             },
             {
@@ -9694,7 +9694,7 @@
               "kind": "classmethod",
               "signature": "(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str",
               "summary": "Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.",
-              "line": 5453,
+              "line": 5477,
               "deprecated": false
             },
             {
@@ -9703,7 +9703,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]",
               "summary": ":meth:`optimize_glb_textures` kwargs for a WEB deliverable.",
-              "line": 5578,
+              "line": 5602,
               "deprecated": false
             },
             {
@@ -9712,7 +9712,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]",
               "summary": "Downsize and re-encode a GLB's embedded images for web delivery.",
-              "line": 5626,
+              "line": 5650,
               "deprecated": false
             },
             {
@@ -9721,7 +9721,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Pack and write the ORM (metallic/roughness) texture into a GLB, by name.",
-              "line": 6309,
+              "line": 6333,
               "deprecated": false
             },
             {
@@ -9730,7 +9730,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]",
               "summary": "Materials whose delivered ORM binding this pipeline never validated.",
-              "line": 6491,
+              "line": 6515,
               "deprecated": false
             },
             {
@@ -9739,7 +9739,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write emissive color / texture into a GLB's materials, by name.",
-              "line": 6619,
+              "line": 6643,
               "deprecated": false
             },
             {
@@ -9748,7 +9748,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Collapse byte-identical embedded images onto one copy.",
-              "line": 6759,
+              "line": 6783,
               "deprecated": false
             },
             {
@@ -9757,7 +9757,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop textures no material samples, and the images/bufferViews only they used.",
-              "line": 6856,
+              "line": 6880,
               "deprecated": false
             },
             {
@@ -9766,7 +9766,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.",
-              "line": 7292,
+              "line": 7316,
               "deprecated": false
             },
             {
@@ -9775,7 +9775,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int",
               "summary": "Write ``normalTexture.scale`` into a GLB's materials.",
-              "line": 7351,
+              "line": 7375,
               "deprecated": false
             },
             {
@@ -9784,7 +9784,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write base colour / texture into a GLB's materials, by name.",
-              "line": 7421,
+              "line": 7445,
               "deprecated": false
             }
           ]
@@ -14954,7 +14954,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath: str) -> float",
               "summary": "Extracts frame rate from a video file using FFmpeg.",
-              "line": 123,
+              "line": 133,
               "deprecated": false
             },
             {
@@ -14963,7 +14963,7 @@
               "kind": "classmethod",
               "signature": "(cls, input_filepath: str) -> Optional[int]",
               "summary": "Find the first frame number of a printf-style image sequence on disk.",
-              "line": 162,
+              "line": 172,
               "deprecated": false
             },
             {
@@ -14972,7 +14972,7 @@
               "kind": "classmethod",
               "signature": "(cls, input_filepath: str, output_filepath: str = None, frame_rate: Union[float, int] = None, delete_original: bool = False, start_number: Optional[int] = None, audio_filepath: Optional[str] = None, audio_offset: float = 0.0, **ffmpeg_options) -> Union[str, None]",
               "summary": "Compresses a video file or image sequence using FFmpeg.",
-              "line": 195,
+              "line": 205,
               "deprecated": false
             }
           ]

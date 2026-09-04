@@ -125,7 +125,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 ### `audio_utils/_audio_utils.py`
 
 - **[`class AudioUtils(HelpMixin)`](pythontk/pythontk/audio_utils/_audio_utils.py#L15)** — Utility helpers for portable audio-file preparation.
-  - `AudioUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Resolve ffmpeg executable from PATH or managed installs.
+  - `AudioUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Resolve the ffmpeg executable from PATH or a managed install.
   - `AudioUtils.is_playable_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is already timeline-playable.
   - `AudioUtils.is_supported_source_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is accepted as conversion source.
   - `AudioUtils.ensure_playable_path(cls, audio_path: str, cache_dir: Optional[str] = None) -> str` *(class)* — Return a playable audio path, converting with ffmpeg if required.

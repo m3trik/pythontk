@@ -103,6 +103,7 @@ class VidUtils(HelpMixin):
         if managed:
             return managed
 
+        install_error = None
         if auto_install:
             try:
                 return AppInstaller.ensure(
@@ -110,13 +111,22 @@ class VidUtils(HelpMixin):
                     platforms=FFMPEG_PLATFORMS,
                     executable="ffmpeg",
                 )
-            except Exception:
-                pass  # Fall through to required/None logic below
+            except Exception as error:  # noqa: BLE001 -- reported, not hidden
+                # NOT swallowed. ``ensure`` raises on a checksum mismatch and
+                # on a truncated download as well as on a plain network
+                # failure, and reporting every one of those as "not found in
+                # the system path" sends the user looking in the wrong place --
+                # a corrupted or tampered payload most of all.
+                logger.warning("FFmpeg auto-install failed: %s", error)
+                install_error = error
 
         if required:
-            raise FileNotFoundError(
-                "FFmpeg is required but not found in the system path."
+            message = (
+                "FFmpeg is required but was not found on PATH or in a managed install."
             )
+            if install_error is not None:
+                message += f" The auto-install attempt failed: {install_error}"
+            raise FileNotFoundError(message)
         return None
 
     @classmethod
@@ -181,7 +191,7 @@ class VidUtils(HelpMixin):
         regex = re.compile(
             re.escape(basename[: token.start()])
             + r"(\d+)"
-            + re.escape(basename[token.end():])
+            + re.escape(basename[token.end() :])
             + r"$"
         )
         try:
@@ -290,10 +300,14 @@ class VidUtils(HelpMixin):
             # shorter audio track.
             ffmpeg_cmd.extend(
                 [
-                    "-map", "0:v:0",
-                    "-map", "1:a:0",
-                    "-c:a", "aac",
-                    "-af", "apad",
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                    "-c:a",
+                    "aac",
+                    "-af",
+                    "apad",
                     "-shortest",
                 ]
             )
