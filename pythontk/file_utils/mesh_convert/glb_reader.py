@@ -84,6 +84,40 @@ class _GlbReaderInternal:
             for i in range(count)
         ]
 
+    @staticmethod
+    def _moving_span(
+        poses: Sequence[Sequence[float]], tolerance: float
+    ) -> Optional[Tuple[int, int]]:
+        """Key indices bracketing the motion in *poses*, or ``None`` if static.
+
+        Trims the leading and trailing HOLDS -- the run of keys still at the
+        opening pose, and the run already at the closing pose -- rather than
+        looking for change between neighbours.
+
+        The neighbour test this replaces could not see motion that accumulates
+        below *tolerance*: measured, 400 keys stepping 0.0005 each (half the
+        1e-3 default) travel 0.2 m over 13 seconds and every individual step
+        is under the threshold, so the whole pan read as static. The same
+        0.2 m as one jump was detected -- the answer depended on how the
+        motion was distributed rather than on whether it happened. Comparing
+        against the resting pose at each end has no such blind spot, and
+        still brackets a single discrete move exactly as before.
+        """
+        count = len(poses)
+        if count < 2:
+            return None
+
+        def apart(a, b) -> bool:
+            return any(abs(x - y) > tolerance for x, y in zip(a, b))
+
+        first, opening = 0, poses[0]
+        while first + 1 < count and not apart(poses[first + 1], opening):
+            first += 1
+        last, closing = count - 1, poses[-1]
+        while last - 1 >= 0 and not apart(poses[last - 1], closing):
+            last -= 1
+        return (first, last) if first < last else None
+
     # ---- matrix math ------------------------------------------------------
     #
     # Convention: a matrix is four row-lists, world = local x parentWorld,
@@ -349,13 +383,9 @@ class GlbReader(_GlbReaderInternal):
             )
             if poses is None:
                 continue
-            first = last = None
-            for i in range(1, len(times)):
-                if any(abs(a - b) > tolerance for a, b in zip(poses[i], poses[i - 1])):
-                    if first is None:
-                        first = i - 1
-                    last = i
-            if first is not None:
+            span = self._moving_span(poses, tolerance)
+            if span is not None:
+                first, last = span
                 lows.append(times[first][0])
                 highs.append(times[last][0])
         if not lows:

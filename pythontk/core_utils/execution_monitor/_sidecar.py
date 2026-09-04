@@ -128,6 +128,12 @@ def _descendants_posix(pid: int) -> list:
     return found
 
 
+#: Seconds ``kill_process`` waits for ``taskkill`` before giving up. Generous
+#: for a real kill (a deep tree takes a second or two) and short enough that a
+#: wedged one cannot outlive the run that spawned it.
+KILL_TIMEOUT = 15.0
+
+
 def kill_process(pid: int, tree: bool = True) -> None:
     """Force-kill *pid* (and, with *tree*, its descendants).
 
@@ -138,7 +144,19 @@ def kill_process(pid: int, tree: bool = True) -> None:
     if sys.platform == "win32":
         cmd = ["taskkill", "/PID", str(pid), "/F"] + (["/T"] if tree else [])
         try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Bounded: run_watchdog returns as soon as this does, so a
+            # taskkill that never comes back -- an unkillable target stuck in
+            # a driver call, a wedged WMI -- would leave the watchdog process
+            # alive forever, which is the failure the sidecar exists to
+            # prevent. On timeout subprocess.run kills the taskkill child and
+            # raises, and the except below absorbs it: the target may survive,
+            # but a best-effort kill that gave up beats a watchdog that hangs.
+            subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=KILL_TIMEOUT,
+            )
         except Exception:
             pass
         return

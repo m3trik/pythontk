@@ -107,6 +107,93 @@ class NormalizeTest(unittest.TestCase):
             self.assertEqual(RemoteFile.normalize(url), url)
 
 
+class SchemeEnforcementTest(unittest.TestCase):
+    """The fetch path must honour the http(s)-only contract the class states.
+
+    ``is_url`` already rejects ``file://`` and ``ftp://`` and is tested doing
+    so, but nothing consulted it on the way to ``urlopen`` -- which handles
+    those schemes natively. So ``RemoteFile.read_bytes("file:///etc/passwd")``
+    returned the file's bytes: a class documented as "read a file by http(s)
+    URL", published as ``ptk.RemoteFile``, quietly acting as a local-file
+    reader. Callers gate on ``is_url`` today (uitk's line-edit validator, both
+    shot-manifest slot modules), so this is a contract hole rather than a live
+    exploit -- but the next caller reads the docstring, not the call sites.
+    """
+
+    BAD = (
+        "file:///C:/Windows/win.ini",
+        "ftp://host/manifest.csv",
+        "data:text/csv,a%2Cb",
+        "https:///no-host.csv",
+        "manifest.csv",
+    )
+
+    def test_open_refuses_a_non_http_scheme(self):
+        for url in self.BAD:
+            with self.subTest(url=url):
+                with self.assertRaises(RemoteFile.Error) as caught:
+                    RemoteFile.open(url)
+                self.assertIn("http", str(caught.exception).lower())
+
+    def test_read_bytes_refuses_a_non_http_scheme(self):
+        for url in self.BAD:
+            with self.subTest(url=url):
+                with self.assertRaises(RemoteFile.Error):
+                    RemoteFile.read_bytes(url)
+
+    def test_probe_reports_a_non_http_scheme_instead_of_fetching(self):
+        problem = RemoteFile.probe("file:///C:/Windows/win.ini")
+        self.assertIsNotNone(problem)
+        self.assertIn("http", problem.lower())
+
+    def test_a_local_file_is_never_read_through_the_url_reader(self):
+        """The concrete case, end to end: a real file on disk stays unread."""
+        import tempfile
+
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        scratch = TempArtifacts(
+            "remote_scheme", policy="scoped", dir=tempfile.gettempdir()
+        )
+        self.addCleanup(scratch.cleanup)
+        path = scratch.path(extension=".txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("LOCAL FILE CONTENTS")
+        url = "file:///" + path.replace(os.sep, "/")
+        self.assertFalse(RemoteFile.is_url(url))
+        with self.assertRaises(RemoteFile.Error):
+            RemoteFile.read_bytes(url)
+
+    def test_a_normal_https_url_is_unaffected(self):
+        with patch(_URLOPEN, return_value=_response()) as opener:
+            self.assertEqual(
+                RemoteFile.read_bytes("https://example.com/x.csv"), b"a,b\n1,2\n"
+            )
+        self.assertEqual(opener.call_count, 1)
+
+
+class NormalizeIdempotenceTest(unittest.TestCase):
+    """``read_bytes`` and ``probe`` normalize, then hand the result to
+    ``open``, which normalizes again -- harmless only while ``normalize`` is
+    idempotent. Nothing asserted that, so a future rewrite rule could quietly
+    double-apply."""
+
+    CASES = (
+        _SHEET + "edit#gid=1234",
+        _SHEET + "edit?usp=sharing&gid=7#gid=7",
+        _SHEET.rstrip("/"),
+        "https://docs.google.com/spreadsheets/d/e/1AbC/pubhtml",
+        "https://docs.google.com/spreadsheets/u/2/d/1AbC/edit",
+        "https://example.com/plain.csv",
+    )
+
+    def test_normalize_twice_equals_normalize_once(self):
+        for url in self.CASES:
+            with self.subTest(url=url):
+                once = RemoteFile.normalize(url)
+                self.assertEqual(RemoteFile.normalize(once), once)
+
+
 class OpenTest(unittest.TestCase):
     def test_open_sends_normalized_target_agent_and_timeout(self):
         resp = _response()

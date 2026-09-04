@@ -160,9 +160,22 @@ class RemoteFile(_RemoteFileInternal):
                 :attr:`USER_AGENT`.
 
         Raises:
-            RemoteFile.Error: DNS/connection/timeout failure or a non-2xx status.
+            RemoteFile.Error: A scheme other than ``http``/``https``,
+                DNS/connection/timeout failure, or a non-2xx status.
         """
         target = cls.normalize(url)
+        # The one choke point every fetch passes through, so the http(s)
+        # contract is enforced here rather than trusted to callers.
+        # ``urlopen`` speaks ``file:``, ``ftp:`` and ``data:`` natively, so
+        # without this a class documented as "read a file by http(s) URL" --
+        # and published as ``ptk.RemoteFile`` -- returns the bytes of a local
+        # path handed to it as ``file:///...``. ``is_url`` already answered
+        # this correctly and was already tested doing so; nothing asked it.
+        if not cls.is_url(target):
+            raise cls.Error(
+                f"Can't fetch {target!r}: only http and https URLs are "
+                "supported. A local path is read with the normal file API."
+            )
         merged = {"User-Agent": cls.USER_AGENT}
         merged.update(headers or {})
         request = Request(target, headers=merged)

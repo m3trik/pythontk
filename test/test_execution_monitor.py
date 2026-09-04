@@ -1404,6 +1404,65 @@ class TestSidecar(unittest.TestCase):
             root.destroy()
 
 
+class TestKillProcessIsBounded(unittest.TestCase):
+    """``kill_process`` must not be able to hang the watchdog that calls it.
+
+    On Windows it shells out to ``taskkill /F`` with ``subprocess.run`` and no
+    timeout. ``run_watchdog`` calls it and returns immediately after, so a
+    ``taskkill`` that never comes back -- an unkillable target stuck in a
+    driver call, a wedged WMI -- leaves the watchdog process alive forever.
+    That is the exact failure the sidecar exists to prevent, in the sidecar.
+    """
+
+    def _kill_process(self):
+        from pythontk.core_utils.execution_monitor import _sidecar
+
+        return _sidecar
+
+    @unittest.skipUnless(sys.platform == "win32", "taskkill path is Windows-only")
+    def test_taskkill_is_given_a_timeout(self):
+        sidecar = self._kill_process()
+        with patch.object(sidecar.subprocess, "run") as run:
+            sidecar.kill_process(4321, tree=True)
+        self.assertEqual(run.call_count, 1)
+        timeout = run.call_args.kwargs.get("timeout")
+        self.assertIsNotNone(timeout, "taskkill was invoked with no timeout")
+        self.assertGreater(timeout, 0)
+        self.assertLessEqual(timeout, 60, "a watchdog kill must be bounded tightly")
+
+    @unittest.skipUnless(sys.platform == "win32", "taskkill path is Windows-only")
+    def test_a_hanging_taskkill_does_not_propagate(self):
+        """``subprocess.run`` kills the child and raises on timeout; the
+        watchdog must absorb that and finish, not die or block."""
+        sidecar = self._kill_process()
+        with patch.object(
+            sidecar.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(cmd="taskkill", timeout=1),
+        ):
+            sidecar.kill_process(4321, tree=True)  # must simply return
+
+    def test_run_watchdog_returns_after_a_kill(self):
+        """End to end: a dead-heartbeat watchdog kills and returns 0 rather
+        than looping or blocking."""
+        sidecar = self._kill_process()
+        calls = []
+        with patch.object(
+            sidecar, "kill_process", side_effect=lambda *a, **k: calls.append(a)
+        ):
+            with patch.object(sidecar, "process_alive", return_value=True):
+                rc = sidecar.run_watchdog(
+                    pid=4321,
+                    heartbeat_path=os.path.join(
+                        tempfile.gettempdir(), "no_such_heartbeat"
+                    ),
+                    timeout=-1,  # already expired
+                    check_interval=0.01,
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(calls), 1)
+
+
 class TestExecutionMonitorPythonExecutable(unittest.TestCase):
     """`_get_python_executable` DCC-host resolution (maya/max/nuke/generic)."""
 

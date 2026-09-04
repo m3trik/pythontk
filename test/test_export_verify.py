@@ -301,6 +301,68 @@ class TestGlbReader(_FixtureCase):
         )
         self.assertAlmostEqual(reader.motion_span("Shot_1")[1], 2.1, places=5)
 
+    def test_motion_span_sees_motion_that_accumulates_below_the_tolerance(self):
+        """A slow pan is motion, even when no single step clears the threshold.
+
+        ``motion_span`` compared each key only against the one before it, so a
+        channel drifting by less than *tolerance* per key read as perfectly
+        static however far it travelled. Measured: 400 keys stepping 0.0005
+        each -- half the 1e-3 default -- move 0.2 m in total (a 13-second
+        camera pan) and the method returned ``None``. The same 0.2 m delivered
+        as one jump between two keys was detected, so the gate's answer
+        depended on how the motion was distributed, not whether it happened.
+
+        This matters because ``check_clips_vs_takes`` FAILs on motion past the
+        last take and only WARNs on an inert margin -- so a slow drift out
+        there was reported as a held pose and shipped.
+        """
+        reader = self._stub_reader(
+            times=[(i / 30.0,) for i in range(400)],
+            values=[(i * 0.0005, 0.0, 0.0) for i in range(400)],
+        )
+        span = reader.motion_span(0)
+        self.assertIsNotNone(
+            span, "0.2 m of travel reported as static because each step was small"
+        )
+        # Motion runs essentially the whole clip: it starts near the top and
+        # continues to the end.
+        self.assertLess(span[0], 0.5)
+        self.assertGreater(span[1], 12.0)
+
+    def test_motion_span_still_locates_a_single_late_jump(self):
+        """The drift fix must not smear a discrete move across the clip: a
+        channel that holds and then jumps once still reports only the jump."""
+        reader = self._stub_reader(
+            times=[(i / 30.0,) for i in range(400)],
+            values=[(0.0, 0.0, 0.0)] * 399 + [(0.2, 0.0, 0.0)],
+        )
+        span = reader.motion_span(0)
+        self.assertIsNotNone(span)
+        self.assertAlmostEqual(span[0], 398 / 30.0, places=6)
+        self.assertAlmostEqual(span[1], 399 / 30.0, places=6)
+
+    def test_motion_span_drops_a_leading_hold_too(self):
+        """Symmetry: a clip that waits, moves, then holds reports only the
+        middle. The trailing half was covered; the leading half was not."""
+        values = [(0.0, 0.0, 0.0)] * 10 + [(1.0, 0.0, 0.0)] * 10
+        reader = self._stub_reader(
+            times=[(i / 30.0,) for i in range(20)], values=values
+        )
+        span = reader.motion_span(0)
+        self.assertAlmostEqual(span[0], 9 / 30.0, places=6)
+        self.assertAlmostEqual(span[1], 10 / 30.0, places=6)
+
+    @staticmethod
+    def _stub_reader(times, values, interpolation="LINEAR"):
+        """A GlbReader whose two decode seams are stubbed -- no file needed,
+        so a sampler shape can be stated directly."""
+        reader = GlbReader.__new__(GlbReader)
+        reader.animation = lambda key: {
+            "samplers": [{"input": 0, "output": 1, "interpolation": interpolation}]
+        }
+        reader.accessor = lambda i: times if i == 0 else values
+        return reader
+
     def test_motion_span_is_none_when_nothing_moves(self):
         """No motion at all is not a zero-length span -- it is no span."""
         reader = GlbReader.load(self.path("asset.glb"))
