@@ -3928,13 +3928,8 @@ class MeshConvert(HelpMixin):
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
             channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
             fps = cls._resolve_clip_fps(
-                metadata if isinstance(metadata, dict) else {}, []
+                metadata if isinstance(metadata, dict) else {}, [], channel
             )
-            if not fps and isinstance(channel, dict):
-                try:
-                    fps = float(channel.get("fps") or 0.0)
-                except (TypeError, ValueError):
-                    fps = 0.0
             if not fps:
                 logger.warning(
                     "Clips: the declared takes are quoted in frames and the "
@@ -4063,13 +4058,16 @@ class MeshConvert(HelpMixin):
                 return None
 
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
-            fps = channel.get("fps")
-            if not fps and isinstance(metadata, dict):
-                fps = metadata.get("fps")
-            try:
-                fps = float(fps)
-            except (TypeError, ValueError):
-                fps = 0.0
+            # Through the shared resolver, in the session's one order. This
+            # read the channel FIRST and fell back to shot_metadata, so when
+            # the two producers disagreed the visibility keys landed at times
+            # no other pass in the same conversion agreed with.
+            fps = (
+                cls._resolve_clip_fps(
+                    metadata if isinstance(metadata, dict) else {}, [], channel
+                )
+                or 0.0
+            )
             if fps <= 0:
                 # Every key here is a FRAME number, and without the rate it was
                 # authored at there is no time to place it at. Refusing beats
@@ -4626,13 +4624,8 @@ class MeshConvert(HelpMixin):
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
             channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
             fps = cls._resolve_clip_fps(
-                metadata if isinstance(metadata, dict) else {}, []
+                metadata if isinstance(metadata, dict) else {}, [], channel
             )
-            if not fps and isinstance(channel, dict):
-                try:
-                    fps = float(channel.get("fps") or 0.0)
-                except (TypeError, ValueError):
-                    fps = 0.0
             if not fps:
                 logger.warning(
                     "Fades: %d authored ramp(s) carry no frame rate, so their "
@@ -4857,7 +4850,12 @@ class MeshConvert(HelpMixin):
                             clip[key] = shot[key]
                 clips.append(clip)
 
-            fps = cls._resolve_clip_fps(metadata, clips)
+            # The fourth resolution in the same session: this one derived from
+            # clip spans but never read the visibility channel, so a file whose
+            # only stated rate lives there fell through to derivation while the
+            # other passes used the stated number.
+            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+            fps = cls._resolve_clip_fps(metadata, clips, channel)
             if fps:
                 windows = cls._take_windows(gltf)
                 union = (
@@ -4985,21 +4983,47 @@ class MeshConvert(HelpMixin):
 
     @staticmethod
     def _resolve_clip_fps(
-        metadata: Dict[str, Any], clips: List[Dict[str, Any]]
+        metadata: Dict[str, Any],
+        clips: List[Dict[str, Any]],
+        channel: Optional[Dict[str, Any]] = None,
     ) -> Optional[float]:
         """The rate the frame numbers were authored at, or ``None``.
 
-        Published by the shot system (``shot_metadata.fps``) and taken from
-        there when present. Older producers did not publish it, so it is
-        derived from the first declared clip that carries both a frame range
-        and a measured span -- the two describe the same interval, one in
-        frames and one in seconds, so their ratio IS the rate. Derivation needs
-        at least two frames: a single-frame take spans zero seconds and would
-        divide by nothing.
+        One rule for the whole conversion, in this order:
+
+        1. ``shot_metadata.fps`` -- published by the shot system, which owns
+           the frame numbers every other channel quotes.
+        2. ``visibility_tracks.fps`` -- the producer's own rate, stated only
+           by files whose shot system did not publish one.
+        3. Derived from the first declared clip carrying both a frame range
+           and a measured span: the two describe the same interval, one in
+           frames and one in seconds, so their ratio IS the rate. Derivation
+           needs at least two frames; a single-frame take spans zero seconds
+           and would divide by nothing.
+
+        The order is the point. One ``fbx_to_glb`` session ran four passes
+        that resolved this number three different ways -- two carried
+        byte-identical inline copies of (1) then (2), a third did (1) then (3)
+        and never looked at the channel, and the visibility pass did (2) then
+        (1), inverted. The channels are written by different producers and can
+        disagree, so the passes placed their keys at times that did not match
+        each other, in a converter whose output ships.
+
+        Parameters:
+            metadata: The ``shot_metadata`` channel, or ``{}``.
+            clips: Declared clips, for derivation; ``[]`` to skip it.
+            channel: The ``visibility_tracks`` channel, when the caller has it.
         """
         published = metadata.get("fps")
         if isinstance(published, (int, float)) and published > 0:
             return round(float(published), 6)
+        if isinstance(channel, dict):
+            try:
+                stated = float(channel.get("fps") or 0.0)
+            except (TypeError, ValueError):
+                stated = 0.0
+            if stated > 0:
+                return round(stated, 6)
         for clip in clips:
             start, end = clip.get("start_frame"), clip.get("end_frame")
             duration = clip.get("duration")

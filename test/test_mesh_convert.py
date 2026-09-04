@@ -6387,6 +6387,54 @@ class TestApplyGlbVisibility(unittest.TestCase):
             return out
 
     # ------------------------------------------------------------------- tests
+    def test_shot_metadata_fps_outranks_the_visibility_channel(self):
+        """One session, four passes, three different answers for one number.
+
+        ``_resolve_clip_fps`` is the published rule -- its docstring names the
+        shot system as the source and derives from clip spans only when the
+        producer did not publish a rate -- and three passes call it. The
+        visibility pass resolved fps itself, in the OPPOSITE order: the
+        ``visibility_tracks`` channel first, ``shot_metadata`` only as a
+        fallback, and no clip derivation at all.
+
+        Those channels are written by different producers, so they can and do
+        disagree. When they do, the visibility keys land at times no other pass
+        agrees with -- in a converter whose output ships. Here
+        ``shot_metadata.fps`` is 24 while the track channel says 30: frames
+        8 -> 23 are 15 frames, which is 0.625 s at 24 and 0.5 s at 30.
+        """
+        path = self._scene(fade=False, shot_metadata={"fps": 24.0})
+        MeshConvert.apply_glb_visibility(path)
+
+        written = self._channels(path, "Shot_1")
+        self.assertEqual(len(written), 1)
+        times = written[0][2]
+        self.assertAlmostEqual(
+            times[1],
+            15 / 24.0,
+            places=5,
+            msg="the visibility pass used the track channel's fps over the "
+            "shot system's, disagreeing with every other pass in the session",
+        )
+
+    def test_the_visibility_channel_fps_is_still_used_when_the_shot_system_is_silent(
+        self,
+    ):
+        """The fallback stays: older producers published no ``shot_metadata``
+        rate, and the track channel is then the only stated one."""
+        path = self._scene(fade=False)  # tracks fps=30, no shot_metadata
+        MeshConvert.apply_glb_visibility(path)
+        times = self._channels(path, "Shot_1")[0][2]
+        self.assertAlmostEqual(times[1], 15 / self.FPS, places=5)
+
+    def test_a_zero_or_absent_published_rate_falls_through(self):
+        """A published 0 is not a rate. It must not win over the channel and
+        must not divide anything."""
+        path = self._scene(fade=False, shot_metadata={"fps": 0})
+        MeshConvert.apply_glb_visibility(path)
+        times = self._channels(path, "Shot_1")[0][2]
+        self.assertAlmostEqual(times[1], 15 / self.FPS, places=5)
+
     def test_a_visibility_only_shot_stops_arriving_empty(self):
         """The reported symptom: half the shots had no channels at all.
 
