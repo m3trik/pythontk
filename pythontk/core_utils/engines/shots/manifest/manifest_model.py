@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 from pythontk import SchemaSpec
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
+from pythontk.net_utils.remote_file import RemoteFile
 
 log = logging.getLogger(__name__)
 
@@ -91,8 +92,8 @@ class _ManifestModelInternal(object):
         return (cell or "").strip()
 
     @staticmethod
-    def _read_csv_rows(filepath: str) -> List[List[str]]:
-        """Read all CSV rows, tolerating non-UTF-8 encodings.
+    def _decode_csv_bytes(raw: bytes) -> List[List[str]]:
+        """Decode raw CSV bytes into rows, tolerating non-UTF-8 encodings.
 
         Production manifests frequently come out of Excel as cp1252; a
         UTF-8-only read used to fail the entire load on the first accented
@@ -102,8 +103,6 @@ class _ManifestModelInternal(object):
         resolves.  Tries UTF-8 first, then cp1252, then a lossy UTF-8 read
         as a last resort so a stray byte can't kill the manifest.
         """
-        with open(filepath, "rb") as fh:
-            raw = fh.read()
         if raw.startswith(b"\xef\xbb\xbf"):
             raw = raw[3:]
         for encoding in ("utf-8", "cp1252"):
@@ -115,6 +114,22 @@ class _ManifestModelInternal(object):
         else:
             text = raw.decode("utf-8", errors="replace")
         return list(csv.reader(io.StringIO(text, newline="")))
+
+    @staticmethod
+    def _read_csv_rows(source: str) -> List[List[str]]:
+        """Read all CSV rows from a local path or an ``http(s)`` URL.
+
+        A URL's bytes come from :class:`~pythontk.RemoteFile` (a Google
+        Sheets share link is rewritten to its CSV export); a path is read
+        from disk.  Decoding is shared in :meth:`_decode_csv_bytes`, so the
+        BOM/encoding tolerance is identical for both.
+        """
+        if RemoteFile.is_url(source):
+            raw = RemoteFile.read_bytes(source)
+        else:
+            with open(source, "rb") as fh:
+                raw = fh.read()
+        return _ManifestModelInternal._decode_csv_bytes(raw)
 
 
 class ManifestModel(_ManifestModelInternal):
@@ -142,7 +157,8 @@ class ManifestModel(_ManifestModelInternal):
         """Parse a structured CSV into a list of :class:`BuilderStep`.
 
         Parameters:
-            filepath: Path to the CSV file.
+            filepath: Path to the CSV file, or an ``http(s)`` URL (a Google
+                Sheets share link is accepted; see :class:`~pythontk.RemoteFile`).
             columns: Optional header-name mapping.  Defaults cover the
                 common sequence-document layouts.
             post_process: Optional callable invoked on each step after

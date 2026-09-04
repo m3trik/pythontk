@@ -435,7 +435,7 @@ class IterUtils(HelpMixin):
             negated, kept = [], []
             for p in inc:
                 if isinstance(p, str) and p.startswith(negate_prefix):
-                    remainder = p[len(negate_prefix):].strip()
+                    remainder = p[len(negate_prefix) :].strip()
                     if remainder:
                         negated.append(remainder)
                 else:
@@ -652,7 +652,9 @@ class IterUtils(HelpMixin):
                 # step (ValueError) — mirrors the "parts+" guard below.
                 n = max(1, len(lst) * -1 // n * -1)  # ceil
             elif mode == "parts+":
-                n = max(1, len(lst) // n)  # floor divisor at 1 so short lists don't crash
+                n = max(
+                    1, len(lst) // n
+                )  # floor divisor at 1 so short lists don't crash
             return [lst[i : i + n] for i in range(0, len(lst), n)]
 
         elif mode == "contiguous" or mode == "range":
@@ -756,7 +758,7 @@ class IterUtils(HelpMixin):
         boundaries of every flat run (a hold).  Everything else is a
         monotone tween or a flat-run interior and is reproducible from
         its neighbours, so it is dropped.  This is the key-selection half
-        of an "unbake" -- pair it with
+        of a reduce-to-extremes pass -- pair it with
         :meth:`MathUtils.fit_hermite_slopes` to restore the tangents.
 
         Parameters:

@@ -162,7 +162,7 @@ class TestAppInstaller(unittest.TestCase):
             progress_calls.append((downloaded, total))
 
         dest = os.path.join(self.tmp, "out.zip")
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
             AppInstaller._download("https://example.com/x.zip", dest, cb)
 
         self.assertTrue(os.path.isfile(dest))
@@ -179,7 +179,7 @@ class TestAppInstaller(unittest.TestCase):
         resp = self._mock_urlopen(zip_path)
 
         dest = os.path.join(self.tmp, "closed.zip")
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
             AppInstaller._download("https://example.com/y.zip", dest)
 
         # The response object is entered and exited as a context manager,
@@ -204,7 +204,7 @@ class TestAppInstaller(unittest.TestCase):
         resp.read = MagicMock(side_effect=[body, b""])
 
         dest = os.path.join(self.tmp, "truncated.bin")
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
             with self.assertRaisesRegex(RuntimeError, "80000 of 200000"):
                 AppInstaller._download("https://example.com/big.exe", dest)
 
@@ -216,7 +216,7 @@ class TestAppInstaller(unittest.TestCase):
         resp.read = MagicMock(side_effect=[body, b""])
 
         dest = os.path.join(self.tmp, "chunked.bin")
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
             AppInstaller._download("https://example.com/chunked.bin", dest)
         self.assertEqual(os.path.getsize(dest), len(body))
 
@@ -228,7 +228,7 @@ class TestAppInstaller(unittest.TestCase):
         resp.read = MagicMock(side_effect=[body, b""])
 
         dest = os.path.join(self.tmp, "complete.bin")
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
             AppInstaller._download("https://example.com/complete.bin", dest)
         self.assertEqual(os.path.getsize(dest), len(body))
 
@@ -374,7 +374,7 @@ class TestAppInstaller(unittest.TestCase):
 
         original_path = os.environ.get("PATH", "")
         try:
-            with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+            with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
                 with patch.object(
                     AppInstaller, "_resolve_location", return_value=install_dir
                 ):
@@ -399,7 +399,7 @@ class TestAppInstaller(unittest.TestCase):
         resp = self._mock_urlopen(zip_path)
         install_dir = os.path.join(self.tmp, "managed")
 
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
             with patch.object(
                 AppInstaller, "_resolve_location", return_value=install_dir
             ):
@@ -440,7 +440,7 @@ class TestAppInstaller(unittest.TestCase):
         install_dir = os.path.join(self.tmp, "hashed")
         plat = AppInstaller._current_platform()
 
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
             with patch.object(
                 AppInstaller, "_resolve_location", return_value=install_dir
             ):
@@ -460,7 +460,7 @@ class TestAppInstaller(unittest.TestCase):
         resp1 = self._mock_urlopen(zip_path)
         install_dir = os.path.join(self.tmp, "upd")
 
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp1):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp1):
             with patch.object(
                 AppInstaller, "_resolve_location", return_value=install_dir
             ):
@@ -473,7 +473,7 @@ class TestAppInstaller(unittest.TestCase):
         zip_path2 = self._make_zip("bin/upd.exe", b"V2")
         resp2 = self._mock_urlopen(zip_path2)
 
-        with patch("pythontk.core_utils.app_installer.urlopen", return_value=resp2):
+        with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp2):
             with patch.object(
                 AppInstaller, "_resolve_location", return_value=install_dir
             ):

@@ -8,6 +8,7 @@ This module provides:
 - Common fixtures for all test modules
 - Path management for test resources
 """
+
 import os
 import re
 import unittest
@@ -16,6 +17,13 @@ from pathlib import Path
 # Enable OpenCV's EXR codec before any test module imports cv2 (OpenCV caches
 # this flag at first codec init). Mirrors the production setting in ImgUtils.
 os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+
+# Process-level isolation -- no real browser launch, one throwaway temp root --
+# before the first temp allocation. Import-time, not a fixture; and ALSO in
+# ``run_tests.py``, which discovers with ``unittest`` and never loads this file.
+from pythontk.core_utils.test_sandbox import TestSandbox  # noqa: E402
+
+TestSandbox.activate()
 
 
 # =============================================================================

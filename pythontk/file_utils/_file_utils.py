@@ -312,6 +312,173 @@ class FileUtils(HelpMixin):
             return None
 
     @staticmethod
+    def is_locked(filepath: str) -> bool:
+        """Is *filepath* held open by another process, so it cannot be replaced?
+
+        Windows refuses to delete a file, rename onto it, or truncate it while
+        another process holds it without ``FILE_SHARE_DELETE``/
+        ``FILE_SHARE_WRITE`` -- the ``[WinError 32] used by another process``
+        that a viewer, an editor or a preview causes simply by having the file
+        open. POSIX permits all three, so this is nearly always False there,
+        which is precisely why the case goes unhandled until it costs a long
+        job its output.
+
+        Belongs to the same family as :meth:`free_space`: turn an opaque write
+        failure into a checkable cause, and check it BEFORE the work rather
+        than at the write that discards it.
+
+        Probes by opening for APPEND -- the cheapest request needing the same
+        write access as a replace, and the only one that touches no bytes (no
+        truncation, no mtime change). A missing file is not locked (nothing
+        holds it) and neither is a directory; both answer False so the caller
+        needs no guard.
+
+        Parameters:
+            filepath (str): Path to probe (environment variables expanded).
+
+        Returns:
+            bool: True when the file exists but cannot be opened for writing.
+        """
+        fp = os.path.expandvars(filepath)
+        if not os.path.isfile(fp):
+            return False
+        try:
+            with open(fp, "ab"):
+                return False
+        except OSError:
+            return True
+
+    @staticmethod
+    def locking_processes(filepath: str) -> List[str]:
+        """Names of the processes currently holding *filepath* open.
+
+        Diagnostic only. It answers the one question a lock message never
+        does -- WHICH process -- turning a hunt into a five-second fix. The
+        verdict must always come from :meth:`is_locked`: a lock this cannot
+        attribute is still a lock, and this returns an empty list on every
+        platform but Windows, when the API is unavailable, and whenever it
+        declines to answer.
+
+        Uses the Restart Manager (``rstrtmgr``), the service installers use to
+        ask what to close; it needs no elevation and reports the current
+        process too, which is worth keeping -- a caller holding its own handle
+        is the likeliest lock a caller can actually fix.
+
+        Parameters:
+            filepath (str): Path to query (environment variables expanded).
+
+        Returns:
+            list[str]: ``"<app name> (PID <n>)"`` per holder, deduplicated and
+                sorted. Empty when nothing holds it or nothing can be learned.
+        """
+        fp = os.path.expandvars(filepath)
+        if os.name != "nt" or not os.path.exists(fp):
+            return []
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            rm = ctypes.WinDLL("rstrtmgr")
+        except (ImportError, OSError, AttributeError):
+            return []
+
+        class _RmUniqueProcess(ctypes.Structure):
+            _fields_ = [
+                ("dwProcessId", wintypes.DWORD),
+                ("ProcessStartTime", wintypes.FILETIME),
+            ]
+
+        class _RmProcessInfo(ctypes.Structure):
+            # CCH_RM_MAX_APP_NAME 255 and CCH_RM_MAX_SVC_NAME 63, each +1 for
+            # the terminator. The struct is passed by size, so these widths are
+            # not cosmetic -- shrinking either misaligns every later field.
+            _fields_ = [
+                ("Process", _RmUniqueProcess),
+                ("strAppName", ctypes.c_wchar * 256),
+                ("strServiceShortName", ctypes.c_wchar * 64),
+                ("ApplicationType", ctypes.c_int),
+                ("AppStatus", ctypes.c_ulong),
+                ("TSSessionId", wintypes.DWORD),
+                ("bRestartable", wintypes.BOOL),
+            ]
+
+        ERROR_MORE_DATA = 234
+        session = wintypes.DWORD()
+        # CCH_RM_SESSION_KEY is a GUID rendered as 32 hex chars, +1 terminator.
+        key = ctypes.create_unicode_buffer(33)
+        try:
+            if rm.RmStartSession(ctypes.byref(session), 0, key) != 0:
+                return []
+        except OSError:
+            return []
+        try:
+            names = (ctypes.c_wchar_p * 1)(fp)
+            if rm.RmRegisterResources(session, 1, names, 0, None, 0, None) != 0:
+                return []
+            needed, count = ctypes.c_uint(0), ctypes.c_uint(0)
+            reasons = wintypes.DWORD()
+            rc = rm.RmGetList(
+                session,
+                ctypes.byref(needed),
+                ctypes.byref(count),
+                None,
+                ctypes.byref(reasons),
+            )
+            # A first call sized at zero reports what it needs; anything else
+            # (including a clean 0 for "nothing holds it") has nothing to read.
+            if rc != ERROR_MORE_DATA or not needed.value:
+                return []
+            infos = (_RmProcessInfo * needed.value)()
+            count.value = needed.value
+            if (
+                rm.RmGetList(
+                    session,
+                    ctypes.byref(needed),
+                    ctypes.byref(count),
+                    infos,
+                    ctypes.byref(reasons),
+                )
+                != 0
+            ):
+                return []
+            return sorted(
+                {
+                    f"{infos[i].strAppName or '?'} (PID {infos[i].Process.dwProcessId})"
+                    for i in range(count.value)
+                }
+            )
+        except OSError:
+            return []
+        finally:
+            rm.RmEndSession(session)
+
+    @classmethod
+    def describe_lock(cls, filepath: str) -> str:
+        """One sentence naming *filepath*'s holder, or "" when it is free.
+
+        The message every caller of :meth:`is_locked` would otherwise assemble
+        by hand, so the wording of this failure stays the same wherever it is
+        reported. Falsy when the file can be replaced, so it doubles as the
+        test.
+
+        Parameters:
+            filepath (str): Path to probe (environment variables expanded).
+
+        Returns:
+            str: e.g. ``"in use by Google Chrome (PID 8421)"``, or
+                ``"in use by another process"`` when the holder cannot be
+                named. Empty string when the file is not locked.
+        """
+        if not cls.is_locked(filepath):
+            return ""
+        holders = cls.locking_processes(filepath)
+        return (
+            f"in use by {', '.join(holders)}"
+            if holders
+            else "in use by another process"
+        )
+
+    @staticmethod
     def format_bytes(size_bytes, unknown: str = "(unknown)") -> str:
         """Render a byte count using the largest unit that keeps the number small.
 

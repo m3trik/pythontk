@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-3907%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-4134%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -62,7 +62,7 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | `img_utils` | Pillow-backed image ops, channel packing, atlas layout/assembly, KTX2 encoding (`Ktx2Encoder`), exposure equalization, image curation, mask generation |
 | `iter_utils` | Flatten, dedupe, wildcard filtering of lists/dicts, integer-sequence collapse |
 | `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, morph-weight math (`Weights`), safe expression evaluation |
-| [`net_utils`](../pythontk/net_utils/README.md) | SSH client, both ends of the plugin-hosted JSON-RPC protocol + DCC plugin installer, credentials, port/RDP helpers, [live WebXR preview server](webxr_preview.md) |
+| [`net_utils`](../pythontk/net_utils/README.md) | SSH client, both ends of the plugin-hosted JSON-RPC protocol + DCC plugin installer, credentials, port/RDP helpers, URL file reads (`RemoteFile`, Google Sheets share links), [live WebXR preview server](webxr_preview.md) |
 | `str_utils` | Sanitizing, batch rename, affix handling, `FuzzyMatcher`, hotkey-token parsing |
 | `vid_utils` | Frame rate probing, compression, sharpest-frame extraction |
 

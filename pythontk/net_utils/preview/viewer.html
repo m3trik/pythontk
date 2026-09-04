@@ -1242,7 +1242,14 @@ async function poll() {
     // FIRST poll happens before anything is published at all — gated behind
     // the early return, a script named on a server that has yet to publish
     // would never load. Already-loaded URLs are skipped inside.
-    loadScripts(manifest.scripts);
+    //
+    // AWAITED, so a script activated by the same push that named the asset is
+    // initialised before the model loads and cannot miss its 'load' event: a
+    // small GLB parses in less time than an ES module takes to arrive
+    // (measured on KB-scale fixtures), which left the shadow shim with no
+    // scene. A push whose scripts fail still loads the model — loadScripts
+    // catches per module.
+    await loadScripts(manifest.scripts);
     if (manifest.version === seenVersion) return;
     // A version that has failed its budget is abandoned until a new publish
     // supersedes it — otherwise a genuinely corrupt GLB re-parses every second.

@@ -462,6 +462,17 @@ class TaskFactory:
         # check that was never made.
         self._last_task_count = self._dispatchable_count(tasks_only)
         self._last_check_count = self._dispatchable_count(checks_only)
+        # The NAMES behind the verdict, for a caller that wants to report (or
+        # ask about) what failed rather than just that something did -- the
+        # bool return says nothing a user can act on. Always rewritten, so a
+        # passing run clears the previous run's list.
+        self._last_failed_checks = list(failed_checks)
+        # ...and the tasks the abort dropped, in their scheduled order. A
+        # caller that decides to proceed ANYWAY (an exporter overriding the
+        # verdict) must be able to run exactly these rather than the whole
+        # list again -- the ones above them already ran, and re-running them
+        # would repeat their mutation.
+        self._last_skipped_tasks = list(skipped_tasks)
 
         if skipped_tasks or skipped_checks:
             # Name what the abort bought, and what it cost: an unexplained

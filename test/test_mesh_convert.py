@@ -1790,6 +1790,44 @@ class TestGlbEditSession(unittest.TestCase):
             MeshConvert.DEFAULT_TIMEOUT,
         )
 
+    def test_the_conversion_timeout_also_scales_with_the_bake(self):
+        """Size alone is a WRONG proxy for FBX2glTF's cost, measured.
+
+        The converter bakes every node at every frame of every take, so a
+        12 MB textureless export of an animated assembly took longer than the
+        300 s its size earned it -- and lost the push. The budget therefore
+        also reads the file's census: nodes x baked frames.
+        """
+        from test_fbx_media import build_fbx
+
+        ticks = MeshConvert._FBX_TICKS_PER_SECOND
+        # 2000 nodes over a 100 s take at 24 fps = 4.8M node-frames.
+        animated = build_fbx(
+            os.path.join(self.tmp, "animated.fbx"),
+            {},
+            models=2000,
+            takes={"Take 001": (0, 100 * ticks)},
+        )
+        self.assertEqual(MeshConvert.bake_node_frames(animated), 2000 * 100 * 24)
+        expected = 2000 * 100 * 24 * MeshConvert.TIMEOUT_SECONDS_PER_NODE_FRAME
+        self.assertGreater(
+            expected, MeshConvert.DEFAULT_TIMEOUT, "fixture too small to test"
+        )
+        self.assertAlmostEqual(MeshConvert.conversion_timeout(animated), expected)
+
+        # No takes: nothing to bake, the size rule stands alone.
+        static = build_fbx(os.path.join(self.tmp, "static.fbx"), {}, models=200)
+        self.assertEqual(MeshConvert.bake_node_frames(static), 0)
+        self.assertEqual(
+            MeshConvert.conversion_timeout(static), MeshConvert.DEFAULT_TIMEOUT
+        )
+
+        # Not a binary FBX: the census degrades to zero rather than raising.
+        junk = os.path.join(self.tmp, "junk.fbx")
+        with open(junk, "wb") as fh:
+            fh.write(b"not an fbx" * 10)
+        self.assertEqual(MeshConvert.bake_node_frames(junk), 0)
+
     def test_describe_texture_pass_owns_up_to_the_power_of_two_snap(self):
         """``max_size=0`` means "never CLAMP", not "never resample".
 
@@ -2387,6 +2425,77 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertEqual(dropped, {"textures": 0, "images": 0, "bytes": 0})
         with open(path, "rb") as f:
             self.assertEqual(f.read(), before, "clean file must not be rewritten")
+
+    def test_prune_unreferenced_textures_honours_the_shadow_web_manifest(self):
+        """``extras.shadow_web`` binds textures by INDEX, and no material
+        samples the horizon map -- so the prune both deleted it and renumbered
+        the survivors out from under the manifest.
+
+        In the preview path the prune always fires (FBX2glTF's own
+        ``diffuse_cube`` / ``ibl_brdf_lut`` sit at low indices), so every
+        projected plane shipped a wrong index. ``extras.lightmap_web`` is
+        immune only because it stores names.
+        """
+        import base64
+        import io as iolib
+
+        from PIL import Image
+
+        def _data_uri(color):
+            buf = iolib.BytesIO()
+            Image.new("RGB", (4, 4), color).save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            return {"uri": f"data:image/png;base64,{b64}", "mimeType": "image/png"}
+
+        gltf = {
+            "asset": {"version": "2.0"},
+            # 0 = orphan (forces the renumber), 1 = sampled, 2 = horizon map
+            # that only the manifest names.
+            "images": [_data_uri(c) for c in ((255, 0, 0), (0, 255, 0), (0, 0, 255))],
+            "textures": [{"source": 0}, {"source": 1}, {"source": 2}],
+            "materials": [
+                {
+                    "name": "Plane",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}},
+                }
+            ],
+            "extras": {
+                "shadow_web": {
+                    "version": 2,
+                    "planes": [
+                        {
+                            "node": "Plane",
+                            "texture_index": 1,
+                            "horizon": {"texture_index": 2},
+                        }
+                    ],
+                }
+            },
+        }
+        path = _write_glb_file(os.path.join(self.tmp, "shadow_prune.glb"), gltf)
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.prune_glb_unreferenced_textures(session)
+
+        with MeshConvert.open_glb(path) as session:
+            out = session.gltf
+        planes = out["extras"]["shadow_web"]["planes"]
+        n_tex = len(out.get("textures") or [])
+        self.assertEqual(
+            len(out["textures"]), 2, "the horizon map the manifest binds was dropped"
+        )
+        for key, plane in (
+            ("texture_index", planes[0]),
+            ("texture_index", planes[0]["horizon"]),
+        ):
+            self.assertLess(
+                plane[key], n_tex, f"manifest {key} {plane[key]} is out of range"
+            )
+        # The colour map moved 1 -> 0 and the horizon map 2 -> 1.
+        self.assertEqual(planes[0]["texture_index"], 0)
+        self.assertEqual(planes[0]["horizon"]["texture_index"], 1)
+        self.assertEqual(
+            out["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"], 0
+        )
 
     def test_prune_unreferenced_textures_keeps_a_view_another_owner_reads(self):
         """A bufferView shared with a live image (FBX2glTF does emit two images
@@ -4295,7 +4404,7 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertEqual(img["mimeType"], "image/png")
         self.assertIn("bufferView", img, "the carrier stayed base64 in the JSON")
         web = gltf["extras"]["lightmap_web"]
-        # The exact contract preview_viewer.html parses.
+        # The exact contract preview/viewer.html parses.
         self.assertEqual(web["carrier"], "occlusion")
         self.assertEqual(web["uv"], 1)
         self.assertEqual(web["encoding"], "srgb")
@@ -5704,7 +5813,7 @@ class TestSetGlbAlphaMode(unittest.TestCase):
     def setUp(self):
         import pythontk as ptk
 
-        artifacts = ptk.TempArtifacts("mesh_convert_alpha_mode")
+        artifacts = ptk.TempArtifacts("mesh_convert_alpha_mode", policy="scoped")
         self.tmp = artifacts.dir_path()
         self.addCleanup(artifacts.cleanup)
 
@@ -7726,6 +7835,132 @@ class TestSetGlbNormalScale(unittest.TestCase):
         """`lightmapped_only` means what it says: no manifest, no baked set."""
         path = self._glb(manifest=False)
         self.assertEqual(MeshConvert.set_glb_normal_scale(path, 1.8), 0)
+
+
+class TestPruneGlbAnimations(unittest.TestCase):
+    """Animations with no channels or samplers are dropped before the manifest.
+
+    Measured on two static production modules (2026-09-02): the Scene Exporter
+    had animation armed, the scenes carried no keys, Maya wrote its whole-
+    timeline ``Take 001`` AnimStack anyway (a stack and a layer, no curves), and
+    FBX2glTF transcribed it as ``animations[0]`` with neither channels nor
+    samplers. glTF requires at least one of each, so the file did not validate
+    -- and the manifest pass, which saw the entry, listed it as the default clip.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_prune_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _glb(self, animations, name="prune.glb"):
+        accessors = [{"type": "SCALAR", "min": [0.0], "max": [1.0]}]
+        return _write_glb_file(
+            os.path.join(self.tmp, name),
+            {
+                "asset": {"version": "2.0"},
+                "nodes": [{"name": "cube", "mesh": 0}],
+                "accessors": accessors,
+                "animations": animations,
+            },
+        )
+
+    @staticmethod
+    def _populated(name):
+        return {
+            "name": name,
+            "samplers": [{"input": 0, "output": 0}],
+            "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}],
+        }
+
+    def _names(self, path):
+        with MeshConvert.open_glb(path) as edit:
+            return [a.get("name") for a in edit.gltf.get("animations") or []]
+
+    def test_a_hollow_whole_timeline_stack_is_dropped(self):
+        """The static-scene case: the one entry goes, and the key with it."""
+        path = self._glb([{"name": "Take 001"}])
+        self.assertEqual(MeshConvert.prune_glb_animations(path), ["Take 001"])
+        with MeshConvert.open_glb(path) as edit:
+            # ``animations`` has ``minItems: 1``; an empty list is as invalid
+            # as the hollow entry was.
+            self.assertNotIn("animations", edit.gltf)
+        report = MeshConvert.verify_glb(path)
+        # Only the animation verdict is under test here: ``verify_glb`` also
+        # wants a scene-sidecar envelope, which this fixture never had.
+        self.assertFalse(
+            [p for p in report["problems"] if "channels" in p], report["problems"]
+        )
+
+    def test_populated_animations_survive_in_order(self):
+        path = self._glb(
+            [
+                {"name": "Take 001"},
+                self._populated("SHOT_A"),
+                {"name": "SHOT_B", "samplers": [{"input": 0, "output": 0}]},
+                self._populated("SHOT_C"),
+            ]
+        )
+        self.assertEqual(MeshConvert.prune_glb_animations(path), ["Take 001", "SHOT_B"])
+        self.assertEqual(self._names(path), ["SHOT_A", "SHOT_C"])
+
+    def test_a_sound_file_is_not_rewritten(self):
+        path = self._glb([self._populated("SHOT_A")])
+        with open(path, "rb") as fh:
+            before = fh.read()
+        self.assertEqual(MeshConvert.prune_glb_animations(path), [])
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_a_file_with_no_animations_is_a_no_op(self):
+        path = _write_glb_file(
+            os.path.join(self.tmp, "static.glb"),
+            {"asset": {"version": "2.0"}, "nodes": [{"name": "cube"}]},
+        )
+        self.assertEqual(MeshConvert.prune_glb_animations(path), [])
+
+    def test_the_conversion_ships_no_hollow_clip_and_no_manifest_for_it(self):
+        """End to end: the converter's hollow ``Take 001`` never reaches the file.
+
+        The manifest pass runs after the prune, so a static scene gets neither
+        an invalid animation nor an ``animation_web`` block naming it as the
+        default clip.
+        """
+        src = os.path.join(self.tmp, "static.fbx")
+        with open(src, "wb") as fh:
+            fh.write(b"Kaydara FBX Binary  \x00")
+        fake_bin = os.path.join(self.tmp, "FBX2glTF.exe")
+        with open(fake_bin, "wb") as fh:
+            fh.write(b"MZ")
+        dst = os.path.join(self.tmp, "static.glb")
+
+        def _run(cmd, *args, **kwargs):
+            _write_glb_file(
+                cmd[cmd.index("-o") + 1] + ".glb",
+                {
+                    "asset": {"version": "2.0"},
+                    "nodes": [{"name": "cube", "mesh": 0}],
+                    "animations": [{"name": "Take 001"}],
+                },
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=fake_bin),
+            patch("subprocess.run", side_effect=_run),
+        ):
+            MeshConvert.fbx_to_glb(src, dst, auto_install=False)
+
+        with MeshConvert.open_glb(dst) as edit:
+            self.assertNotIn("animations", edit.gltf)
+            self.assertNotIn(
+                MeshConvert.ANIMATION_WEB_KEY, edit.gltf.get("extras") or {}
+            )
+        report = MeshConvert.verify_glb(dst)
+        # Only the animation verdict is under test here: ``verify_glb`` also
+        # wants a scene-sidecar envelope, which this fixture never had.
+        self.assertFalse(
+            [p for p in report["problems"] if "channels" in p], report["problems"]
+        )
 
 
 if __name__ == "__main__":

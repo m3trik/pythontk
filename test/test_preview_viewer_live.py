@@ -2,7 +2,7 @@
 # coding=utf-8
 """Run the WebXR viewer page and assert what it DOES, not how it is spelled.
 
-Every other assertion about ``preview_viewer.html`` is
+Every other assertion about ``preview/viewer.html`` is
 ``assertIn("<a literal line of JS>", page)``, which pins the spelling rather
 than the behaviour: reflowing a line fails with no defect, while an inversion
 that keeps the same tokens passes green. That is not hypothetical -- the key

@@ -772,7 +772,8 @@ class MapFactory(LoggingMixin):
     ) -> Dict[str, List[str]]:
         """Gap-fill each texture set with same-base-name siblings from ``directory``.
 
-        For every set, scans ``directory`` for files that resolve to the same base
+        For every set, scans ``directory`` **and its subdirectories** for files
+        that resolve to the same base
         name (honoring ``prefix``/``suffix``) and a recognized map type, then appends
         any whose map type is missing from the set. Provided files always win — an
         existing map slot is never replaced and files already present are not
@@ -794,9 +795,17 @@ class MapFactory(LoggingMixin):
         if not (directory and os.path.isdir(directory)):
             return texture_sets
 
+        # Recursive: the caller hands over a texture ROOT (a Maya project's
+        # ``sourceImages`` rule, say), and that root is routinely one folder
+        # per asset rather than a flat pile. A root-only scan finds nothing in
+        # that layout -- the maps sitting beside the ones already wired are one
+        # level down -- so discovery silently no-ops exactly where it is needed.
+        # Matching stays base-name + map-type, so depth widens the search
+        # without widening what can match.
         dir_files = FileUtils.get_dir_contents(
             directory,
             "filepath",
+            recursive=True,
             inc_files=[f"*.{ext}" for ext in ImgUtils.texture_file_types],
         )
         if not dir_files:
@@ -1129,8 +1138,16 @@ class MapFactory(LoggingMixin):
           unavailable (``extract_missing=False``, missing Pillow, or the packed
           entry is not a readable file), the packed map is kept and its loose
           components retire instead — the lossless direction.
-        - A packed map with **no loose components present** is the sole source
-          of its channels and is kept regardless of workflow.
+        - A packed map with **no loose components at all** is the same case with
+          nothing covered: every channel it carries is extracted and it retires.
+          A preset has to mean the same thing whatever the material happened to
+          start with, and this used to be the one shape that quietly kept the
+          packing — so one material came out packed and its neighbour unpacked
+          purely on whether a stray loose map sat beside it. The lossless
+          fallback above still applies: a packing whose channels cannot be
+          recovered is kept, because dropping it would lose all of them, as is
+          one whose channels the registry does not describe at all and that has
+          no loose component to take the slots over.
 
         Modifies ``sorted_maps`` in place. Values may be file paths or lists of
         paths (both caller shapes are preserved).
@@ -1192,12 +1209,11 @@ class MapFactory(LoggingMixin):
                         drop(redundant, f"superseded by {dominant}")
                 continue
 
-            if not any(r in sorted_maps and sorted_maps[r] for r in redundants):
-                continue  # sole source of its channels — keep it
-
-            # Unpacked workflow with loose components present. Judge coverage
-            # per declared channel: covered when the carried type — or a loose
-            # type a registered conversion derives it from — survives the drop.
+            # Unpacked workflow. Judge coverage per declared channel: covered
+            # when the carried type — or a loose type a registered conversion
+            # derives it from — survives the drop. With no loose components at
+            # all nothing is covered, so this extracts the whole packing, which
+            # is the point: the preset decides the shape, not the input set.
             present = {
                 t
                 for t, v in sorted_maps.items()
@@ -1205,6 +1221,22 @@ class MapFactory(LoggingMixin):
             }
 
             carried = map_def.carried_types() if map_def else []
+            if not (
+                carried or any(r in sorted_maps and sorted_maps[r] for r in redundants)
+            ):
+                # A packing that carries nothing checkable, with no loose
+                # component standing by to take the slots over: coverage cannot
+                # be judged and there is nothing to extract, so the drop below
+                # would be a pure loss. ``MapType.__post_init__`` already
+                # refuses a packing with no ``channels`` at all, which leaves
+                # one shape — every channel marked OPTIONAL, so
+                # ``carried_types()`` skips them all. Rare, and only reachable
+                # through a caller-registered type, but the failure is a map
+                # silently vanishing, and keeping it is this function's standing
+                # answer to "cannot be shown redundant". A packing that carries
+                # real channels needs no guard: they are extracted first.
+                continue
+
             uncovered = [t for t in carried if not cls._channel_covered(t, present)]
 
             if uncovered:
@@ -1518,8 +1550,10 @@ class MapFactory(LoggingMixin):
             output_dir: Optional output directory.
             group_by_set: Whether to automatically group textures into sets (default: True).
                           If False, all input files are treated as a single set.
-            discover_dir: Optional directory to scan for same-base-name sibling
-                          textures that aren't in ``source``. Any whose map type is
+            discover_dir: Optional directory tree to scan for same-base-name
+                          sibling textures that aren't in ``source``. Scanned
+                          RECURSIVELY, so a per-asset subfolder layout is
+                          reached. Any whose map type is
                           missing from a set is pulled in (gap-fill); provided files
                           always win — a present map type is never replaced. Honors
                           ``prefix``/``suffix`` when matching base names.

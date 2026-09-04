@@ -13,7 +13,8 @@ import tempfile
 import zipfile
 from typing import Callable, Dict, Optional, Union
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+
+from pythontk.net_utils.remote_file import RemoteFile
 
 logger = logging.getLogger(__name__)
 
@@ -305,9 +306,10 @@ class AppInstaller:
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> None:
         """Download *url* to *dest* with chunked reading."""
-        request = Request(url, headers={"User-Agent": "pythontk/AppInstaller"})
         try:
-            response = urlopen(request, timeout=30)
+            response = RemoteFile.open(
+                url, timeout=30, headers={"User-Agent": "pythontk/AppInstaller"}
+            )
         except Exception as exc:
             raise RuntimeError(f"Download failed for {url}: {exc}") from exc
 

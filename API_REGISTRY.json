@@ -625,7 +625,7 @@
         {
           "name": "AppInstaller",
           "summary": "Download, extract, and manage external OS-level tool binaries.",
-          "line": 41,
+          "line": 42,
           "bases": [],
           "members": [
             {
@@ -634,7 +634,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, platforms: Dict[str, dict], executable: Optional[str] = None, version: Optional[str] = None, sha256: Optional[Dict[str, str]] = None, location: str = 'user', update: bool = False, add_to_path: bool = True, progress_callback: Optional[Callable[[int, int], None]] = None) -> str",
               "summary": "Ensure a tool is available locally, downloading if necessary.",
-              "line": 69,
+              "line": 70,
               "deprecated": false
             },
             {
@@ -643,7 +643,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, location: str = 'user', executable: Optional[str] = None, add_to_path: bool = False) -> Optional[str]",
               "summary": "Find a tool without installing.",
-              "line": 213,
+              "line": 214,
               "deprecated": false
             },
             {
@@ -652,7 +652,7 @@
               "kind": "staticmethod",
               "signature": "(prompt: Union[bool, Callable[[str], bool], None], question: str) -> Optional[bool]",
               "summary": "Resolve a caller's *prompt* policy for an install into a yes/no.",
-              "line": 263,
+              "line": 264,
               "deprecated": false
             }
           ]
@@ -1434,6 +1434,317 @@
       ]
     },
     {
+      "relpath": "core_utils/engines/key_stash/key_stash_model.py",
+      "summary": "Key stash — park keyframes outside the working animation, retrieve later.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "StashedClip",
+          "summary": "One parked set of keys.",
+          "line": 51,
+          "bases": [],
+          "members": [
+            {
+              "name": "times",
+              "qualname": "StashedClip.times",
+              "kind": "property",
+              "signature": "(self) -> List[float]",
+              "summary": "Every stashed key time across all curves, sorted, de-duplicated.",
+              "line": 77,
+              "deprecated": false
+            },
+            {
+              "name": "start",
+              "qualname": "StashedClip.start",
+              "kind": "property",
+              "signature": "(self) -> Optional[float]",
+              "summary": "Earliest stashed key time, or ``None`` for an empty clip.",
+              "line": 85,
+              "deprecated": false
+            },
+            {
+              "name": "end",
+              "qualname": "StashedClip.end",
+              "kind": "property",
+              "signature": "(self) -> Optional[float]",
+              "summary": "Latest stashed key time, or ``None`` for an empty clip.",
+              "line": 91,
+              "deprecated": false
+            },
+            {
+              "name": "duration",
+              "qualname": "StashedClip.duration",
+              "kind": "property",
+              "signature": "(self) -> float",
+              "summary": "``end - start`` in frames (``0.0`` for a single-frame or empty clip).",
+              "line": 97,
+              "deprecated": false
+            },
+            {
+              "name": "key_count",
+              "qualname": "StashedClip.key_count",
+              "kind": "property",
+              "signature": "(self) -> int",
+              "summary": "Total stashed keys over every curve.",
+              "line": 103,
+              "deprecated": false
+            },
+            {
+              "name": "rescale",
+              "qualname": "StashedClip.rescale",
+              "kind": "method",
+              "signature": "(self, ratio: float) -> None",
+              "summary": "Multiply every recorded key time by *ratio* (frame-rate change).",
+              "line": 107,
+              "deprecated": false
+            },
+            {
+              "name": "to_dict",
+              "qualname": "StashedClip.to_dict",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "",
+              "line": 115,
+              "deprecated": false
+            },
+            {
+              "name": "from_dict",
+              "qualname": "StashedClip.from_dict",
+              "kind": "classmethod",
+              "signature": "(cls, data: Dict[str, Any]) -> 'StashedClip'",
+              "summary": "",
+              "line": 129,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "StashChanged",
+          "summary": "Fired on every store mutation.",
+          "line": 142,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "KeyStash",
+          "summary": "Store of parked key clips with pluggable persistence.",
+          "line": 191,
+          "bases": [
+            "_KeyStashInternal"
+          ],
+          "members": [
+            {
+              "name": "add_clip",
+              "qualname": "KeyStash.add_clip",
+              "kind": "method",
+              "signature": "(self, objects: List[str], curves: List[Dict[str, Any]], label: Optional[str] = None, source_shot_id: Optional[int] = None, metadata: Optional[Dict[str, Any]] = None) -> StashedClip",
+              "summary": "Record a new clip and return it.",
+              "line": 232,
+              "deprecated": false
+            },
+            {
+              "name": "get_clip",
+              "qualname": "KeyStash.get_clip",
+              "kind": "method",
+              "signature": "(self, clip_id: int) -> Optional[StashedClip]",
+              "summary": "The clip with *clip_id*, or ``None``.",
+              "line": 271,
+              "deprecated": false
+            },
+            {
+              "name": "remove_clip",
+              "qualname": "KeyStash.remove_clip",
+              "kind": "method",
+              "signature": "(self, clip_id: int, kind: str = 'dropped') -> Optional[StashedClip]",
+              "summary": "Forget *clip_id* and return the removed record (``None`` if absent).",
+              "line": 278,
+              "deprecated": false
+            },
+            {
+              "name": "clips_for_object",
+              "qualname": "KeyStash.clips_for_object",
+              "kind": "method",
+              "signature": "(self, name: str) -> List[StashedClip]",
+              "summary": "Clips whose ``objects`` include *name* (exact or leaf-name match).",
+              "line": 295,
+              "deprecated": false
+            },
+            {
+              "name": "clips_for_shot",
+              "qualname": "KeyStash.clips_for_shot",
+              "kind": "method",
+              "signature": "(self, shot_id: int) -> List[StashedClip]",
+              "summary": "Clips stashed from shot *shot_id*.",
+              "line": 306,
+              "deprecated": false
+            },
+            {
+              "name": "is_empty",
+              "qualname": "KeyStash.is_empty",
+              "kind": "method",
+              "signature": "(self) -> bool",
+              "summary": "``True`` when the store holds no clips and no preview.",
+              "line": 310,
+              "deprecated": false
+            },
+            {
+              "name": "set_preview",
+              "qualname": "KeyStash.set_preview",
+              "kind": "method",
+              "signature": "(self, clip_id: int, payload: Optional[Dict[str, Any]] = None) -> None",
+              "summary": "Record that *clip_id* is being previewed (adapter *payload* rides along).",
+              "line": 316,
+              "deprecated": false
+            },
+            {
+              "name": "clear_preview",
+              "qualname": "KeyStash.clear_preview",
+              "kind": "method",
+              "signature": "(self) -> Optional[Dict[str, Any]]",
+              "summary": "Forget the preview record;",
+              "line": 330,
+              "deprecated": false
+            },
+            {
+              "name": "add_listener",
+              "qualname": "KeyStash.add_listener",
+              "kind": "method",
+              "signature": "(self, callback: Callable[[StashChanged], None]) -> None",
+              "summary": "Register *callback* for :class:`StashChanged` events.",
+              "line": 340,
+              "deprecated": false
+            },
+            {
+              "name": "remove_listener",
+              "qualname": "KeyStash.remove_listener",
+              "kind": "method",
+              "signature": "(self, callback: Callable[[StashChanged], None]) -> None",
+              "summary": "Remove a previously registered listener.",
+              "line": 345,
+              "deprecated": false
+            },
+            {
+              "name": "batch_update",
+              "qualname": "KeyStash.batch_update",
+              "kind": "method",
+              "signature": "(self)",
+              "summary": "Defer notifications and the flush until the block exits.",
+              "line": 363,
+              "deprecated": false
+            },
+            {
+              "name": "rescale_to_fps",
+              "qualname": "KeyStash.rescale_to_fps",
+              "kind": "method",
+              "signature": "(self, new_fps: float) -> None",
+              "summary": "Rescale every recorded key time from :attr:`scene_fps` to *new_fps*.",
+              "line": 378,
+              "deprecated": false
+            },
+            {
+              "name": "mark_dirty",
+              "qualname": "KeyStash.mark_dirty",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Flag the store for saving;",
+              "line": 402,
+              "deprecated": false
+            },
+            {
+              "name": "save",
+              "qualname": "KeyStash.save",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Persist through the configured backend (no-op without one).",
+              "line": 417,
+              "deprecated": false
+            },
+            {
+              "name": "to_dict",
+              "qualname": "KeyStash.to_dict",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "",
+              "line": 429,
+              "deprecated": false
+            },
+            {
+              "name": "from_dict",
+              "qualname": "KeyStash.from_dict",
+              "kind": "classmethod",
+              "signature": "(cls, data: Dict[str, Any]) -> 'KeyStash'",
+              "summary": "",
+              "line": 446,
+              "deprecated": false
+            },
+            {
+              "name": "set_persistence",
+              "qualname": "KeyStash.set_persistence",
+              "kind": "classmethod",
+              "signature": "(cls, backend: Optional[ScenePersistence]) -> None",
+              "summary": "Set the backend :meth:`active` loads from and :meth:`save` writes to.",
+              "line": 465,
+              "deprecated": false
+            },
+            {
+              "name": "active",
+              "qualname": "KeyStash.active",
+              "kind": "classmethod",
+              "signature": "(cls) -> 'KeyStash'",
+              "summary": "The active store, loaded from the backend on first access.",
+              "line": 470,
+              "deprecated": false
+            },
+            {
+              "name": "invalidate",
+              "qualname": "KeyStash.invalidate",
+              "kind": "classmethod",
+              "signature": "(cls) -> None",
+              "summary": "Drop the active store (scene changed);",
+              "line": 499,
+              "deprecated": false
+            },
+            {
+              "name": "add_invalidation_listener",
+              "qualname": "KeyStash.add_invalidation_listener",
+              "kind": "classmethod",
+              "signature": "(cls, callback: Callable[[StashChanged], None]) -> None",
+              "summary": "Register a callback that survives store instances (UI rebinding).",
+              "line": 509,
+              "deprecated": false
+            },
+            {
+              "name": "remove_invalidation_listener",
+              "qualname": "KeyStash.remove_invalidation_listener",
+              "kind": "classmethod",
+              "signature": "(cls, callback: Callable[[StashChanged], None]) -> None",
+              "summary": "Remove a previously registered invalidation listener.",
+              "line": 517,
+              "deprecated": false
+            },
+            {
+              "name": "offset_for",
+              "qualname": "KeyStash.offset_for",
+              "kind": "staticmethod",
+              "signature": "(clip: StashedClip, at: Optional[float]) -> float",
+              "summary": "Frame offset that lands *clip*'s first key on *at* (``0.0`` for ``None``).",
+              "line": 529,
+              "deprecated": false
+            },
+            {
+              "name": "gate_range",
+              "qualname": "KeyStash.gate_range",
+              "kind": "staticmethod",
+              "signature": "(clip: StashedClip) -> Optional[Tuple[float, float]]",
+              "summary": "``(start, end)`` of *clip*, or ``None`` when it holds no keys.",
+              "line": 536,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "core_utils/engines/shots/manifest/behaviors/_behaviors.py",
       "summary": "Behaviors — load JSON keying recipes and resolve them to keyframe math.",
       "functions": [],
@@ -1646,7 +1957,7 @@
         {
           "name": "ManifestModel",
           "summary": "ManifestModel — module namespace.",
-          "line": 120,
+          "line": 135,
           "bases": [
             "_ManifestModelInternal"
           ],
@@ -1657,7 +1968,7 @@
               "kind": "staticmethod",
               "signature": "(text: str) -> List[str]",
               "summary": "Return behavior names inferred from descriptive *text*.",
-              "line": 124,
+              "line": 139,
               "deprecated": false
             },
             {
@@ -1666,7 +1977,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]",
               "summary": "Parse a structured CSV into a list of :class:`BuilderStep`.",
-              "line": 137,
+              "line": 152,
               "deprecated": false
             }
           ]
@@ -1674,14 +1985,14 @@
         {
           "name": "BuilderObject",
           "summary": "One asset within a step.",
-          "line": 321,
+          "line": 337,
           "bases": [],
           "members": []
         },
         {
           "name": "BuilderStep",
           "summary": "One step (= one future sequencer shot).",
-          "line": 331,
+          "line": 347,
           "bases": [],
           "members": [
             {
@@ -1690,7 +2001,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Text shown in the tree Description column.",
-              "line": 345,
+              "line": 361,
               "deprecated": false
             },
             {
@@ -1699,7 +2010,7 @@
               "kind": "classmethod",
               "signature": "(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]",
               "summary": "Convert detection candidates to BuilderSteps + pre-filled ranges.",
-              "line": 350,
+              "line": 366,
               "deprecated": false
             }
           ]
@@ -1707,21 +2018,21 @@
         {
           "name": "PlannedShot",
           "summary": "Immutable build instruction computed before any store mutation.",
-          "line": 401,
+          "line": 417,
           "bases": [],
           "members": []
         },
         {
           "name": "ObjectStatus",
           "summary": "Assessment result for one object within a step.",
-          "line": 440,
+          "line": 456,
           "bases": [],
           "members": []
         },
         {
           "name": "StepStatus",
           "summary": "Assessment result for one step.",
-          "line": 456,
+          "line": 472,
           "bases": [],
           "members": [
             {
@@ -1730,7 +2041,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Worst-of-children rollup.",
-              "line": 467,
+              "line": 483,
               "deprecated": false
             },
             {
@@ -1739,7 +2050,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "",
-              "line": 484,
+              "line": 500,
               "deprecated": false
             },
             {
@@ -1748,7 +2059,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "",
-              "line": 488,
+              "line": 504,
               "deprecated": false
             }
           ]
@@ -1756,7 +2067,7 @@
         {
           "name": "ColumnMap",
           "summary": "Maps logical fields to CSV header names (case-insensitive).",
-          "line": 508,
+          "line": 524,
           "bases": [
             "SchemaSpec"
           ],
@@ -1767,7 +2078,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "Serialise to a JSON-safe dict (tuples → lists).",
-              "line": 556,
+              "line": 572,
               "deprecated": false
             },
             {
@@ -1776,7 +2087,7 @@
               "kind": "classmethod",
               "signature": "(cls, data: Dict[str, Any]) -> 'ColumnMap'",
               "summary": "Reconstruct from a dict produced by :meth:`to_dict`.",
-              "line": 570,
+              "line": 586,
               "deprecated": false
             }
           ]
@@ -2439,12 +2750,21 @@
               "deprecated": false
             },
             {
+              "name": "is_empty",
+              "qualname": "ShotStore.is_empty",
+              "kind": "method",
+              "signature": "(self) -> bool",
+              "summary": "``True`` when the store declares no shots.",
+              "line": 620,
+              "deprecated": false
+            },
+            {
               "name": "notify_settings_changed",
               "qualname": "ShotStore.notify_settings_changed",
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Fire a ``\"settings_changed\"`` event.",
-              "line": 622,
+              "line": 631,
               "deprecated": false
             },
             {
@@ -2453,7 +2773,7 @@
               "kind": "method",
               "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
               "summary": "Register a listener called on store mutations.",
-              "line": 631,
+              "line": 640,
               "deprecated": false
             },
             {
@@ -2462,7 +2782,7 @@
               "kind": "method",
               "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
               "summary": "Remove a previously registered listener.",
-              "line": 648,
+              "line": 657,
               "deprecated": false
             },
             {
@@ -2471,7 +2791,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Defer listener notifications until the block exits.",
-              "line": 669,
+              "line": 678,
               "deprecated": false
             },
             {
@@ -2480,7 +2800,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> bool",
               "summary": "Return whether the gap between two adjacent shots is locked.",
-              "line": 693,
+              "line": 702,
               "deprecated": false
             },
             {
@@ -2489,7 +2809,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> None",
               "summary": "Lock a gap so its width is preserved during global respace.",
-              "line": 697,
+              "line": 706,
               "deprecated": false
             },
             {
@@ -2498,7 +2818,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> None",
               "summary": "Unlock a gap so it follows the global gap value.",
-              "line": 704,
+              "line": 713,
               "deprecated": false
             },
             {
@@ -2507,7 +2827,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Lock every adjacent gap.",
-              "line": 710,
+              "line": 719,
               "deprecated": false
             },
             {
@@ -2516,7 +2836,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Unlock every gap.",
-              "line": 719,
+              "line": 728,
               "deprecated": false
             },
             {
@@ -2525,7 +2845,7 @@
               "kind": "classmethod",
               "signature": "(cls, backend: Optional[ScenePersistence]) -> None",
               "summary": "Set the persistence backend used by :meth:`active` and :meth:`save`.",
-              "line": 728,
+              "line": 737,
               "deprecated": false
             },
             {
@@ -2534,7 +2854,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'ShotStore'",
               "summary": "Return the current active store, creating one if needed.",
-              "line": 737,
+              "line": 746,
               "deprecated": false
             },
             {
@@ -2543,7 +2863,7 @@
               "kind": "classmethod",
               "signature": "(cls, store: 'ShotStore') -> None",
               "summary": "Replace the active store instance.",
-              "line": 763,
+              "line": 772,
               "deprecated": false
             },
             {
@@ -2552,7 +2872,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Reset the active store and persistence backend.",
-              "line": 768,
+              "line": 777,
               "deprecated": false
             },
             {
@@ -2561,7 +2881,7 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
               "summary": "Register a callback fired when the active store is discarded.",
-              "line": 786,
+              "line": 795,
               "deprecated": false
             },
             {
@@ -2570,7 +2890,16 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
               "summary": "Remove a previously registered invalidation listener.",
-              "line": 799,
+              "line": 808,
+              "deprecated": false
+            },
+            {
+              "name": "invalidate",
+              "qualname": "ShotStore.invalidate",
+              "kind": "classmethod",
+              "signature": "(cls) -> None",
+              "summary": "Drop the active store (the scene changed) and fire the invalidation listeners.",
+              "line": 818,
               "deprecated": false
             },
             {
@@ -2579,7 +2908,7 @@
               "kind": "method",
               "signature": "(self, frame: float) -> float",
               "summary": "Return *frame* rounded to the nearest integer when snapping is on.",
-              "line": 900,
+              "line": 921,
               "deprecated": false
             },
             {
@@ -2588,7 +2917,7 @@
               "kind": "method",
               "signature": "(self) -> float",
               "summary": "Derive the predominant inter-shot gap from current shot positions.",
-              "line": 913,
+              "line": 934,
               "deprecated": false
             },
             {
@@ -2597,7 +2926,7 @@
               "kind": "method",
               "signature": "(self) -> List[ShotBlock]",
               "summary": "Return shots ordered by start time.",
-              "line": 934,
+              "line": 955,
               "deprecated": false
             },
             {
@@ -2606,7 +2935,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int) -> Optional[ShotBlock]",
               "summary": "",
-              "line": 938,
+              "line": 959,
               "deprecated": false
             },
             {
@@ -2615,7 +2944,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[ShotBlock]",
               "summary": "Return the first shot whose name matches *name*, or ``None``.",
-              "line": 944,
+              "line": 965,
               "deprecated": false
             },
             {
@@ -2624,7 +2953,7 @@
               "kind": "method",
               "signature": "(self, name: str, start: float, end: float, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
               "summary": "Create a new shot and add it to the store.",
-              "line": 951,
+              "line": 972,
               "deprecated": false
             },
             {
@@ -2633,7 +2962,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int, *, start: Optional[float] = None, end: Optional[float] = None, name: Optional[str] = None, objects: Optional[List[str]] = None, description: Optional[str] = None, locked: Optional[bool] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[ShotBlock]",
               "summary": "Update fields on an existing shot.",
-              "line": 996,
+              "line": 1017,
               "deprecated": false
             },
             {
@@ -2642,7 +2971,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int) -> bool",
               "summary": "Remove a shot by ID.",
-              "line": 1039,
+              "line": 1060,
               "deprecated": false
             },
             {
@@ -2651,7 +2980,7 @@
               "kind": "method",
               "signature": "(self, name: str, duration: float, gap: float = 0, start_frame: Optional[float] = None, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
               "summary": "Append a shot after the last existing shot, with gap-aware placement.",
-              "line": 1049,
+              "line": 1070,
               "deprecated": false
             },
             {
@@ -2660,7 +2989,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> bool",
               "summary": "Return True if *obj_name* is hidden in the sequencer UI.",
-              "line": 1090,
+              "line": 1111,
               "deprecated": false
             },
             {
@@ -2669,7 +2998,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str, hidden: bool = True) -> None",
               "summary": "Show or hide *obj_name* in the sequencer UI.",
-              "line": 1094,
+              "line": 1115,
               "deprecated": false
             },
             {
@@ -2678,7 +3007,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> bool",
               "summary": "Return True if *obj_name* is pinned (kept even when missing).",
-              "line": 1106,
+              "line": 1127,
               "deprecated": false
             },
             {
@@ -2687,7 +3016,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str, pinned: bool = True) -> None",
               "summary": "Pin or unpin *obj_name*.",
-              "line": 1110,
+              "line": 1131,
               "deprecated": false
             },
             {
@@ -2696,7 +3025,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> None",
               "summary": "Remove *obj_name* from every shot's object list.",
-              "line": 1127,
+              "line": 1148,
               "deprecated": false
             },
             {
@@ -2705,7 +3034,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "Serialise shots and settings to a plain dict.",
-              "line": 1145,
+              "line": 1166,
               "deprecated": false
             },
             {
@@ -2714,7 +3043,7 @@
               "kind": "method",
               "signature": "(self, strategy: str = 'name') -> Dict[str, Any]",
               "summary": "Build the FBX/Unity export view from the current shots.",
-              "line": 1180,
+              "line": 1201,
               "deprecated": false
             },
             {
@@ -2723,7 +3052,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Republish the active store's export view.",
-              "line": 1218,
+              "line": 1239,
               "deprecated": false
             },
             {
@@ -2732,7 +3061,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Opt every export this session into carrying the active store's shots.",
-              "line": 1238,
+              "line": 1259,
               "deprecated": false
             },
             {
@@ -2741,7 +3070,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Remove the before-export preparer for the rest of the session.",
-              "line": 1251,
+              "line": 1272,
               "deprecated": false
             },
             {
@@ -2750,7 +3079,7 @@
               "kind": "classmethod",
               "signature": "(cls, data: Dict[str, Any]) -> 'ShotStore'",
               "summary": "Restore from serialised data.",
-              "line": 1282,
+              "line": 1303,
               "deprecated": false
             },
             {
@@ -2759,7 +3088,7 @@
               "kind": "method",
               "signature": "(self, new_fps: float) -> None",
               "summary": "Scale all shot timings from the current ``scene_fps`` to *new_fps*.",
-              "line": 1348,
+              "line": 1369,
               "deprecated": false
             },
             {
@@ -2768,7 +3097,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Flag the store as needing a save.",
-              "line": 1373,
+              "line": 1394,
               "deprecated": false
             },
             {
@@ -2777,7 +3106,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Persist via the configured backend (no-op if none set).",
-              "line": 1391,
+              "line": 1412,
               "deprecated": false
             },
             {
@@ -2786,7 +3115,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "True when detection settings are actionable.",
-              "line": 1416,
+              "line": 1437,
               "deprecated": false
             },
             {
@@ -2795,7 +3124,7 @@
               "kind": "method",
               "signature": "(self, overwrite: bool = False) -> List[ShotBlock]",
               "summary": "Detect shot regions and define them in the store.",
-              "line": 1433,
+              "line": 1454,
               "deprecated": false
             },
             {
@@ -2804,7 +3133,7 @@
               "kind": "staticmethod",
               "signature": "(node) -> str",
               "summary": "Leaf name with namespace preserved: ``\"|grp|ns:obj\"`` -> ``\"ns:obj\"``.",
-              "line": 1465,
+              "line": 1486,
               "deprecated": false
             },
             {
@@ -2813,7 +3142,16 @@
               "kind": "staticmethod",
               "signature": "(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]",
               "summary": "Resolve ``[(clip_name, start, end), …]`` — the single source of truth for",
-              "line": 1475,
+              "line": 1496,
+              "deprecated": false
+            },
+            {
+              "name": "declared_range",
+              "qualname": "ShotStore.declared_range",
+              "kind": "classmethod",
+              "signature": "(cls, strategy: str = 'name') -> Optional[Tuple[int, int]]",
+              "summary": "The ``(start, end)`` frames the active store's shots span, or None.",
+              "line": 1518,
               "deprecated": false
             }
           ]
@@ -3247,7 +3585,7 @@
               "kind": "classmethod",
               "signature": "(cls, files, types='')",
               "summary": "Parameters:",
-              "line": 835,
+              "line": 844,
               "deprecated": false
             },
             {
@@ -3256,7 +3594,7 @@
               "kind": "classmethod",
               "signature": "(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]",
               "summary": "Sort image files by map type based on the input format.",
-              "line": 850,
+              "line": 859,
               "deprecated": false
             },
             {
@@ -3265,7 +3603,7 @@
               "kind": "classmethod",
               "signature": "(cls, files, map_types)",
               "summary": "Check if the given images contain the given map types.",
-              "line": 885,
+              "line": 894,
               "deprecated": false
             },
             {
@@ -3274,7 +3612,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Check the map type for one of the normal values in map_types.",
-              "line": 912,
+              "line": 921,
               "deprecated": false
             },
             {
@@ -3283,7 +3621,7 @@
               "kind": "classmethod",
               "signature": "(cls, handler_class: Type[WorkflowHandler])",
               "summary": "Register a custom workflow handler (extensibility).",
-              "line": 931,
+              "line": 940,
               "deprecated": false
             },
             {
@@ -3292,7 +3630,7 @@
               "kind": "classmethod",
               "signature": "(cls, conversion: MapConversion)",
               "summary": "Register a custom map conversion (extensibility).",
-              "line": 948,
+              "line": 957,
               "deprecated": false
             },
             {
@@ -3301,7 +3639,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_type: str) -> Tuple[str, ...]",
               "summary": "Get fallback map types for a given map type.",
-              "line": 953,
+              "line": 962,
               "deprecated": false
             },
             {
@@ -3310,7 +3648,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, List[str]]",
               "summary": "Returns a dictionary of map precedence rules.",
-              "line": 965,
+              "line": 974,
               "deprecated": false
             },
             {
@@ -3319,7 +3657,7 @@
               "kind": "classmethod",
               "signature": "(cls, sorted_maps: Dict[str, Any], target_format: Optional[str] = None, convert: bool = True) -> Dict[str, Dict[str, str]]",
               "summary": "Reduce an inventory to exactly ONE normal map — optionally in a given convention.",
-              "line": 973,
+              "line": 982,
               "deprecated": false
             },
             {
@@ -3328,7 +3666,7 @@
               "kind": "classmethod",
               "signature": "(cls, sorted_maps: Dict[str, Any], config: Dict[str, Any] = None, extract_missing: bool = True) -> Dict[str, Dict[str, str]]",
               "summary": "Resolve packed-map redundancy in-place — losslessly.",
-              "line": 1093,
+              "line": 1102,
               "deprecated": false
             },
             {
@@ -3337,7 +3675,7 @@
               "kind": "classmethod",
               "signature": "(cls, packed_type: str, packed_path: Optional[str], targets: List[str], config: Dict[str, Any] = None) -> Optional[Dict[str, str]]",
               "summary": "Extract ``targets`` from a packed map into loose files beside it.",
-              "line": 1427,
+              "line": 1459,
               "deprecated": false
             },
             {
@@ -3346,7 +3684,7 @@
               "kind": "classmethod",
               "signature": "(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]",
               "summary": "Main factory method.",
-              "line": 1501,
+              "line": 1533,
               "deprecated": false
             },
             {
@@ -3355,7 +3693,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…",
-              "line": 1956,
+              "line": 1990,
               "deprecated": false
             },
             {
@@ -3364,7 +3702,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.",
-              "line": 2014,
+              "line": 2048,
               "deprecated": false
             },
             {
@@ -3373,7 +3711,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]",
               "summary": "Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.",
-              "line": 2068,
+              "line": 2102,
               "deprecated": false
             },
             {
@@ -3382,7 +3720,7 @@
               "kind": "classmethod",
               "signature": "(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.",
-              "line": 2212,
+              "line": 2246,
               "deprecated": false
             },
             {
@@ -3391,7 +3729,7 @@
               "kind": "classmethod",
               "signature": "(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a bump/height map to a tangent-space normal map.",
-              "line": 2285,
+              "line": 2319,
               "deprecated": false
             },
             {
@@ -3400,7 +3738,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]",
               "summary": "Extracts gloss from a specific channel in the specular map.",
-              "line": 2444,
+              "line": 2478,
               "deprecated": false
             },
             {
@@ -3409,7 +3747,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'], diffuse_map: Union[str, 'Image.Image'] = None, output_dir: str = None, convert_diffuse_to_albedo: bool = False, output_type: str = None, image_size: Optional[int] = None, optimize_bit_depth: bool = True, write_files: bool = False) -> Union[Tuple['Image.Image', 'Image.Image', 'Image.Image'], Tuple[str, str, str]]",
               "summary": "Converts Specular/Glossiness maps to PBR Metal/Rough.",
-              "line": 2478,
+              "line": 2512,
               "deprecated": false
             },
             {
@@ -3418,7 +3756,7 @@
               "kind": "classmethod",
               "signature": "(cls, diffuse: Union[str, 'Image.Image'], spec: Union[str, 'Image.Image'], metalness: Union[str, 'Image.Image'], conserve_energy: bool = True, metal_darkening: float = 0.22) -> 'Image.Image'",
               "summary": "Computes Base Color from Specular workflow with better metal handling.",
-              "line": 2580,
+              "line": 2614,
               "deprecated": false
             },
             {
@@ -3427,7 +3765,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None, threshold: int = 55, softness: float = 0.2) -> 'Image.Image'",
               "summary": "Creates a metallic map from a specular (and optional glossiness) map.",
-              "line": 2636,
+              "line": 2670,
               "deprecated": false
             },
             {
@@ -3436,7 +3774,7 @@
               "kind": "classmethod",
               "signature": "(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'",
               "summary": "Estimates roughness from a specular map.",
-              "line": 2681,
+              "line": 2715,
               "deprecated": false
             },
             {
@@ -3445,7 +3783,7 @@
               "kind": "classmethod",
               "signature": "(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'",
               "summary": "Converts a Base Color map to a true Albedo map by:",
-              "line": 2729,
+              "line": 2763,
               "deprecated": false
             },
             {
@@ -3454,7 +3792,7 @@
               "kind": "staticmethod",
               "signature": "(map_type: str, available: dict) -> Optional[Any]",
               "summary": "Get the converted map based on the given map type and available maps.",
-              "line": 2771,
+              "line": 2805,
               "deprecated": false
             },
             {
@@ -3463,7 +3801,7 @@
               "kind": "classmethod",
               "signature": "(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']",
               "summary": "Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.",
-              "line": 2821,
+              "line": 2855,
               "deprecated": false
             },
             {
@@ -3472,7 +3810,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']",
               "summary": "Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.",
-              "line": 2907,
+              "line": 2941,
               "deprecated": false
             },
             {
@@ -3481,7 +3819,7 @@
               "kind": "classmethod",
               "signature": "(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']",
               "summary": "Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.",
-              "line": 3009,
+              "line": 3043,
               "deprecated": false
             },
             {
@@ -3490,7 +3828,7 @@
               "kind": "classmethod",
               "signature": "(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Smoothness map to a Roughness map by inverting the grayscale values.",
-              "line": 3114,
+              "line": 3148,
               "deprecated": false
             },
             {
@@ -3499,7 +3837,7 @@
               "kind": "classmethod",
               "signature": "(cls, roughness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']",
               "summary": "Convert a Roughness map to a Smoothness map by inverting the grayscale values.",
-              "line": 3167,
+              "line": 3201,
               "deprecated": false
             },
             {
@@ -3508,7 +3846,7 @@
               "kind": "classmethod",
               "signature": "(cls, sources: Iterable[Any], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]",
               "summary": "``{path: map type}`` for **packed** sources belonging to another engine.",
-              "line": 3253,
+              "line": 3287,
               "deprecated": false
             },
             {
@@ -3517,7 +3855,7 @@
               "kind": "classmethod",
               "signature": "(cls, source: Union[str, 'Image.Image'], map_type: Optional[str] = None, save: bool = False) -> Dict[str, 'Image.Image']",
               "summary": "The loose maps a packed source map carries, keyed by canonical type.",
-              "line": 3329,
+              "line": 3363,
               "deprecated": false
             },
             {
@@ -3526,7 +3864,7 @@
               "kind": "classmethod",
               "signature": "(cls, orm_map_path: str, output_dir: str = None, ao_suffix: str = '_AO', roughness_suffix: str = '_Roughness', metallic_suffix: str = '_Metallic', invert_roughness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpacks AO (R), Roughness (G), and Metallic (B) maps from a combined ORM texture.",
-              "line": 3479,
+              "line": 3513,
               "deprecated": false
             },
             {
@@ -3535,7 +3873,7 @@
               "kind": "classmethod",
               "signature": "(cls, msao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', ao_suffix: str = '_AO', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpack Metallic, AO, and Smoothness from a combined MSAO texture.",
-              "line": 3514,
+              "line": 3548,
               "deprecated": false
             },
             {
@@ -3544,7 +3882,7 @@
               "kind": "classmethod",
               "signature": "(cls, mrao_map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', roughness_suffix: str = '_Roughness', ao_suffix: str = '_AO', invert_roughness: bool = False, save: bool = True, layout: Optional[str] = None, **kwargs) -> Union[Tuple[str, str, str], Tuple['Image.Image', 'Image.Image', 'Image.Image']]",
               "summary": "Unpack Metallic, Roughness, and AO from a combined MRAO texture.",
-              "line": 3569,
+              "line": 3603,
               "deprecated": false
             },
             {
@@ -3553,7 +3891,7 @@
               "kind": "classmethod",
               "signature": "(cls, albedo_map_path: str, output_dir: str = None, base_color_suffix: str = '_BaseColor', opacity_suffix: str = '_Opacity', save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Base Color (RGB) and Opacity (A) from an Albedo+Transparency map.",
-              "line": 3624,
+              "line": 3658,
               "deprecated": false
             },
             {
@@ -3562,7 +3900,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, metallic_suffix: str = '_Metallic', smoothness_suffix: str = '_Smoothness', invert_smoothness: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Metallic (RGB) and Smoothness (A) from a combined map.",
-              "line": 3645,
+              "line": 3679,
               "deprecated": false
             },
             {
@@ -3571,7 +3909,7 @@
               "kind": "classmethod",
               "signature": "(cls, map_path: str, output_dir: str = None, specular_suffix: str = '_Specular', gloss_suffix: str = '_Glossiness', invert_gloss: bool = False, save: bool = True, **kwargs) -> Union[Tuple[str, str], Tuple['Image.Image', 'Image.Image']]",
               "summary": "Unpacks Specular (RGB) and Glossiness (A) from a combined map.",
-              "line": 3667,
+              "line": 3701,
               "deprecated": false
             }
           ]
@@ -4029,7 +4367,7 @@
               "kind": "method",
               "signature": "(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str",
               "summary": "Saves and optimizes a map, enforcing mode and naming conventions.",
-              "line": 104,
+              "line": 125,
               "deprecated": false
             },
             {
@@ -4038,7 +4376,7 @@
               "kind": "method",
               "signature": "(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]",
               "summary": "Intelligently resolve a map from inventory with fallback conversions.",
-              "line": 401,
+              "line": 434,
               "deprecated": false
             },
             {
@@ -4047,7 +4385,7 @@
               "kind": "method",
               "signature": "(self, *map_types: str)",
               "summary": "Mark map types as consumed.",
-              "line": 466,
+              "line": 499,
               "deprecated": false
             },
             {
@@ -4056,7 +4394,7 @@
               "kind": "method",
               "signature": "(self) -> Tuple[Optional[Union[str, 'Image.Image']], bool]",
               "summary": "Resolve data for a smoothness-oriented channel, tracking inversion.",
-              "line": 482,
+              "line": 515,
               "deprecated": false
             },
             {
@@ -4065,7 +4403,7 @@
               "kind": "method",
               "signature": "(self) -> Tuple[Optional[Union[str, 'Image.Image']], bool]",
               "summary": "Resolve data for a roughness-oriented channel, tracking inversion.",
-              "line": 506,
+              "line": 539,
               "deprecated": false
             },
             {
@@ -4074,7 +4412,7 @@
               "kind": "method",
               "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 530,
+              "line": 563,
               "deprecated": false
             },
             {
@@ -4083,7 +4421,7 @@
               "kind": "method",
               "signature": "(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 544,
+              "line": 577,
               "deprecated": false
             },
             {
@@ -4092,7 +4430,7 @@
               "kind": "method",
               "signature": "(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 560,
+              "line": 593,
               "deprecated": false
             },
             {
@@ -4101,7 +4439,7 @@
               "kind": "method",
               "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 576,
+              "line": 609,
               "deprecated": false
             },
             {
@@ -4110,7 +4448,7 @@
               "kind": "method",
               "signature": "(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 590,
+              "line": 623,
               "deprecated": false
             },
             {
@@ -4119,7 +4457,7 @@
               "kind": "method",
               "signature": "(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 604,
+              "line": 637,
               "deprecated": false
             },
             {
@@ -4128,7 +4466,7 @@
               "kind": "method",
               "signature": "(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 618,
+              "line": 651,
               "deprecated": false
             },
             {
@@ -4137,7 +4475,7 @@
               "kind": "method",
               "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 634,
+              "line": 667,
               "deprecated": false
             },
             {
@@ -4146,7 +4484,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']",
               "summary": "Simple copy/rename for compatible maps (e.g.",
-              "line": 651,
+              "line": 684,
               "deprecated": false
             },
             {
@@ -4155,7 +4493,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack and cache results.",
-              "line": 661,
+              "line": 694,
               "deprecated": false
             },
             {
@@ -4164,7 +4502,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 680,
+              "line": 713,
               "deprecated": false
             },
             {
@@ -4173,7 +4511,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 686,
+              "line": 719,
               "deprecated": false
             },
             {
@@ -4182,7 +4520,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 692,
+              "line": 725,
               "deprecated": false
             },
             {
@@ -4191,7 +4529,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack MSAO and cache results.",
-              "line": 703,
+              "line": 736,
               "deprecated": false
             },
             {
@@ -4200,7 +4538,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 728,
+              "line": 761,
               "deprecated": false
             },
             {
@@ -4209,7 +4547,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 734,
+              "line": 767,
               "deprecated": false
             },
             {
@@ -4218,7 +4556,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 740,
+              "line": 773,
               "deprecated": false
             },
             {
@@ -4227,7 +4565,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 750,
+              "line": 783,
               "deprecated": false
             },
             {
@@ -4236,7 +4574,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack MRAO and cache results.",
-              "line": 756,
+              "line": 789,
               "deprecated": false
             },
             {
@@ -4245,7 +4583,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 785,
+              "line": 818,
               "deprecated": false
             },
             {
@@ -4254,7 +4592,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 791,
+              "line": 824,
               "deprecated": false
             },
             {
@@ -4263,7 +4601,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 797,
+              "line": 830,
               "deprecated": false
             },
             {
@@ -4272,7 +4610,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 805,
+              "line": 838,
               "deprecated": false
             },
             {
@@ -4281,7 +4619,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack ORM and cache results.",
-              "line": 811,
+              "line": 844,
               "deprecated": false
             },
             {
@@ -4290,7 +4628,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 836,
+              "line": 869,
               "deprecated": false
             },
             {
@@ -4299,7 +4637,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 842,
+              "line": 875,
               "deprecated": false
             },
             {
@@ -4308,7 +4646,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 848,
+              "line": 881,
               "deprecated": false
             },
             {
@@ -4317,7 +4655,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 855,
+              "line": 888,
               "deprecated": false
             },
             {
@@ -4326,7 +4664,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack Albedo+Transparency and cache results.",
-              "line": 861,
+              "line": 894,
               "deprecated": false
             },
             {
@@ -4335,7 +4673,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 879,
+              "line": 912,
               "deprecated": false
             },
             {
@@ -4344,7 +4682,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 885,
+              "line": 918,
               "deprecated": false
             },
             {
@@ -4353,7 +4691,7 @@
               "kind": "method",
               "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
               "summary": "Create ORM map from components.",
-              "line": 891,
+              "line": 924,
               "deprecated": false
             },
             {
@@ -4362,7 +4700,7 @@
               "kind": "method",
               "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
               "summary": "Create MRAO (Metallic R / Roughness G / AO B) map from components.",
-              "line": 917,
+              "line": 950,
               "deprecated": false
             },
             {
@@ -4371,7 +4709,7 @@
               "kind": "method",
               "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
               "summary": "Create Mask Map (MSAO) from components.",
-              "line": 968,
+              "line": 1001,
               "deprecated": false
             },
             {
@@ -4380,7 +4718,7 @@
               "kind": "method",
               "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
               "summary": "Create Metallic-Smoothness map from components.",
-              "line": 1020,
+              "line": 1053,
               "deprecated": false
             }
           ]
@@ -5359,22 +5697,6 @@
       ]
     },
     {
-      "relpath": "core_utils/execution_monitor/_dialog_viewer.py",
-      "summary": "Subprocess-based dialog viewer for custom button labels.",
-      "functions": [
-        {
-          "name": "run",
-          "qualname": "run",
-          "kind": "function",
-          "signature": "(title: str, message: str, force_label: str | None = None)",
-          "summary": "Display a dialog with custom buttons matching VS Code style.",
-          "line": 14,
-          "deprecated": false
-        }
-      ],
-      "classes": []
-    },
-    {
       "relpath": "core_utils/execution_monitor/_execution_monitor.py",
       "summary": "",
       "functions": [],
@@ -5382,7 +5704,7 @@
         {
           "name": "ExecutionMonitor",
           "summary": "Utilities for monitoring and handling long-running executions.",
-          "line": 53,
+          "line": 56,
           "bases": [],
           "members": [
             {
@@ -5391,7 +5713,7 @@
               "kind": "staticmethod",
               "signature": "(hold_seconds: float = 0.4, require_foreground: bool = True)",
               "summary": "Build an Esc-hold probe for use as a ``CancelScope`` pull source.",
-              "line": 76,
+              "line": 92,
               "deprecated": false
             },
             {
@@ -5400,16 +5722,16 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "True when the focused window belongs to this process.",
-              "line": 140,
+              "line": 156,
               "deprecated": false
             },
             {
               "name": "is_escape_pressed",
               "qualname": "ExecutionMonitor.is_escape_pressed",
               "kind": "staticmethod",
-              "signature": "()",
+              "signature": "() -> bool",
               "summary": "Check if the Escape key is currently pressed (Windows & Linux).",
-              "line": 165,
+              "line": 181,
               "deprecated": false
             },
             {
@@ -5418,7 +5740,7 @@
               "kind": "classmethod",
               "signature": "(cls, path)",
               "summary": "Set a custom Python interpreter to use for subprocesses.",
-              "line": 234,
+              "line": 247,
               "deprecated": false
             },
             {
@@ -5426,17 +5748,17 @@
               "qualname": "ExecutionMonitor.on_long_execution",
               "kind": "staticmethod",
               "signature": "(threshold, callback, interval=None, allow_escape_cancel=False, indicator=None, cancel_scope=None, escape_hold_seconds=0.4)",
-              "summary": "Decorator that triggers a callback if the decorated function",
-              "line": 407,
+              "summary": "Decorator that triggers a callback if the decorated function takes",
+              "line": 476,
               "deprecated": false
             },
             {
               "name": "show_long_execution_dialog",
               "qualname": "ExecutionMonitor.show_long_execution_dialog",
               "kind": "staticmethod",
-              "signature": "(title, message, force_action=None)",
+              "signature": "(title, message, force_action=None, finished=None)",
               "summary": "Show a dialog to ask the user how to proceed with a long operation.",
-              "line": 523,
+              "line": 650,
               "deprecated": false
             },
             {
@@ -5444,8 +5766,8 @@
               "qualname": "ExecutionMonitor.execution_monitor",
               "kind": "staticmethod",
               "signature": "(threshold, message, logger=None, allow_escape_cancel=False, show_dialog: bool = True, force_action: str | None = None, watchdog_timeout: float | None = None, watchdog_heartbeat_interval: float = 1.0, watchdog_check_interval: float = 1.0, watchdog_kill_tree: bool = True, watchdog_heartbeat_path: str | None = None, indicator: bool | str | None = None, cancel_scope=None, escape_hold_seconds: float = 0.4)",
-              "summary": "Decorator that monitors execution time and (optionally) prompts the user via a native",
-              "line": 681,
+              "summary": "Decorator that monitors execution time and (optionally) prompts the",
+              "line": 803,
               "deprecated": false
             },
             {
@@ -5454,7 +5776,7 @@
               "kind": "staticmethod",
               "signature": "(timeout: float, message: str = 'Operation appears to have stalled', heartbeat_interval: float = 1.0, check_interval: float = 1.0, kill_tree: bool = True, logger=None, heartbeat_path: str | None = None)",
               "summary": "Decorator that starts an OS-level watchdog for the current process.",
-              "line": 1008,
+              "line": 1064,
               "deprecated": false
             }
           ]
@@ -5462,32 +5784,88 @@
       ]
     },
     {
-      "relpath": "core_utils/execution_monitor/_gif_viewer.py",
-      "summary": "",
+      "relpath": "core_utils/execution_monitor/_sidecar.py",
+      "summary": "Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.",
       "functions": [
         {
-          "name": "run",
-          "qualname": "run",
+          "name": "process_alive",
+          "qualname": "process_alive",
           "kind": "function",
-          "signature": "(gif_path, target_size=DEFAULT_SIZE, pos=None)",
-          "summary": "",
-          "line": 47,
+          "signature": "(pid: int) -> bool",
+          "summary": "True while *pid* is running.",
+          "line": 67,
           "deprecated": false
-        }
-      ],
-      "classes": []
-    },
-    {
-      "relpath": "core_utils/execution_monitor/_spinner.py",
-      "summary": "Lightweight canvas-based spinner for task-indicator overlay.",
-      "functions": [
+        },
         {
-          "name": "run",
-          "qualname": "run",
+          "name": "kill_process",
+          "qualname": "kill_process",
           "kind": "function",
-          "signature": "(size=DEFAULT_SIZE, pos=None)",
+          "signature": "(pid: int, tree: bool = True) -> None",
+          "summary": "Force-kill *pid* (and, with *tree*, its descendants).",
+          "line": 131,
+          "deprecated": false
+        },
+        {
+          "name": "run_watchdog",
+          "qualname": "run_watchdog",
+          "kind": "function",
+          "signature": "(pid: int, heartbeat_path: str, timeout: float, check_interval: float = 1.0, kill_tree: bool = True, stop_file: str | None = None) -> int",
+          "summary": "Kill *pid* when *heartbeat_path* stops being touched for *timeout* seconds.",
+          "line": 154,
+          "deprecated": false
+        },
+        {
+          "name": "watch_parent",
+          "qualname": "watch_parent",
+          "kind": "function",
+          "signature": "(root, pid: int | None, on_gone=None) -> None",
+          "summary": "Close *root* (or call *on_gone*) once process *pid* has exited.",
+          "line": 185,
+          "deprecated": false
+        },
+        {
+          "name": "run_indicator",
+          "qualname": "run_indicator",
+          "kind": "function",
+          "signature": "(size: int | None = None, pos=None, gif_path: str | None = None, parent_pid: int | None = None) -> int",
+          "summary": "Show the busy indicator near *pos* until killed or the parent exits.",
+          "line": 315,
+          "deprecated": false
+        },
+        {
+          "name": "build_dialog",
+          "qualname": "build_dialog",
+          "kind": "function",
+          "signature": "(root, title: str, message: str, force_label: str | None = None) -> list",
+          "summary": "Populate *root* with the VS Code-style dialog;",
+          "line": 338,
+          "deprecated": false
+        },
+        {
+          "name": "fit_and_center",
+          "qualname": "fit_and_center",
+          "kind": "function",
+          "signature": "(root) -> None",
+          "summary": "Size the dialog to its content and centre it on screen.",
+          "line": 397,
+          "deprecated": false
+        },
+        {
+          "name": "run_dialog",
+          "qualname": "run_dialog",
+          "kind": "function",
+          "signature": "(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int",
+          "summary": "Show the dialog;",
+          "line": 410,
+          "deprecated": false
+        },
+        {
+          "name": "main",
+          "qualname": "main",
+          "kind": "function",
+          "signature": "(argv=None) -> int",
           "summary": "",
-          "line": 17,
+          "line": 438,
           "deprecated": false
         }
       ],
@@ -6135,7 +6513,7 @@
         {
           "name": "StripHtmlFormatter",
           "summary": "Formatter that strips HTML tags from the message.",
-          "line": 22,
+          "line": 26,
           "bases": [
             "internal_logging.Formatter"
           ],
@@ -6146,7 +6524,7 @@
               "kind": "method",
               "signature": "(self, record)",
               "summary": "",
-              "line": 25,
+              "line": 29,
               "deprecated": false
             }
           ]
@@ -6154,7 +6532,7 @@
         {
           "name": "LevelAwareFormatter",
           "summary": "Formatter that dynamically selects format per-record based on log level.",
-          "line": 44,
+          "line": 48,
           "bases": [
             "internal_logging.Formatter"
           ],
@@ -6165,7 +6543,7 @@
               "kind": "method",
               "signature": "(self, record)",
               "summary": "",
-              "line": 57,
+              "line": 61,
               "deprecated": false
             }
           ]
@@ -6173,7 +6551,7 @@
         {
           "name": "LoggerExt",
           "summary": "",
-          "line": 84,
+          "line": 93,
           "bases": [],
           "members": [
             {
@@ -6182,7 +6560,7 @@
               "kind": "classmethod",
               "signature": "(cls, logger: internal_logging.Logger) -> None",
               "summary": "Patch the logger with additional methods and setup.",
-              "line": 153,
+              "line": 162,
               "deprecated": false
             },
             {
@@ -6191,7 +6569,7 @@
               "kind": "classmethod",
               "signature": "(cls, text: str) -> str",
               "summary": "Remove HTML tags from *text*, leaving the visible plain text.",
-              "line": 608,
+              "line": 641,
               "deprecated": false
             },
             {
@@ -6200,7 +6578,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: str) -> str",
               "summary": "Get the color code for a given log level.",
-              "line": 1321,
+              "line": 1399,
               "deprecated": false
             },
             {
@@ -6209,7 +6587,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, format_str: str) -> None",
               "summary": "Register a new HTML preset.",
-              "line": 1338,
+              "line": 1416,
               "deprecated": false
             },
             {
@@ -6218,7 +6596,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str) -> str",
               "summary": "Get an HTML preset by name.",
-              "line": 1343,
+              "line": 1421,
               "deprecated": false
             },
             {
@@ -6227,7 +6605,7 @@
               "kind": "classmethod",
               "signature": "(cls, message: str, level: str, preset: str = None) -> str",
               "summary": "Format a message using HTML presets.",
-              "line": 1348,
+              "line": 1426,
               "deprecated": false
             }
           ]
@@ -6235,7 +6613,7 @@
         {
           "name": "DefaultTextLogHandler",
           "summary": "A generic logging handler that writes logs to any widget supporting",
-          "line": 1363,
+          "line": 1441,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -6246,7 +6624,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1384,
+              "line": 1462,
               "deprecated": false
             },
             {
@@ -6255,7 +6633,7 @@
               "kind": "method",
               "signature": "(self, level: str) -> str",
               "summary": "",
-              "line": 1415,
+              "line": 1493,
               "deprecated": false
             }
           ]
@@ -6263,7 +6641,7 @@
         {
           "name": "RingBufferHandler",
           "summary": "In-memory capped ring buffer of log records.",
-          "line": 1419,
+          "line": 1497,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -6274,7 +6652,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1433,
+              "line": 1511,
               "deprecated": false
             },
             {
@@ -6283,7 +6661,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "",
-              "line": 1437,
+              "line": 1515,
               "deprecated": false
             },
             {
@@ -6292,7 +6670,7 @@
               "kind": "method",
               "signature": "(self, formatter: internal_logging.Formatter = None) -> str",
               "summary": "Render buffered records to a single plain-text string.",
-              "line": 1440,
+              "line": 1518,
               "deprecated": false
             }
           ]
@@ -6300,7 +6678,7 @@
         {
           "name": "TableMixin",
           "summary": "Mixin for formatting data as ASCII tables.",
-          "line": 1457,
+          "line": 1535,
           "bases": [],
           "members": [
             {
@@ -6309,7 +6687,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str",
               "summary": "Formats a list of lists as an ASCII table.",
-              "line": 1460,
+              "line": 1538,
               "deprecated": false
             },
             {
@@ -6318,7 +6696,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None",
               "summary": "Logs a formatted table.",
-              "line": 1555,
+              "line": 1633,
               "deprecated": false
             },
             {
@@ -6327,7 +6705,7 @@
               "kind": "method",
               "signature": "(self, title: str, items: List[str], level: str = 'info') -> None",
               "summary": "Log a titled list of related lines as a single record.",
-              "line": 1589,
+              "line": 1667,
               "deprecated": false
             }
           ]
@@ -6335,7 +6713,7 @@
         {
           "name": "LoggingMixin",
           "summary": "Mixin class for logging utilities.",
-          "line": 1632,
+          "line": 1710,
           "bases": [
             "TableMixin"
           ],
@@ -6345,8 +6723,8 @@
               "qualname": "LoggingMixin.logger",
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
-              "summary": "",
-              "line": 1669,
+              "summary": "The patched logger for this class (one per class, created lazily).",
+              "line": 1757,
               "deprecated": false
             },
             {
@@ -6355,7 +6733,7 @@
               "kind": "method",
               "signature": "(self, logger: Optional[internal_logging.Logger]) -> None",
               "summary": "Route THIS instance's log output through *logger*.",
-              "line": 1684,
+              "line": 1775,
               "deprecated": false
             },
             {
@@ -6363,8 +6741,8 @@
               "qualname": "LoggingMixin.class_logger",
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
-              "summary": "",
-              "line": 1714,
+              "summary": "A manager-registered sibling of ``logger`` (``<name>.class``).",
+              "line": 1805,
               "deprecated": false
             },
             {
@@ -6373,7 +6751,7 @@
               "kind": "method",
               "signature": "(cls)",
               "summary": "Access to Python's internal logging module (aliased).",
-              "line": 1725,
+              "line": 1821,
               "deprecated": false
             },
             {
@@ -6382,7 +6760,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: int | str)",
               "summary": "Set log level for the class logger and its handlers.",
-              "line": 1730,
+              "line": 1826,
               "deprecated": false
             },
             {
@@ -6391,7 +6769,7 @@
               "kind": "classmethod",
               "signature": "(cls, filename: Optional[str], level: Union[int, str] = internal_logging.NOTSET) -> None",
               "summary": "Tee this class's log output to *filename* (or ``None`` to stop).",
-              "line": 1747,
+              "line": 1843,
               "deprecated": false
             },
             {
@@ -6400,7 +6778,7 @@
               "kind": "classmethod",
               "signature": "(cls, capacity: int = 2000, level: Union[int, str] = internal_logging.NOTSET) -> None",
               "summary": "Capture this class's log records into a capped ring buffer.",
-              "line": 1758,
+              "line": 1854,
               "deprecated": false
             },
             {
@@ -6409,7 +6787,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Stop ring-buffer capture and discard buffered records.",
-              "line": 1769,
+              "line": 1865,
               "deprecated": false
             },
             {
@@ -6418,7 +6796,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Drop buffered records but keep capturing.",
-              "line": 1774,
+              "line": 1870,
               "deprecated": false
             },
             {
@@ -6427,7 +6805,7 @@
               "kind": "classmethod",
               "signature": "(cls, target: Union[str, object, None] = None, mode: str = 'w', encoding: str = 'utf-8') -> str",
               "summary": "Render the ring buffer to text, optionally writing it to *target*.",
-              "line": 1779,
+              "line": 1875,
               "deprecated": false
             }
           ]
@@ -8447,6 +8825,59 @@
       ]
     },
     {
+      "relpath": "core_utils/test_sandbox.py",
+      "summary": "Process-level test isolation -- keep a test run off the developer's machine.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TestSandbox",
+          "summary": "Keep this process's side effects off the developer's machine.",
+          "line": 79,
+          "bases": [
+            "_TestSandboxInternal"
+          ],
+          "members": [
+            {
+              "name": "browser",
+              "qualname": "TestSandbox.browser",
+              "kind": "classmethod",
+              "signature": "(cls) -> None",
+              "summary": "Refuse every ``webbrowser`` launch for the rest of the process.",
+              "line": 88,
+              "deprecated": false
+            },
+            {
+              "name": "temp",
+              "qualname": "TestSandbox.temp",
+              "kind": "classmethod",
+              "signature": "(cls) -> str",
+              "summary": "Route the process's temp dir into one throwaway root;",
+              "line": 107,
+              "deprecated": false
+            },
+            {
+              "name": "activate",
+              "qualname": "TestSandbox.activate",
+              "kind": "classmethod",
+              "signature": "(cls) -> str",
+              "summary": "Both guards; returns the temp root.",
+              "line": 137,
+              "deprecated": false
+            },
+            {
+              "name": "is_active",
+              "qualname": "TestSandbox.is_active",
+              "kind": "classmethod",
+              "signature": "(cls) -> bool",
+              "summary": "True while both guards are in place.",
+              "line": 143,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "core_utils/user_config.py",
       "summary": "Qt-free, zero-dependency user-config resolution for the ecosystem.",
       "functions": [],
@@ -8610,12 +9041,39 @@
               "deprecated": false
             },
             {
+              "name": "is_locked",
+              "qualname": "FileUtils.is_locked",
+              "kind": "staticmethod",
+              "signature": "(filepath: str) -> bool",
+              "summary": "Is *filepath* held open by another process, so it cannot be replaced?",
+              "line": 315,
+              "deprecated": false
+            },
+            {
+              "name": "locking_processes",
+              "qualname": "FileUtils.locking_processes",
+              "kind": "staticmethod",
+              "signature": "(filepath: str) -> List[str]",
+              "summary": "Names of the processes currently holding *filepath* open.",
+              "line": 352,
+              "deprecated": false
+            },
+            {
+              "name": "describe_lock",
+              "qualname": "FileUtils.describe_lock",
+              "kind": "classmethod",
+              "signature": "(cls, filepath: str) -> str",
+              "summary": "One sentence naming *filepath*'s holder, or \"\" when it is free.",
+              "line": 456,
+              "deprecated": false
+            },
+            {
               "name": "format_bytes",
               "qualname": "FileUtils.format_bytes",
               "kind": "staticmethod",
               "signature": "(size_bytes, unknown: str = '(unknown)') -> str",
               "summary": "Render a byte count using the largest unit that keeps the number small.",
-              "line": 315,
+              "line": 482,
               "deprecated": false
             },
             {
@@ -8624,7 +9082,7 @@
               "kind": "classmethod",
               "signature": "(cls, before, after, unknown: str = '(unknown)') -> str",
               "summary": "Render a ``before -> after`` size transition with a percent delta.",
-              "line": 347,
+              "line": 514,
               "deprecated": false
             },
             {
@@ -8633,7 +9091,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> None",
               "summary": "Create a directory if one doesn't already exist.",
-              "line": 369,
+              "line": 536,
               "deprecated": false
             },
             {
@@ -8642,7 +9100,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str",
               "summary": "Return the next available versioned path for `filepath`.",
-              "line": 387,
+              "line": 554,
               "deprecated": false
             },
             {
@@ -8651,7 +9109,7 @@
               "kind": "staticmethod",
               "signature": "(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)",
               "summary": "Get the contents of a directory and any of its children.",
-              "line": 469,
+              "line": 636,
               "deprecated": false
             },
             {
@@ -8660,7 +9118,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, create_dir: bool = False, logger=None) -> bool",
               "summary": "Open the file explorer at the given path.",
-              "line": 653,
+              "line": 820,
               "deprecated": false
             },
             {
@@ -8669,7 +9127,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, as_list: bool = False, encoding: str = 'utf-8') -> Optional[Union[str, List[str]]]",
               "summary": "Read a text file, whole or as a list of lines.",
-              "line": 702,
+              "line": 869,
               "deprecated": false
             },
             {
@@ -8678,7 +9136,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, lines)",
               "summary": "Write the given list contents to the given file.",
-              "line": 725,
+              "line": 892,
               "deprecated": false
             },
             {
@@ -8687,7 +9145,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, content: str, encoding: str = 'utf-8') -> None",
               "summary": "Write text to a file atomically.",
-              "line": 739,
+              "line": 906,
               "deprecated": false
             },
             {
@@ -8696,7 +9154,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str",
               "summary": "Copies a file to a specified folder, ensuring the folder exists.",
-              "line": 788,
+              "line": 955,
               "deprecated": false
             },
             {
@@ -8705,7 +9163,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]",
               "summary": "Moves one or more files to a specified folder.",
-              "line": 827,
+              "line": 994,
               "deprecated": false
             },
             {
@@ -8714,7 +9172,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, _runner=None)",
               "summary": "Open the OS file manager showing ``path`` (selecting the file when supported, else",
-              "line": 895,
+              "line": 1062,
               "deprecated": false
             },
             {
@@ -8723,7 +9181,7 @@
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 930,
+              "line": 1097,
               "deprecated": false
             },
             {
@@ -8732,7 +9190,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 1013,
+              "line": 1180,
               "deprecated": false
             },
             {
@@ -8741,7 +9199,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 1083,
+              "line": 1250,
               "deprecated": false
             },
             {
@@ -8750,7 +9208,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 1130,
+              "line": 1297,
               "deprecated": false
             },
             {
@@ -8759,7 +9217,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 1183,
+              "line": 1350,
               "deprecated": false
             },
             {
@@ -8768,7 +9226,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 1205,
+              "line": 1372,
               "deprecated": false
             },
             {
@@ -8777,7 +9235,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 1326,
+              "line": 1493,
               "deprecated": false
             },
             {
@@ -8786,7 +9244,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Set the current json filepath.",
-              "line": 1483,
+              "line": 1650,
               "deprecated": false
             },
             {
@@ -8795,7 +9253,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Get the current json filepath.",
-              "line": 1495,
+              "line": 1662,
               "deprecated": false
             },
             {
@@ -8804,7 +9262,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, value, file=None)",
               "summary": "Parameters:",
-              "line": 1507,
+              "line": 1674,
               "deprecated": false
             },
             {
@@ -8813,7 +9271,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, file=None)",
               "summary": "Parameters:",
-              "line": 1544,
+              "line": 1711,
               "deprecated": false
             }
           ]
@@ -8930,7 +9388,16 @@
               "kind": "classmethod",
               "signature": "(cls, src: str) -> float",
               "summary": "Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.",
-              "line": 97,
+              "line": 111,
+              "deprecated": false
+            },
+            {
+              "name": "bake_node_frames",
+              "qualname": "MeshConvert.bake_node_frames",
+              "kind": "classmethod",
+              "signature": "(cls, src: str) -> int",
+              "summary": "Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.",
+              "line": 147,
               "deprecated": false
             },
             {
@@ -8939,16 +9406,16 @@
               "kind": "classmethod",
               "signature": "(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]",
               "summary": "Resolve the FBX2glTF executable from PATH or managed installs.",
-              "line": 815,
+              "line": 887,
               "deprecated": false
             },
             {
               "name": "fbx_to_glb",
               "qualname": "MeshConvert.fbx_to_glb",
               "kind": "classmethod",
-              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str",
+              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = ()) -> str",
               "summary": "Convert an FBX file to a binary glTF 2.0 (GLB) file.",
-              "line": 893,
+              "line": 965,
               "deprecated": false
             },
             {
@@ -8957,7 +9424,7 @@
               "kind": "classmethod",
               "signature": "(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Wrap *sections* in the versioned scene-sidecar envelope.",
-              "line": 1154,
+              "line": 1267,
               "deprecated": false
             },
             {
@@ -8966,7 +9433,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict) -> int",
               "summary": "Drop the FBX's handoff block from a converted glTF's node extras.",
-              "line": 1250,
+              "line": 1375,
               "deprecated": false
             },
             {
@@ -8975,7 +9442,7 @@
               "kind": "classmethod",
               "signature": "(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]",
               "summary": "The standalone-reader contract for an FBX, ready to publish.",
-              "line": 1283,
+              "line": 1408,
               "deprecated": false
             },
             {
@@ -8984,7 +9451,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]",
               "summary": "Apply a scene-sidecar envelope to a GLB and embed it in its extras.",
-              "line": 1363,
+              "line": 1488,
               "deprecated": false
             },
             {
@@ -8993,7 +9460,7 @@
               "kind": "classmethod",
               "signature": "(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]",
               "summary": "``{path: map type}`` for envelope textures authored for another engine.",
-              "line": 1785,
+              "line": 1910,
               "deprecated": false
             },
             {
@@ -9002,7 +9469,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The scene-sidecar envelope embedded in a GLB, or ``None``.",
-              "line": 1836,
+              "line": 1961,
               "deprecated": false
             },
             {
@@ -9011,7 +9478,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, Any]",
               "summary": "Check a delivered GLB against the envelope it carries.",
-              "line": 1848,
+              "line": 1973,
               "deprecated": false
             },
             {
@@ -9020,7 +9487,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict, key: str) -> Optional[Any]",
               "summary": "Decoded value of one ``data_export`` channel in a parsed glTF, or ``None``.",
-              "line": 2195,
+              "line": 2321,
               "deprecated": false
             },
             {
@@ -9029,7 +9496,7 @@
               "kind": "classmethod",
               "signature": "(cls, data_export: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "Copy of a ``data_export`` snapshot with build-time locate hints removed.",
-              "line": 2260,
+              "line": 2386,
               "deprecated": false
             },
             {
@@ -9038,7 +9505,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.",
-              "line": 2404,
+              "line": 2530,
               "deprecated": false
             },
             {
@@ -9047,7 +9514,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, List[str]]",
               "summary": "Split a GLB's bake manifest by whether this GLB actually carries each object.",
-              "line": 2479,
+              "line": 2605,
               "deprecated": false
             },
             {
@@ -9056,7 +9523,16 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]",
               "summary": "Wire a host DCC's committed lightmaps into a GLB for the web viewer.",
-              "line": 2515,
+              "line": 2641,
+              "deprecated": false
+            },
+            {
+              "name": "apply_glb_shadows",
+              "qualname": "MeshConvert.apply_glb_shadows",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]",
+              "summary": "Bind a scene's shadow-rig maps into a GLB;",
+              "line": 3403,
               "deprecated": false
             },
             {
@@ -9065,7 +9541,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Rebuild the declared shot clips as exact slices of the whole timeline.",
-              "line": 3245,
+              "line": 3887,
               "deprecated": false
             },
             {
@@ -9074,7 +9550,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize keyed visibility as STEP ``scale`` channels the file can play.",
-              "line": 3351,
+              "line": 3993,
               "deprecated": false
             },
             {
@@ -9083,7 +9559,7 @@
               "kind": "classmethod",
               "signature": "(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]",
               "summary": "Per take, the first and last authored frame inside its window.",
-              "line": 3485,
+              "line": 4127,
               "deprecated": false
             },
             {
@@ -9092,7 +9568,7 @@
               "kind": "classmethod",
               "signature": "(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]",
               "summary": "Wrap *tracks* in the versioned ``visibility_tracks`` envelope.",
-              "line": 3550,
+              "line": 4192,
               "deprecated": false
             },
             {
@@ -9101,7 +9577,16 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize authored opacity ramps as animated material alpha.",
-              "line": 3954,
+              "line": 4596,
+              "deprecated": false
+            },
+            {
+              "name": "prune_glb_animations",
+              "qualname": "MeshConvert.prune_glb_animations",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget) -> List[str]",
+              "summary": "Drop every animation that carries no channels or no samplers.",
+              "line": 4681,
               "deprecated": false
             },
             {
@@ -9110,7 +9595,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Publish the GLB's clips as ``extras.animation_web``, joined to the shots.",
-              "line": 4039,
+              "line": 4755,
               "deprecated": false
             },
             {
@@ -9119,7 +9604,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 4298,
+              "line": 5018,
               "deprecated": false
             },
             {
@@ -9128,7 +9613,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 4383,
+              "line": 5103,
               "deprecated": false
             },
             {
@@ -9137,7 +9622,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget)",
               "summary": "Yield an open :class:`GlbEdit` for *glb*, writing once on close.",
-              "line": 4470,
+              "line": 5190,
               "deprecated": false
             },
             {
@@ -9146,7 +9631,7 @@
               "kind": "classmethod",
               "signature": "(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str",
               "summary": "Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.",
-              "line": 4733,
+              "line": 5453,
               "deprecated": false
             },
             {
@@ -9155,7 +9640,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]",
               "summary": ":meth:`optimize_glb_textures` kwargs for a WEB deliverable.",
-              "line": 4858,
+              "line": 5578,
               "deprecated": false
             },
             {
@@ -9164,7 +9649,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]",
               "summary": "Downsize and re-encode a GLB's embedded images for web delivery.",
-              "line": 4906,
+              "line": 5626,
               "deprecated": false
             },
             {
@@ -9173,7 +9658,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Pack and write the ORM (metallic/roughness) texture into a GLB, by name.",
-              "line": 5573,
+              "line": 6309,
               "deprecated": false
             },
             {
@@ -9182,7 +9667,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]",
               "summary": "Materials whose delivered ORM binding this pipeline never validated.",
-              "line": 5751,
+              "line": 6491,
               "deprecated": false
             },
             {
@@ -9191,7 +9676,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write emissive color / texture into a GLB's materials, by name.",
-              "line": 5879,
+              "line": 6619,
               "deprecated": false
             },
             {
@@ -9200,7 +9685,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Collapse byte-identical embedded images onto one copy.",
-              "line": 6019,
+              "line": 6759,
               "deprecated": false
             },
             {
@@ -9209,7 +9694,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop textures no material samples, and the images/bufferViews only they used.",
-              "line": 6116,
+              "line": 6856,
               "deprecated": false
             },
             {
@@ -9218,7 +9703,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.",
-              "line": 6516,
+              "line": 7292,
               "deprecated": false
             },
             {
@@ -9227,7 +9712,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int",
               "summary": "Write ``normalTexture.scale`` into a GLB's materials.",
-              "line": 6575,
+              "line": 7351,
               "deprecated": false
             },
             {
@@ -9236,7 +9721,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write base colour / texture into a GLB's materials, by name.",
-              "line": 6645,
+              "line": 7421,
               "deprecated": false
             }
           ]
@@ -9412,7 +9897,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "The FBX parses;",
-              "line": 481,
+              "line": 524,
               "deprecated": false
             },
             {
@@ -9421,7 +9906,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Declared sidecar takes all exist as AnimationStacks.",
-              "line": 495,
+              "line": 538,
               "deprecated": false
             },
             {
@@ -9430,7 +9915,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "GLB clip names exist as FBX stacks (the conversion kept them).",
-              "line": 511,
+              "line": 554,
               "deprecated": false
             },
             {
@@ -9439,7 +9924,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Structural drift vs a previous known-good GLB.",
-              "line": 527,
+              "line": 570,
               "deprecated": false
             }
           ]
@@ -9454,7 +9939,7 @@
         {
           "name": "FbxFile",
           "summary": "A parsed binary FBX, held read-only.",
-          "line": 112,
+          "line": 118,
           "bases": [
             "_FbxFileInternal"
           ],
@@ -9463,9 +9948,9 @@
               "name": "load",
               "qualname": "FbxFile.load",
               "kind": "classmethod",
-              "signature": "(cls, path: str, decode_arrays: bool = False) -> 'FbxFile'",
+              "signature": "(cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True) -> 'FbxFile'",
               "summary": "Parse *path*.",
-              "line": 132,
+              "line": 138,
               "deprecated": false
             },
             {
@@ -9474,7 +9959,7 @@
               "kind": "staticmethod",
               "signature": "(path: str) -> bool",
               "summary": "True when *path* starts with the binary-FBX magic.",
-              "line": 160,
+              "line": 173,
               "deprecated": false
             },
             {
@@ -9483,7 +9968,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[Dict[str, Any]]",
               "summary": "Top-level record *name* (``\"Objects\"``, ``\"Connections\"`` …).",
-              "line": 170,
+              "line": 183,
               "deprecated": false
             },
             {
@@ -9492,7 +9977,7 @@
               "kind": "method",
               "signature": "(self) -> Iterator[Dict[str, Any]]",
               "summary": "Yield every child record of the ``Objects`` section.",
-              "line": 174,
+              "line": 187,
               "deprecated": false
             },
             {
@@ -9501,7 +9986,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "``{record name: count}`` over the Objects section.",
-              "line": 182,
+              "line": 195,
               "deprecated": false
             },
             {
@@ -9510,7 +9995,7 @@
               "kind": "method",
               "signature": "(self, kind: str) -> List[str]",
               "summary": "Display names of every Objects child whose record name is *kind*.",
-              "line": 192,
+              "line": 205,
               "deprecated": false
             },
             {
@@ -9519,7 +10004,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Animation take names — the ``AnimationStack`` display names.",
-              "line": 205,
+              "line": 218,
               "deprecated": false
             },
             {
@@ -9528,7 +10013,51 @@
               "kind": "method",
               "signature": "(self) -> List[Tuple[str, Any, Any, Optional[str]]]",
               "summary": "Every ``C`` record as ``(kind, child_id, parent_id, property)``.",
-              "line": 209,
+              "line": 222,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "file_utils/mesh_convert/fbx_media.py",
+      "summary": "Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "FbxMedia",
+          "summary": "Read and rewrite the media a binary FBX embeds.",
+          "line": 219,
+          "bases": [
+            "_FbxMediaInternal"
+          ],
+          "members": [
+            {
+              "name": "embedded",
+              "qualname": "FbxMedia.embedded",
+              "kind": "classmethod",
+              "signature": "(cls, path: str) -> List[Dict[str, Any]]",
+              "summary": "Every embedded image: ``{\"name\", \"format\", \"size\", \"bytes\"}``.",
+              "line": 223,
+              "deprecated": false
+            },
+            {
+              "name": "downsize",
+              "qualname": "FbxMedia.downsize",
+              "kind": "classmethod",
+              "signature": "(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]",
+              "summary": "Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.",
+              "line": 255,
+              "deprecated": false
+            },
+            {
+              "name": "rewrite",
+              "qualname": "FbxMedia.rewrite",
+              "kind": "classmethod",
+              "signature": "(cls, src: str, dst: str) -> None",
+              "summary": "Re-serialise *src* to *dst* unchanged -- the writer's own round trip.",
+              "line": 395,
               "deprecated": false
             }
           ]
@@ -9595,7 +10124,7 @@
         {
           "name": "GlbReader",
           "summary": "Read-only GLB inspector: accessors, animation evaluation, node worlds.",
-          "line": 94,
+          "line": 133,
           "bases": [
             "_GlbReaderInternal"
           ],
@@ -9606,7 +10135,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str) -> 'GlbReader'",
               "summary": "Open *path* read-only and return a reader.",
-              "line": 123,
+              "line": 162,
               "deprecated": false
             },
             {
@@ -9615,7 +10144,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "Section lengths for the usual census keys (missing -> 0).",
-              "line": 135,
+              "line": 174,
               "deprecated": false
             },
             {
@@ -9624,7 +10153,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "``{mimeType: count}`` over ``images`` (missing type -> \"?\").",
-              "line": 153,
+              "line": 192,
               "deprecated": false
             },
             {
@@ -9633,7 +10162,7 @@
               "kind": "method",
               "signature": "(self) -> Tuple[List[str], List[str]]",
               "summary": "``(extensionsUsed, extensionsRequired)`` (each possibly empty).",
-              "line": 161,
+              "line": 200,
               "deprecated": false
             },
             {
@@ -9642,7 +10171,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "Counts the skin checks need: skins, with-IBM, skinned mesh nodes.",
-              "line": 168,
+              "line": 207,
               "deprecated": false
             },
             {
@@ -9651,7 +10180,7 @@
               "kind": "method",
               "signature": "(self, index: int) -> Optional[List[Tuple[float, ...]]]",
               "summary": "Decode accessor *index* into element tuples, or ``None``.",
-              "line": 183,
+              "line": 222,
               "deprecated": false
             },
             {
@@ -9660,7 +10189,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Clip names, in file order (unnamed -> ``\"<i>\"``).",
-              "line": 228,
+              "line": 267,
               "deprecated": false
             },
             {
@@ -9669,7 +10198,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str]) -> Optional[Dict[str, Any]]",
               "summary": "The animation dict for an index or name, or ``None``.",
-              "line": 235,
+              "line": 274,
               "deprecated": false
             },
             {
@@ -9678,7 +10207,16 @@
               "kind": "method",
               "signature": "(self, fps: float = 30.0) -> Dict[str, Tuple[float, float, int]]",
               "summary": "Per clip: ``(min_seconds, max_seconds, end_frame)``.",
-              "line": 245,
+              "line": 284,
+              "deprecated": false
+            },
+            {
+              "name": "motion_span",
+              "qualname": "GlbReader.motion_span",
+              "kind": "method",
+              "signature": "(self, key: Union[int, str], tolerance: float = 0.001) -> Optional[Tuple[float, float]]",
+              "summary": "The clip's MOTION extent in seconds: ``(low, high)``, or ``None``.",
+              "line": 306,
               "deprecated": false
             },
             {
@@ -9687,7 +10225,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str]) -> List[Dict[str, Any]]",
               "summary": "One row per channel: node index/name, path, interpolation, keys.",
-              "line": 267,
+              "line": 365,
               "deprecated": false
             },
             {
@@ -9696,7 +10234,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str], node: Union[int, str], path: str, time: float) -> Optional[Tuple[float, ...]]",
               "summary": "Evaluate one channel at *time* seconds, or ``None`` when absent.",
-              "line": 295,
+              "line": 393,
               "deprecated": false
             },
             {
@@ -9705,7 +10243,7 @@
               "kind": "method",
               "signature": "(self, huge: float = 10000000.0, deep: bool = False) -> List[str]",
               "summary": "Animation outputs that are NaN or beyond *huge* world units.",
-              "line": 346,
+              "line": 453,
               "deprecated": false
             },
             {
@@ -9714,7 +10252,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[int]",
               "summary": "First node index with *name*, or ``None``.",
-              "line": 388,
+              "line": 495,
               "deprecated": false
             },
             {
@@ -9723,7 +10261,7 @@
               "kind": "method",
               "signature": "(self, index: int) -> Optional[int]",
               "summary": "Parent node index, or ``None`` for a root.",
-              "line": 396,
+              "line": 503,
               "deprecated": false
             },
             {
@@ -9732,7 +10270,7 @@
               "kind": "method",
               "signature": "(self, index: int, time: Optional[float] = None, animation: Union[int, str, None] = None) -> List[List[float]]",
               "summary": "Node *index*'s local matrix, animated when *time* is given.",
-              "line": 405,
+              "line": 512,
               "deprecated": false
             },
             {
@@ -9741,7 +10279,7 @@
               "kind": "method",
               "signature": "(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[List[List[float]]]",
               "summary": "World matrix of *node* (name or index), or ``None`` when absent.",
-              "line": 429,
+              "line": 536,
               "deprecated": false
             },
             {
@@ -9750,7 +10288,7 @@
               "kind": "method",
               "signature": "(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[Tuple[float, float, float]]",
               "summary": "World-space translation of *node*, or ``None`` when absent.",
-              "line": 446,
+              "line": 553,
               "deprecated": false
             },
             {
@@ -9759,7 +10297,7 @@
               "kind": "method",
               "signature": "(self) -> Iterator[Tuple[int, Optional[str]]]",
               "summary": "Yield ``(index, name)`` for every node, in file order.",
-              "line": 456,
+              "line": 563,
               "deprecated": false
             }
           ]
@@ -10747,6 +11285,344 @@
       ]
     },
     {
+      "relpath": "geo_utils/shadow_horizon.py",
+      "summary": "Coverage-aware horizon maps: a ground shadow that follows the light at runtime.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "HorizonMap",
+          "summary": "A baked horizon map and the frame it was baked in.",
+          "line": 72,
+          "bases": [
+            "NamedTuple"
+          ],
+          "members": [
+            {
+              "name": "encode_angle",
+              "qualname": "HorizonMap.encode_angle",
+              "kind": "method",
+              "signature": "(self, angle: np.ndarray) -> np.ndarray",
+              "summary": "``cot(angle) / max_stretch`` clamped to ``[0, 1]`` — the interval",
+              "line": 97,
+              "deprecated": false
+            },
+            {
+              "name": "decode_cot",
+              "qualname": "HorizonMap.decode_cot",
+              "kind": "method",
+              "signature": "(self, value: np.ndarray) -> np.ndarray",
+              "summary": "The cotangent an encoded channel value stands for.",
+              "line": 110,
+              "deprecated": false
+            },
+            {
+              "name": "layers",
+              "qualname": "HorizonMap.layers",
+              "kind": "property",
+              "signature": "(self) -> int",
+              "summary": "",
+              "line": 116,
+              "deprecated": false
+            },
+            {
+              "name": "tiles",
+              "qualname": "HorizonMap.tiles",
+              "kind": "property",
+              "signature": "(self) -> int",
+              "summary": "Tiles in the PNG: one per layer per bin.",
+              "line": 120,
+              "deprecated": false
+            },
+            {
+              "name": "layout",
+              "qualname": "HorizonMap.layout",
+              "kind": "property",
+              "signature": "(self) -> Tuple[int, int]",
+              "summary": "``(cols, rows)`` of the tile grid a PNG lays the tiles out in.",
+              "line": 125,
+              "deprecated": false
+            },
+            {
+              "name": "tile_index",
+              "qualname": "HorizonMap.tile_index",
+              "kind": "method",
+              "signature": "(self, layer: int, k: int) -> int",
+              "summary": "Tile ``t`` of bin *k*'s *layer*: grounded tiles first.",
+              "line": 129,
+              "deprecated": false
+            },
+            {
+              "name": "tile_rects",
+              "qualname": "HorizonMap.tile_rects",
+              "kind": "method",
+              "signature": "(self) -> List[Tuple[float, float, float, float]]",
+              "summary": "Per tile, its ``(scaleX, scaleY, offsetX, offsetY)`` inside the",
+              "line": 133,
+              "deprecated": false
+            },
+            {
+              "name": "to_rgba",
+              "qualname": "HorizonMap.to_rgba",
+              "kind": "method",
+              "signature": "(self) -> np.ndarray",
+              "summary": "The map as one ``uint8`` RGBA image: ``2 × bins`` tiles in a",
+              "line": 143,
+              "deprecated": false
+            },
+            {
+              "name": "from_rgba",
+              "qualname": "HorizonMap.from_rgba",
+              "kind": "classmethod",
+              "signature": "(cls, pixels: np.ndarray, *, bins: int, size: Sequence[int], r_min: float, r_max: float, ground: float = 0.0, up: int = 1, max_stretch: Optional[float] = None) -> 'HorizonMap'",
+              "summary": "Rebuild a map from an image written by :meth:`to_rgba`.",
+              "line": 160,
+              "deprecated": false
+            },
+            {
+              "name": "texel_positions",
+              "qualname": "HorizonMap.texel_positions",
+              "kind": "method",
+              "signature": "(self) -> np.ndarray",
+              "summary": "Horizontal frame coordinates ``(H, W, 2)`` of every texel centre.",
+              "line": 212,
+              "deprecated": false
+            },
+            {
+              "name": "uv",
+              "qualname": "HorizonMap.uv",
+              "kind": "method",
+              "signature": "(self, horizontal) -> Tuple[np.ndarray, np.ndarray, np.ndarray]",
+              "summary": "Log-polar ``(u, v, inside)`` for horizontal frame points ``(N, 2)``:",
+              "line": 222,
+              "deprecated": false
+            },
+            {
+              "name": "taps",
+              "qualname": "HorizonMap.taps",
+              "kind": "method",
+              "signature": "(self, layer: int, k, u, v) -> Tuple[np.ndarray, np.ndarray, np.ndarray]",
+              "summary": "The four texels around ``(u, v)`` in *layer*'s bin ``k`` — the way",
+              "line": 233,
+              "deprecated": false
+            },
+            {
+              "name": "mask_bits",
+              "qualname": "HorizonMap.mask_bits",
+              "kind": "staticmethod",
+              "signature": "(values: np.ndarray) -> np.ndarray",
+              "summary": "``(..., 16)`` booleans from the ``B, A`` channels of texel values",
+              "line": 267,
+              "deprecated": false
+            },
+            {
+              "name": "alpha",
+              "qualname": "HorizonMap.alpha",
+              "kind": "method",
+              "signature": "(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray",
+              "summary": "Shadow alpha ``(N,)`` at frame *points* for one source — the",
+              "line": 277,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ShadowHorizon",
+          "summary": "Bake, measure and lay out coverage-aware horizon maps (module doc).",
+          "line": 508,
+          "bases": [],
+          "members": [
+            {
+              "name": "shader_source",
+              "qualname": "ShadowHorizon.shader_source",
+              "kind": "classmethod",
+              "signature": "(cls, language: str = 'glsl') -> str",
+              "summary": "The shared horizon evaluation, spelled for *language*.",
+              "line": 540,
+              "deprecated": false
+            },
+            {
+              "name": "layout",
+              "qualname": "ShadowHorizon.layout",
+              "kind": "staticmethod",
+              "signature": "(tiles: int) -> Tuple[int, int]",
+              "summary": "``(cols, rows)`` of the grid holding *tiles*: ``cols = ceil(sqrt(tiles))``.",
+              "line": 581,
+              "deprecated": false
+            },
+            {
+              "name": "range_for",
+              "qualname": "ShadowHorizon.range_for",
+              "kind": "classmethod",
+              "signature": "(cls, radius: float, height: float, max_stretch: Optional[float] = None) -> Tuple[float, float]",
+              "summary": "``(r_min, r_max)``: an eighth of the footprint radius to the reach",
+              "line": 588,
+              "deprecated": false
+            },
+            {
+              "name": "bake",
+              "qualname": "ShadowHorizon.bake",
+              "kind": "classmethod",
+              "signature": "(cls, meshes, *, ground: float = 0.0, up: int = 1, radius: Optional[float] = None, height: Optional[float] = None, bins: int = DEFAULT_BINS, size: Sequence[int] = DEFAULT_SIZE, r_min: Optional[float] = None, r_max: Optional[float] = None, max_stretch: Optional[float] = None, footprint: int = DEFAULT_FOOTPRINT, threads: Optional[int] = None) -> HorizonMap",
+              "summary": "Bake the map of *meshes* in the map's frame.",
+              "line": 607,
+              "deprecated": false
+            },
+            {
+              "name": "measure",
+              "qualname": "ShadowHorizon.measure",
+              "kind": "classmethod",
+              "signature": "(cls, hmap: HorizonMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]",
+              "summary": "Compare :meth:`HorizonMap.alpha` with the exact projection at random",
+              "line": 908,
+              "deprecated": false
+            },
+            {
+              "name": "bake_adaptive",
+              "qualname": "ShadowHorizon.bake_adaptive",
+              "kind": "classmethod",
+              "signature": "(cls, meshes, *, threshold: float = 0.05, max_bins: int = 64, measure_samples: int = 6, **kwargs) -> Tuple[HorizonMap, Dict[str, float]]",
+              "summary": "Bake at :attr:`ADAPTIVE_BINS` in turn until :meth:`measure`'s",
+              "line": 1016,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "geo_utils/shadow_projection.py",
+      "summary": "Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ShadowModel",
+          "summary": "The analytic shadow of a bounding cylinder (see :meth:`ShadowProjection.model`).",
+          "line": 60,
+          "bases": [
+            "NamedTuple"
+          ],
+          "members": [
+            {
+              "name": "near",
+              "qualname": "ShadowModel.near",
+              "kind": "property",
+              "signature": "(self) -> float",
+              "summary": "The near edge along ``u``, relative to the anchor (``-base``).",
+              "line": 93,
+              "deprecated": false
+            },
+            {
+              "name": "length",
+              "qualname": "ShadowModel.length",
+              "kind": "property",
+              "signature": "(self) -> float",
+              "summary": "Extent along ``u`` (``reach + base + top``).",
+              "line": 98,
+              "deprecated": false
+            },
+            {
+              "name": "across",
+              "qualname": "ShadowModel.across",
+              "kind": "property",
+              "signature": "(self) -> Vec2",
+              "summary": "Unit ``w`` — across the bearing, the plane's local +X.",
+              "line": 103,
+              "deprecated": false
+            },
+            {
+              "name": "rect",
+              "qualname": "ShadowModel.rect",
+              "kind": "method",
+              "signature": "(self, fractions: Sequence[float]) -> Rect",
+              "summary": "The canvas rectangle *fractions* denote at this model, absolute in",
+              "line": 107,
+              "deprecated": false
+            },
+            {
+              "name": "placement",
+              "qualname": "ShadowModel.placement",
+              "kind": "method",
+              "signature": "(self, fractions: Sequence[float]) -> Tuple[Vec2, float, float]",
+              "summary": "Where a plane carrying a canvas of *fractions* sits at this model:",
+              "line": 126,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ShadowProjection",
+          "summary": "Planar shadow projection: exact per-point mapping plus the live model.",
+          "line": 140,
+          "bases": [],
+          "members": [
+            {
+              "name": "horizontal_axes",
+              "qualname": "ShadowProjection.horizontal_axes",
+              "kind": "staticmethod",
+              "signature": "(up: int = 1) -> Tuple[int, int]",
+              "summary": "The two horizontal axis indices, in order, for the vertical *up*.",
+              "line": 156,
+              "deprecated": false
+            },
+            {
+              "name": "far_point",
+              "qualname": "ShadowProjection.far_point",
+              "kind": "classmethod",
+              "signature": "(cls, contact, direction, scale: float) -> Tuple[float, float, float]",
+              "summary": "A directional source written as a point: *scale* x :attr:`FAR_FACTOR`",
+              "line": 169,
+              "deprecated": false
+            },
+            {
+              "name": "model",
+              "qualname": "ShadowProjection.model",
+              "kind": "classmethod",
+              "signature": "(cls, contact, light=None, ground: float = 0.0, radius: float = 0.5, height: float = 1.0, *, up: int = 1, direction=None, max_stretch: Optional[float] = None) -> ShadowModel",
+              "summary": "The shadow of the bounding cylinder standing on *contact*.",
+              "line": 179,
+              "deprecated": false
+            },
+            {
+              "name": "project",
+              "qualname": "ShadowProjection.project",
+              "kind": "classmethod",
+              "signature": "(cls, points, light=None, ground: float = 0.0, *, up: int = 1, direction=None, max_length: Optional[float] = None) -> Optional[Tuple[np.ndarray, np.ndarray]]",
+              "summary": "Project world *points* onto the ground plane along the light's rays.",
+              "line": 263,
+              "deprecated": false
+            },
+            {
+              "name": "to_frame",
+              "qualname": "ShadowProjection.to_frame",
+              "kind": "staticmethod",
+              "signature": "(ground_points, model: ShadowModel) -> np.ndarray",
+              "summary": "``(N, 2)`` ground coordinates -> ``(u, w)`` relative to the model's",
+              "line": 337,
+              "deprecated": false
+            },
+            {
+              "name": "fractions",
+              "qualname": "ShadowProjection.fractions",
+              "kind": "staticmethod",
+              "signature": "(rect: Rect, model: ShadowModel) -> Tuple[float, float, float, float]",
+              "summary": "Express a ``(u, w)`` canvas *rect* as the stamp a plane carries so a",
+              "line": 349,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ShadowRaster",
+          "summary": "What a rasterized shadow texture was drawn into (``ImgUtils.rasterize_shadow``).",
+          "line": 367,
+          "bases": [
+            "NamedTuple"
+          ],
+          "members": []
+        }
+      ]
+    },
+    {
       "relpath": "geo_utils/uv_pack.py",
       "summary": "UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).",
       "functions": [],
@@ -11399,7 +12275,25 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)",
               "summary": "Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.",
-              "line": 2821,
+              "line": 2826,
+              "deprecated": false
+            },
+            {
+              "name": "rasterize_height_fields",
+              "qualname": "ImgUtils.rasterize_height_fields",
+              "kind": "classmethod",
+              "signature": "(cls, meshes, *, up: int = 1, size: int = 64, ground: float = 0.0, bounds=None, padding: float = 0.02)",
+              "summary": "Top and bottom height fields of world meshes over their footprint.",
+              "line": 2909,
+              "deprecated": false
+            },
+            {
+              "name": "rasterize_shadow",
+              "qualname": "ImgUtils.rasterize_shadow",
+              "kind": "classmethod",
+              "signature": "(cls, meshes, light=None, ground=0.0, size=512, *, up=1, direction=None, source_size=0.0, max_stretch=None, canvas=None, contact=None, radius=None, height=None, padding=0.04, uniform_alpha=True, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.0)",
+              "summary": "Rasterize the shadow world-space meshes cast onto the ground plane.",
+              "line": 3036,
               "deprecated": false
             },
             {
@@ -11408,7 +12302,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Convert an RGB Image data array to grayscale (luma weights).",
-              "line": 2904,
+              "line": 3253,
               "deprecated": false
             },
             {
@@ -11417,7 +12311,7 @@
               "kind": "staticmethod",
               "signature": "(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]",
               "summary": "Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.",
-              "line": 2920,
+              "line": 3269,
               "deprecated": false
             },
             {
@@ -11426,7 +12320,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert an RGB image to HSV mode.",
-              "line": 2980,
+              "line": 3329,
               "deprecated": false
             },
             {
@@ -11435,7 +12329,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a high-bit-depth grayscale image to 8-bit 'L'.",
-              "line": 2995,
+              "line": 3344,
               "deprecated": false
             },
             {
@@ -11444,7 +12338,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a float grayscale image to 8-bit 'L', rescaling the unit range.",
-              "line": 3026,
+              "line": 3375,
               "deprecated": false
             },
             {
@@ -11453,7 +12347,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 3066,
+              "line": 3415,
               "deprecated": false
             },
             {
@@ -11462,7 +12356,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 3162,
+              "line": 3511,
               "deprecated": false
             },
             {
@@ -11471,7 +12365,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 3315,
+              "line": 3664,
               "deprecated": false
             },
             {
@@ -11480,7 +12374,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 3327,
+              "line": 3676,
               "deprecated": false
             },
             {
@@ -11489,7 +12383,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, percentile=None)",
               "summary": "Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.",
-              "line": 3345,
+              "line": 3694,
               "deprecated": false
             },
             {
@@ -11498,7 +12392,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> List[Image.Image]",
               "summary": "Generate a mipmap chain for an image.",
-              "line": 3407,
+              "line": 3756,
               "deprecated": false
             },
             {
@@ -11507,7 +12401,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 3434,
+              "line": 3783,
               "deprecated": false
             },
             {
@@ -11516,7 +12410,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 3454,
+              "line": 3803,
               "deprecated": false
             },
             {
@@ -11525,7 +12419,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 3495,
+              "line": 3844,
               "deprecated": false
             },
             {
@@ -11534,7 +12428,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 3556,
+              "line": 3905,
               "deprecated": false
             }
           ]
@@ -11636,7 +12530,7 @@
               "kind": "method",
               "signature": "(self, source_dirs, hash_thresholds=(5,), keep_per_cluster=1, sharpness_floor=0.0, sharpness_floor_percentile=None, min_sharpness_fraction_of_median=0.0, progress=None)",
               "summary": "Dry-run curation report — scan **once**, evaluate one or more",
-              "line": 309,
+              "line": 332,
               "deprecated": false
             }
           ]
@@ -11747,7 +12641,76 @@
               "kind": "method",
               "signature": "(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]",
               "summary": "Generate alpha-channel masks for every image in ``input_dir``.",
-              "line": 54,
+              "line": 60,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "img_utils/shadow_atlas.py",
+      "summary": "One atlas per shadow-rig type: equal cells, a tile rewritten in place.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ShadowAtlas",
+          "summary": "Grid-pack equal shadow tiles into one RGBA atlas (module doc).",
+          "line": 32,
+          "bases": [],
+          "members": [
+            {
+              "name": "grid",
+              "qualname": "ShadowAtlas.grid",
+              "kind": "staticmethod",
+              "signature": "(count: int, cell: Sequence[int]) -> Tuple[int, int, Tuple[int, int]]",
+              "summary": "``(cols, rows, (width, height))`` of the atlas holding *count*",
+              "line": 39,
+              "deprecated": false
+            },
+            {
+              "name": "cell_pixel_rect",
+              "qualname": "ShadowAtlas.cell_pixel_rect",
+              "kind": "classmethod",
+              "signature": "(cls, index: int, cols: int, cell: Sequence[int], tile: Sequence[int]) -> PixelRect",
+              "summary": "Pixel rect of the tile ``tile = (w, h)`` sitting at the top-left of",
+              "line": 50,
+              "deprecated": false
+            },
+            {
+              "name": "uv_rect",
+              "qualname": "ShadowAtlas.uv_rect",
+              "kind": "staticmethod",
+              "signature": "(pixel_rect: PixelRect, atlas_size: Sequence[int]) -> Rect",
+              "summary": "The bottom-left ``scaleOffset`` of a top-down pixel rect — the",
+              "line": 61,
+              "deprecated": false
+            },
+            {
+              "name": "pack",
+              "qualname": "ShadowAtlas.pack",
+              "kind": "classmethod",
+              "signature": "(cls, tiles: Dict[str, np.ndarray], *, gutter: int = GUTTER, cell: Optional[Sequence[int]] = None, order: Optional[Sequence[str]] = None) -> Tuple[np.ndarray, Dict[str, Rect], Dict[str, PixelRect]]",
+              "summary": "Composite *tiles* into one atlas.",
+              "line": 69,
+              "deprecated": false
+            },
+            {
+              "name": "write_tile",
+              "qualname": "ShadowAtlas.write_tile",
+              "kind": "staticmethod",
+              "signature": "(atlas: np.ndarray, pixel_rect: PixelRect, tile: np.ndarray) -> None",
+              "summary": "Rewrite one tile in place (Recalculate): the tile must match the",
+              "line": 129,
+              "deprecated": false
+            },
+            {
+              "name": "uv_corners",
+              "qualname": "ShadowAtlas.uv_corners",
+              "kind": "classmethod",
+              "signature": "(cls, rect: Rect) -> List[Tuple[float, float]]",
+              "summary": "The four UV corners ``(u, v)`` of a plane whose unit UVs are",
+              "line": 180,
               "deprecated": false
             }
           ]
@@ -12006,7 +12969,7 @@
               "kind": "staticmethod",
               "signature": "(cost_matrix: Sequence[Sequence[float]], maximize: bool = False) -> Tuple[List[int], List[int]]",
               "summary": "Solve the linear sum assignment problem (Hungarian algorithm).",
-              "line": 415,
+              "line": 419,
               "deprecated": false
             },
             {
@@ -12015,7 +12978,7 @@
               "kind": "staticmethod",
               "signature": "(points: Sequence[Sequence[float]], k: int, max_iterations: int = 30, seed_indices: Optional[List[int]] = None) -> List[List[int]]",
               "summary": "Perform K-Means clustering on a set of points.",
-              "line": 560,
+              "line": 564,
               "deprecated": false
             },
             {
@@ -12024,7 +12987,7 @@
               "kind": "staticmethod",
               "signature": "(values: Sequence[float], k: int = 3, max_iterations: int = 10) -> Tuple[List[float], List[List[float]]]",
               "summary": "Perform 1D K-Means clustering to find natural breakpoints in scalar data.",
-              "line": 710,
+              "line": 714,
               "deprecated": false
             },
             {
@@ -12033,7 +12996,7 @@
               "kind": "classmethod",
               "signature": "(cls, values: Sequence[float], k: int = 3) -> float",
               "summary": "Use K-Means to find an adaptive threshold separating \"parts\" from \"bodies\".",
-              "line": 831,
+              "line": 835,
               "deprecated": false
             },
             {
@@ -12042,7 +13005,7 @@
               "kind": "staticmethod",
               "signature": "(num, places)",
               "summary": "Move the decimal place in a given number.",
-              "line": 881,
+              "line": 885,
               "deprecated": false
             },
             {
@@ -12051,7 +13014,7 @@
               "kind": "staticmethod",
               "signature": "(a: List[float], b: List[float]) -> Tuple[float, float, float]",
               "summary": "Get a directional vector from a given start and end point.",
-              "line": 907,
+              "line": 911,
               "deprecated": false
             },
             {
@@ -12060,7 +13023,7 @@
               "kind": "staticmethod",
               "signature": "(n=0.0, minimum=0.0, maximum=1.0)",
               "summary": "Clamps the value x between min and max.",
-              "line": 926,
+              "line": 930,
               "deprecated": false
             },
             {
@@ -12069,7 +13032,7 @@
               "kind": "staticmethod",
               "signature": "(start, end, clamp_start=None, clamp_end=None, validate=True)",
               "summary": "Clamp a numeric range (start, end) to optional boundaries with validation.",
-              "line": 943,
+              "line": 947,
               "deprecated": false
             },
             {
@@ -12078,7 +13041,7 @@
               "kind": "classmethod",
               "signature": "(cls, vector, amount=1)",
               "summary": "Normalize a 2 or 3 dimensional vector.",
-              "line": 986,
+              "line": 990,
               "deprecated": false
             },
             {
@@ -12087,7 +13050,7 @@
               "kind": "staticmethod",
               "signature": "(vector)",
               "summary": "Get the magnatude (length) of a given vector.",
-              "line": 1006,
+              "line": 1010,
               "deprecated": false
             },
             {
@@ -12096,7 +13059,7 @@
               "kind": "classmethod",
               "signature": "(cls, v1, v2, normalize_input=False)",
               "summary": "Returns the dot product of two 3D float arrays.",
-              "line": 1025,
+              "line": 1029,
               "deprecated": false
             },
             {
@@ -12105,7 +13068,7 @@
               "kind": "classmethod",
               "signature": "(cls, a, b, c=None, normalize=0)",
               "summary": "Get the cross product of two vectors, using two 3d vectors, or 3 points.",
-              "line": 1048,
+              "line": 1052,
               "deprecated": false
             },
             {
@@ -12114,7 +13077,7 @@
               "kind": "classmethod",
               "signature": "(cls, p, d, v=None)",
               "summary": "Move a point relative to it's current position.",
-              "line": 1082,
+              "line": 1086,
               "deprecated": false
             },
             {
@@ -12123,7 +13086,7 @@
               "kind": "classmethod",
               "signature": "(cls, a, b, vect, dist, toward=True)",
               "summary": "Move a point (a) along a given vector toward or away from a given point (b).",
-              "line": 1120,
+              "line": 1124,
               "deprecated": false
             },
             {
@@ -12132,7 +13095,7 @@
               "kind": "staticmethod",
               "signature": "(a: Tuple[float, ...], b: Tuple[float, ...]) -> float",
               "summary": "Calculates the Euclidean distance between two points in N-dimensional space.",
-              "line": 1149,
+              "line": 1153,
               "deprecated": false
             },
             {
@@ -12141,7 +13104,7 @@
               "kind": "staticmethod",
               "signature": "(a: List[float], b: List[float]) -> Tuple[float, float, float]",
               "summary": "Get the point in the middle of two given points.",
-              "line": 1168,
+              "line": 1172,
               "deprecated": false
             },
             {
@@ -12150,7 +13113,7 @@
               "kind": "classmethod",
               "signature": "(cls, v1, v2, degree=False)",
               "summary": "Get an angle from two given vectors.",
-              "line": 1186,
+              "line": 1190,
               "deprecated": false
             },
             {
@@ -12159,7 +13122,7 @@
               "kind": "staticmethod",
               "signature": "(a, b, c, degree=False)",
               "summary": "Get the opposing angle from 3 given points.",
-              "line": 1216,
+              "line": 1220,
               "deprecated": false
             },
             {
@@ -12168,7 +13131,7 @@
               "kind": "staticmethod",
               "signature": "(a1, a2, s, unit='degrees')",
               "summary": "Get the length of two sides of a triangle, given two angles, and the length of the side in-between.",
-              "line": 1255,
+              "line": 1261,
               "deprecated": false
             },
             {
@@ -12177,7 +13140,7 @@
               "kind": "classmethod",
               "signature": "(cls, theta, axis, degree=False)",
               "summary": "Get the rotation about the X,Y,Z axes given an angle for rotation",
-              "line": 1292,
+              "line": 1298,
               "deprecated": false
             },
             {
@@ -12186,7 +13149,7 @@
               "kind": "staticmethod",
               "signature": "(start, end, t: float)",
               "summary": "Linear interpolation between two values or two equal-length points.",
-              "line": 1368,
+              "line": 1374,
               "deprecated": false
             },
             {
@@ -12195,7 +13158,7 @@
               "kind": "classmethod",
               "signature": "(cls, vector, fallback, amount: float = 1)",
               "summary": ":meth:`normalize`, returning ``fallback`` for a ~zero-length vector.",
-              "line": 1388,
+              "line": 1394,
               "deprecated": false
             },
             {
@@ -12204,7 +13167,7 @@
               "kind": "staticmethod",
               "signature": "(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float",
               "summary": "Canonical clamped Hermite smoothstep (``3t² − 2t³``).",
-              "line": 1401,
+              "line": 1407,
               "deprecated": false
             },
             {
@@ -12213,7 +13176,7 @@
               "kind": "staticmethod",
               "signature": "(profile: Union[str, Callable]) -> Callable[[float], float]",
               "summary": "Resolve a falloff profile to a callable ``f(t) -> w`` over t in [0, 1].",
-              "line": 1425,
+              "line": 1431,
               "deprecated": false
             },
             {
@@ -12222,7 +13185,7 @@
               "kind": "staticmethod",
               "signature": "(stations: List[float], degree: int) -> List[float]",
               "summary": "Clamped knot vector over *stations* via knot averaging (de Boor).",
-              "line": 1459,
+              "line": 1465,
               "deprecated": false
             },
             {
@@ -12231,7 +13194,7 @@
               "kind": "staticmethod",
               "signature": "(knots: List[float], span: int, degree: int, s: float) -> List[float]",
               "summary": "The non-zero B-spline basis values ``N[span - degree ..",
-              "line": 1485,
+              "line": 1487,
               "deprecated": false
             },
             {
@@ -12240,7 +13203,7 @@
               "kind": "staticmethod",
               "signature": "(x: float) -> float",
               "summary": "Ricker (Mexican-hat) wavelet — a unit ridge flanked by two balanced",
-              "line": 1516,
+              "line": 1518,
               "deprecated": false
             },
             {
@@ -12249,7 +13212,7 @@
               "kind": "staticmethod",
               "signature": "(t: float, tension: float) -> float",
               "summary": "Normalized catenary (``cosh``) profile across a span.",
-              "line": 1535,
+              "line": 1537,
               "deprecated": false
             },
             {
@@ -12258,7 +13221,7 @@
               "kind": "classmethod",
               "signature": "(cls, t: float, tension: float, round_amount: float = 0.0, gather: float = 0.0) -> float",
               "summary": "Catenary sag profile, optionally rounded / gathered at the supports.",
-              "line": 1560,
+              "line": 1562,
               "deprecated": false
             },
             {
@@ -12267,7 +13230,7 @@
               "kind": "staticmethod",
               "signature": "(time_value: float, sample_times: Sequence[float], progress: Sequence[float], tolerance: float = 1e-06) -> float",
               "summary": "Interpolate normalized progress from sampled time/progress pairs.",
-              "line": 1605,
+              "line": 1607,
               "deprecated": false
             },
             {
@@ -12276,7 +13239,7 @@
               "kind": "staticmethod",
               "signature": "(base_value: int, terms: int, common_ratio: float = 2.0) -> List[int]",
               "summary": "Generate a geometric sequence.",
-              "line": 1656,
+              "line": 1658,
               "deprecated": false
             },
             {
@@ -12285,7 +13248,7 @@
               "kind": "staticmethod",
               "signature": "(value: Union[float, List[Any], Tuple[Any, ...], 'np.ndarray'], old_range: Tuple[float, float], new_range: Tuple[float, float], clamp: bool = False) -> Union[float, List[Any], Tuple[Any, ...], 'np.ndarray']",
               "summary": "Remaps a value, list, or tuple of varying sizes from one range to another.",
-              "line": 1686,
+              "line": 1688,
               "deprecated": false
             },
             {
@@ -12294,7 +13257,7 @@
               "kind": "staticmethod",
               "signature": "(p: Sequence[float], a: Sequence[float], b: Sequence[float]) -> float",
               "summary": "Perpendicular distance from point ``p`` to the segment ``a``-``b``.",
-              "line": 1737,
+              "line": 1739,
               "deprecated": false
             },
             {
@@ -12303,7 +13266,7 @@
               "kind": "staticmethod",
               "signature": "(value: int) -> int",
               "summary": "Finds the nearest power of two for a given integer without using the math module.",
-              "line": 1766,
+              "line": 1768,
               "deprecated": false
             },
             {
@@ -12312,7 +13275,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, tolerance: float = 0.0001) -> bool",
               "summary": "Check if a float value is close to a whole number within tolerance.",
-              "line": 1794,
+              "line": 1796,
               "deprecated": false
             },
             {
@@ -12321,7 +13284,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, step: float, direction: int, snap: bool = False, tolerance: float = 1e-06) -> float",
               "summary": "Offset that advances *value* one *step* along *direction* on a grid anchored at 0.",
-              "line": 1814,
+              "line": 1816,
               "deprecated": false
             },
             {
@@ -12330,7 +13293,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, mode: str = 'none', max_distance: float = 1.5) -> Union[int, float]",
               "summary": "General-purpose rounding function with multiple modes.",
-              "line": 1867,
+              "line": 1869,
               "deprecated": false
             },
             {
@@ -12339,7 +13302,7 @@
               "kind": "staticmethod",
               "signature": "(value: float, max_distance: float = 1.5) -> int",
               "summary": "Round to aesthetically pleasing 'round' numbers (conservative approach).",
-              "line": 1924,
+              "line": 1926,
               "deprecated": false
             },
             {
@@ -12348,7 +13311,7 @@
               "kind": "classmethod",
               "signature": "(cls, value: float) -> int",
               "summary": "Round to aesthetically pleasing 'round' numbers (aggressive approach).",
-              "line": 1979,
+              "line": 1981,
               "deprecated": false
             },
             {
@@ -12357,7 +13320,7 @@
               "kind": "staticmethod",
               "signature": "(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float",
               "summary": "Calculate the effective rotation distance between two Euler rotations.",
-              "line": 2002,
+              "line": 2004,
               "deprecated": false
             },
             {
@@ -12366,7 +13329,7 @@
               "kind": "staticmethod",
               "signature": "(times: Sequence[float], values: Sequence[float], keep_indices: Sequence[int], flat_tolerance: float = 0.0) -> Tuple[List[float], List[float]]",
               "summary": "Fit cubic-Hermite tangent slopes at a subset of samples so the",
-              "line": 2099,
+              "line": 2101,
               "deprecated": false
             }
           ]
@@ -12674,14 +13637,191 @@
       ]
     },
     {
-      "relpath": "net_utils/preview_server.py",
+      "relpath": "net_utils/preview/bridge.py",
+      "summary": "The hand-off bridge whose target is a live preview page.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PreviewBridge",
+          "summary": "Hand-off bridge whose target is a live preview page rather than an application.",
+          "line": 26,
+          "bases": [
+            "HandoffBridge"
+          ],
+          "members": [
+            {
+              "name": "lightmap_search_dirs",
+              "qualname": "PreviewBridge.lightmap_search_dirs",
+              "kind": "method",
+              "signature": "(self) -> Sequence[str]",
+              "summary": "Extra directories the lightmap pass resolves the manifest's EXRs against.",
+              "line": 46,
+              "deprecated": false
+            },
+            {
+              "name": "params_defaults",
+              "qualname": "PreviewBridge.params_defaults",
+              "kind": "method",
+              "signature": "(self) -> Dict[str, Any]",
+              "summary": "glTF-appropriate export defaults, read by both DCC export mixins.",
+              "line": 64,
+              "deprecated": false
+            },
+            {
+              "name": "url",
+              "qualname": "PreviewBridge.url",
+              "kind": "property",
+              "signature": "(self) -> Optional[str]",
+              "summary": "The preview URL, or ``None`` before the first push.",
+              "line": 136,
+              "deprecated": false
+            },
+            {
+              "name": "scope_objects",
+              "qualname": "PreviewBridge.scope_objects",
+              "kind": "method",
+              "signature": "(self, scope: str = 'selected') -> List[Any]",
+              "summary": "The objects *scope* resolves to, through the host hooks.",
+              "line": 141,
+              "deprecated": false
+            },
+            {
+              "name": "push",
+              "qualname": "PreviewBridge.push",
+              "kind": "method",
+              "signature": "(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]",
+              "summary": "Export and publish, returning the deliverer's result (``None`` on failure).",
+              "line": 168,
+              "deprecated": false
+            },
+            {
+              "name": "publish_file",
+              "qualname": "PreviewBridge.publish_file",
+              "kind": "method",
+              "signature": "(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]",
+              "summary": "Publish a GLB that already exists on disk, unchanged.",
+              "line": 225,
+              "deprecated": false
+            },
+            {
+              "name": "sidecar_summary",
+              "qualname": "PreviewBridge.sidecar_summary",
+              "kind": "staticmethod",
+              "signature": "(result: Optional[Dict[str, Any]]) -> str",
+              "summary": "One plain-text line describing what the scene sidecar did.",
+              "line": 294,
+              "deprecated": false
+            },
+            {
+              "name": "lightmap_summary",
+              "qualname": "PreviewBridge.lightmap_summary",
+              "kind": "staticmethod",
+              "signature": "(result: Optional[Dict[str, Any]]) -> str",
+              "summary": "One plain-text line on the lightmaps: bound, or how many came back unlit.",
+              "line": 323,
+              "deprecated": false
+            },
+            {
+              "name": "stop",
+              "qualname": "PreviewBridge.stop",
+              "kind": "method",
+              "signature": "(self) -> None",
+              "summary": "Stop serving and release the port.",
+              "line": 364,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "net_utils/preview/deliverer.py",
+      "summary": "FBX -> GLB -> publish: the hand-off strategy behind every live preview.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PreviewPassContext",
+          "summary": "What a post-conversion preview pass reads, and reports into.",
+          "line": 26,
+          "bases": [],
+          "members": [
+            {
+              "name": "logger",
+              "qualname": "PreviewPassContext.logger",
+              "kind": "property",
+              "signature": "(self)",
+              "summary": "The bridge's logger -- every pass reports through the push's own sink.",
+              "line": 51,
+              "deprecated": false
+            },
+            {
+              "name": "sidecar",
+              "qualname": "PreviewPassContext.sidecar",
+              "kind": "property",
+              "signature": "(self) -> Optional[Dict[str, Any]]",
+              "summary": "The scene-sidecar envelope the producer attached, if any.",
+              "line": 56,
+              "deprecated": false
+            },
+            {
+              "name": "lightmap_search_dirs",
+              "qualname": "PreviewPassContext.lightmap_search_dirs",
+              "kind": "property",
+              "signature": "(self) -> Sequence[str]",
+              "summary": "The host's live texture folders (:meth:`PreviewBridge.lightmap_search_dirs`).",
+              "line": 61,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "PreviewDeliverer",
+          "summary": "Hand-off strategy: convert the produced FBX to GLB and publish it.",
+          "line": 75,
+          "bases": [
+            "Deliverer"
+          ],
+          "members": [
+            {
+              "name": "ensure_server",
+              "qualname": "PreviewDeliverer.ensure_server",
+              "kind": "method",
+              "signature": "(self) -> PreviewServer",
+              "summary": "The bridge's server, started, creating it on first use.",
+              "line": 165,
+              "deprecated": false
+            },
+            {
+              "name": "publish",
+              "qualname": "PreviewDeliverer.publish",
+              "kind": "method",
+              "signature": "(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]",
+              "summary": "Put *glb* on the server and report what the viewer now sees.",
+              "line": 370,
+              "deprecated": false
+            },
+            {
+              "name": "deliver",
+              "qualname": "PreviewDeliverer.deliver",
+              "kind": "method",
+              "signature": "(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
+              "summary": "",
+              "line": 432,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "net_utils/preview/server.py",
       "summary": "Localhost static-file server for live browser / WebXR previews.",
       "functions": [],
       "classes": [
         {
           "name": "PreviewServer",
           "summary": "Serve a directory of preview assets on loopback, with a live manifest.",
-          "line": 332,
+          "line": 324,
           "bases": [
             "LoggingMixin",
             "_PreviewServerInternal"
@@ -12693,7 +13833,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[int]",
               "summary": "The bound port, or ``None`` before :meth:`start`.",
-              "line": 428,
+              "line": 443,
               "deprecated": false
             },
             {
@@ -12702,7 +13842,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The viewer URL, or ``None`` before :meth:`start`.",
-              "line": 433,
+              "line": 448,
               "deprecated": false
             },
             {
@@ -12711,7 +13851,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "Number of published revisions;",
-              "line": 438,
+              "line": 453,
               "deprecated": false
             },
             {
@@ -12720,7 +13860,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 443,
+              "line": 458,
               "deprecated": false
             },
             {
@@ -12729,7 +13869,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Whether a page is currently watching this server.",
-              "line": 446,
+              "line": 461,
               "deprecated": false
             },
             {
@@ -12738,7 +13878,7 @@
               "kind": "property",
               "signature": "(self) -> tuple",
               "summary": "Registered names of the viewer scripts currently active, in load order.",
-              "line": 474,
+              "line": 489,
               "deprecated": false
             },
             {
@@ -12747,7 +13887,7 @@
               "kind": "method",
               "signature": "(self, name: str, path: Optional[Union[str, Path]] = None) -> 'PreviewServer'",
               "summary": "Activate a viewer script, on disk and in the manifest at once.",
-              "line": 479,
+              "line": 494,
               "deprecated": false
             },
             {
@@ -12756,7 +13896,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> 'PreviewServer'",
               "summary": "Deactivate a viewer script (unknown names are ignored), and sweep it.",
-              "line": 509,
+              "line": 524,
               "deprecated": false
             },
             {
@@ -12765,7 +13905,7 @@
               "kind": "method",
               "signature": "(self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]) -> 'PreviewServer'",
               "summary": "Replace the whole active set (``None`` or empty clears it).",
-              "line": 519,
+              "line": 534,
               "deprecated": false
             },
             {
@@ -12774,7 +13914,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "The payload served at ``/manifest.json``.",
-              "line": 591,
+              "line": 649,
               "deprecated": false
             },
             {
@@ -12783,7 +13923,7 @@
               "kind": "method",
               "signature": "(self) -> 'PreviewServer'",
               "summary": "Bind the port and serve on a daemon thread.",
-              "line": 606,
+              "line": 664,
               "deprecated": false
             },
             {
@@ -12792,7 +13932,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Stop serving and release the port.",
-              "line": 636,
+              "line": 694,
               "deprecated": false
             },
             {
@@ -12801,7 +13941,7 @@
               "kind": "method",
               "signature": "(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int",
               "summary": "Place an asset in the serve root and bump the manifest version.",
-              "line": 653,
+              "line": 711,
               "deprecated": false
             },
             {
@@ -12810,7 +13950,7 @@
               "kind": "method",
               "signature": "(self, settings: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "Write delivery dials into the published GLB, and remember them.",
-              "line": 719,
+              "line": 779,
               "deprecated": false
             },
             {
@@ -12819,170 +13959,69 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Open the viewer in the default browser.",
-              "line": 798,
+              "line": 858,
               "deprecated": false
             }
           ]
-        },
+        }
+      ]
+    },
+    {
+      "relpath": "net_utils/remote_file.py",
+      "summary": "Read a file by ``http(s)`` URL with the same surface as a local read.",
+      "functions": [],
+      "classes": [
         {
-          "name": "PreviewPassContext",
-          "summary": "What a post-conversion preview pass reads, and reports into.",
-          "line": 823,
-          "bases": [],
-          "members": [
-            {
-              "name": "logger",
-              "qualname": "PreviewPassContext.logger",
-              "kind": "property",
-              "signature": "(self)",
-              "summary": "The bridge's logger -- every pass reports through the push's own sink.",
-              "line": 846,
-              "deprecated": false
-            },
-            {
-              "name": "sidecar",
-              "qualname": "PreviewPassContext.sidecar",
-              "kind": "property",
-              "signature": "(self) -> Optional[Dict[str, Any]]",
-              "summary": "The scene-sidecar envelope the producer attached, if any.",
-              "line": 851,
-              "deprecated": false
-            },
-            {
-              "name": "lightmap_search_dirs",
-              "qualname": "PreviewPassContext.lightmap_search_dirs",
-              "kind": "property",
-              "signature": "(self) -> Sequence[str]",
-              "summary": "The host's live texture folders (:meth:`PreviewBridge.lightmap_search_dirs`).",
-              "line": 856,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "PreviewDeliverer",
-          "summary": "Hand-off strategy: convert the produced FBX to GLB and publish it.",
-          "line": 870,
+          "name": "RemoteFile",
+          "summary": "Fetch the bytes behind an ``http(s)`` URL, with share links normalized.",
+          "line": 89,
           "bases": [
-            "Deliverer"
+            "_RemoteFileInternal"
           ],
           "members": [
             {
-              "name": "ensure_server",
-              "qualname": "PreviewDeliverer.ensure_server",
-              "kind": "method",
-              "signature": "(self) -> PreviewServer",
-              "summary": "The bridge's server, started, creating it on first use.",
-              "line": 952,
-              "deprecated": false
-            },
-            {
-              "name": "publish",
-              "qualname": "PreviewDeliverer.publish",
-              "kind": "method",
-              "signature": "(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]",
-              "summary": "Put *glb* on the server and report what the viewer now sees.",
-              "line": 1108,
-              "deprecated": false
-            },
-            {
-              "name": "deliver",
-              "qualname": "PreviewDeliverer.deliver",
-              "kind": "method",
-              "signature": "(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
-              "summary": "",
-              "line": 1170,
-              "deprecated": false
-            }
-          ]
-        },
-        {
-          "name": "PreviewBridge",
-          "summary": "Hand-off bridge whose target is a live preview page rather than an application.",
-          "line": 1340,
-          "bases": [
-            "HandoffBridge"
-          ],
-          "members": [
-            {
-              "name": "lightmap_search_dirs",
-              "qualname": "PreviewBridge.lightmap_search_dirs",
-              "kind": "method",
-              "signature": "(self) -> Sequence[str]",
-              "summary": "Extra directories the lightmap pass resolves the manifest's EXRs against.",
-              "line": 1360,
-              "deprecated": false
-            },
-            {
-              "name": "params_defaults",
-              "qualname": "PreviewBridge.params_defaults",
-              "kind": "method",
-              "signature": "(self) -> Dict[str, Any]",
-              "summary": "glTF-appropriate export defaults, read by both DCC export mixins.",
-              "line": 1378,
-              "deprecated": false
-            },
-            {
-              "name": "url",
-              "qualname": "PreviewBridge.url",
-              "kind": "property",
-              "signature": "(self) -> Optional[str]",
-              "summary": "The preview URL, or ``None`` before the first push.",
-              "line": 1450,
-              "deprecated": false
-            },
-            {
-              "name": "scope_objects",
-              "qualname": "PreviewBridge.scope_objects",
-              "kind": "method",
-              "signature": "(self, scope: str = 'selected') -> List[Any]",
-              "summary": "The objects *scope* resolves to, through the host hooks.",
-              "line": 1455,
-              "deprecated": false
-            },
-            {
-              "name": "push",
-              "qualname": "PreviewBridge.push",
-              "kind": "method",
-              "signature": "(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, whole_scene: Optional[bool] = None, **params: Any) -> Optional[Dict[str, Any]]",
-              "summary": "Export and publish, returning the deliverer's result (``None`` on failure).",
-              "line": 1482,
-              "deprecated": false
-            },
-            {
-              "name": "publish_file",
-              "qualname": "PreviewBridge.publish_file",
-              "kind": "method",
-              "signature": "(self, path: Union[str, Path], open_browser: Union[bool, str] = 'auto', scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]",
-              "summary": "Publish a GLB that already exists on disk, unchanged.",
-              "line": 1554,
-              "deprecated": false
-            },
-            {
-              "name": "sidecar_summary",
-              "qualname": "PreviewBridge.sidecar_summary",
+              "name": "is_url",
+              "qualname": "RemoteFile.is_url",
               "kind": "staticmethod",
-              "signature": "(result: Optional[Dict[str, Any]]) -> str",
-              "summary": "One plain-text line describing what the scene sidecar did.",
-              "line": 1622,
+              "signature": "(source: str) -> bool",
+              "summary": "True when *source* is an ``http`` or ``https`` URL.",
+              "line": 113,
               "deprecated": false
             },
             {
-              "name": "lightmap_summary",
-              "qualname": "PreviewBridge.lightmap_summary",
-              "kind": "staticmethod",
-              "signature": "(result: Optional[Dict[str, Any]]) -> str",
-              "summary": "One plain-text line on the lightmaps: bound, or how many came back unlit.",
-              "line": 1651,
+              "name": "normalize",
+              "qualname": "RemoteFile.normalize",
+              "kind": "classmethod",
+              "signature": "(cls, url: str) -> str",
+              "summary": "The download form of *url*;",
+              "line": 125,
               "deprecated": false
             },
             {
-              "name": "stop",
-              "qualname": "PreviewBridge.stop",
-              "kind": "method",
-              "signature": "(self) -> None",
-              "summary": "Stop serving and release the port.",
-              "line": 1692,
+              "name": "open",
+              "qualname": "RemoteFile.open",
+              "kind": "classmethod",
+              "signature": "(cls, url: str, *, timeout: Optional[float] = None, headers: Optional[Dict[str, str]] = None)",
+              "summary": "Open *url* (normalized) and return the response for streaming.",
+              "line": 143,
+              "deprecated": false
+            },
+            {
+              "name": "read_bytes",
+              "qualname": "RemoteFile.read_bytes",
+              "kind": "classmethod",
+              "signature": "(cls, url: str, *, timeout: Optional[float] = None, reject_html: bool = True) -> bytes",
+              "summary": "The full body behind *url*.",
+              "line": 184,
+              "deprecated": false
+            },
+            {
+              "name": "probe",
+              "qualname": "RemoteFile.probe",
+              "kind": "classmethod",
+              "signature": "(cls, url: str, *, timeout: Optional[float] = None) -> Optional[str]",
+              "summary": "Why *url* would NOT serve a file, or None when it would.",
+              "line": 217,
               "deprecated": false
             }
           ]

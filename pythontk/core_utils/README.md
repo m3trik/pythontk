@@ -55,6 +55,7 @@ Everything here is reachable from the package root (`import pythontk as ptk; ptk
 | `symbol_record` | `SymbolRecord` | The shared public-API symbol shape produced by both the static registry generator and the dynamic `HelpMixin`; compared in the runtime-vs-static drift gate. |
 | `doc_audit` | `DocAudit` | Markdown-example rot gate: extracts fenced code blocks and validates attribute chains + keyword arguments against the live package. Backs the README gates in `test/test_doc_audit.py`; downstream repos can gate their own docs with it. |
 | `status_badge` | `StatusBadge` | Shields.io badges embedded in a markdown file; sole writer of the ecosystem's README test badges (see `m3trik/docs/TEST_BADGE_STANDARD.md`). |
+| `test_sandbox` | `TestSandbox` | Process-level test isolation, activated once from a conftest/runner: refuses every real browser launch (loudly, and records it) and routes the process temp dir into one throwaway root that children inherit. `uitk.testing.TestSandbox` extends it with the Qt-side stores. |
 
 ## Pipeline primitives
 

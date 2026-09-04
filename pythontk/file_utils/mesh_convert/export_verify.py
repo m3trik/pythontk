@@ -406,7 +406,12 @@ class ExportVerifier(_ExportVerifierInternal):
         """Each GLB clip's length matches its declared take (±1 frame).
 
         Exactly one clip with no declared take is treated as the
-        whole-timeline clip and compared against the takes' overall end.
+        whole-timeline clip, measured from its own ``extras.zero_frame`` and
+        compared against the takes' overall end -- ending SHORT of them FAILs
+        (it cannot play the declared range), while running long is judged on
+        the frames it ANIMATES rather than the frames it occupies: a bake pads
+        it with held poses, so an inert margin is a WARN and only motion past
+        the last take FAILs.
         """
         if self.reader is None:
             return [Finding(SKIP, "clips_vs_takes", "no readable GLB")]
@@ -446,17 +451,55 @@ class ExportVerifier(_ExportVerifierInternal):
                     if isinstance(value, (int, float)):
                         zero = float(value)
                     break
-            end_frame = spans[clip][2] + zero
+            end_frame = int(round(spans[clip][2] + zero))
             timeline_end = max(int(t["end"]) for t in takes)
-            if abs(end_frame - timeline_end) > 1:
+            # The two ends fail for different reasons, so judge them apart.
+            # SHORT is measured on keys: a clip whose keys stop before the
+            # last take cannot play the declared range at all. LONG is
+            # measured on motion: the bake writes keys across whatever range
+            # it is handed, so a whole-timeline clip routinely ends on a held
+            # pose past the last take -- inert padding, not an overrun. Only
+            # motion out there is content no shot will ever play. Measured on
+            # the VDATS assembly: 48 padded frames moving 76 of 1185 channels
+            # by at most 3e-4, against a body moving 1183 of them by up to
+            # 3.5. Motion that stops EARLY is never a fault -- a clip closing
+            # on a deliberate hold is ordinary animation, not truncation.
+            if end_frame < timeline_end - 1:
                 rows.append(
                     Finding(
                         FAIL,
                         "clips_vs_takes",
                         f"{clip}: full-timeline clip ends {end_frame}f, "
-                        f"takes end {timeline_end}f",
+                        f"short of the takes' {timeline_end}f",
                     )
                 )
+            elif end_frame > timeline_end + 1:
+                motion = self.reader.motion_span(clip)
+                motion_end = (
+                    int(round(motion[1] * self.fps + zero))
+                    if motion is not None
+                    else timeline_end
+                )
+                excess = end_frame - timeline_end
+                if motion_end > timeline_end + 1:
+                    rows.append(
+                        Finding(
+                            FAIL,
+                            "clips_vs_takes",
+                            f"{clip}: full-timeline clip animates to "
+                            f"{motion_end}f, past the takes' {timeline_end}f",
+                        )
+                    )
+                else:
+                    rows.append(
+                        Finding(
+                            WARN,
+                            "clips_vs_takes",
+                            f"{clip}: full-timeline clip ends {end_frame}f vs "
+                            f"takes {timeline_end}f, but those {excess:+d}f "
+                            f"hold still (bake padding, not content)",
+                        )
+                    )
         elif unmatched:
             rows.append(
                 Finding(WARN, "clips_vs_takes", f"undeclared clips: {unmatched}")

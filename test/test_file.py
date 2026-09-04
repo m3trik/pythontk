@@ -18,6 +18,7 @@ Run with:
     python -m pytest test_file.py -v
     python test_file.py
 """
+
 import inspect
 import os
 import sys
@@ -356,9 +357,7 @@ class FileTest(BaseTestCase):
 
     def test_next_version_path_format_with_unknown_field_raises(self):
         with self.assertRaises(ValueError):
-            FileUtils.next_version_path(
-                "shot.ma", format="{stem}_{user}_v{n:03d}{ext}"
-            )
+            FileUtils.next_version_path("shot.ma", format="{stem}_{user}_v{n:03d}{ext}")
 
     def test_next_version_path_missing_dir_returns_start(self):
         # Nonexistent parent dir should not crash; falls back to start.
@@ -617,9 +616,7 @@ class FileTest(BaseTestCase):
         from pythontk.iter_utils._iter_utils import IterUtils as Canonical
 
         filepath = inspect.getfile(Canonical)
-        result = FileUtils.get_classes_from_path(
-            filepath, ["classname", "classobj"]
-        )
+        result = FileUtils.get_classes_from_path(filepath, ["classname", "classobj"])
         match = [obj for name, obj in result if name == "IterUtils"]
         self.assertEqual(len(match), 1)
         self.assertIs(match[0], Canonical)
@@ -756,8 +753,12 @@ class FileTest(BaseTestCase):
 
             # A real file → the args include the file path (selected on Win/mac).
             args_file = FileUtils.reveal_in_file_manager(f, _runner=captured.append)
-            self.assertIn(f, [os.path.normpath(a) for a in args_file if isinstance(a, str)])
-            self.assertEqual(captured[-1], args_file)  # the runner received exactly the args
+            self.assertIn(
+                f, [os.path.normpath(a) for a in args_file if isinstance(a, str)]
+            )
+            self.assertEqual(
+                captured[-1], args_file
+            )  # the runner received exactly the args
 
             # A directory → opens the folder (no file-select token).
             args_dir = FileUtils.reveal_in_file_manager(d, _runner=captured.append)
@@ -853,6 +854,134 @@ class FileTest(BaseTestCase):
             "pythontk.file_utils._file_utils.os.path.exists", return_value=False
         ):
             self.assertIsNone(FileUtils.free_space("Z:/x/y/z.csv"))
+
+    # -------------------------------------------------------------------------
+    # is_locked / locking_processes / describe_lock Tests
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _hold_open(path):
+        """Open *path* with a share mode that denies writers, as a viewer does.
+
+        Windows share modes are per-HANDLE, not per-process, so holding this
+        in the test process blocks the test process' own writes -- the real
+        lock, with no subprocess to spawn or reap.
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        create = ctypes.windll.kernel32.CreateFileW
+        create.restype = wintypes.HANDLE
+        create.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        # GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING.
+        handle = create(path, 0x80000000, 0x00000001, None, 3, 0, None)
+        assert handle != wintypes.HANDLE(-1).value, "could not open the probe file"
+        return handle
+
+    def _locked_file(self):
+        """A real, currently-locked file; released at test teardown."""
+        import ctypes
+        import os as _os
+        import tempfile
+        from ctypes import wintypes
+
+        path = _os.path.join(tempfile.mkdtemp(), "held.glb")
+        with open(path, "wb") as fh:
+            fh.write(b"glTF")
+        handle = self._hold_open(path)
+        self.addCleanup(ctypes.windll.kernel32.CloseHandle, wintypes.HANDLE(handle))
+        return path
+
+    def test_is_locked_false_for_a_writable_file(self):
+        """Nothing holding it -> replaceable -> False."""
+        import os as _os
+        import tempfile
+
+        path = _os.path.join(tempfile.mkdtemp(), "free.glb")
+        with open(path, "wb") as fh:
+            fh.write(b"glTF")
+        self.assertFalse(FileUtils.is_locked(path))
+
+    def test_is_locked_false_for_missing_path_and_for_a_directory(self):
+        """Neither can be 'held'; both answer False so callers need no guard."""
+        import tempfile
+
+        self.assertFalse(FileUtils.is_locked("X:/no/such/file_abc123.glb"))
+        self.assertFalse(FileUtils.is_locked(tempfile.gettempdir()))
+
+    @unittest.skipUnless(os.name == "nt", "file locking is a Windows behavior")
+    def test_is_locked_true_while_another_handle_denies_writes(self):
+        """The case this exists for: a viewer has the deliverable open."""
+        path = self._locked_file()
+        self.assertTrue(FileUtils.is_locked(path))
+
+    @unittest.skipUnless(os.name == "nt", "file locking is a Windows behavior")
+    def test_is_locked_agrees_with_the_operations_it_gates(self):
+        """A True verdict must mean os.remove and os.replace really do fail.
+
+        The probe opens for append while the caller deletes or renames; if
+        those diverged, the check would be a superstition.
+        """
+        import os as _os
+
+        path = self._locked_file()
+        # A real source for the rename, or the raise would be a missing file.
+        source = path + ".src"
+        with open(source, "wb") as fh:
+            fh.write(b"replacement")
+
+        self.assertTrue(FileUtils.is_locked(path))
+        with self.assertRaises(OSError):
+            _os.remove(path)
+        with self.assertRaises(OSError):
+            _os.replace(source, path)
+        self.assertTrue(_os.path.isfile(source), "the failed rename consumed it")
+
+    @unittest.skipUnless(os.name == "nt", "Restart Manager is Windows-only")
+    def test_locking_processes_names_the_holder(self):
+        """The holder is this very process, so its PID must be in the list."""
+        import os as _os
+
+        path = self._locked_file()
+        holders = FileUtils.locking_processes(path)
+        self.assertTrue(holders, "Restart Manager named no holder for a held file")
+        self.assertTrue(
+            any(f"PID {_os.getpid()}" in h for h in holders),
+            f"this process ({_os.getpid()}) is missing from {holders}",
+        )
+
+    def test_locking_processes_is_empty_off_windows(self):
+        """Every non-Windows caller gets a clean, allocation-free no-op."""
+        from unittest.mock import patch
+
+        with patch("pythontk.file_utils._file_utils.os.name", "posix"):
+            self.assertEqual(FileUtils.locking_processes(__file__), [])
+
+    def test_describe_lock_is_falsy_when_the_file_is_free(self):
+        """It doubles as the test, so a free file must read as empty."""
+        self.assertEqual(FileUtils.describe_lock(__file__), "")
+
+    @unittest.skipUnless(os.name == "nt", "file locking is a Windows behavior")
+    def test_describe_lock_reports_the_holder(self):
+        path = self._locked_file()
+        self.assertIn("in use by", FileUtils.describe_lock(path))
+
+    @unittest.skipUnless(os.name == "nt", "file locking is a Windows behavior")
+    def test_describe_lock_still_reports_a_lock_it_cannot_attribute(self):
+        """An unattributable lock is still a lock - never silently 'free'."""
+        from unittest.mock import patch
+
+        path = self._locked_file()
+        with patch.object(FileUtils, "locking_processes", return_value=[]):
+            self.assertEqual(FileUtils.describe_lock(path), "in use by another process")
 
     # -------------------------------------------------------------------------
     # is_under Tests
@@ -1126,9 +1255,7 @@ class FileTest(BaseTestCase):
                     num_threads=nt,
                 )
                 names = sorted(os.path.basename(p) for p in result)
-                self.assertEqual(
-                    names, ["deep.txt", "top.txt"], f"num_threads={nt}"
-                )
+                self.assertEqual(names, ["deep.txt", "top.txt"], f"num_threads={nt}")
 
     def test_get_dir_contents_num_threads_all_cores_enters_parallel_branch(self):
         """Regression: num_threads=-1 ('use all cores') must enter the
@@ -1150,9 +1277,7 @@ class FileTest(BaseTestCase):
                 spy.called,
                 "num_threads=-1 did not enter the parallel branch",
             )
-            self.assertEqual(
-                sorted(os.path.basename(p) for p in result), ["a.txt"]
-            )
+            self.assertEqual(sorted(os.path.basename(p) for p in result), ["a.txt"])
 
     def test_get_object_path_module_absent_from_sys_modules_no_unbound_local(self):
         """Regression: a class whose __module__ is absent from sys.modules

@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Regression tests for the MapFactory workflow handlers (Strategy pattern)."""
+
 import os
 import tempfile
 import shutil
@@ -35,9 +36,7 @@ class TestBaseColorHandlerAlbedoTransparencyFailure(unittest.TestCase):
         ImgUtils.save_image(
             ImgUtils.create_image("RGB", (16, 16), (128, 128, 128)), self.base_color
         )
-        ImgUtils.save_image(
-            ImgUtils.create_image("L", (16, 16), 128), self.opacity
-        )
+        ImgUtils.save_image(ImgUtils.create_image("L", (16, 16), 128), self.opacity)
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
@@ -70,9 +69,7 @@ class TestBaseColorHandlerAlbedoTransparencyFailure(unittest.TestCase):
             result = handler.process(ctx)
 
         # 1. A map is still produced (not dropped entirely).
-        self.assertIsNotNone(
-            result, "handler dropped the map entirely on pack failure"
-        )
+        self.assertIsNotNone(result, "handler dropped the map entirely on pack failure")
         base = os.path.basename(result)
         # 2. It is emitted under the requested Albedo_Transparency slot, NOT
         #    silently renamed to a Base_Color map.
@@ -193,7 +190,9 @@ class TestMissingMapRule(unittest.TestCase):
     def setUp(self):
         import pythontk as ptk
 
-        self._artifacts = ptk.TempArtifacts("handlers_missing_map_rule")
+        self._artifacts = ptk.TempArtifacts(
+            "handlers_missing_map_rule", policy="scoped"
+        )
         self.test_dir = self._artifacts.dir_path()
         self.output_dir = os.path.join(self.test_dir, "output")
         os.makedirs(self.output_dir, exist_ok=True)
@@ -235,9 +234,7 @@ class TestMissingMapRule(unittest.TestCase):
             ),
         ):
             with self.subTest(config=config):
-                self.assertEqual(
-                    MapRegistry.resolve_missing_map_rule(config), expected
-                )
+                self.assertEqual(MapRegistry.resolve_missing_map_rule(config), expected)
 
     def test_multi_sits_between_skip_and_force(self):
         """Two of three channels resolved: only 'skip' refuses to pack."""
@@ -311,7 +308,6 @@ class TestMissingMapRule(unittest.TestCase):
                         f"'force' refused a set with only {map_type}",
                     )
 
-
     def test_mask_map_requires_smoothness_not_just_two_of_three(self):
         """Counting resolved channels hides the ONE unsafe 2-of-3 combination.
 
@@ -365,6 +361,7 @@ class TestMissingMapRule(unittest.TestCase):
                     self._result(MaskMapHandler, dict(inventory)),
                     f"the default rule refused a benign pair ({label})",
                 )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ Run with:
     python -m pytest test_img.py -v
     python test_img.py
 """
+
 import ast
 import os
 import unittest
@@ -277,9 +278,7 @@ class ImgTest(BaseTestCase):
             "Mixed_AO",
         )
         self.assertEqual(
-            TextureMapFactory.resolve_map_type(
-                "Cart_AmbientOcclusion.PNG", key=False
-            ),
+            TextureMapFactory.resolve_map_type("Cart_AmbientOcclusion.PNG", key=False),
             "AmbientOcclusion",
         )
 
@@ -351,7 +350,8 @@ class ImgTest(BaseTestCase):
             self.assertIsNotNone(rt, f"resolver dropped suffix for {fn}")
             out = TextureMapFactory.resolve_texture_filename(fn, rt)
             self.assertEqual(
-                os.path.basename(out), fn,
+                os.path.basename(out),
+                fn,
                 f"round-trip changed filename: {fn} -> {os.path.basename(out)}",
             )
 
@@ -608,7 +608,7 @@ class ImgTest(BaseTestCase):
         # Its own scratch dir, not the class fixture dir: the conversion writes a
         # sibling file per case, and `test_get_images_pattern` globs `*Normal*`
         # over the shared dir expecting exactly the two fixtures.
-        artifacts = TempArtifacts(prefix="test_normal_spelling")
+        artifacts = TempArtifacts(prefix="test_normal_spelling", policy="scoped")
         scratch = artifacts.dir_path()
         try:
             for src_suffix, target, expected_suffix in (
@@ -1231,8 +1231,9 @@ class DilateImageTest(unittest.TestCase):
         # legitimate baked texel (e.g. shadow contact) -- it must spread, not
         # be treated as empty. With the default luminance mask it would be
         # background; the explicit coverage mask is the whole point.
-        img = np.array([[[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                       dtype=np.float32)
+        img = np.array(
+            [[[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]], dtype=np.float32
+        )
         mask = np.array([[True, True, False]])
         out = ImgUtils.dilate_image(img, mask)
         np.testing.assert_allclose(out[0, 0], (1, 1, 1))  # untouched
@@ -1309,7 +1310,9 @@ class ImageFormatCapabilityTest(unittest.TestCase):
         fmts = ImgUtils.image_formats
         self.assertEqual(ImgUtils.recognized, tuple(fmts))
         self.assertEqual(ImgUtils.readable, tuple(e for e, f in fmts.items() if f.read))
-        self.assertEqual(ImgUtils.writable, tuple(e for e, f in fmts.items() if f.write))
+        self.assertEqual(
+            ImgUtils.writable, tuple(e for e, f in fmts.items() if f.write)
+        )
 
     def test_texture_file_types_alias_preserved(self):
         # Public back-compat name still exists and mirrors the recognized set.
@@ -1430,7 +1433,9 @@ class ImageFormatCapabilityTest(unittest.TestCase):
 
     def test_dds_bc7_without_codec_raises_clearly(self):
         with self.assertRaises(ValueError) as ctx:
-            ImgUtils.save_image(self.img, os.path.join(self.tmp, "x.dds"), compression="BC7")
+            ImgUtils.save_image(
+                self.img, os.path.join(self.tmp, "x.dds"), compression="BC7"
+            )
         self.assertIn("codec", str(ctx.exception).lower())
 
     def test_register_dds_codec_is_used_for_block_formats(self):
@@ -1443,7 +1448,9 @@ class ImageFormatCapabilityTest(unittest.TestCase):
         original = ImgUtils._dds_codec
         try:
             ImgUtils.register_dds_codec(fake_codec)
-            ImgUtils.save_image(self.img, os.path.join(self.tmp, "bc7.dds"), compression="BC7")
+            ImgUtils.save_image(
+                self.img, os.path.join(self.tmp, "bc7.dds"), compression="BC7"
+            )
             self.assertEqual(calls["args"], ((8, 8), "bc7.dds", "BC7"))
         finally:
             ImgUtils._dds_codec = original
@@ -1487,9 +1494,7 @@ class AtlasLayoutTest(unittest.TestCase):
         self.assertEqual(ImgUtils.compute_atlas_layout([]), [])
 
     def test_single_is_identity(self):
-        self.assertEqual(
-            ImgUtils.compute_atlas_layout([5.0]), [(1.0, 1.0, 0.0, 0.0)]
-        )
+        self.assertEqual(ImgUtils.compute_atlas_layout([5.0]), [(1.0, 1.0, 0.0, 0.0)])
 
     def test_equal_weights_tile_and_are_equal_area(self):
         rects = ImgUtils.compute_atlas_layout([1.0] * 4)
@@ -1606,16 +1611,16 @@ class AtlasPixelRectsTest(unittest.TestCase):
     """ImgUtils.atlas_pixel_rects — SSoT UV-rect → pixel-rect mapping (with flip)."""
 
     def test_full_rect_covers_whole_canvas(self):
-        (r0, r1, c0, c1), = ImgUtils.atlas_pixel_rects([(1.0, 1.0, 0.0, 0.0)], 8)
+        ((r0, r1, c0, c1),) = ImgUtils.atlas_pixel_rects([(1.0, 1.0, 0.0, 0.0)], 8)
         self.assertEqual((r0, r1, c0, c1), (0, 8, 0, 8))
 
     def test_uv_bottom_rect_lands_in_bottom_rows(self):
         # UV oy=0 (bottom half) -> image rows 4..8 (bottom) after the flip.
-        (r0, r1, c0, c1), = ImgUtils.atlas_pixel_rects([(1.0, 0.5, 0.0, 0.0)], 8)
+        ((r0, r1, c0, c1),) = ImgUtils.atlas_pixel_rects([(1.0, 0.5, 0.0, 0.0)], 8)
         self.assertEqual((r0, r1), (4, 8))
 
     def test_size_tuple_is_width_height(self):
-        (r0, r1, c0, c1), = ImgUtils.atlas_pixel_rects([(1.0, 1.0, 0.0, 0.0)], (6, 4))
+        ((r0, r1, c0, c1),) = ImgUtils.atlas_pixel_rects([(1.0, 1.0, 0.0, 0.0)], (6, 4))
         self.assertEqual((r0, r1, c0, c1), (0, 4, 0, 6))
 
     def test_shared_edges_have_no_gap_or_overlap(self):
@@ -1630,7 +1635,7 @@ class InsetAtlasRectsTest(unittest.TestCase):
     """ImgUtils.inset_atlas_rects — pixel gutter around each atlas rect."""
 
     def test_inset_frees_gutter_on_all_sides(self):
-        (sx, sy, ox, oy), = ImgUtils.inset_atlas_rects([(1.0, 1.0, 0.0, 0.0)], 64, 4)
+        ((sx, sy, ox, oy),) = ImgUtils.inset_atlas_rects([(1.0, 1.0, 0.0, 0.0)], 64, 4)
         self.assertAlmostEqual(ox, 4 / 64)
         self.assertAlmostEqual(oy, 4 / 64)
         self.assertAlmostEqual(sx, 1.0 - 8 / 64)
@@ -1639,7 +1644,7 @@ class InsetAtlasRectsTest(unittest.TestCase):
     def test_tiny_rect_is_protected(self):
         # A 4px-wide rect can't afford an 8px gutter: per-axis inset is capped
         # at a quarter of the extent, so content keeps at least half the rect.
-        (sx, _sy, ox, _oy), = ImgUtils.inset_atlas_rects(
+        ((sx, _sy, ox, _oy),) = ImgUtils.inset_atlas_rects(
             [(4 / 64, 1.0, 0.0, 0.0)], 64, 8
         )
         self.assertGreaterEqual(sx, (4 / 64) / 2)
@@ -1724,13 +1729,13 @@ class InsetRectsToTexelCentersTest(unittest.TestCase):
             self.assertAlmostEqual(edge % 1.0, 0.5, places=6, msg=f"v={vv} -> {edge}")
         # Interior samples shift by less than one texel vs the original rect.
         u_mid = (bbox[0] + bbox[2]) / 2
-        self.assertLess(
-            abs((ox + sx * u_mid) - (rect[2] + rect[0] * u_mid)) * 256, 1.0
-        )
+        self.assertLess(abs((ox + sx * u_mid) - (rect[2] + rect[0] * u_mid)) * 256, 1.0)
 
     def test_none_bbox_entry_means_full_coverage(self):
         rects = [(0.5, 0.5, 0.0, 0.0), (0.5, 0.5, 0.5, 0.5)]
-        with_none = ImgUtils.inset_rects_to_texel_centers(rects, 64, bboxes=[None, None])
+        with_none = ImgUtils.inset_rects_to_texel_centers(
+            rects, 64, bboxes=[None, None]
+        )
         without = ImgUtils.inset_rects_to_texel_centers(rects, 64)
         self.assertEqual(with_none, without)
 
@@ -1848,6 +1853,7 @@ class FillEmptyTexelsTest(unittest.TestCase):
         single = np.isclose(approx[near], exact[near], atol=1e-5).all(axis=-1)
         self.assertGreater(float(single.mean()), 0.9)
         self.assertTrue((approx > 0).all())
+
     """ImgUtils.flip_rect_v — bottom-left UV rect <-> top-down glTF texture space."""
 
     def test_known_value(self):
@@ -1962,21 +1968,29 @@ class RasterizeSilhouetteTest(unittest.TestCase):
     def test_uniform_sharp_coverage(self):
         # blur=0 -> sharp; quad [-1,1] with extent=2.2 maps to ~px 3..60 of 64 (~0.79 coverage).
         a = ImgUtils.rasterize_silhouette(
-            [(self.QUAD, self.TRIS)], size=64, axis="z", uniform_alpha=True, blur_amount=0
+            [(self.QUAD, self.TRIS)],
+            size=64,
+            axis="z",
+            uniform_alpha=True,
+            blur_amount=0,
         )[:, :, 3]
         self.assertGreater((a > 0).mean(), 0.6)
         self.assertLess((a > 0).mean(), 0.95)
-        self.assertGreater(a[32, 32], 0)   # centre filled
-        self.assertEqual(a[0, 0], 0)       # corner empty (quad < frame)
+        self.assertGreater(a[32, 32], 0)  # centre filled
+        self.assertEqual(a[0, 0], 0)  # corner empty (quad < frame)
 
     def test_contact_falloff_is_a_gradient(self):
         a = ImgUtils.rasterize_silhouette(
             [(self.QUAD, self.TRIS)], size=64, axis="z", blur_amount=0
         )[:, :, 3].astype(float)
-        self.assertGreater(a[a > 0].std(), 5.0)  # non-uniform alpha under the silhouette
+        self.assertGreater(
+            a[a > 0].std(), 5.0
+        )  # non-uniform alpha under the silhouette
 
     def test_auto_axis_nonempty(self):
-        img = ImgUtils.rasterize_silhouette([(self.QUAD, self.TRIS)], size=32, axis="auto")
+        img = ImgUtils.rasterize_silhouette(
+            [(self.QUAD, self.TRIS)], size=32, axis="auto"
+        )
         self.assertTrue((img[:, :, 3] > 0).any())
 
     def test_empty_geometry_raises(self):
@@ -2017,20 +2031,22 @@ class GaussianBlurNumpyFallbackTest(unittest.TestCase):
         out = ImgUtils._gaussian_blur_array_numpy(a, 2.0, None)
         self.assertEqual(out.shape, (32, 32))
         self.assertEqual(out.dtype, np.uint8)
-        self.assertLess(int(out[16, 16]), 255)          # spread the impulse
-        self.assertGreater(int(out[16, 17]), 0)          # energy bled to neighbours
+        self.assertLess(int(out[16, 16]), 255)  # spread the impulse
+        self.assertGreater(int(out[16, 17]), 0)  # energy bled to neighbours
 
     def test_rgba_channel_restricted(self):
         rgba = (np.random.RandomState(0).rand(16, 16, 4) * 255).astype(np.uint8)
         out = ImgUtils._gaussian_blur_array_numpy(rgba, 2.0, "A")
-        self.assertTrue(np.array_equal(out[:, :, :3], rgba[:, :, :3]))   # RGB untouched
-        self.assertFalse(np.array_equal(out[:, :, 3], rgba[:, :, 3]))     # alpha blurred
+        self.assertTrue(np.array_equal(out[:, :, :3], rgba[:, :, :3]))  # RGB untouched
+        self.assertFalse(np.array_equal(out[:, :, 3], rgba[:, :, 3]))  # alpha blurred
 
     def test_matches_pil_path_closely(self):
         a = (np.random.RandomState(1).rand(32, 32) * 255).astype(np.uint8)
-        pil = ImgUtils._gaussian_blur_array(a, 1.5, None)            # PIL (present in this env)
+        pil = ImgUtils._gaussian_blur_array(a, 1.5, None)  # PIL (present in this env)
         npy = ImgUtils._gaussian_blur_array_numpy(a, 1.5, None)
-        self.assertLess(float(np.abs(pil.astype(float) - npy.astype(float)).mean()), 6.0)
+        self.assertLess(
+            float(np.abs(pil.astype(float) - npy.astype(float)).mean()), 6.0
+        )
 
 
 class ValidateImageIntegrityTest(unittest.TestCase):
@@ -2070,12 +2086,16 @@ class ValidateImageIntegrityTest(unittest.TestCase):
     def test_complete_flat_rgbe_hdr(self):
         # Old/flat RGBE: 16*16*4 bytes of pixel data, no run markers (width<8
         # marker path is skipped, so this exercises the flat fallback).
-        blob = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 4 +X 4\n" + b"\x10" * (4 * 4 * 4)
+        blob = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 4 +X 4\n" + b"\x10" * (
+            4 * 4 * 4
+        )
         ok, why = ImgUtils.validate_image_integrity(self._write(".hdr", blob))
         self.assertTrue(ok, why)
 
     def test_exr_bad_magic(self):
-        ok, why = ImgUtils.validate_image_integrity(self._write(".exr", b"XXXX" + b"0" * 100))
+        ok, why = ImgUtils.validate_image_integrity(
+            self._write(".exr", b"XXXX" + b"0" * 100)
+        )
         self.assertFalse(ok)
 
     def test_exr_valid_magic(self):
@@ -2084,7 +2104,9 @@ class ValidateImageIntegrityTest(unittest.TestCase):
         self.assertTrue(ok)
 
     def test_unknown_extension_is_not_rejected(self):
-        ok, _ = ImgUtils.validate_image_integrity(self._write(".png", b"\x89PNG" + b"0" * 50))
+        ok, _ = ImgUtils.validate_image_integrity(
+            self._write(".png", b"\x89PNG" + b"0" * 50)
+        )
         self.assertTrue(ok)
 
 
@@ -2128,6 +2150,7 @@ class UniqueDirStemsTest(unittest.TestCase):
 
     def test_distinct_basenames_pass_through(self):
         from pythontk import ImgUtils
+
         self.assertEqual(
             ImgUtils.unique_dir_stems(["/x/capA", "/x/capB"]),
             ["capA", "capB"],
@@ -2135,17 +2158,20 @@ class UniqueDirStemsTest(unittest.TestCase):
 
     def test_same_basename_gets_parent_qualified(self):
         from pythontk import ImgUtils
+
         stems = ImgUtils.unique_dir_stems(["/x/capA/images", "/x/capB/images"])
         self.assertEqual(len(set(stems)), 2)
         self.assertEqual(stems, ["capA_images", "capB_images"])
 
     def test_identical_paths_fall_back_to_index(self):
         from pythontk import ImgUtils
+
         stems = ImgUtils.unique_dir_stems(["/x/a", "/x/a"])
         self.assertEqual(len(set(stems)), 2)
 
     def test_order_is_preserved(self):
         from pythontk import ImgUtils
+
         dirs = ["/p1/images", "/z/solo", "/p2/images"]
         stems = ImgUtils.unique_dir_stems(dirs)
         self.assertEqual(stems[1], "solo")
@@ -2195,19 +2221,19 @@ class BitDepthAndBlurChannelRegressionTest(unittest.TestCase):
         self.assertEqual(out.mode, "LA")
         in_l, in_a = (np.asarray(b) for b in im.split())
         out_l, out_a = (np.asarray(b) for b in out.split())
-        self.assertTrue(np.array_equal(out_l, in_l))      # luminance untouched
-        self.assertFalse(np.array_equal(out_a, in_a))     # alpha blurred
+        self.assertTrue(np.array_equal(out_l, in_l))  # luminance untouched
+        self.assertFalse(np.array_equal(out_a, in_a))  # alpha blurred
 
     def test_gaussian_blur_la_alpha_numpy_fallback_only_blurs_alpha(self):
         """The pure-numpy LA path used a fixed RGBA index map, so channel='A'
         (idx 3, not < 2 channels) fell through to blurring EVERY channel. It must
         blur only the alpha (index 1) and leave luminance intact."""
         arr = np.zeros((16, 16, 2), dtype=np.float64)
-        arr[..., 0] = 0.5              # flat L
-        arr[::2, ::2, 1] = 1.0         # noisy A
+        arr[..., 0] = 0.5  # flat L
+        arr[::2, ::2, 1] = 1.0  # noisy A
         out = ImgUtils._gaussian_blur_array_numpy(arr, 2.0, "A")
-        self.assertTrue(np.allclose(out[..., 0], arr[..., 0]))    # L untouched
-        self.assertFalse(np.allclose(out[..., 1], arr[..., 1]))   # A blurred
+        self.assertTrue(np.allclose(out[..., 0], arr[..., 0]))  # L untouched
+        self.assertFalse(np.allclose(out[..., 1], arr[..., 1]))  # A blurred
 
 
 class TestKelvinToLinearRgb(unittest.TestCase):
@@ -2276,7 +2302,9 @@ class WebPWriteTest(unittest.TestCase):
 
     def _max_error(self, path):
         back = Image.open(path).convert("RGB")
-        return int(np.abs(np.asarray(self.src, np.int16) - np.asarray(back, np.int16)).max())
+        return int(
+            np.abs(np.asarray(self.src, np.int16) - np.asarray(back, np.int16)).max()
+        )
 
     def test_webp_is_writable(self):
         self.assertIn("webp", ImgUtils.writable)
@@ -2442,7 +2470,9 @@ class EffectiveModeTest(unittest.TestCase):
 
         before = ImageFile.MAXBLOCK
         img = Image.new("RGB", (64, 64), (128, 64, 32))
-        ImgUtils.save_image(img, os.path.join(self.test_dir, "restore.jpg"), optimize=True)
+        ImgUtils.save_image(
+            img, os.path.join(self.test_dir, "restore.jpg"), optimize=True
+        )
         self.assertEqual(ImageFile.MAXBLOCK, before)
 
 
@@ -2454,7 +2484,9 @@ class _FakeKtx2Encoder:
     def __init__(self):
         self.calls = []
 
-    def encode(self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None):
+    def encode(
+        self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None
+    ):
         self.calls.append(
             {
                 "codec": codec,
@@ -2530,8 +2562,11 @@ class ImgKtx2RoutingTest(BaseTestCase):
         from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
 
         ImgUtils.register_ktx2_encoder(None)
-        with mock.patch.object(Ktx2Encoder, "available", return_value=False), mock.patch.object(
-            Ktx2Encoder, "resolve_toktx", side_effect=FileNotFoundError("no toktx")
+        with (
+            mock.patch.object(Ktx2Encoder, "available", return_value=False),
+            mock.patch.object(
+                Ktx2Encoder, "resolve_toktx", side_effect=FileNotFoundError("no toktx")
+            ),
         ):
             self.assertFalse(ImgUtils.ktx2_available())
             with self.assertRaises(FileNotFoundError) as ctx:
@@ -2552,8 +2587,11 @@ class ImgKtx2RoutingTest(BaseTestCase):
         from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
 
         ImgUtils.register_ktx2_encoder(None)
-        with mock.patch.object(Ktx2Encoder, "available", return_value=False), mock.patch.object(
-            Ktx2Encoder, "resolve_toktx", return_value=r"C:\fake\toktx.exe"
+        with (
+            mock.patch.object(Ktx2Encoder, "available", return_value=False),
+            mock.patch.object(
+                Ktx2Encoder, "resolve_toktx", return_value=r"C:\fake\toktx.exe"
+            ),
         ):
             with self.assertRaises(FileNotFoundError) as ctx:
                 ImgUtils.resolve_ktx2_encoder(required=True)
@@ -2573,9 +2611,12 @@ class ImgKtx2RoutingTest(BaseTestCase):
         def consent(question):
             return True
 
-        with mock.patch.object(Ktx2Encoder, "available", return_value=False), mock.patch.object(
-            Ktx2Encoder, "resolve_toktx", return_value=r"C:\managed\toktx.exe"
-        ) as resolve:
+        with (
+            mock.patch.object(Ktx2Encoder, "available", return_value=False),
+            mock.patch.object(
+                Ktx2Encoder, "resolve_toktx", return_value=r"C:\managed\toktx.exe"
+            ) as resolve,
+        ):
             encoder = ImgUtils.resolve_ktx2_encoder(
                 required=True, auto_install=True, prompt=consent
             )

@@ -31,12 +31,9 @@ from pythontk.core_utils.app_handoff import (
 )
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.temp_artifacts import TempArtifacts
-from pythontk.net_utils.preview_server import (
-    VIEWER_CLOSED_PATH,
-    PreviewBridge,
-    PreviewDeliverer,
-    PreviewServer,
-)
+from pythontk.net_utils.preview.bridge import PreviewBridge
+from pythontk.net_utils.preview.deliverer import PreviewDeliverer
+from pythontk.net_utils.preview.server import VIEWER_CLOSED_PATH, PreviewServer
 
 
 class PreviewServerTestCase(unittest.TestCase):
@@ -120,7 +117,7 @@ class PreviewServerTestCase(unittest.TestCase):
         with (
             unittest.mock.patch.object(PreviewServer, "DEFAULT_PORT", blocker.port),
             unittest.mock.patch(
-                "pythontk.net_utils.preview_server.NetUtils.is_port_bindable",
+                "pythontk.net_utils.preview.server.NetUtils.is_port_bindable",
                 return_value=True,
             ),
         ):
@@ -736,7 +733,7 @@ class PreviewScriptsTestCase(unittest.TestCase):
 
         `SCRIPTS_DIR` resolves beside this module, so from a source tree every
         script is found and every assertion passes -- while an installed wheel
-        that does not carry `*.js` has no `preview_scripts/` at all, and each
+        that does not carry `*.js` has no `preview/scripts/` at all, and each
         one 404s for real users only. The viewer page has the same exposure and
         was in fact missing from `MANIFEST.in` (it survived on `package-data`
         alone, so an sdist-based install shipped no page either).
@@ -1514,6 +1511,24 @@ class PreviewDelivererTestCase(unittest.TestCase):
         # than overriding it with the parameter's `None` sentinel.
         self.assertEqual(optimize.call_args.kwargs["image_format"], "WEBP")
 
+    def test_push_defers_to_a_deliverer_that_says_no_browser(self):
+        """A deliverer built with ``open_browser=False`` holds when the caller
+        says nothing. ``push()`` once carried its own ``"auto"`` as the default,
+        which travelled as the request's EXPLICIT answer and outranked the
+        deliverer's -- so an embedder (or this suite) that configured the
+        deliverer once still got a real browser tab per push."""
+        bridge = _StubPreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        with (
+            unittest.mock.patch.object(
+                MeshConvert, "fbx_to_glb", side_effect=self._fake_convert
+            ),
+            unittest.mock.patch("webbrowser.open", return_value=True) as opened,
+        ):
+            result = bridge.push()
+        self.assertFalse(result["opened_browser"])
+        opened.assert_not_called()
+
     # `webbrowser.open` is patched rather than `open_in_browser`, because the
     # method under test is what registers the launch as a viewer — stubbing it
     # out would hide the very interaction these cover.
@@ -1926,6 +1941,110 @@ class PreviewDelivererTestCase(unittest.TestCase):
         finally:
             if deliverer.server is not None:
                 deliverer.server.stop()
+
+
+class PayloadPassTestCase(unittest.TestCase):
+    """`PreviewDeliverer.PAYLOAD_PASSES`: the FBX is downsized before the converter reads it."""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_preview_payload_pass", policy="scoped")
+        self.server = PreviewServer(root=self.temp.dir_path(), port=0).start()
+        self.bridge = _StubBridge()
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        self.converted = []
+
+    def tearDown(self):
+        self.server.stop()
+        self.temp.cleanup()
+
+    def _fake_convert(self, src, dst=None, **kwargs):
+        self.converted.append(src)
+        Path(dst).write_bytes(
+            PreviewDelivererTestCase._glb_bytes({"asset": {"version": "2.0"}})
+        )
+        return dst
+
+    def _payload(self, path):
+        from test_fbx_media import build_fbx, png_bytes
+
+        return build_fbx(path, {"wall_Base_color.png": png_bytes((512, 256))})
+
+    def _deliver(self, payload, **params):
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        request = HandoffRequest(mode="push", params=params)
+        with (
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            unittest.mock.patch.object(MeshConvert, "WEB_DELIVERY_MAX_SIZE", 128),
+        ):
+            return self.bridge.deliverer.deliver(self.bridge, payload, request)
+
+    def test_a_minted_payload_is_downsized_to_a_new_scratch_file(self):
+
+        original = self._payload(self.bridge._make_payload_path(extension=".fbx"))
+        payload = Payload(primary=original)
+        result = self._deliver(payload, EMBED_TEXTURES=True)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(self.converted), 1)
+        converted = self.converted[0]
+        self.assertNotEqual(converted, original, "the converter read the 4K payload")
+        self.assertEqual(payload.primary, converted)
+        self.assertFalse(
+            os.path.exists(original), "the superseded scratch payload was not released"
+        )
+        # The converted file was released after the conversion too, as before.
+        self.assertFalse(os.path.exists(converted))
+
+    def test_the_downsized_payload_carries_the_ceiling(self):
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        seen = {}
+
+        def convert(src, dst=None, **kwargs):
+            seen["size"] = FbxMedia.embedded(src)[0]["size"]
+            return self._fake_convert(src, dst, **kwargs)
+
+        original = self._payload(self.bridge._make_payload_path(extension=".fbx"))
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with (
+            unittest.mock.patch(target, side_effect=convert),
+            unittest.mock.patch.object(MeshConvert, "WEB_DELIVERY_MAX_SIZE", 128),
+        ):
+            self.bridge.deliverer.deliver(
+                self.bridge, Payload(primary=original), HandoffRequest(mode="push")
+            )
+        self.assertEqual(seen["size"], (128, 64))
+
+    def test_embed_textures_off_skips_the_pass(self):
+        original = self._payload(self.bridge._make_payload_path(extension=".fbx"))
+        self._deliver(Payload(primary=original), EMBED_TEXTURES=False)
+        self.assertEqual(self.converted, [original])
+
+    def test_a_durable_payload_is_read_through_a_copy_and_kept(self):
+        """A producer's own file is never rewritten or deleted -- only the
+        converter's input changes."""
+        durable = self._payload(os.path.join(self.temp.dir_path(), "authored.fbx"))
+        before = Path(durable).read_bytes()
+        self._deliver(Payload(primary=durable), EMBED_TEXTURES=True)
+        self.assertNotEqual(self.converted, [durable])
+        self.assertEqual(Path(durable).read_bytes(), before)
+
+    def test_a_payload_that_is_not_a_binary_fbx_is_left_alone(self):
+        stub = self.bridge._make_payload_path(extension=".fbx")
+        Path(stub).write_bytes(b"fake-fbx-payload")
+        self._deliver(Payload(primary=stub), EMBED_TEXTURES=True)
+        self.assertEqual(self.converted, [stub])
+
+    def test_nothing_over_the_ceiling_means_nothing_rewritten(self):
+        original = self._payload(self.bridge._make_payload_path(extension=".fbx"))
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with (
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            unittest.mock.patch.object(MeshConvert, "WEB_DELIVERY_MAX_SIZE", 4096),
+        ):
+            self.bridge.deliverer.deliver(
+                self.bridge, Payload(primary=original), HandoffRequest(mode="push")
+            )
+        self.assertEqual(self.converted, [original])
 
 
 class SetGlbEmissiveTestCase(unittest.TestCase):

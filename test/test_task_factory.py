@@ -109,6 +109,40 @@ class TaskFactoryTest(unittest.TestCase):
     def test_failing_check_returns_false(self):
         self.assertFalse(_Recorder().run_tasks({"check_bad": True}))
 
+    def test_tasks_the_abort_dropped_are_recorded_for_the_caller(self):
+        """A failed check stops the runner dispatching the tasks below it. A
+        caller that then decides to proceed anyway needs to run exactly those
+        -- the ones above already ran, and repeating them repeats their
+        mutation -- so the names are recorded alongside the verdict.
+        Added: 2026-09-03
+        """
+
+        class _Gated(_Recorder):
+            TASK_ORDER = ["task_plain", "task_noargs"]
+            CHECK_DEPENDENCIES = {"check_bad": ("task_plain",)}
+
+        r = _Gated()
+        self.assertFalse(
+            r.run_tasks({"task_plain": "x", "task_noargs": True, "check_bad": True})
+        )
+        # check_bad is hoisted to run right after its only dependency, so the
+        # task below it never dispatches.
+        self.assertNotIn("task_noargs", [c[0] for c in r.calls])
+        self.assertEqual(r._last_skipped_tasks, ["task_noargs"])
+
+    def test_failed_check_names_are_recorded_for_the_caller(self):
+        """The bool verdict names nothing a caller can act on, so a consumer
+        that wants to report (or ask about) the failure had to re-derive it
+        from the log. ``_last_failed_checks`` carries the names, and a passing
+        run clears the previous run's list.
+        Added: 2026-09-03
+        """
+        r = _Recorder()
+        self.assertFalse(r.run_tasks({"check_bad": True, "check_ok": True}))
+        self.assertEqual(r._last_failed_checks, ["check_bad"])
+        self.assertTrue(r.run_tasks({"check_ok": True}))
+        self.assertEqual(r._last_failed_checks, [])
+
     def test_set_task_is_reverted_with_its_return_value(self):
         r = _Recorder()
         r.run_tasks({"set_flag": True})

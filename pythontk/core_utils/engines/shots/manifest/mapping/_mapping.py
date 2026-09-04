@@ -372,7 +372,7 @@ class Mapping(_MappingInternal):
         disk).  If neither is given, uses default ``ColumnMap``.
 
         Parameters:
-            csv_path: Path to the CSV file.
+            csv_path: Path to the CSV file, or an ``http(s)`` URL.
             mapping: Pre-loaded mapping dict.
             name: Mapping file stem to load via :func:`load_mapping`.
             directory: Search directory for :func:`load_mapping`.
