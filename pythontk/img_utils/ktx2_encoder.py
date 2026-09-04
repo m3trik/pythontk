@@ -442,7 +442,17 @@ class Ktx2Encoder:
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
 
-        if PIL_AVAILABLE and Image is not None and isinstance(source, Image.Image):
+        # Gate on the BINDING, not on PIL_AVAILABLE. Blender imports pythontk
+        # before ensure_image_deps() can provision Pillow, so this module
+        # caches Image = None; blendertk's _rebind_pil_globals repairs that
+        # binding afterwards but cannot repair a bool, leaving PIL_AVAILABLE
+        # False forever. Gating on it sent a live PIL image down the path
+        # branch below, handing toktx str(source) -- an image repr. The bool
+        # is left bound rather than deleted: it is part of the optional-dep
+        # idiom blendertk's _rebind_pil_globals enumerates across seven
+        # modules, and the regression test sets it False on purpose to pin
+        # that reading it is no longer load-bearing.
+        if Image is not None and isinstance(source, Image.Image):
             from pythontk.file_utils.temp_artifacts import TempArtifacts
 
             with TempArtifacts("ktx2_encode", policy="scoped") as tmp:

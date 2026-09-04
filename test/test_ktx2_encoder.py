@@ -220,6 +220,42 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
                 )
             self.assertEqual(staged_modes, [expected], f"{mode} -> ktx2")
 
+    def test_late_provisioned_pillow_still_stages_a_pil_image(self):
+        """A stale ``PIL_AVAILABLE`` must not send a live image down the
+        path branch.
+
+        In Blender, ``import pythontk`` runs before ``ensure_image_deps()``
+        can provision Pillow, so this module caches ``Image = None``.
+        blendertk's ``_rebind_pil_globals`` repairs it afterwards -- but its
+        own docstring scopes that to "a name the module itself set to
+        ``None``", so the ``PIL_AVAILABLE`` bool stays False forever. This
+        pins the post-repair state: bool stale, ``Image`` live.
+        """
+        import pythontk.img_utils.ktx2_encoder as mod
+
+        enc = Ktx2Encoder(toktx="toktx-test-bin")
+        seen = []
+
+        def fake_run(argv, **kw):
+            source = argv[-1]
+            seen.append((source, os.path.isfile(source)))
+            return mock.Mock(returncode=0, stderr="", stdout="")
+
+        with mock.patch.object(mod, "PIL_AVAILABLE", False), mock.patch(
+            "pythontk.img_utils.ktx2_encoder.subprocess.run", side_effect=fake_run
+        ):
+            enc.encode(
+                Image.new("RGB", (8, 8)),
+                os.path.join(self.out_dir, "late_provisioned.ktx2"),
+            )
+
+        self.assertEqual(len(seen), 1)
+        source, existed = seen[0]
+        self.assertTrue(
+            existed and source.lower().endswith(".png"),
+            f"toktx was handed {source!r} where a staged PNG path belongs",
+        )
+
     def test_sixteen_bit_source_is_rescaled_not_clipped(self):
         """A 16-bit source must be RANGE-REDUCED to 8-bit, not clipped.
 
