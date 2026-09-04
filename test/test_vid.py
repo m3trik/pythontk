@@ -542,6 +542,44 @@ class ImageCuratorTest(BaseTestCase):
         __import__("importlib").util.find_spec("cv2"),
         "cv2 not available",
     )
+    def test_curate_never_purges_the_source_dir(self) -> None:
+        """output_root=parent + suffix="" resolves the output dir onto the
+        source dir itself; the stale-output purge must skip it instead of
+        rmtree'ing the capture it is about to copy from.
+
+        The scan runs BEFORE the purge, so the kept records survive the
+        delete and every copy2 then fails against a source that is gone --
+        the capture is destroyed and curate still returns its out_dir.
+        Mirrors ExposureEqualizerTest.test_equalize_never_purges_the_source_dir.
+        """
+        import numpy as np
+        import cv2 as _cv2
+        from pythontk import ImageCurator
+
+        src = os.path.join(self.temp_dir, "inplace_src")
+        os.makedirs(src, exist_ok=True)
+        names = []
+        for i, base in enumerate((30, 90, 150)):
+            arr = np.full((64, 64, 3), base, dtype=np.uint8)
+            arr[:: (i + 2), :] = 255
+            name = f"img_{i}.jpg"
+            _cv2.imwrite(os.path.join(src, name), arr)
+            names.append(name)
+
+        out = ImageCurator().curate([src], self.temp_dir, suffix="")[0]
+        self.assertEqual(
+            os.path.normcase(os.path.normpath(out)),
+            os.path.normcase(os.path.normpath(src)),
+        )
+        self.assertEqual(
+            sorted(os.listdir(src)), sorted(names),
+            "source capture was destroyed by the overwrite purge",
+        )
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
     def test_curate_drops_near_duplicates(self) -> None:
         import numpy as np
         import cv2 as _cv2

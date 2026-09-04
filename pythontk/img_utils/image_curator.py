@@ -172,12 +172,35 @@ class ImageCurator:
             out_dir = os.path.join(output_root, stem + suffix)
             if overwrite_output and os.path.isdir(out_dir):
                 # Purge stale survivors from any previous run at a
-                # different threshold.
-                shutil.rmtree(out_dir, ignore_errors=True)
+                # different threshold — unless the output resolves onto the
+                # source dir itself (e.g. output_root=parent + suffix=""),
+                # where the purge would delete the capture before it is
+                # copied. The scan has already run by this point, so its
+                # records outlive the delete and every copy below then fails
+                # against a source that is gone: the capture is destroyed and
+                # curate still returns the out_dir. Same guard, same reason,
+                # as ExposureEqualizer.equalize_directories.
+                if os.path.normcase(os.path.normpath(out_dir)) == os.path.normcase(
+                    os.path.normpath(src_dir)
+                ):
+                    logger.warning(
+                        f"Output dir resolves onto the source dir ({out_dir}); "
+                        f"skipping purge. Survivors stay in place and culled "
+                        f"frames are NOT removed."
+                    )
+                else:
+                    shutil.rmtree(out_dir, ignore_errors=True)
             os.makedirs(out_dir, exist_ok=True)
             count = 0
             for _src, path, _h, _s in kept_by_src.get(src_dir, []):
                 dest = os.path.join(out_dir, os.path.basename(path))
+                if os.path.normcase(os.path.normpath(path)) == os.path.normcase(
+                    os.path.normpath(dest)
+                ):
+                    # In-place run: the survivor is already where it belongs,
+                    # and copy2 onto itself raises SameFileError.
+                    count += 1
+                    continue
                 try:
                     shutil.copy2(path, dest)
                     count += 1
