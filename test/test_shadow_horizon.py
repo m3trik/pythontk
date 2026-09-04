@@ -350,6 +350,72 @@ class TestReference(HorizonCase):
         np.testing.assert_allclose(z_up.data, y_up.data, atol=1e-6)
 
 
+class TestBakeWorkingSet(unittest.TestCase):
+    """The bake's peak memory must be bounded by construction.
+
+    ``_march`` vectorises every (texel, bin) ray against every sample at once,
+    so one call allocates about a dozen ``(chunk * bins, samples)`` arrays.
+    The chunk was a fixed 1024 TEXELS, which bounds none of that: the working
+    set is ``chunk * bins * samples``, so raising either parameter multiplied
+    memory silently, and ``ThreadPoolExecutor`` ran up to
+    ``min(32, cpu + 4)`` of them at once.
+
+    Measured at the defaults on a 20-core box: one chair bake peaked at
+    4306 MiB RSS and the full test suite died in this function with
+    ``numpy._core._exceptions._ArrayMemoryError: Unable to allocate 64.0 MiB``.
+    That is a library that runs inside Maya and Blender, beside a loaded scene.
+
+    Budgeting the working set instead measured 616-762 MiB over three runs at
+    5.52-5.81 s, against 4306 MiB at 6.01 s -- about 6x less memory and no
+    slower, the smaller arrays staying closer to cache. 8 workers were already
+    as fast as 24 (5.09 s vs 5.36 s), so the extra threads bought only
+    footprint.
+
+    These assert the SHAPE of the fix, not a megabyte number: a memory
+    assertion would be flaky, while the invariant that makes it work -- the
+    chunk shrinking as bins and samples grow -- is exact.
+    """
+
+    def test_the_chunk_shrinks_as_bins_and_samples_grow(self):
+        budget = ShadowHorizon.RAY_BUDGET
+        for bins, samples in ((32, 256), (64, 256), (32, 512), (128, 1024)):
+            with self.subTest(bins=bins, samples=samples):
+                chunk = ShadowHorizon._solve_chunk_size(bins, samples)
+                self.assertGreaterEqual(
+                    chunk, 1, "a chunk must hold at least one texel"
+                )
+                self.assertLessEqual(
+                    chunk * bins * samples,
+                    budget,
+                    "the per-march working set must stay inside the budget",
+                )
+
+    def test_doubling_either_parameter_halves_the_chunk(self):
+        base = ShadowHorizon._solve_chunk_size(32, 256)
+        self.assertEqual(ShadowHorizon._solve_chunk_size(64, 256), base // 2)
+        self.assertEqual(ShadowHorizon._solve_chunk_size(32, 512), base // 2)
+
+    def test_an_absurd_request_still_yields_a_usable_chunk(self):
+        """Never zero: a chunk of 0 texels would make the job list empty and
+        the bake silently return an unwritten map."""
+        self.assertGreaterEqual(ShadowHorizon._solve_chunk_size(4096, 4096), 1)
+        self.assertGreaterEqual(ShadowHorizon._solve_chunk_size(0, 0), 1)
+
+    def test_default_worker_count_is_capped(self):
+        """8 measured as fast as 24; above it, threads only add footprint."""
+        self.assertLessEqual(ShadowHorizon.MAX_BAKE_THREADS, 8)
+        self.assertGreaterEqual(ShadowHorizon.MAX_BAKE_THREADS, 2)
+
+    def test_an_explicit_thread_count_is_still_honoured(self):
+        """The cap is a DEFAULT. A caller who knows its machine can override,
+        and threads=1 must stay the serial path."""
+        self.assertEqual(ShadowHorizon._bake_workers(1), 1)
+        self.assertEqual(ShadowHorizon._bake_workers(16), 16)
+        self.assertLessEqual(
+            ShadowHorizon._bake_workers(None), ShadowHorizon.MAX_BAKE_THREADS
+        )
+
+
 class TestMeasure(HorizonCase):
     """The reference against the exact projection, and the bake's budget."""
 

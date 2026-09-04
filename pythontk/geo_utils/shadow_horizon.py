@@ -48,6 +48,7 @@ doubles the bin count until that disagreement is under a threshold.
 from __future__ import annotations
 
 import math
+import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from importlib import resources
@@ -603,6 +604,45 @@ class ShadowHorizon:
         return r_min, r_max
 
     # -- bake ----------------------------------------------------------------
+    #: Elements in one ``_march`` working array. ``_march`` vectorises every
+    #: (texel, bin) ray against every sample, so it allocates about a dozen
+    #: ``(chunk * bins, samples)`` arrays at once; budgeting their SIZE keeps
+    #: the bake's footprint fixed, where a fixed texel count let ``bins`` and
+    #: ``samples`` multiply it silently. Measured at the defaults on a 20-core
+    #: box: a fixed 1024-texel chunk peaked at 4306 MiB for one chair bake and
+    #: exhausted memory inside a full test run (``Unable to allocate 64.0 MiB``
+    #: from ``_march``). This budget measured 616-762 MiB over three runs of
+    #: the same bake at 5.52-5.81 s, against 6.01 s before -- ~6x less memory
+    #: and no slower, because the smaller arrays stay closer to cache.
+    RAY_BUDGET = 1 << 20
+
+    #: Cap on worker threads when the caller names none. Measured 5.09 s at 8
+    #: against 5.36 s at the ``ThreadPoolExecutor`` default of 24 on a 20-core
+    #: box -- the extra threads bought no speed, only a bigger simultaneous
+    #: working set, since each holds a full march in flight.
+    MAX_BAKE_THREADS = 8
+
+    @staticmethod
+    def _solve_chunk_size(bins: int, samples: int) -> int:
+        """Texels per solve chunk so one march stays inside :attr:`RAY_BUDGET`.
+
+        Never zero: a chunk of 0 makes the job list empty and the bake returns
+        an unwritten map rather than failing.
+        """
+        per_texel = max(1, int(bins) * int(samples))
+        return max(1, int(ShadowHorizon.RAY_BUDGET) // per_texel)
+
+    @classmethod
+    def _bake_workers(cls, threads):
+        """Worker count for the solve pool; *threads* wins when given.
+
+        The cap applies only to the default. A caller that knows its machine
+        passes a number, and ``threads=1`` still selects the serial path.
+        """
+        if threads:
+            return int(threads)
+        return min(cls.MAX_BAKE_THREADS, (os.cpu_count() or 1))
+
     @classmethod
     def bake(
         cls,
@@ -693,8 +733,8 @@ class ShadowHorizon:
         if not mask.any():
             return hmap
         texels = hmap.texel_positions().reshape(-1, 2)
-        workers = threads if threads else None
-        chunk = 1024
+        workers = cls._bake_workers(threads)
+        chunk = cls._solve_chunk_size(bins, fields.samples)
         jobs = [(s, texels[s : s + chunk]) for s in range(0, texels.shape[0], chunk)]
 
         def solve(job):
