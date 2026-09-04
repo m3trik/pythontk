@@ -264,9 +264,7 @@ class TestImportOps(unittest.TestCase):
             fh.write("REGISTERED = []\n")
         with open(os.path.join(pkg, "ops", "__init__.py"), "w", encoding="utf-8") as fh:
             fh.write("from . import demo_ops  # noqa: F401\n")
-        with open(
-            os.path.join(pkg, "ops", "demo_ops.py"), "w", encoding="utf-8"
-        ) as fh:
+        with open(os.path.join(pkg, "ops", "demo_ops.py"), "w", encoding="utf-8") as fh:
             fh.write("from .. import REGISTERED\nREGISTERED.append('demo.op')\n")
         sys.path.insert(0, self.tmp)
         self.addCleanup(sys.path.remove, self.tmp)
@@ -436,7 +434,9 @@ class TestWireContract(_EnvGuard):
         other.registry.register("only.other")(lambda: "yes")
         host, port = other.start()
         try:
-            self.assertEqual(RpcClient(port=port, host=host).invoke("only.other"), "yes")
+            self.assertEqual(
+                RpcClient(port=port, host=host).invoke("only.other"), "yes"
+            )
             # Neither registry leaked into the other.
             self.assertNotIn("only.other", self.client.list_ops())
             self.assertNotIn("math.add", other.registry.all_ops())
@@ -451,6 +451,56 @@ class TestRootExport(unittest.TestCase):
         self.assertTrue(hasattr(ptk, "RpcPlugin"))
         self.assertTrue(hasattr(ptk, "OpRegistry"))
         self.assertTrue(hasattr(ptk, "MainThreadMarshaller"))
+
+
+class TestBindPolicy(unittest.TestCase):
+    """Both pinned-port servers must refuse to bind over a LIVE listener.
+
+    ``SO_REUSEADDR`` does not mean the same thing on both platforms. On POSIX
+    it reuses a ``TIME_WAIT`` port -- what you want when a DCC restarts a
+    server on a pinned port. On Windows it *additionally* permits binding over
+    a live listener: two servers both start and the stack picks which socket
+    gets each request, so a client can be talking to a stale process from a
+    previous session while the new one looks healthy.
+
+    ``preview/server.py`` reasoned this out and set
+    ``allow_reuse_address = os.name != "nt"``. ``plugin_core``'s
+    ``_ReusableServer`` kept an unconditional ``True`` with a docstring giving
+    only the POSIX rationale -- and it is the one that actually runs on a
+    pinned port inside Toolbag and Painter. The two are asserted together
+    because the hazard is identical and the answer must not drift again.
+    """
+
+    @staticmethod
+    def _expected():
+        return os.name != "nt"
+
+    def test_the_rpc_plugin_server_refuses_a_live_listener(self):
+        from pythontk.net_utils.rpc import plugin_core
+
+        self.assertEqual(
+            plugin_core._ReusableServer.allow_reuse_address,
+            self._expected(),
+            "on Windows SO_REUSEADDR lets a second server bind over a live "
+            "one, so requests can reach a stale process",
+        )
+
+    def test_the_preview_server_agrees(self):
+        from pythontk.net_utils.preview import server
+
+        self.assertEqual(
+            server._PreviewHTTPServer.allow_reuse_address, self._expected()
+        )
+
+    def test_the_two_servers_share_one_policy(self):
+        from pythontk.net_utils.preview import server
+        from pythontk.net_utils.rpc import plugin_core
+
+        self.assertEqual(
+            plugin_core._ReusableServer.allow_reuse_address,
+            server._PreviewHTTPServer.allow_reuse_address,
+            "same hazard, same pinned-port-inside-a-DCC shape: one answer",
+        )
 
 
 if __name__ == "__main__":

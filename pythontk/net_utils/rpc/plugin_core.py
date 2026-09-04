@@ -311,9 +311,22 @@ class MainThreadMarshaller(_MainThreadMarshallerInternal):
 
 # ------------------------------------------------------------------ http server
 class _ReusableServer(HTTPServer):
-    """``SO_REUSEADDR`` so a host relaunch isn't blocked by a ``TIME_WAIT`` socket."""
+    """Reuse a ``TIME_WAIT`` port on POSIX; refuse a LIVE listener everywhere.
 
-    allow_reuse_address = True
+    ``SO_REUSEADDR`` does not mean the same thing on both platforms. On POSIX
+    it reuses a ``TIME_WAIT`` port -- exactly what a host relaunch on a pinned
+    port needs, and the reason the flag was set here. On Windows it
+    *additionally* permits binding over a live listener: two servers both
+    start, and the stack decides which socket receives each request. For a
+    plugin that pins its port inside Toolbag or Painter that means a client
+    can be driving a stale server from a previous session while the new one
+    looks healthy, so the flag is dropped there and ``bind()`` fails loudly
+    instead. Same reasoning, same wording, as ``preview/server.py``'s
+    ``_PreviewHTTPServer``; ``test_plugin_core.TestBindPolicy`` asserts the
+    two together so the answer cannot drift apart again.
+    """
+
+    allow_reuse_address = os.name != "nt"
 
 
 def _make_handler(plugin):
@@ -343,7 +356,10 @@ def _make_handler(plugin):
             if self.path == "/describe":
                 self._respond(
                     200,
-                    {"ok": True, "value": plugin.registry.describe(req.get("op") or None)},
+                    {
+                        "ok": True,
+                        "value": plugin.registry.describe(req.get("op") or None),
+                    },
                 )
                 return
 
