@@ -101,6 +101,27 @@ class TextureProcessor:
         # Return a copy to avoid mutation issues between consumers
         return self._image_cache[abs_path].copy()
 
+    @staticmethod
+    def _map_type_carries_alpha(map_type: str) -> bool:
+        """Does *map_type*'s registry definition declare an alpha band?
+
+        Alias-tolerant, because callers pass authoring spellings: ``get()``
+        answers None for an alias (``MaskMap``), while
+        ``resolve_type_from_path`` maps it to its canonical type.
+
+        Both signals are consulted, because neither alone is complete:
+        ``Metallic_Smoothness`` declares ``mode="RGBA"``, but ``MSAO`` leaves
+        ``mode`` as None and names its alpha only in ``channels``.
+        """
+        registry = MapRegistry()
+        resolved = registry.resolve_type_from_path(f"{map_type}.png") or map_type
+        map_def = registry.get(resolved)
+        if map_def is None:
+            return False
+        if "A" in (map_def.channels or {}):
+            return True
+        return str(map_def.mode or "").endswith("A")
+
     def save_map(
         self,
         image: Union[str, Any],
@@ -150,14 +171,26 @@ class TextureProcessor:
             else:
                 ext = DEFAULT_EXTENSION  # Fallback for generated images
 
-        # Force PNG for maps requiring alpha if source was JPG
-        if ext.lower() in ["jpg", "jpeg"] and map_type in [
-            "MaskMap",
-            "MSAO",
-            "MRAO",
-            "ORM",
-            "Albedo_Transparency",
-        ]:
+        # Force PNG for maps requiring alpha if source was JPG.
+        #
+        # The hand-written list below is a FLOOR, not the whole rule: it
+        # omitted Metallic_Smoothness, whose alpha carries URP's smoothness,
+        # so a JPG output profile wrote a .jpg that reopens RGB and the
+        # smoothness was gone. Ask the registry instead, and keep the list so
+        # MRAO/ORM (packed, but no alpha band) hold the protection they have
+        # today -- whether every lossy-unsafe map should escalate is a wider
+        # policy question than this rule answers.
+        if ext.lower() in ["jpg", "jpeg"] and (
+            map_type
+            in [
+                "MaskMap",
+                "MSAO",
+                "MRAO",
+                "ORM",
+                "Albedo_Transparency",
+            ]
+            or self._map_type_carries_alpha(map_type)
+        ):
             ext = ALPHA_EXTENSION
 
         # Generate output path (same convention output_path_for exposes)

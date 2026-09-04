@@ -327,6 +327,43 @@ class TestMapFactoryRefactored(unittest.TestCase):
             sum(1 for p in result[base] if "BaseColor" in os.path.basename(p)), 1
         )
 
+    def test_supplement_finds_siblings_in_a_subdirectory(self):
+        """Gap-fill reaches maps in a SUBDIRECTORY of the scan root.
+
+        Regression: a Maya project's ``sourceimages`` is routinely organized as
+        one folder per asset, and the tool that opts into discovery hands over
+        the ``sourceImages`` rule -- the ROOT. A root-only scan found nothing
+        in that layout, so a material whose Metallic/Roughness sat one level
+        down kept whatever was already wired (a stale packed map) instead of
+        converting to the preset's loose maps.
+        """
+        root = os.path.join(self.test_dir, "discover_nested")
+        nested = os.path.join(root, "gadget")
+        os.makedirs(nested, exist_ok=True)
+        try:
+            for fn, mode, color in [
+                ("gadget_BaseColor.png", "RGB", (128, 128, 128)),
+                ("gadget_Roughness.png", "L", 128),
+                ("gadget_Metallic.png", "L", 32),
+            ]:
+                ImgUtils.save_image(
+                    ImgUtils.create_image(mode, (8, 8), color),
+                    os.path.join(nested, fn),
+                )
+
+            base_color = os.path.join(nested, "gadget_BaseColor.png")
+            sets = {MapFactory.get_base_texture_name(base_color): [base_color]}
+            # The ROOT is what gets passed, not the folder the files live in.
+            result = MapFactory._supplement_sets_from_dir(sets, root)
+
+            types = {
+                MapFactory.resolve_map_type(p) for p in next(iter(result.values()))
+            }
+            self.assertIn("Roughness", types)
+            self.assertIn("Metallic", types)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_supplement_does_not_replace_present_type(self):
         """A connected map slot is never replaced by a same-type sibling on disk."""
         base = MapFactory.get_base_texture_name(self.texture_paths[0])
@@ -1050,6 +1087,56 @@ class TestTextureProcessorLogic(unittest.TestCase):
             img = ImgUtils.create_image("L", (8, 8), 128)
             path = context.save_map(img, "Roughness")
             self.assertTrue(path.endswith("_Roughness.png"))
+
+    def test_packed_alpha_map_never_lands_in_a_jpg_container(self):
+        """A JPEG cannot carry alpha, so a packed map whose alpha IS a
+        material input must escalate to PNG.
+
+        ``Metallic_Smoothness`` declares ``mode="RGBA"``, ``is_packed=True``
+        and ``channels={"RGB": "Metallic", "A": "Smoothness"}`` -- URP reads
+        smoothness out of that alpha. The escalation was driven by a
+        hand-written five-name list that omitted it, so choosing JPG wrote a
+        .jpg that reopens RGB and the smoothness was simply gone.
+        ``ImgUtils.dropped_channels`` names this exact failure in its own
+        docstring. ``MaskMap`` is here as an alias that must keep resolving,
+        and ``MSAO`` / ``Albedo_Transparency`` guard the types the old list
+        already covered.
+
+        ``Emissive_Mask`` is pinned deliberately: it declares ``mode="RGBA"``
+        without any packed-channel semantics, so the registry-derived rule
+        escalates it too. That is a SECOND behaviour change beyond the
+        reported defect and it is correct -- JPEG drops its alpha the same
+        way -- but it is listed here so it stays intentional rather than
+        emergent. Measured: these two are the only types the derived rule
+        adds over the old hand-written list.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            context = TextureProcessor(
+                inventory={},
+                config={"dry_run": True},
+                output_dir=tmp,
+                base_name="test",
+                ext="jpg",
+                conversion_registry=ConversionRegistry(),
+                logger=None,
+            )
+            img = ImgUtils.create_image("RGBA", (8, 8), (128, 128, 128, 255))
+            for key in (
+                "Metallic_Smoothness",
+                "Emissive_Mask",
+                "Albedo_Transparency",
+                "MSAO",
+                "MaskMap",
+            ):
+                with self.subTest(map_type=key):
+                    path = context.save_map(img, key)
+                    self.assertTrue(
+                        path.lower().endswith(".png"),
+                        f"{key} was written to a container that drops its "
+                        f"alpha: {path}",
+                    )
 
     def test_normal_map_orientation_convention(self):
         """Regression: convert_bump_to_normal produced DirectX orientation
