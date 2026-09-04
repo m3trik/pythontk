@@ -941,19 +941,19 @@ Region-mask engine — named face-group masks that gate texture regions at runti
 Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
 
 - [`process_alive(pid: int) -> bool`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L67) — True while *pid* is running.
-- [`kill_process(pid: int, tree: bool = True) -> None`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L131) — Force-kill *pid* (and, with *tree*, its descendants).
-- [`run_watchdog(pid: int, heartbeat_path: str, timeout: float, check_interval: float = 1.0, kill_tree: bool = True, stop_file: str | None = None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L154) — Kill *pid* when *heartbeat_path* stops being touched for *timeout* seconds.
-- [`watch_parent(root, pid: int | None, on_gone=None) -> None`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L185) — Close *root* (or call *on_gone*) once process *pid* has exited.
-- [`run_indicator(size: int | None = None, pos=None, gif_path: str | None = None, parent_pid: int | None = None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L315) — Show the busy indicator near *pos* until killed or the parent exits.
-- [`build_dialog(root, title: str, message: str, force_label: str | None = None) -> list`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L338) — Populate *root* with the VS Code-style dialog;
-- [`fit_and_center(root) -> None`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L397) — Size the dialog to its content and centre it on screen.
-- [`run_dialog(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L410) — Show the dialog;
-- [`main(argv=None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L438)
+- [`kill_process(pid: int, tree: bool = True) -> None`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L137) — Force-kill *pid* (and, with *tree*, its descendants).
+- [`run_watchdog(pid: int, heartbeat_path: str, timeout: float, check_interval: float = 1.0, kill_tree: bool = True, stop_file: str | None = None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L172) — Kill *pid* when *heartbeat_path* stops being touched for *timeout* seconds.
+- [`watch_parent(root, pid: int | None, on_gone=None) -> None`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L203) — Close *root* (or call *on_gone*) once process *pid* has exited.
+- [`run_indicator(size: int | None = None, pos=None, gif_path: str | None = None, parent_pid: int | None = None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L333) — Show the busy indicator near *pos* until killed or the parent exits.
+- [`build_dialog(root, title: str, message: str, force_label: str | None = None) -> list`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L356) — Populate *root* with the VS Code-style dialog;
+- [`fit_and_center(root) -> None`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L415) — Size the dialog to its content and centre it on screen.
+- [`run_dialog(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L428) — Show the dialog;
+- [`main(argv=None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L456)
 
 <a id="core_utils--git"></a>
 ### `core_utils/git.py`
 
-- **[`class Git`](pythontk/pythontk/core_utils/git.py#L9)** — A wrapper around git subprocess commands for a specific repository.
+- **[`class Git`](pythontk/pythontk/core_utils/git.py#L10)** — A wrapper around git subprocess commands for a specific repository.
   - `Git.execute(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]` — Run a generic shell command in the repository directory.
   - `Git.run(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]` — Run a git command in the repository.
   - `Git.checkout(self, branch: str)` — Checkout a branch.
@@ -1424,7 +1424,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
 <a id="file_utils--_file_utils"></a>
 ### `file_utils/_file_utils.py`
 
-- **[`class FileUtils(HelpMixin)`](pythontk/pythontk/file_utils/_file_utils.py#L17)**
+- **[`class FileUtils(HelpMixin)`](pythontk/pythontk/file_utils/_file_utils.py#L18)**
   - `FileUtils.is_valid(filepath: str, expected_type: Optional[str] = None) -> bool` *(static)* — Check if a path is valid, optionally requiring a specific type ('file' or 'dir').
   - `FileUtils.is_cloud_placeholder(filepath: str) -> bool` *(static)* — Return True if *filepath* is an online-only cloud-sync placeholder.
   - `FileUtils.is_under(path: str, directory: str, inclusive: bool = True) -> bool` *(static)* — Is *path* inside *directory*?
@@ -1458,8 +1458,8 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.get_classes_from_path(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)` *(class)* — Scan the specified directory or Python file and retrieve class information from each file.
   - `FileUtils.set_json_file(cls, file)` *(class)* — Set the current json filepath.
   - `FileUtils.get_json_file(cls)` *(class)* — Get the current json filepath.
-  - `FileUtils.set_json(cls, key, value, file=None)` *(class)* — Parameters:
-  - `FileUtils.get_json(cls, key, file=None)` *(class)* — Parameters:
+  - `FileUtils.set_json(cls, key, value, file=None)` *(class)* — **Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;
+  - `FileUtils.get_json(cls, key, file=None)` *(class)* — **Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;
 
 <a id="file_utils--file_naming"></a>
 ### `file_utils/file_naming.py`
@@ -1593,7 +1593,7 @@ Write authored opacity ramps into a GLB as ``KHR_animation_pointer`` channels.
 
 Read-only structured access to a GLB: accessors, animation sampling, worlds.
 
-- **[`class GlbReader(_GlbReaderInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_reader.py#L133)** — Read-only GLB inspector: accessors, animation evaluation, node worlds.
+- **[`class GlbReader(_GlbReaderInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_reader.py#L167)** — Read-only GLB inspector: accessors, animation evaluation, node worlds.
   - `GlbReader.load(cls, path: str) -> 'GlbReader'` *(class)* — Open *path* read-only and return a reader.
   - `GlbReader.counts(self) -> Dict[str, int]` — Section lengths for the usual census keys (missing -> 0).
   - `GlbReader.image_mimes(self) -> Dict[str, int]` — ``{mimeType: count}`` over ``images`` (missing type -> "?").
@@ -1776,7 +1776,7 @@ Rail-driven parametric surface — a general geometry primitive.
 
 Coverage-aware horizon maps: a ground shadow that follows the light at runtime.
 
-- **[`class HorizonMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L72)** — A baked horizon map and the frame it was baked in.
+- **[`class HorizonMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L73)** — A baked horizon map and the frame it was baked in.
   - `HorizonMap.encode_angle(self, angle: np.ndarray) -> np.ndarray` — ``cot(angle) / max_stretch`` clamped to ``[0, 1]`` — the interval
   - `HorizonMap.decode_cot(self, value: np.ndarray) -> np.ndarray` — The cotangent an encoded channel value stands for.
   - `HorizonMap.layers(self) -> int` *(property)*
@@ -1791,7 +1791,7 @@ Coverage-aware horizon maps: a ground shadow that follows the light at runtime.
   - `HorizonMap.taps(self, layer: int, k, u, v) -> Tuple[np.ndarray, np.ndarray, np.ndarray]` — The four texels around ``(u, v)`` in *layer*'s bin ``k`` — the way
   - `HorizonMap.mask_bits(values: np.ndarray) -> np.ndarray` *(static)* — ``(..., 16)`` booleans from the ``B, A`` channels of texel values
   - `HorizonMap.alpha(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray` — Shadow alpha ``(N,)`` at frame *points* for one source — the
-- **[`class ShadowHorizon`](pythontk/pythontk/geo_utils/shadow_horizon.py#L508)** — Bake, measure and lay out coverage-aware horizon maps (module doc).
+- **[`class ShadowHorizon`](pythontk/pythontk/geo_utils/shadow_horizon.py#L509)** — Bake, measure and lay out coverage-aware horizon maps (module doc).
   - `ShadowHorizon.shader_source(cls, language: str = 'glsl') -> str` *(class)* — The shared horizon evaluation, spelled for *language*.
   - `ShadowHorizon.layout(tiles: int) -> Tuple[int, int]` *(static)* — ``(cols, rows)`` of the grid holding *tiles*: ``cols = ceil(sqrt(tiles))``.
   - `ShadowHorizon.range_for(cls, radius: float, height: float, max_stretch: Optional[float] = None) -> Tuple[float, float]` *(class)* — ``(r_min, r_max)``: an eighth of the footprint radius to the reach
@@ -2220,7 +2220,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
 - **[`class MainThreadMarshaller(_MainThreadMarshallerInternal)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L200)** — Run a callable on the host's Qt main thread and block for its result.
   - `MainThreadMarshaller.is_active(self)` — True when :meth:`run` will marshal rather than call direct.
   - `MainThreadMarshaller.run(self, fn, *args, timeout=None, **kwargs)` — Call *fn*, on the main thread when one is reachable.
-- **[`class RpcPlugin(object)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L394)** — One host plugin: a registry, a marshaller, and the server that joins them.
+- **[`class RpcPlugin(object)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L410)** — One host plugin: a registry, a marshaller, and the server that joins them.
   - `RpcPlugin.import_ops(package)` *(static)* — Import *package* (dotted name), forcing its ``@register`` side effects.
   - `RpcPlugin.port(self)` *(property)* — Configured port: ``<PREFIX>_PORT`` if set and numeric, else the default.
   - `RpcPlugin.is_hosted(self)` — True only inside the real host application.

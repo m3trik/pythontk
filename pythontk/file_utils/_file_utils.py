@@ -4,6 +4,7 @@ import sys
 import os
 import re
 import json
+import warnings
 import functools
 import traceback
 from typing import Union, List, Tuple, Optional
@@ -1646,13 +1647,42 @@ class FileUtils(HelpMixin):
             )
         return results
 
+    #: One message for the whole JSON key-value cluster. Retired together
+    #: because they share the process-global `_jsonFile` that makes them a
+    #: cluster in the first place.
+    _JSON_KV_DEPRECATION = (
+        "FileUtils.{name} is deprecated and will be removed in the next "
+        "release. It keeps a process-global file path set by set_json_file, "
+        "validates with bare asserts that vanish under `python -O`, and "
+        "truncates the file before serialising, so a failed dumps loses it. "
+        "Use json.dumps with FileUtils.atomic_write_text (and json.loads on a "
+        "normal read) instead."
+    )
+
+    @classmethod
+    def _warn_json_kv(cls, name: str) -> None:
+        """Emit the retirement warning for one JSON key-value entry point.
+
+        In the bodies rather than a module-level ``__getattr__``: these are
+        classmethods on a wildcard-exported class, so ``__getattr__`` never
+        sees the lookup. ``stacklevel=3`` points at the caller rather than at
+        this helper or its caller.
+        """
+        warnings.warn(
+            cls._JSON_KV_DEPRECATION.format(name=name),
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
     @classmethod
     def set_json_file(cls, file):
-        """Set the current json filepath.
+        """Set the current json filepath. **Deprecated** -- see
+        :attr:`_JSON_KV_DEPRECATION`; removed next release.
 
         Parameters:
             file (str): The filepath to a json file. If a file doesn't exist, it will be created.
         """
+        cls._warn_json_kv("set_json_file")
         cls._jsonFile = file
         if not os.path.exists(file):
             with open(file, "a", encoding="utf-8"):
@@ -1660,11 +1690,13 @@ class FileUtils(HelpMixin):
 
     @classmethod
     def get_json_file(cls):
-        """Get the current json filepath.
+        """Get the current json filepath. **Deprecated** -- see
+        :attr:`_JSON_KV_DEPRECATION`; removed next release.
 
         Returns:
             (str)
         """
+        cls._warn_json_kv("get_json_file")
         try:
             return cls._jsonFile
         except AttributeError:
@@ -1672,7 +1704,7 @@ class FileUtils(HelpMixin):
 
     @classmethod
     def set_json(cls, key, value, file=None):
-        """
+        """**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`; removed next release.
         Parameters:
             key () = Set the json key.
             value () = Set the json value for the given key.
@@ -1682,6 +1714,7 @@ class FileUtils(HelpMixin):
         Example:
             set_json('hdr_map_visibility', state)
         """
+        cls._warn_json_kv("set_json")
         if not file:
             file = cls.get_json_file()
 
@@ -1709,7 +1742,7 @@ class FileUtils(HelpMixin):
 
     @classmethod
     def get_json(cls, key, file=None):
-        """
+        """**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`; removed next release.
         Parameters:
             key () = Set the json key.
             value () = Set the json value for the given key.
@@ -1722,6 +1755,7 @@ class FileUtils(HelpMixin):
         Example:
             get_json('hdr_map_visibility') #returns: state
         """
+        cls._warn_json_kv("get_json")
         if not file:
             file = cls.get_json_file()
 

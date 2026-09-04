@@ -24,6 +24,7 @@ import os
 import sys
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 from pythontk import FileUtils
@@ -33,6 +34,27 @@ from conftest import BaseTestCase, TestPaths
 
 class FileTest(BaseTestCase):
     """File utilities test class with comprehensive edge case coverage."""
+
+    def setUp(self):
+        """Silence the JSON key-value retirement warning for this class only.
+
+        Six tests here exercise ``set_json`` / ``get_json`` deliberately --
+        they pin the behaviour that must not change before the removal
+        release -- and each now emits a DeprecationWarning, 23 in all. Left
+        alone that noise is what a genuinely NEW deprecation would hide in.
+        Filtered by MESSAGE, so any other DeprecationWarning still surfaces,
+        and the warning's own contract is asserted separately by
+        DeprecatedSurfaceTest.
+        """
+        super().setUp()
+        ctx = warnings.catch_warnings()
+        ctx.__enter__()
+        self.addCleanup(ctx.__exit__, None, None, None)
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*FileUtils\.(get|set)_json.*",
+            category=DeprecationWarning,
+        )
 
     @classmethod
     def setUpClass(cls):
@@ -1367,6 +1389,89 @@ class FileTest(BaseTestCase):
                 ["__main__"],
                 f"driver script was re-executed by get_object_path: {executions}",
             )
+
+
+class DeprecatedSurfaceTest(unittest.TestCase):
+    """Published names with no callers, on a two-release retirement train.
+
+    ``ptk.Git`` resolves, is exported, and has zero callers monorepo-wide and
+    no test file of its own. The JSON key-value cluster
+    (``set_json_file`` / ``get_json_file`` / ``set_json`` / ``get_json``) is
+    reached only by this suite -- and it keeps a process-global created on
+    first write, validates with bare ``assert``s that vanish under ``python
+    -O``, and is the class's only non-atomic JSON writer, sitting ~800 lines
+    below ``atomic_write_text``. It truncates before it serialises, so a
+    ``dumps`` failure loses the file.
+
+    Its real cost is navigational: ``get_json`` / ``set_json`` are the only
+    JSON read/write names on the public index, so the documented "check
+    API_INDEX.md first" workflow routes the next author straight into the
+    trap.
+
+    Release N (this one) warns; N+1 deletes. A module-level ``__getattr__``
+    cannot intercept either -- ``Git`` is a resolver-registered real
+    attribute and the JSON four are classmethods on a wildcard-exported
+    class -- so the warnings live in the bodies.
+    """
+
+    def test_git_warns_on_construction(self):
+        from pythontk.core_utils.git import Git
+
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertWarns(DeprecationWarning) as caught:
+                Git(d, dry_run=True)
+        self.assertIn("Git", str(caught.warning))
+
+    def test_each_json_kv_entry_point_warns(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "kv.json")
+            for call in (
+                lambda: FileUtils.set_json_file(path),
+                lambda: FileUtils.get_json_file(),
+                lambda: FileUtils.set_json("k", 1, file=path),
+                lambda: FileUtils.get_json("k", file=path),
+            ):
+                with self.subTest(call=call):
+                    with self.assertWarns(DeprecationWarning):
+                        call()
+
+    def test_the_warning_names_the_replacement(self):
+        """A deprecation nobody can act on is noise. Each message has to say
+        what to use instead."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "kv.json")
+            with self.assertWarns(DeprecationWarning) as caught:
+                FileUtils.set_json("k", 1, file=path)
+        message = str(caught.warning)
+        self.assertIn("atomic_write_text", message)
+
+    def test_deprecated_behaviour_is_unchanged(self):
+        """Warning is not breaking: the round trip still works this release."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "kv.json")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                FileUtils.set_json("key", {"a": [1, 2]}, file=path)
+                self.assertEqual(FileUtils.get_json("key", file=path), {"a": [1, 2]})
+
+    def test_the_freed_names_are_not_reused_by_a_new_primitive(self):
+        """Hard constraint from the retirement plan: once these names go, they
+        must NOT come back on a tolerant-JSON primitive. A caller pinned to an
+        old release would then silently get the process-global, non-atomic
+        implementation under a name that now means something else.
+
+        Asserted as a live check on the docstrings so the rule is enforced
+        where it can be seen, not only written down in a plan.
+        """
+        for name in ("get_json", "set_json", "get_json_file", "set_json_file"):
+            with self.subTest(name=name):
+                doc = getattr(FileUtils, name).__doc__ or ""
+                self.assertIn(
+                    "Deprecated",
+                    doc,
+                    f"{name} must stay marked deprecated until it is deleted; "
+                    "do not repurpose the name",
+                )
 
 
 if __name__ == "__main__":

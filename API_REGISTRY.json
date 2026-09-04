@@ -5829,7 +5829,7 @@
           "kind": "function",
           "signature": "(pid: int, tree: bool = True) -> None",
           "summary": "Force-kill *pid* (and, with *tree*, its descendants).",
-          "line": 131,
+          "line": 137,
           "deprecated": false
         },
         {
@@ -5838,7 +5838,7 @@
           "kind": "function",
           "signature": "(pid: int, heartbeat_path: str, timeout: float, check_interval: float = 1.0, kill_tree: bool = True, stop_file: str | None = None) -> int",
           "summary": "Kill *pid* when *heartbeat_path* stops being touched for *timeout* seconds.",
-          "line": 154,
+          "line": 172,
           "deprecated": false
         },
         {
@@ -5847,7 +5847,7 @@
           "kind": "function",
           "signature": "(root, pid: int | None, on_gone=None) -> None",
           "summary": "Close *root* (or call *on_gone*) once process *pid* has exited.",
-          "line": 185,
+          "line": 203,
           "deprecated": false
         },
         {
@@ -5856,7 +5856,7 @@
           "kind": "function",
           "signature": "(size: int | None = None, pos=None, gif_path: str | None = None, parent_pid: int | None = None) -> int",
           "summary": "Show the busy indicator near *pos* until killed or the parent exits.",
-          "line": 315,
+          "line": 333,
           "deprecated": false
         },
         {
@@ -5865,7 +5865,7 @@
           "kind": "function",
           "signature": "(root, title: str, message: str, force_label: str | None = None) -> list",
           "summary": "Populate *root* with the VS Code-style dialog;",
-          "line": 338,
+          "line": 356,
           "deprecated": false
         },
         {
@@ -5874,7 +5874,7 @@
           "kind": "function",
           "signature": "(root) -> None",
           "summary": "Size the dialog to its content and centre it on screen.",
-          "line": 397,
+          "line": 415,
           "deprecated": false
         },
         {
@@ -5883,7 +5883,7 @@
           "kind": "function",
           "signature": "(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int",
           "summary": "Show the dialog;",
-          "line": 410,
+          "line": 428,
           "deprecated": false
         },
         {
@@ -5892,7 +5892,7 @@
           "kind": "function",
           "signature": "(argv=None) -> int",
           "summary": "",
-          "line": 438,
+          "line": 456,
           "deprecated": false
         }
       ],
@@ -5906,7 +5906,7 @@
         {
           "name": "Git",
           "summary": "A wrapper around git subprocess commands for a specific repository.",
-          "line": 9,
+          "line": 10,
           "bases": [],
           "members": [
             {
@@ -5915,7 +5915,7 @@
               "kind": "method",
               "signature": "(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]",
               "summary": "Run a generic shell command in the repository directory.",
-              "line": 29,
+              "line": 44,
               "deprecated": false
             },
             {
@@ -5924,7 +5924,7 @@
               "kind": "method",
               "signature": "(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]",
               "summary": "Run a git command in the repository.",
-              "line": 79,
+              "line": 94,
               "deprecated": false
             },
             {
@@ -5933,7 +5933,7 @@
               "kind": "method",
               "signature": "(self, branch: str)",
               "summary": "Checkout a branch.",
-              "line": 90,
+              "line": 105,
               "deprecated": false
             },
             {
@@ -5942,7 +5942,7 @@
               "kind": "method",
               "signature": "(self, remote: str = 'origin', branch: str = None)",
               "summary": "Pull changes.",
-              "line": 94,
+              "line": 109,
               "deprecated": false
             },
             {
@@ -5951,7 +5951,7 @@
               "kind": "method",
               "signature": "(self, remote: str = 'origin', branch: str = None)",
               "summary": "Push changes.",
-              "line": 101,
+              "line": 116,
               "deprecated": false
             },
             {
@@ -5960,7 +5960,7 @@
               "kind": "method",
               "signature": "(self, source_branch: str)",
               "summary": "Merge a branch into the current branch.",
-              "line": 108,
+              "line": 123,
               "deprecated": false
             },
             {
@@ -5969,7 +5969,7 @@
               "kind": "method",
               "signature": "(self, remote: str = 'origin')",
               "summary": "Fetch remote.",
-              "line": 112,
+              "line": 127,
               "deprecated": false
             },
             {
@@ -5978,7 +5978,7 @@
               "kind": "method",
               "signature": "(self) -> str",
               "summary": "Get status output.",
-              "line": 116,
+              "line": 131,
               "deprecated": false
             },
             {
@@ -5987,7 +5987,7 @@
               "kind": "method",
               "signature": "(self) -> str",
               "summary": "Get current branch name.",
-              "line": 120,
+              "line": 135,
               "deprecated": false
             }
           ]
@@ -8981,7 +8981,7 @@
         {
           "name": "FileUtils",
           "summary": "",
-          "line": 17,
+          "line": 18,
           "bases": [
             "HelpMixin"
           ],
@@ -8992,7 +8992,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, expected_type: Optional[str] = None) -> bool",
               "summary": "Check if a path is valid, optionally requiring a specific type ('file' or 'dir').",
-              "line": 21,
+              "line": 22,
               "deprecated": false
             },
             {
@@ -9001,7 +9001,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> bool",
               "summary": "Return True if *filepath* is an online-only cloud-sync placeholder.",
-              "line": 41,
+              "line": 42,
               "deprecated": false
             },
             {
@@ -9010,7 +9010,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, directory: str, inclusive: bool = True) -> bool",
               "summary": "Is *path* inside *directory*?",
-              "line": 79,
+              "line": 80,
               "deprecated": false
             },
             {
@@ -9019,7 +9019,7 @@
               "kind": "staticmethod",
               "signature": "(text: str) -> bool",
               "summary": "Does *text* name a full path rather than a subdirectory?",
-              "line": 109,
+              "line": 110,
               "deprecated": false
             },
             {
@@ -9028,7 +9028,7 @@
               "kind": "classmethod",
               "signature": "(cls, entry: str, base: Optional[str]) -> Optional[str]",
               "summary": "Resolve a user-typed output-directory *entry* against *base*.",
-              "line": 141,
+              "line": 142,
               "deprecated": false
             },
             {
@@ -9037,7 +9037,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str, base: Optional[str]) -> str",
               "summary": "The portable spelling of *path* for a :meth:`resolve_output_dir` field.",
-              "line": 184,
+              "line": 185,
               "deprecated": false
             },
             {
@@ -9046,7 +9046,7 @@
               "kind": "staticmethod",
               "signature": "() -> int",
               "summary": "The longest path this OS will accept, in characters.",
-              "line": 215,
+              "line": 216,
               "deprecated": false
             },
             {
@@ -9055,7 +9055,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, limit: Optional[int] = None) -> bool",
               "summary": "Is *path* longer than the OS path-length limit?",
-              "line": 254,
+              "line": 255,
               "deprecated": false
             },
             {
@@ -9064,7 +9064,7 @@
               "kind": "staticmethod",
               "signature": "(path: str) -> Optional[int]",
               "summary": "Return free space (bytes) on the volume that holds *path*.",
-              "line": 280,
+              "line": 281,
               "deprecated": false
             },
             {
@@ -9073,7 +9073,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> bool",
               "summary": "Is *filepath* held open by another process, so it cannot be replaced?",
-              "line": 315,
+              "line": 316,
               "deprecated": false
             },
             {
@@ -9082,7 +9082,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> List[str]",
               "summary": "Names of the processes currently holding *filepath* open.",
-              "line": 352,
+              "line": 353,
               "deprecated": false
             },
             {
@@ -9091,7 +9091,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath: str) -> str",
               "summary": "One sentence naming *filepath*'s holder, or \"\" when it is free.",
-              "line": 456,
+              "line": 457,
               "deprecated": false
             },
             {
@@ -9100,7 +9100,7 @@
               "kind": "staticmethod",
               "signature": "(size_bytes, unknown: str = '(unknown)') -> str",
               "summary": "Render a byte count using the largest unit that keeps the number small.",
-              "line": 482,
+              "line": 483,
               "deprecated": false
             },
             {
@@ -9109,7 +9109,7 @@
               "kind": "classmethod",
               "signature": "(cls, before, after, unknown: str = '(unknown)') -> str",
               "summary": "Render a ``before -> after`` size transition with a percent delta.",
-              "line": 514,
+              "line": 515,
               "deprecated": false
             },
             {
@@ -9118,7 +9118,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> None",
               "summary": "Create a directory if one doesn't already exist.",
-              "line": 536,
+              "line": 537,
               "deprecated": false
             },
             {
@@ -9127,7 +9127,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str",
               "summary": "Return the next available versioned path for `filepath`.",
-              "line": 554,
+              "line": 555,
               "deprecated": false
             },
             {
@@ -9136,7 +9136,7 @@
               "kind": "staticmethod",
               "signature": "(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)",
               "summary": "Get the contents of a directory and any of its children.",
-              "line": 636,
+              "line": 637,
               "deprecated": false
             },
             {
@@ -9145,7 +9145,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, create_dir: bool = False, logger=None) -> bool",
               "summary": "Open the file explorer at the given path.",
-              "line": 820,
+              "line": 821,
               "deprecated": false
             },
             {
@@ -9154,7 +9154,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, as_list: bool = False, encoding: str = 'utf-8') -> Optional[Union[str, List[str]]]",
               "summary": "Read a text file, whole or as a list of lines.",
-              "line": 869,
+              "line": 870,
               "deprecated": false
             },
             {
@@ -9163,7 +9163,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, lines)",
               "summary": "Write the given list contents to the given file.",
-              "line": 892,
+              "line": 893,
               "deprecated": false
             },
             {
@@ -9172,7 +9172,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, content: str, encoding: str = 'utf-8') -> None",
               "summary": "Write text to a file atomically.",
-              "line": 906,
+              "line": 907,
               "deprecated": false
             },
             {
@@ -9181,7 +9181,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str",
               "summary": "Copies a file to a specified folder, ensuring the folder exists.",
-              "line": 955,
+              "line": 956,
               "deprecated": false
             },
             {
@@ -9190,7 +9190,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]",
               "summary": "Moves one or more files to a specified folder.",
-              "line": 994,
+              "line": 995,
               "deprecated": false
             },
             {
@@ -9199,7 +9199,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, _runner=None)",
               "summary": "Open the OS file manager showing ``path`` (selecting the file when supported, else",
-              "line": 1062,
+              "line": 1063,
               "deprecated": false
             },
             {
@@ -9208,7 +9208,7 @@
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 1097,
+              "line": 1098,
               "deprecated": false
             },
             {
@@ -9217,7 +9217,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 1180,
+              "line": 1181,
               "deprecated": false
             },
             {
@@ -9226,7 +9226,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 1250,
+              "line": 1251,
               "deprecated": false
             },
             {
@@ -9235,7 +9235,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 1297,
+              "line": 1298,
               "deprecated": false
             },
             {
@@ -9244,7 +9244,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 1350,
+              "line": 1351,
               "deprecated": false
             },
             {
@@ -9253,7 +9253,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 1372,
+              "line": 1373,
               "deprecated": false
             },
             {
@@ -9262,7 +9262,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 1493,
+              "line": 1494,
               "deprecated": false
             },
             {
@@ -9271,7 +9271,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Set the current json filepath.",
-              "line": 1650,
+              "line": 1678,
               "deprecated": false
             },
             {
@@ -9280,7 +9280,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Get the current json filepath.",
-              "line": 1662,
+              "line": 1692,
               "deprecated": false
             },
             {
@@ -9288,8 +9288,8 @@
               "qualname": "FileUtils.set_json",
               "kind": "classmethod",
               "signature": "(cls, key, value, file=None)",
-              "summary": "Parameters:",
-              "line": 1674,
+              "summary": "**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;",
+              "line": 1706,
               "deprecated": false
             },
             {
@@ -9297,8 +9297,8 @@
               "qualname": "FileUtils.get_json",
               "kind": "classmethod",
               "signature": "(cls, key, file=None)",
-              "summary": "Parameters:",
-              "line": 1711,
+              "summary": "**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;",
+              "line": 1744,
               "deprecated": false
             }
           ]
@@ -10151,7 +10151,7 @@
         {
           "name": "GlbReader",
           "summary": "Read-only GLB inspector: accessors, animation evaluation, node worlds.",
-          "line": 133,
+          "line": 167,
           "bases": [
             "_GlbReaderInternal"
           ],
@@ -10162,7 +10162,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str) -> 'GlbReader'",
               "summary": "Open *path* read-only and return a reader.",
-              "line": 162,
+              "line": 196,
               "deprecated": false
             },
             {
@@ -10171,7 +10171,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "Section lengths for the usual census keys (missing -> 0).",
-              "line": 174,
+              "line": 208,
               "deprecated": false
             },
             {
@@ -10180,7 +10180,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "``{mimeType: count}`` over ``images`` (missing type -> \"?\").",
-              "line": 192,
+              "line": 226,
               "deprecated": false
             },
             {
@@ -10189,7 +10189,7 @@
               "kind": "method",
               "signature": "(self) -> Tuple[List[str], List[str]]",
               "summary": "``(extensionsUsed, extensionsRequired)`` (each possibly empty).",
-              "line": 200,
+              "line": 234,
               "deprecated": false
             },
             {
@@ -10198,7 +10198,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "Counts the skin checks need: skins, with-IBM, skinned mesh nodes.",
-              "line": 207,
+              "line": 241,
               "deprecated": false
             },
             {
@@ -10207,7 +10207,7 @@
               "kind": "method",
               "signature": "(self, index: int) -> Optional[List[Tuple[float, ...]]]",
               "summary": "Decode accessor *index* into element tuples, or ``None``.",
-              "line": 222,
+              "line": 256,
               "deprecated": false
             },
             {
@@ -10216,7 +10216,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Clip names, in file order (unnamed -> ``\"<i>\"``).",
-              "line": 267,
+              "line": 301,
               "deprecated": false
             },
             {
@@ -10225,7 +10225,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str]) -> Optional[Dict[str, Any]]",
               "summary": "The animation dict for an index or name, or ``None``.",
-              "line": 274,
+              "line": 308,
               "deprecated": false
             },
             {
@@ -10234,7 +10234,7 @@
               "kind": "method",
               "signature": "(self, fps: float = 30.0) -> Dict[str, Tuple[float, float, int]]",
               "summary": "Per clip: ``(min_seconds, max_seconds, end_frame)``.",
-              "line": 284,
+              "line": 318,
               "deprecated": false
             },
             {
@@ -10243,7 +10243,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str], tolerance: float = 0.001) -> Optional[Tuple[float, float]]",
               "summary": "The clip's MOTION extent in seconds: ``(low, high)``, or ``None``.",
-              "line": 306,
+              "line": 340,
               "deprecated": false
             },
             {
@@ -10252,7 +10252,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str]) -> List[Dict[str, Any]]",
               "summary": "One row per channel: node index/name, path, interpolation, keys.",
-              "line": 365,
+              "line": 395,
               "deprecated": false
             },
             {
@@ -10261,7 +10261,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str], node: Union[int, str], path: str, time: float) -> Optional[Tuple[float, ...]]",
               "summary": "Evaluate one channel at *time* seconds, or ``None`` when absent.",
-              "line": 393,
+              "line": 423,
               "deprecated": false
             },
             {
@@ -10270,7 +10270,7 @@
               "kind": "method",
               "signature": "(self, huge: float = 10000000.0, deep: bool = False) -> List[str]",
               "summary": "Animation outputs that are NaN or beyond *huge* world units.",
-              "line": 453,
+              "line": 483,
               "deprecated": false
             },
             {
@@ -10279,7 +10279,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[int]",
               "summary": "First node index with *name*, or ``None``.",
-              "line": 495,
+              "line": 525,
               "deprecated": false
             },
             {
@@ -10288,7 +10288,7 @@
               "kind": "method",
               "signature": "(self, index: int) -> Optional[int]",
               "summary": "Parent node index, or ``None`` for a root.",
-              "line": 503,
+              "line": 533,
               "deprecated": false
             },
             {
@@ -10297,7 +10297,7 @@
               "kind": "method",
               "signature": "(self, index: int, time: Optional[float] = None, animation: Union[int, str, None] = None) -> List[List[float]]",
               "summary": "Node *index*'s local matrix, animated when *time* is given.",
-              "line": 512,
+              "line": 542,
               "deprecated": false
             },
             {
@@ -10306,7 +10306,7 @@
               "kind": "method",
               "signature": "(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[List[List[float]]]",
               "summary": "World matrix of *node* (name or index), or ``None`` when absent.",
-              "line": 536,
+              "line": 566,
               "deprecated": false
             },
             {
@@ -10315,7 +10315,7 @@
               "kind": "method",
               "signature": "(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[Tuple[float, float, float]]",
               "summary": "World-space translation of *node*, or ``None`` when absent.",
-              "line": 553,
+              "line": 583,
               "deprecated": false
             },
             {
@@ -10324,7 +10324,7 @@
               "kind": "method",
               "signature": "(self) -> Iterator[Tuple[int, Optional[str]]]",
               "summary": "Yield ``(index, name)`` for every node, in file order.",
-              "line": 563,
+              "line": 593,
               "deprecated": false
             }
           ]
@@ -11319,7 +11319,7 @@
         {
           "name": "HorizonMap",
           "summary": "A baked horizon map and the frame it was baked in.",
-          "line": 72,
+          "line": 73,
           "bases": [
             "NamedTuple"
           ],
@@ -11330,7 +11330,7 @@
               "kind": "method",
               "signature": "(self, angle: np.ndarray) -> np.ndarray",
               "summary": "``cot(angle) / max_stretch`` clamped to ``[0, 1]`` — the interval",
-              "line": 97,
+              "line": 98,
               "deprecated": false
             },
             {
@@ -11339,7 +11339,7 @@
               "kind": "method",
               "signature": "(self, value: np.ndarray) -> np.ndarray",
               "summary": "The cotangent an encoded channel value stands for.",
-              "line": 110,
+              "line": 111,
               "deprecated": false
             },
             {
@@ -11348,7 +11348,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "",
-              "line": 116,
+              "line": 117,
               "deprecated": false
             },
             {
@@ -11357,7 +11357,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "Tiles in the PNG: one per layer per bin.",
-              "line": 120,
+              "line": 121,
               "deprecated": false
             },
             {
@@ -11366,7 +11366,7 @@
               "kind": "property",
               "signature": "(self) -> Tuple[int, int]",
               "summary": "``(cols, rows)`` of the tile grid a PNG lays the tiles out in.",
-              "line": 125,
+              "line": 126,
               "deprecated": false
             },
             {
@@ -11375,7 +11375,7 @@
               "kind": "method",
               "signature": "(self, layer: int, k: int) -> int",
               "summary": "Tile ``t`` of bin *k*'s *layer*: grounded tiles first.",
-              "line": 129,
+              "line": 130,
               "deprecated": false
             },
             {
@@ -11384,7 +11384,7 @@
               "kind": "method",
               "signature": "(self) -> List[Tuple[float, float, float, float]]",
               "summary": "Per tile, its ``(scaleX, scaleY, offsetX, offsetY)`` inside the",
-              "line": 133,
+              "line": 134,
               "deprecated": false
             },
             {
@@ -11393,7 +11393,7 @@
               "kind": "method",
               "signature": "(self) -> np.ndarray",
               "summary": "The map as one ``uint8`` RGBA image: ``2 × bins`` tiles in a",
-              "line": 143,
+              "line": 144,
               "deprecated": false
             },
             {
@@ -11402,7 +11402,7 @@
               "kind": "classmethod",
               "signature": "(cls, pixels: np.ndarray, *, bins: int, size: Sequence[int], r_min: float, r_max: float, ground: float = 0.0, up: int = 1, max_stretch: Optional[float] = None) -> 'HorizonMap'",
               "summary": "Rebuild a map from an image written by :meth:`to_rgba`.",
-              "line": 160,
+              "line": 161,
               "deprecated": false
             },
             {
@@ -11411,7 +11411,7 @@
               "kind": "method",
               "signature": "(self) -> np.ndarray",
               "summary": "Horizontal frame coordinates ``(H, W, 2)`` of every texel centre.",
-              "line": 212,
+              "line": 213,
               "deprecated": false
             },
             {
@@ -11420,7 +11420,7 @@
               "kind": "method",
               "signature": "(self, horizontal) -> Tuple[np.ndarray, np.ndarray, np.ndarray]",
               "summary": "Log-polar ``(u, v, inside)`` for horizontal frame points ``(N, 2)``:",
-              "line": 222,
+              "line": 223,
               "deprecated": false
             },
             {
@@ -11429,7 +11429,7 @@
               "kind": "method",
               "signature": "(self, layer: int, k, u, v) -> Tuple[np.ndarray, np.ndarray, np.ndarray]",
               "summary": "The four texels around ``(u, v)`` in *layer*'s bin ``k`` — the way",
-              "line": 233,
+              "line": 234,
               "deprecated": false
             },
             {
@@ -11438,7 +11438,7 @@
               "kind": "staticmethod",
               "signature": "(values: np.ndarray) -> np.ndarray",
               "summary": "``(..., 16)`` booleans from the ``B, A`` channels of texel values",
-              "line": 267,
+              "line": 268,
               "deprecated": false
             },
             {
@@ -11447,7 +11447,7 @@
               "kind": "method",
               "signature": "(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray",
               "summary": "Shadow alpha ``(N,)`` at frame *points* for one source — the",
-              "line": 277,
+              "line": 278,
               "deprecated": false
             }
           ]
@@ -11455,7 +11455,7 @@
         {
           "name": "ShadowHorizon",
           "summary": "Bake, measure and lay out coverage-aware horizon maps (module doc).",
-          "line": 508,
+          "line": 509,
           "bases": [],
           "members": [
             {
@@ -11464,7 +11464,7 @@
               "kind": "classmethod",
               "signature": "(cls, language: str = 'glsl') -> str",
               "summary": "The shared horizon evaluation, spelled for *language*.",
-              "line": 540,
+              "line": 541,
               "deprecated": false
             },
             {
@@ -11473,7 +11473,7 @@
               "kind": "staticmethod",
               "signature": "(tiles: int) -> Tuple[int, int]",
               "summary": "``(cols, rows)`` of the grid holding *tiles*: ``cols = ceil(sqrt(tiles))``.",
-              "line": 581,
+              "line": 582,
               "deprecated": false
             },
             {
@@ -11482,7 +11482,7 @@
               "kind": "classmethod",
               "signature": "(cls, radius: float, height: float, max_stretch: Optional[float] = None) -> Tuple[float, float]",
               "summary": "``(r_min, r_max)``: an eighth of the footprint radius to the reach",
-              "line": 588,
+              "line": 589,
               "deprecated": false
             },
             {
@@ -11491,7 +11491,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, *, ground: float = 0.0, up: int = 1, radius: Optional[float] = None, height: Optional[float] = None, bins: int = DEFAULT_BINS, size: Sequence[int] = DEFAULT_SIZE, r_min: Optional[float] = None, r_max: Optional[float] = None, max_stretch: Optional[float] = None, footprint: int = DEFAULT_FOOTPRINT, threads: Optional[int] = None) -> HorizonMap",
               "summary": "Bake the map of *meshes* in the map's frame.",
-              "line": 607,
+              "line": 647,
               "deprecated": false
             },
             {
@@ -11500,7 +11500,7 @@
               "kind": "classmethod",
               "signature": "(cls, hmap: HorizonMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]",
               "summary": "Compare :meth:`HorizonMap.alpha` with the exact projection at random",
-              "line": 908,
+              "line": 948,
               "deprecated": false
             },
             {
@@ -11509,7 +11509,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, *, threshold: float = 0.05, max_bins: int = 64, measure_samples: int = 6, **kwargs) -> Tuple[HorizonMap, Dict[str, float]]",
               "summary": "Bake at :attr:`ADAPTIVE_BINS` in turn until :meth:`measure`'s",
-              "line": 1016,
+              "line": 1056,
               "deprecated": false
             }
           ]
@@ -14039,7 +14039,7 @@
               "kind": "classmethod",
               "signature": "(cls, url: str, *, timeout: Optional[float] = None, reject_html: bool = True) -> bytes",
               "summary": "The full body behind *url*.",
-              "line": 184,
+              "line": 197,
               "deprecated": false
             },
             {
@@ -14048,7 +14048,7 @@
               "kind": "classmethod",
               "signature": "(cls, url: str, *, timeout: Optional[float] = None) -> Optional[str]",
               "summary": "Why *url* would NOT serve a file, or None when it would.",
-              "line": 217,
+              "line": 230,
               "deprecated": false
             }
           ]
@@ -14306,7 +14306,7 @@
         {
           "name": "RpcPlugin",
           "summary": "One host plugin: a registry, a marshaller, and the server that joins them.",
-          "line": 394,
+          "line": 410,
           "bases": [
             "object"
           ],
@@ -14317,7 +14317,7 @@
               "kind": "staticmethod",
               "signature": "(package)",
               "summary": "Import *package* (dotted name), forcing its ``@register`` side effects.",
-              "line": 453,
+              "line": 469,
               "deprecated": false
             },
             {
@@ -14326,7 +14326,7 @@
               "kind": "property",
               "signature": "(self)",
               "summary": "Configured port: ``<PREFIX>_PORT`` if set and numeric, else the default.",
-              "line": 520,
+              "line": 536,
               "deprecated": false
             },
             {
@@ -14335,7 +14335,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "True only inside the real host application.",
-              "line": 527,
+              "line": 543,
               "deprecated": false
             },
             {
@@ -14344,7 +14344,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "True while the HTTP server is bound.",
-              "line": 549,
+              "line": 565,
               "deprecated": false
             },
             {
@@ -14353,7 +14353,7 @@
               "kind": "property",
               "signature": "(self)",
               "summary": "The bound ``(host, port)``, or ``None`` when not running.",
-              "line": 554,
+              "line": 570,
               "deprecated": false
             },
             {
@@ -14362,7 +14362,7 @@
               "kind": "method",
               "signature": "(self, port=None, host=None)",
               "summary": "Bind and serve on a daemon thread.",
-              "line": 558,
+              "line": 574,
               "deprecated": false
             },
             {
@@ -14371,7 +14371,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Shut the server down (host teardown hook, tests, hot-reload).",
-              "line": 580,
+              "line": 596,
               "deprecated": false
             },
             {
@@ -14380,7 +14380,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Start on plugin load, but only when actually hosted.",
-              "line": 591,
+              "line": 607,
               "deprecated": false
             },
             {
@@ -14389,7 +14389,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": ":meth:`autostart`, but a failure is logged instead of raised.",
-              "line": 605,
+              "line": 621,
               "deprecated": false
             }
           ]
