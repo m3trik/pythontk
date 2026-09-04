@@ -27,6 +27,68 @@ TestSandbox.activate()
 
 
 # =============================================================================
+# Session gates
+# =============================================================================
+
+#: Env var carrying how many tests pytest collected, for the collector drift
+#: guard in test_test_sandbox.py. An env var rather than a module global
+#: because pytest imports conftest under its own name, so a test doing
+#: ``import conftest`` gets a DIFFERENT module object and would read None.
+#: Absent under the unittest runner, which never loads this file.
+COLLECTED_COUNT_ENV = "PYTHONTK_PYTEST_COLLECTED"
+
+
+def pytest_collection_modifyitems(session, config, items):
+    """Record the collected count, but only for a whole-directory run.
+
+    A subset run (``pytest test/test_x.py``) collects a handful of tests while
+    unittest discovery still walks everything, so recording it would make the
+    drift guard fail on every targeted run. Absent means "no comparable
+    number", which the guard skips on.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    args = [a.split("::", 1)[0] for a in config.args]
+    whole_dir = bool(args) and all(
+        os.path.abspath(a).rstrip("\/") == here for a in args
+    )
+    os.environ.pop(COLLECTED_COUNT_ENV, None)
+    if whole_dir:
+        os.environ[COLLECTED_COUNT_ENV] = str(len(items))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run when the sandbox refused a browser launch and the code
+    under test swallowed it.
+
+    ``run_tests.py`` has always done this, but CI runs bare ``pytest test/``
+    (``.github/workflows/tests.yml``) and never loads that runner -- so on the
+    path that actually gates a PR, five downstream suites armed the guard and
+    nothing read the record. A refused launch that a broad ``except`` ate
+    leaves its test green; in production the same call opened a tab.
+
+    It sets ``session.exitstatus`` rather than printing. A print gates
+    nothing, which is the mistake this replaces.
+    """
+    leaked = list(TestSandbox.launches)
+    if not leaked:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    message = (
+        f"{len(leaked)} browser launch(es) blocked by the sandbox and swallowed "
+        "by the code under test: " + ", ".join(leaked)
+    )
+    if reporter is not None:
+        reporter.write_sep("=", "BROWSER LEAK", red=True)
+        reporter.write_line(message)
+    else:  # -p no:terminal, or a very early failure
+        print("[ERROR] " + message)
+    # 0 and 5 (no tests collected) are the statuses a leak must override;
+    # a real test failure already fails and keeps its own, more specific code.
+    if exitstatus in (0, 5):
+        session.exitstatus = 1
+
+
+# =============================================================================
 # Test Utilities & Base Classes
 # =============================================================================
 
