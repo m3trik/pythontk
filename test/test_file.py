@@ -22,6 +22,7 @@ Run with:
 import inspect
 import os
 import sys
+import shutil
 import tempfile
 import unittest
 import warnings
@@ -1443,7 +1444,8 @@ class DeprecatedSurfaceTest(unittest.TestCase):
             with self.assertWarns(DeprecationWarning) as caught:
                 FileUtils.set_json("k", 1, file=path)
         message = str(caught.warning)
-        self.assertIn("atomic_write_text", message)
+        self.assertIn("write_json", message)
+        self.assertIn("read_json", message)
 
     def test_deprecated_behaviour_is_unchanged(self):
         """Warning is not breaking: the round trip still works this release."""
@@ -1472,6 +1474,206 @@ class DeprecatedSurfaceTest(unittest.TestCase):
                     f"{name} must stay marked deprecated until it is deleted; "
                     "do not repurpose the name",
                 )
+
+
+class JsonPrimitiveTest(unittest.TestCase):
+    """``read_json`` / ``write_json`` -- the halves the class was missing.
+
+    ``atomic_write_text`` existed and was composed at exactly two sites, while
+    five JSON writers wrote non-atomically and tolerant reads were re-derived
+    with at least six different catch sets: ``json.JSONDecodeError`` alone
+    (x4), ``ValueError`` (x3), ``(OSError, ValueError)`` (x2),
+    ``FileNotFoundError``, ``(json.decoder.JSONDecodeError, FileNotFoundError)``,
+    ``(TypeError, ValueError)``. Those are not equivalent -- ``JSONDecodeError``
+    does not catch a missing file -- so half the call sites crashed where the
+    other half returned a default.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="ptk_json_")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def path(self, name="doc.json"):
+        return os.path.join(self.dir, name)
+
+    # -- read ----------------------------------------------------------
+
+    def test_round_trip(self):
+        p = self.path()
+        data = {"a": [1, 2, {"b": None}], "c": "text"}
+        FileUtils.write_json(p, data)
+        self.assertEqual(FileUtils.read_json(p), data)
+
+    def test_a_missing_file_is_the_default_not_an_exception(self):
+        self.assertIsNone(FileUtils.read_json(self.path("absent.json")))
+        self.assertEqual(FileUtils.read_json(self.path("absent.json"), default={}), {})
+
+    def test_malformed_content_is_the_default(self):
+        p = self.path()
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        self.assertEqual(
+            FileUtils.read_json(p, default={"fallback": True}), {"fallback": True}
+        )
+
+    def test_a_directory_in_place_of_a_file_is_the_default(self):
+        """An OSError that is not FileNotFoundError -- the case the
+        ``JSONDecodeError``-only call sites crashed on."""
+        self.assertEqual(FileUtils.read_json(self.dir, default="d"), "d")
+
+    def test_an_empty_file_is_the_default(self):
+        p = self.path()
+        open(p, "w").close()
+        self.assertEqual(FileUtils.read_json(p, default={}), {})
+
+    # -- write ---------------------------------------------------------
+
+    def test_write_is_atomic_leaving_no_temp_behind(self):
+        p = self.path()
+        FileUtils.write_json(p, {"k": 1})
+        self.assertEqual(os.listdir(self.dir), [os.path.basename(p)])
+
+    def test_an_unencodable_value_leaves_the_existing_file_intact(self):
+        """The failure mode ``set_json`` had: it truncated the file, THEN
+        serialised, so a value json could not encode destroyed the previous
+        contents. Serialise first, write second."""
+        p = self.path()
+        FileUtils.write_json(p, {"good": 1})
+        with self.assertRaises(TypeError):
+            FileUtils.write_json(p, {"bad": object()})
+        self.assertEqual(
+            FileUtils.read_json(p), {"good": 1}, "the old file was destroyed"
+        )
+        self.assertEqual(
+            os.listdir(self.dir), [os.path.basename(p)], "a temp file was stranded"
+        )
+
+    def test_write_creates_missing_parent_directories(self):
+        p = os.path.join(self.dir, "nested", "deep", "doc.json")
+        FileUtils.write_json(p, {"k": 1})
+        self.assertEqual(FileUtils.read_json(p), {"k": 1})
+
+    def test_indent_and_sort_keys_are_honoured(self):
+        p = self.path()
+        FileUtils.write_json(p, {"b": 1, "a": 2}, indent=None, sort_keys=True)
+        with open(p, encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"a": 2, "b": 1}')
+
+    def test_the_deprecated_names_are_not_what_was_added(self):
+        """The retirement plan's constraint, restated as a live check: the new
+        primitive must NOT be called get_json/set_json."""
+        self.assertTrue(hasattr(FileUtils, "read_json"))
+        self.assertTrue(hasattr(FileUtils, "write_json"))
+
+
+class UserConfigSaveTest(unittest.TestCase):
+    """``UserConfig`` published a loader and no writer, so every caller that
+    needed to persist a config hand-rolled one -- non-atomically."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="ptk_uc_")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def test_save_file_round_trips_through_load_file(self):
+        from pythontk.core_utils.user_config import UserConfig
+
+        p = os.path.join(self.dir, "cfg.json")
+        UserConfig.save_file(p, {"root": "x", "tuning": {"quality": 2}})
+        self.assertEqual(
+            UserConfig.load_file(p), {"root": "x", "tuning": {"quality": 2}}
+        )
+
+    def test_save_file_creates_the_parent_directory(self):
+        from pythontk.core_utils.user_config import UserConfig
+
+        p = os.path.join(self.dir, "pkg", "cfg.json")
+        UserConfig.save_file(p, {"a": 1})
+        self.assertEqual(UserConfig.load_file(p), {"a": 1})
+
+    def test_save_file_refuses_a_non_object(self):
+        """``load_file`` returns {} for anything that is not a JSON object, so
+        writing one would create a file its own loader silently discards."""
+        from pythontk.core_utils.user_config import UserConfig
+
+        with self.assertRaises(TypeError):
+            UserConfig.save_file(os.path.join(self.dir, "c.json"), [1, 2, 3])
+
+
+class AtomicJsonWriterAdoptionTest(unittest.TestCase):
+    """The five non-atomic JSON writers are down to the deprecated one.
+
+    ``atomic_write_text`` existed and was composed at two sites while five
+    writers truncated their target and serialised into it. Four are migrated
+    to ``write_json``; the fifth is ``set_json``, which is on its way out.
+
+    ``QcLog.finalize`` had NO test of any kind, so its migration is covered
+    here rather than assumed -- it is also the one whose truncation is worst,
+    since a half-written QC log reads as a completed run with fields missing.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="ptk_adopt_")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def test_qc_log_writes_atomically_and_creates_its_parent(self):
+        from pythontk import QcLog
+
+        path = os.path.join(self.dir, "nested", "qc.json")
+        QcLog(path).finalize(True)
+        self.assertTrue(os.path.isfile(path))
+        self.assertEqual(os.listdir(os.path.dirname(path)), ["qc.json"])
+        data = FileUtils.read_json(path)
+        self.assertIs(data["success"], True)
+        self.assertIn("total_duration_sec", data)
+
+    def test_the_metadata_sidecar_round_trips_a_non_ascii_value(self):
+        """The sidecar's write is now atomic; this pins that the migration did
+        not change what it stores.
+
+        The old ``open(path, "w")`` carried no ``encoding=``, which LOOKS like
+        a cp1252 bug on Windows and is not: ``json.dump`` defaults to
+        ``ensure_ascii=True``, so the bytes were pure ASCII escapes either
+        way -- verified before claiming otherwise. The real fix here is
+        truncation, not encoding.
+        """
+        from pythontk.file_utils.metadata import MetadataInternal
+
+        target = os.path.join(self.dir, "asset.fbx")
+        open(target, "w").close()
+        # The sidecar writer directly: Metadata.set's default path needs
+        # win32com.propsys, which is not the code this migration touched.
+        MetadataInternal._save_sidecar(target, {"note": "café ☕", "who": "Ana Lucía"})
+        self.assertEqual(MetadataInternal._load_sidecar(target)["note"], "café ☕")
+
+    def test_no_module_writes_json_by_truncating_first(self):
+        """Drift guard: a new ``json.dump(x, open(p, "w"))`` is the pattern
+        this pass removed, and it reintroduces silently."""
+        import pythontk as ptk
+
+        root = os.path.dirname(os.path.abspath(ptk.__file__))
+        offenders = []
+        for folder, _dirs, files in os.walk(root):
+            if "__pycache__" in folder:
+                continue
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(folder, name)
+                with open(path, encoding="utf-8") as fh:
+                    source = fh.read()
+                for lineno, line in enumerate(source.splitlines(), 1):
+                    if "json.dump(" in line or "write(json.dumps" in line:
+                        rel = os.path.relpath(path, root).replace(os.sep, "/")
+                        offenders.append(rel)
+        # By FILE, not line: line numbers churn on every edit above them, and
+        # the fact worth guarding is "which module still does this".
+        self.assertEqual(
+            sorted(set(offenders)),
+            ["file_utils/_file_utils.py"],
+            "a non-atomic JSON writer was added, or the deprecated set_json "
+            "was deleted (then this expectation drops to []). Use "
+            "FileUtils.write_json.",
+        )
 
 
 if __name__ == "__main__":

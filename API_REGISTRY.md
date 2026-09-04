@@ -1260,13 +1260,13 @@ App-agnostic line-stream primitives for launched processes and log files.
 
 Structured run logs and threshold-based acceptance gates for pipeline
 
-- **[`class GateError(RuntimeError)`](pythontk/pythontk/core_utils/qc_log.py#L15)** — Raised by :meth:`QcGate.check` when a halt-mode gate fails.
-- **[`class QcLog`](pythontk/pythontk/core_utils/qc_log.py#L19)** — Append-only structured run log.
+- **[`class GateError(RuntimeError)`](pythontk/pythontk/core_utils/qc_log.py#L14)** — Raised by :meth:`QcGate.check` when a halt-mode gate fails.
+- **[`class QcLog`](pythontk/pythontk/core_utils/qc_log.py#L18)** — Append-only structured run log.
   - `QcLog.stage(self, name: str)`
   - `QcLog.warn(self, message: str) -> None`
   - `QcLog.set(self, key: str, value: Any) -> None`
   - `QcLog.finalize(self, success: bool) -> None`
-- **[`class QcGate`](pythontk/pythontk/core_utils/qc_log.py#L65)** — Threshold-based acceptance gate that logs into a bound :class:`QcLog`.
+- **[`class QcGate`](pythontk/pythontk/core_utils/qc_log.py#L67)** — Threshold-based acceptance gate that logs into a bound :class:`QcLog`.
   - `QcGate.check(self, gate_name: str, metrics: Dict[str, Any]) -> bool` — Compare ``metrics`` against ``self.rules[gate_name]``.
 
 <a id="core_utils--schema_spec"></a>
@@ -1416,6 +1416,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
 - **[`class UserConfig`](pythontk/pythontk/core_utils/user_config.py#L44)** — Resolve a JSON user-config doc with discovery + deep-merge over a default.
   - `UserConfig.path_for(name: str, package: str) -> Path` *(static)* — Default on-disk location: ``<user_config_root>/<package>/<name>.json``.
   - `UserConfig.load_file(path: Union[str, os.PathLike]) -> dict` *(static)* — Load a JSON object from *path*.
+  - `UserConfig.save_file(path: Union[str, os.PathLike], data: Mapping[str, Any]) -> None` *(static)* — Write *data* to *path* as a JSON object, atomically.
   - `UserConfig.resolve(cls, name: str, *, package: str, env: Optional[str] = None, default: Optional[Mapping[str, Any]] = None, path: Optional[Union[str, os.PathLike]] = None) -> dict` *(class)* — Resolve config *name* for *package*, deep-merged over *default*.
   - `UserConfig.deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict` *(static)* — Recursively merge *override* into a copy of *base* (override wins).
   - `UserConfig.expand(value: Any) -> Any` *(static)* — Expand ``~`` and ``${ENV}`` / ``%VAR%`` in string values.
@@ -1445,6 +1446,8 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.open_explorer(path: str, create_dir: bool = False, logger=None) -> bool` *(static)* — Open the file explorer at the given path.
   - `FileUtils.get_file_contents(filepath: str, as_list: bool = False, encoding: str = 'utf-8') -> Optional[Union[str, List[str]]]` *(static)* — Read a text file, whole or as a list of lines.
   - `FileUtils.write_to_file(filepath, lines)` *(static)* — Write the given list contents to the given file.
+  - `FileUtils.read_json(filepath, default=None, encoding: str = 'utf-8')` *(static)* — Parse the JSON document at *filepath*, or return *default*.
+  - `FileUtils.write_json(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None` *(class)* — Serialise *data* to *filepath* atomically, creating parent dirs.
   - `FileUtils.atomic_write_text(filepath: str, content: str, encoding: str = 'utf-8') -> None` *(static)* — Write text to a file atomically.
   - `FileUtils.copy_file(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str` *(static)* — Copies a file to a specified folder, ensuring the folder exists.
   - `FileUtils.move_file(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]` *(class)* — Moves one or more files to a specified folder.
@@ -1636,7 +1639,7 @@ File-level mesh processing via PyMeshLab (optional dependency).
 ### `file_utils/metadata.py`
 
 - **[`class MetadataInternal`](pythontk/pythontk/file_utils/metadata.py#L9)** — Internal utilities for handling file metadata on Windows and Linux.
-- **[`class Metadata(MetadataInternal)`](pythontk/pythontk/file_utils/metadata.py#L410)** — Public interface for metadata operations.
+- **[`class Metadata(MetadataInternal)`](pythontk/pythontk/file_utils/metadata.py#L419)** — Public interface for metadata operations.
   - `Metadata.get(cls, file_path: Any, *keys: str, mode: str = 'metadata') -> Any` *(class)* — Unified get method for metadata and tags.
   - `Metadata.set(cls, file_path: Any, mode: str = 'metadata', **kwargs) -> None` *(class)* — Unified set method for metadata and tags.
 

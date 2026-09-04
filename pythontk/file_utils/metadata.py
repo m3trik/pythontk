@@ -40,9 +40,18 @@ class MetadataInternal:
         # Remove None values
         current_data = {k: v for k, v in current_data.items() if v is not None}
 
+        from pythontk.file_utils._file_utils import FileUtils
+
         try:
-            with open(sidecar_path, "w") as f:
-                json.dump(current_data, f, indent=4)
+            # Atomic. The sidecar is written beside a file in a user
+            # project folder -- the exact case atomic_write_text's docstring
+            # names -- and this truncated it before serialising, so an
+            # interrupted save left a stub that _load_sidecar then read as
+            # "no metadata". (The missing encoding= on the old open() was
+            # harmless: json.dump defaults to ensure_ascii=True, so the bytes
+            # were pure ASCII escapes either way. utf-8 is explicit now
+            # regardless, since that default is not a thing to rely on.)
+            FileUtils.write_json(sidecar_path, current_data, indent=4)
 
             # Hide the file on Windows
             if os.name == "nt":

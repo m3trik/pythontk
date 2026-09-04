@@ -161,8 +161,9 @@ class HierarchyDiff:
             filepath: Path to save the JSON file
             indent: JSON indentation level
         """
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(self.as_dict(), f, indent=indent)
+        from pythontk.file_utils._file_utils import FileUtils
+
+        FileUtils.write_json(filepath, self.as_dict(), indent=indent)
 
     @classmethod
     def load_from_file(cls, filepath: str) -> "HierarchyDiff":

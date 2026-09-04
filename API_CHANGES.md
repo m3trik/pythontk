@@ -42,7 +42,7 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `net_utils/preview_server.py::PreviewServer.url` — was `(self) -> Optional[str]`
 - `net_utils/preview_server.py::PreviewServer.version` — was `(self) -> int`
 
-## Added (150)
+## Added (153)
 
 - `core_utils/color.py::Palette.copy(self) -> 'Palette'`
 - `core_utils/color.py::Palette.setdefault(self, key: str, default: object = None) -> object`
@@ -98,9 +98,12 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `core_utils/test_sandbox.py::TestSandbox.browser(cls) -> None`
 - `core_utils/test_sandbox.py::TestSandbox.is_active(cls) -> bool`
 - `core_utils/test_sandbox.py::TestSandbox.temp(cls) -> str`
+- `core_utils/user_config.py::UserConfig.save_file(path: Union[str, os.PathLike], data: Mapping[str, Any]) -> None`
 - `file_utils/_file_utils.py::FileUtils.describe_lock(cls, filepath: str) -> str`
 - `file_utils/_file_utils.py::FileUtils.is_locked(filepath: str) -> bool`
 - `file_utils/_file_utils.py::FileUtils.locking_processes(filepath: str) -> List[str]`
+- `file_utils/_file_utils.py::FileUtils.read_json(filepath, default=None, encoding: str = 'utf-8')`
+- `file_utils/_file_utils.py::FileUtils.write_json(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_shadows(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.bake_node_frames(cls, src: str) -> int`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.prune_glb_animations(cls, glb: GlbTarget) -> List[str]`

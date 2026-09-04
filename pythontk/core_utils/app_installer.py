@@ -662,6 +662,9 @@ class AppInstaller:
         if os.path.isfile(cat_path):
             with open(cat_path, "r", encoding="utf-8") as fh:
                 catalog = json.load(fh)
+        from pythontk.file_utils._file_utils import FileUtils
+
         catalog[name] = {"path": exe_path, "version": version}
-        with open(cat_path, "w", encoding="utf-8") as fh:
-            json.dump(catalog, fh, indent=2)
+        # Atomic: the catalog is read by other processes (and by a later run
+        # of this installer), so a half-written one must never be visible.
+        FileUtils.write_json(cat_path, catalog, indent=2)

@@ -6255,7 +6255,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath: str) -> 'HierarchyDiff'",
               "summary": "Load diff result from JSON file.",
-              "line": 168,
+              "line": 169,
               "deprecated": false
             },
             {
@@ -6264,7 +6264,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Clear all diff results.",
-              "line": 190,
+              "line": 191,
               "deprecated": false
             },
             {
@@ -6273,7 +6273,7 @@
               "kind": "method",
               "signature": "(self, other: 'HierarchyDiff') -> None",
               "summary": "Merge another diff result into this one.",
-              "line": 200,
+              "line": 201,
               "deprecated": false
             },
             {
@@ -6282,7 +6282,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "Get summary counts of all difference types.",
-              "line": 214,
+              "line": 215,
               "deprecated": false
             },
             {
@@ -6291,7 +6291,7 @@
               "kind": "method",
               "signature": "(self, pattern: str, field: str = 'missing') -> List[str]",
               "summary": "Filter items by regex pattern.",
-              "line": 230,
+              "line": 231,
               "deprecated": false
             },
             {
@@ -6300,7 +6300,7 @@
               "kind": "method",
               "signature": "(self, key: str, value: Any) -> None",
               "summary": "Add metadata to the diff result.",
-              "line": 245,
+              "line": 246,
               "deprecated": false
             }
           ]
@@ -8041,7 +8041,7 @@
         {
           "name": "GateError",
           "summary": "Raised by :meth:`QcGate.check` when a halt-mode gate fails.",
-          "line": 15,
+          "line": 14,
           "bases": [
             "RuntimeError"
           ],
@@ -8050,7 +8050,7 @@
         {
           "name": "QcLog",
           "summary": "Append-only structured run log.",
-          "line": 19,
+          "line": 18,
           "bases": [],
           "members": [
             {
@@ -8059,7 +8059,7 @@
               "kind": "method",
               "signature": "(self, name: str)",
               "summary": "",
-              "line": 41,
+              "line": 40,
               "deprecated": false
             },
             {
@@ -8068,7 +8068,7 @@
               "kind": "method",
               "signature": "(self, message: str) -> None",
               "summary": "",
-              "line": 50,
+              "line": 49,
               "deprecated": false
             },
             {
@@ -8077,7 +8077,7 @@
               "kind": "method",
               "signature": "(self, key: str, value: Any) -> None",
               "summary": "",
-              "line": 53,
+              "line": 52,
               "deprecated": false
             },
             {
@@ -8086,7 +8086,7 @@
               "kind": "method",
               "signature": "(self, success: bool) -> None",
               "summary": "",
-              "line": 56,
+              "line": 55,
               "deprecated": false
             }
           ]
@@ -8094,7 +8094,7 @@
         {
           "name": "QcGate",
           "summary": "Threshold-based acceptance gate that logs into a bound :class:`QcLog`.",
-          "line": 65,
+          "line": 67,
           "bases": [],
           "members": [
             {
@@ -8103,7 +8103,7 @@
               "kind": "method",
               "signature": "(self, gate_name: str, metrics: Dict[str, Any]) -> bool",
               "summary": "Compare ``metrics`` against ``self.rules[gate_name]``.",
-              "line": 94,
+              "line": 96,
               "deprecated": false
             }
           ]
@@ -8934,12 +8934,21 @@
               "deprecated": false
             },
             {
+              "name": "save_file",
+              "qualname": "UserConfig.save_file",
+              "kind": "staticmethod",
+              "signature": "(path: Union[str, os.PathLike], data: Mapping[str, Any]) -> None",
+              "summary": "Write *data* to *path* as a JSON object, atomically.",
+              "line": 88,
+              "deprecated": false
+            },
+            {
               "name": "resolve",
               "qualname": "UserConfig.resolve",
               "kind": "classmethod",
               "signature": "(cls, name: str, *, package: str, env: Optional[str] = None, default: Optional[Mapping[str, Any]] = None, path: Optional[Union[str, os.PathLike]] = None) -> dict",
               "summary": "Resolve config *name* for *package*, deep-merged over *default*.",
-              "line": 88,
+              "line": 118,
               "deprecated": false
             },
             {
@@ -8948,7 +8957,7 @@
               "kind": "staticmethod",
               "signature": "(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict",
               "summary": "Recursively merge *override* into a copy of *base* (override wins).",
-              "line": 126,
+              "line": 156,
               "deprecated": false
             },
             {
@@ -8957,7 +8966,7 @@
               "kind": "staticmethod",
               "signature": "(value: Any) -> Any",
               "summary": "Expand ``~`` and ``${ENV}`` / ``%VAR%`` in string values.",
-              "line": 141,
+              "line": 171,
               "deprecated": false
             },
             {
@@ -8966,7 +8975,7 @@
               "kind": "staticmethod",
               "signature": "() -> Path",
               "summary": "The ecosystem per-user config directory, resolved **without Qt**.",
-              "line": 158,
+              "line": 188,
               "deprecated": false
             }
           ]
@@ -9167,12 +9176,30 @@
               "deprecated": false
             },
             {
+              "name": "read_json",
+              "qualname": "FileUtils.read_json",
+              "kind": "staticmethod",
+              "signature": "(filepath, default=None, encoding: str = 'utf-8')",
+              "summary": "Parse the JSON document at *filepath*, or return *default*.",
+              "line": 907,
+              "deprecated": false
+            },
+            {
+              "name": "write_json",
+              "qualname": "FileUtils.write_json",
+              "kind": "classmethod",
+              "signature": "(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None",
+              "summary": "Serialise *data* to *filepath* atomically, creating parent dirs.",
+              "line": 934,
+              "deprecated": false
+            },
+            {
               "name": "atomic_write_text",
               "qualname": "FileUtils.atomic_write_text",
               "kind": "staticmethod",
               "signature": "(filepath: str, content: str, encoding: str = 'utf-8') -> None",
               "summary": "Write text to a file atomically.",
-              "line": 907,
+              "line": 970,
               "deprecated": false
             },
             {
@@ -9181,7 +9208,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str",
               "summary": "Copies a file to a specified folder, ensuring the folder exists.",
-              "line": 956,
+              "line": 1019,
               "deprecated": false
             },
             {
@@ -9190,7 +9217,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]",
               "summary": "Moves one or more files to a specified folder.",
-              "line": 995,
+              "line": 1058,
               "deprecated": false
             },
             {
@@ -9199,7 +9226,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, _runner=None)",
               "summary": "Open the OS file manager showing ``path`` (selecting the file when supported, else",
-              "line": 1063,
+              "line": 1126,
               "deprecated": false
             },
             {
@@ -9208,7 +9235,7 @@
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 1098,
+              "line": 1161,
               "deprecated": false
             },
             {
@@ -9217,7 +9244,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 1181,
+              "line": 1244,
               "deprecated": false
             },
             {
@@ -9226,7 +9253,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 1251,
+              "line": 1314,
               "deprecated": false
             },
             {
@@ -9235,7 +9262,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 1298,
+              "line": 1361,
               "deprecated": false
             },
             {
@@ -9244,7 +9271,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 1351,
+              "line": 1414,
               "deprecated": false
             },
             {
@@ -9253,7 +9280,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 1373,
+              "line": 1436,
               "deprecated": false
             },
             {
@@ -9262,7 +9289,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 1494,
+              "line": 1557,
               "deprecated": false
             },
             {
@@ -9271,7 +9298,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Set the current json filepath.",
-              "line": 1678,
+              "line": 1742,
               "deprecated": false
             },
             {
@@ -9280,7 +9307,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Get the current json filepath.",
-              "line": 1692,
+              "line": 1756,
               "deprecated": false
             },
             {
@@ -9289,7 +9316,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, value, file=None)",
               "summary": "**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;",
-              "line": 1706,
+              "line": 1770,
               "deprecated": false
             },
             {
@@ -9298,7 +9325,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, file=None)",
               "summary": "**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;",
-              "line": 1744,
+              "line": 1808,
               "deprecated": false
             }
           ]
@@ -10461,7 +10488,7 @@
         {
           "name": "Metadata",
           "summary": "Public interface for metadata operations.",
-          "line": 410,
+          "line": 419,
           "bases": [
             "MetadataInternal"
           ],
@@ -10472,7 +10499,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Any, *keys: str, mode: str = 'metadata') -> Any",
               "summary": "Unified get method for metadata and tags.",
-              "line": 418,
+              "line": 427,
               "deprecated": false
             },
             {
@@ -10481,7 +10508,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Any, mode: str = 'metadata', **kwargs) -> None",
               "summary": "Unified set method for metadata and tags.",
-              "line": 454,
+              "line": 463,
               "deprecated": false
             }
           ]

@@ -904,6 +904,69 @@ class FileUtils(HelpMixin):
             traceback.print_exc()
 
     @staticmethod
+    def read_json(filepath, default=None, encoding: str = "utf-8"):
+        """Parse the JSON document at *filepath*, or return *default*.
+
+        Tolerant of BOTH halves of "cannot be read": the file being absent or
+        unreadable (``OSError``) and its contents not being JSON
+        (``ValueError``, which ``json.JSONDecodeError`` subclasses). The
+        package previously re-derived this with at least six different catch
+        sets -- ``JSONDecodeError`` alone, ``ValueError``,
+        ``(OSError, ValueError)``, ``FileNotFoundError`` ... -- which are not
+        equivalent: ``JSONDecodeError`` does not catch a missing file, so half
+        the call sites raised where the other half fell back.
+
+        Parameters:
+            filepath (str): Path to the JSON document.
+            default: Returned when the file cannot be read or parsed.
+            encoding (str): Text encoding (default "utf-8").
+
+        Returns:
+            The decoded document, or *default*.
+        """
+        try:
+            with open(filepath, "r", encoding=encoding) as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return default
+
+    @classmethod
+    def write_json(
+        cls,
+        filepath,
+        data,
+        *,
+        indent=2,
+        encoding: str = "utf-8",
+        sort_keys: bool = False,
+    ) -> None:
+        """Serialise *data* to *filepath* atomically, creating parent dirs.
+
+        Serialises BEFORE touching the file, which is the whole difference
+        from the retired :meth:`set_json`: that one truncated the target and
+        then serialised, so a value ``json`` could not encode destroyed the
+        previous contents. Here an unencodable value raises with the existing
+        file untouched, and the write itself goes through
+        :meth:`atomic_write_text`, so a reader sees either the old document or
+        the complete new one.
+
+        Parameters:
+            filepath (str): Destination path; missing parents are created.
+            data: Any JSON-serialisable value.
+            indent: ``json.dumps`` indent; ``None`` for the compact form.
+            encoding (str): Text encoding (default "utf-8").
+            sort_keys (bool): Sort object keys, for a stable diff.
+
+        Raises:
+            TypeError: *data* is not JSON-serialisable (before any write).
+        """
+        content = json.dumps(data, indent=indent, sort_keys=sort_keys)
+        parent = os.path.dirname(os.path.abspath(os.fspath(filepath)))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        cls.atomic_write_text(filepath, content, encoding=encoding)
+
+    @staticmethod
     def atomic_write_text(filepath: str, content: str, encoding: str = "utf-8") -> None:
         """Write text to a file atomically.
 
@@ -1655,8 +1718,9 @@ class FileUtils(HelpMixin):
         "release. It keeps a process-global file path set by set_json_file, "
         "validates with bare asserts that vanish under `python -O`, and "
         "truncates the file before serialising, so a failed dumps loses it. "
-        "Use json.dumps with FileUtils.atomic_write_text (and json.loads on a "
-        "normal read) instead."
+        "Use FileUtils.write_json / FileUtils.read_json instead: they are "
+        "atomic, take an explicit path, and serialise before touching the "
+        "target."
     )
 
     @classmethod

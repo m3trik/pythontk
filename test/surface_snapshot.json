@@ -1100,6 +1100,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "read_json",
+    "qualname": "FileUtils.read_json",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "register_dds_codec",
     "qualname": "ImgUtils.register_dds_codec",
@@ -1467,6 +1474,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "validate_image_integrity",
     "qualname": "ImgUtils.validate_image_integrity",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "write_json",
+    "qualname": "FileUtils.write_json",
     "tier": "bare"
   },
   {
