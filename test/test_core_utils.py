@@ -17,6 +17,7 @@ invisible to unittest discovery and silently never ran.
 Run with:
     python -m pytest test_core_utils.py -q
 """
+
 import unittest
 
 from pythontk import CoreUtils
@@ -116,6 +117,100 @@ class TestTeardownGuard(unittest.TestCase):
         with self.assertLogs("pythontk.core_utils._core_utils", level="WARNING"):
             with CoreUtils.teardown_guard(what="thing"):
                 raise RuntimeError("boom")
+
+
+class TestListifyThreadingPolicy(unittest.TestCase):
+    """``listify(threading=True)`` builds a ThreadPoolExecutor per call.
+
+    Measured on 2/200/2000-item lists, that is a LOSS for every pure-Python
+    and stat-bound method it decorated -- 2.4x to 173x slower, worst at the
+    small list sizes real callers pass:
+
+        format_path                6.0x - 48.7x slower
+        convert_to_relative_path   2.4x - 18.3x
+        move_decimal_point         9.7x - 34.9x
+        clamp                     33.8x - 98.1x
+        set_case                  29.1x - 173.0x
+        split_delimited_string    34.8x - 158.5x
+        truncate                  25.6x - 151.9x
+        time_stamp                 1.4x -  9.7x   (os.path.getmtime; still a loss)
+
+    ``create_mask`` is the one real winner -- numpy/PIL release the GIL, and
+    it measured 0.56x / 0.25x / 0.21x the serial time on 2/20/100 1024px
+    images -- so it KEEPS the flag. This test pins both halves of that split,
+    since the cost is invisible at every call site.
+    """
+
+    #: Decorated methods measured slower threaded; the flag must be gone.
+    SERIAL = (
+        ("FileUtils", "format_path", ("C:/a/b.txt", "C:/a/c.txt"), ()),
+        (
+            "FileUtils",
+            "convert_to_relative_path",
+            ("C:/a/b.txt", "C:/a/c.txt"),
+            ("C:/a",),
+        ),
+        ("MathUtils", "move_decimal_point", (1.0, 2.0), (2,)),
+        ("MathUtils", "clamp", (1.0, 2.0), ()),
+        ("StrUtils", "set_case", ("ab", "cd"), ()),
+        ("StrUtils", "split_delimited_string", ("a,b", "c,d"), ()),
+        ("StrUtils", "truncate", ("x" * 200, "y" * 200), ()),
+        ("StrUtils", "time_stamp", (__file__, __file__), ()),
+    )
+
+    def _count_pools(self, call):
+        """Run *call* with the executor the decorator uses swapped for a
+        counting stand-in, and report how many pools it built."""
+        import pythontk.core_utils._core_utils as cu
+
+        built = []
+        real = cu.ThreadPoolExecutor
+
+        class Counting(real):
+            def __init__(self, *a, **kw):
+                built.append(1)
+                super().__init__(*a, **kw)
+
+        cu.ThreadPoolExecutor = Counting
+        try:
+            call()
+        finally:
+            cu.ThreadPoolExecutor = real
+        return len(built)
+
+    def test_pure_python_methods_do_not_build_a_thread_pool(self):
+        import pythontk as ptk
+
+        for cls_name, meth, items, extra in self.SERIAL:
+            with self.subTest(method=f"{cls_name}.{meth}"):
+                fn = getattr(getattr(ptk, cls_name), meth)
+                n = self._count_pools(lambda: fn(list(items), *extra))
+                self.assertEqual(
+                    n,
+                    0,
+                    f"{cls_name}.{meth} built {n} thread pool(s); it was "
+                    "measured slower threaded and must run serially",
+                )
+
+    def test_create_mask_keeps_threading(self):
+        """The deliberate hold-out: it is the only decoration that measured
+        FASTER threaded, so a well-meaning sweep must not strip it too."""
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("PIL not available")
+        import pythontk as ptk
+
+        imgs = [Image.new("RGBA", (8, 8), (1, 2, 3, 255)) for _ in range(2)]
+        n = self._count_pools(lambda: ptk.ImgUtils.create_mask(imgs, (1, 2, 3, 255)))
+        self.assertEqual(n, 1, "create_mask must stay threaded -- it is 4.8x faster")
+
+    def test_a_scalar_call_never_builds_a_pool(self):
+        """Pre-existing guard, pinned here because the split above is only
+        safe while it holds: a single item has nothing to parallelize."""
+        import pythontk as ptk
+
+        self.assertEqual(self._count_pools(lambda: ptk.StrUtils.set_case("solo")), 0)
 
 
 if __name__ == "__main__":

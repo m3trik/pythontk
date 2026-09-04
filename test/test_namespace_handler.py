@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_namespace_handler.py -v
     python test_namespace_handler.py
 """
+
 import unittest
 
 from pythontk.core_utils.namespace_handler import NamespaceHandler, Placeholder
@@ -290,9 +291,7 @@ class NamespaceHandlerTest(BaseTestCase):
 
         # get() on a fresh placeholder must return the value, not the default.
         handler2 = NamespaceHandler(owner=self.owner)
-        handler2.set_placeholder(
-            "lazy", Placeholder(dict, factory=lambda: {"made": 2})
-        )
+        handler2.set_placeholder("lazy", Placeholder(dict, factory=lambda: {"made": 2}))
         self.assertEqual(handler2.get("lazy", "DEFAULT"), {"made": 2})
 
         # resolve_all_placeholders must not raise.
@@ -383,6 +382,113 @@ class NamespaceHandlerTest(BaseTestCase):
         repr_str = repr(handler)
         self.assertIn("NamespaceHandler", repr_str)
         self.assertIn("test_handler", repr_str)
+
+
+class WeakrefNonReferenceableTest(BaseTestCase):
+    """A value that cannot be weak-referenced corrupted the whole handler.
+
+    All three write paths (``__setattr__``, ``__setitem__``, and the resolver
+    cache) caught the ``TypeError`` from ``WeakValueDictionary[k] = v`` and
+    then wrote the BARE value into ``.data`` -- the mapping's private backing
+    store, whose values must be callables returning the referent. Every
+    subsequent read calls it, so one ``handler.label = "text"`` made read,
+    ``in``, ``keys()`` and iteration all raise ``TypeError: 'str' object is
+    not callable``. Not one bad key: the entire namespace.
+
+    str / int / tuple are the ordinary cases -- none of them support weak
+    references, and a namespace of settings is full of them.
+    """
+
+    class Owner:
+        pass
+
+    def _handler(self):
+        return NamespaceHandler(self.Owner(), "pythontk", use_weakref=True)
+
+    # -- the three write paths ---------------------------------------------
+
+    def test_setitem_of_a_str_survives_readback(self):
+        h = self._handler()
+        h["label"] = "a plain string"
+        self.assertEqual(h["label"], "a plain string")
+
+    def test_setattr_of_a_str_survives_readback(self):
+        h = self._handler()
+        h.label = "a plain string"
+        self.assertEqual(h.label, "a plain string")
+
+    def test_resolver_cache_of_a_non_referenceable_value(self):
+        h = NamespaceHandler(
+            self.Owner(),
+            "pythontk",
+            use_weakref=True,
+            resolver=lambda k: f"resolved:{k}",
+        )
+        self.assertEqual(h["anything"], "resolved:anything")
+        self.assertEqual(h["anything"], "resolved:anything")  # again, from cache
+
+    # -- the container stays coherent afterwards ---------------------------
+
+    def test_container_protocol_still_works(self):
+        h = self._handler()
+        h["label"] = "text"
+        self.assertIn("label", h)
+        self.assertIn("label", h.keys())
+        self.assertEqual(len(h.keys()), 1)
+
+    def test_every_non_referenceable_builtin_round_trips(self):
+        h = self._handler()
+        for i, value in enumerate(("text", 42, 3.5, (1, 2), True, b"bytes")):
+            with self.subTest(value=value):
+                h[f"k{i}"] = value
+                self.assertEqual(h[f"k{i}"], value)
+
+    def test_none_reads_as_absent_under_weakref(self):
+        """Known divergence, pinned rather than fixed -- and NOT introduced by
+        the strong-ref repair above.
+
+        ``WeakValueDictionary`` cannot represent a ``None`` value: its
+        ``__getitem__`` calls the stored ref and treats a ``None`` result as
+        "the referent died", so a genuinely-stored ``None`` is indistinguishable
+        from a dead entry. With ``use_weakref=False`` the same write round-trips
+        normally, so the two modes disagree.
+
+        Left as-is because the module already reads ``None`` as absent -- the
+        resolver cache only stores ``if resolved is not None`` -- and making
+        the modes agree means either intercepting six read paths or changing
+        what ``use_weakref=False`` does to existing callers. Deciding which
+        mode is correct is a maintainer call, logged in .claude/BACKLOG.md.
+        """
+        h = self._handler()
+        h["n"] = None
+        self.assertNotIn("n", h)
+
+        strong = NamespaceHandler(self.Owner(), "pythontk", use_weakref=False)
+        strong["n"] = None
+        self.assertIn("n", strong)
+        self.assertIsNone(strong["n"])
+
+    def test_weak_referenceable_values_are_still_weak(self):
+        """The fix must not turn the whole namespace into strong refs -- that
+        is the leak ``use_weakref=True`` exists to avoid."""
+        import gc
+
+        class Big:
+            pass
+
+        h = self._handler()
+        obj = Big()
+        h["big"] = obj
+        self.assertIs(h["big"], obj)
+        del obj
+        gc.collect()
+        self.assertNotIn("big", h, "a weak-referenceable value must not be pinned")
+
+    def test_delete_removes_a_strongly_held_value(self):
+        h = self._handler()
+        h["label"] = "text"
+        del h["label"]
+        self.assertNotIn("label", h)
 
 
 if __name__ == "__main__":

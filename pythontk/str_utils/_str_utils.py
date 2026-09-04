@@ -236,7 +236,7 @@ class StrUtils(CoreUtils):
         return text
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @CoreUtils.listify
     def set_case(string, case="title"):
         """Format the given string(s) in the given case.
 
@@ -379,7 +379,7 @@ class StrUtils(CoreUtils):
         return sorted(matches, key=lambda x: len(x), reverse=reverse)
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @CoreUtils.listify
     def split_delimited_string(
         string: str,
         delimiter: str = "|",
@@ -622,7 +622,7 @@ class StrUtils(CoreUtils):
         return result
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @CoreUtils.listify
     def truncate(string, length=75, mode="start", insert="..", head=None):
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.
@@ -1876,7 +1876,7 @@ class StrUtils(CoreUtils):
     _TIME_STAMP_RE = None  # compiled lazily below
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @CoreUtils.listify
     def time_stamp(filepath, stamp="%m-%d-%Y  %H:%M"):
         """Attach or detach a modified timestamp and date to/from a given file path.
 

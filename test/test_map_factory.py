@@ -1193,11 +1193,16 @@ class TestTextureProcessorLogic(unittest.TestCase):
             "imgtk_test",
             "im_Normal_OpenGL.png",
         )
-        if os.path.exists(asset):
-            self.assertEqual(
-                MapFactory.detect_normal_map_format(asset, threshold=0.15),
-                "OpenGL",
-            )
+        # NOT guarded by os.path.exists: this is the only reference to
+        # test/test_assets/ anywhere in the suite, and behind that guard the
+        # test reported green with the fixture deleted -- a zero-sample pass
+        # on the one assertion that reads a real bake rather than a generated
+        # hemisphere. A missing fixture must fail loudly.
+        self.assertTrue(os.path.exists(asset), f"missing test fixture: {asset}")
+        self.assertEqual(
+            MapFactory.detect_normal_map_format(asset, threshold=0.15),
+            "OpenGL",
+        )
 
     def test_fine_detail_survives_the_downsample_shortcut(self):
         """A low-amplitude, high-frequency map must not read as indeterminate.

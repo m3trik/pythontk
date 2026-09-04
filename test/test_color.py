@@ -376,5 +376,98 @@ class TestPalette(unittest.TestCase):
             self.assertIn(key, p)
 
 
+class TestPaletteWritePaths(unittest.TestCase):
+    """``Palette`` wrapped on ``__init__``/``__setitem__`` only.
+
+    Every other dict write path let a raw value in, so a Palette could hold
+    plain strings that later code indexes as ``Color``/``ColorPair``:
+
+        update / setdefault / |=   stored the raw str
+        copy / |                   returned a plain dict, losing the class
+
+    ``copy()`` is the likeliest trap -- ``Palette.override`` and ``.alias``
+    both build derived palettes, and a consumer reaching for the dict idiom
+    instead got something that no longer wraps on write.
+    """
+
+    HEX = "#112233"
+
+    @staticmethod
+    def _types():
+        from pythontk import Palette, Color, ColorPair
+
+        return Palette, Color, ColorPair
+
+    def _assert_wrapped(self, palette, key, label):
+        Palette, Color, _ = self._types()
+        self.assertIsInstance(
+            palette,
+            Palette,
+            f"{label} must return a Palette, got {type(palette).__name__}",
+        )
+        self.assertIsInstance(
+            palette[key],
+            Color,
+            f"{label} must wrap its value, got {type(palette[key]).__name__}",
+        )
+
+    def test_update_wraps(self):
+        Palette, Color, ColorPair = self._types()
+        p = Palette()
+        p.update({"a": self.HEX})
+        self._assert_wrapped(p, "a", "update")
+
+    def test_update_wraps_kwargs_and_pairs(self):
+        Palette, Color, ColorPair = self._types()
+        p = Palette()
+        p.update(a=self.HEX, b=("#445566", "#778899"))
+        self.assertIsInstance(p["a"], Color)
+        self.assertIsInstance(p["b"], ColorPair)
+
+    def test_setdefault_wraps_and_returns_the_wrapped_value(self):
+        Palette, Color, ColorPair = self._types()
+        p = Palette()
+        returned = p.setdefault("a", self.HEX)
+        self._assert_wrapped(p, "a", "setdefault")
+        self.assertIsInstance(
+            returned, Color, "setdefault must RETURN the wrapped value"
+        )
+
+    def test_setdefault_leaves_an_existing_entry_alone(self):
+        Palette, Color, ColorPair = self._types()
+        p = Palette(a=self.HEX)
+        first = p["a"]
+        self.assertIs(p.setdefault("a", "#FFFFFF"), first)
+
+    def test_copy_keeps_the_class(self):
+        Palette, Color, ColorPair = self._types()
+        p = Palette(a=self.HEX)
+        self._assert_wrapped(p.copy(), "a", "copy")
+
+    def test_or_keeps_the_class_and_wraps(self):
+        Palette, Color, ColorPair = self._types()
+        p = Palette(a=self.HEX)
+        self._assert_wrapped(p | {"b": "#445566"}, "b", "|")
+
+    def test_ror_keeps_the_class_and_wraps(self):
+        Palette, Color, ColorPair = self._types()
+        """A plain dict on the LEFT must still produce a Palette."""
+        p = Palette(a=self.HEX)
+        self._assert_wrapped({"b": "#445566"} | p, "b", "reflected |")
+
+    def test_ior_wraps(self):
+        Palette, Color, ColorPair = self._types()
+        p = Palette(a=self.HEX)
+        p |= {"b": "#445566"}
+        self._assert_wrapped(p, "b", "|=")
+
+    def test_fromkeys_was_already_correct(self):
+        Palette, Color, ColorPair = self._types()
+        """Pinned, not fixed: ``dict.fromkeys`` on a subclass routes through
+        ``__setitem__``, so this one always wrapped. It is here so a later
+        override of the write paths does not accidentally break it."""
+        self._assert_wrapped(Palette.fromkeys(["a"], self.HEX), "a", "fromkeys")
+
+
 if __name__ == "__main__":
     unittest.main()

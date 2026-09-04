@@ -1176,7 +1176,7 @@ class FileUtils(HelpMixin):
         return results
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @CoreUtils.listify
     def format_path(
         p: Union[str, List[str]],
         section: Union[str, None] = None,
@@ -1246,7 +1246,7 @@ class FileUtils(HelpMixin):
         return result
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @CoreUtils.listify
     def convert_to_relative_path(
         file_path: str,
         base_dir: str,
