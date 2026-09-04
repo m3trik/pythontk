@@ -42,7 +42,7 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `net_utils/preview_server.py::PreviewServer.url` — was `(self) -> Optional[str]`
 - `net_utils/preview_server.py::PreviewServer.version` — was `(self) -> int`
 
-## Added (153)
+## Added (154)
 
 - `core_utils/color.py::Palette.copy(self) -> 'Palette'`
 - `core_utils/color.py::Palette.setdefault(self, key: str, default: object = None) -> object`
@@ -93,6 +93,7 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `core_utils/execution_monitor/_sidecar.py::run_indicator(size: int | None = None, pos=None, gif_path: str | None = None, parent_pid: int | None = None) -> int`
 - `core_utils/execution_monitor/_sidecar.py::run_watchdog(pid: int, heartbeat_path: str, timeout: float, check_interval: float = 1.0, kill_tree: bool = True, stop_file: str | None = None) -> int`
 - `core_utils/execution_monitor/_sidecar.py::watch_parent(root, pid: int | None, on_gone=None) -> None`
+- `core_utils/logging_mixin.py::LoggerExt.set_default_text_handler(handler: Union[type, object, None]) -> None`
 - `core_utils/test_sandbox.py::TestSandbox(class)`
 - `core_utils/test_sandbox.py::TestSandbox.activate(cls) -> str`
 - `core_utils/test_sandbox.py::TestSandbox.browser(cls) -> None`

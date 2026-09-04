@@ -6591,12 +6591,21 @@
               "deprecated": false
             },
             {
+              "name": "set_default_text_handler",
+              "qualname": "LoggerExt.set_default_text_handler",
+              "kind": "staticmethod",
+              "signature": "(handler: Union[type, object, None]) -> None",
+              "summary": "Set the process-wide DEFAULT text handler class or instance.",
+              "line": 523,
+              "deprecated": false
+            },
+            {
               "name": "strip_html",
               "qualname": "LoggerExt.strip_html",
               "kind": "classmethod",
               "signature": "(cls, text: str) -> str",
               "summary": "Remove HTML tags from *text*, leaving the visible plain text.",
-              "line": 641,
+              "line": 692,
               "deprecated": false
             },
             {
@@ -6605,7 +6614,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: str) -> str",
               "summary": "Get the color code for a given log level.",
-              "line": 1399,
+              "line": 1450,
               "deprecated": false
             },
             {
@@ -6614,7 +6623,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, format_str: str) -> None",
               "summary": "Register a new HTML preset.",
-              "line": 1416,
+              "line": 1467,
               "deprecated": false
             },
             {
@@ -6623,7 +6632,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str) -> str",
               "summary": "Get an HTML preset by name.",
-              "line": 1421,
+              "line": 1472,
               "deprecated": false
             },
             {
@@ -6632,7 +6641,7 @@
               "kind": "classmethod",
               "signature": "(cls, message: str, level: str, preset: str = None) -> str",
               "summary": "Format a message using HTML presets.",
-              "line": 1426,
+              "line": 1477,
               "deprecated": false
             }
           ]
@@ -6640,7 +6649,7 @@
         {
           "name": "DefaultTextLogHandler",
           "summary": "A generic logging handler that writes logs to any widget supporting",
-          "line": 1441,
+          "line": 1492,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -6651,7 +6660,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1462,
+              "line": 1513,
               "deprecated": false
             },
             {
@@ -6660,7 +6669,7 @@
               "kind": "method",
               "signature": "(self, level: str) -> str",
               "summary": "",
-              "line": 1493,
+              "line": 1544,
               "deprecated": false
             }
           ]
@@ -6668,7 +6677,7 @@
         {
           "name": "RingBufferHandler",
           "summary": "In-memory capped ring buffer of log records.",
-          "line": 1497,
+          "line": 1548,
           "bases": [
             "internal_logging.Handler"
           ],
@@ -6679,7 +6688,7 @@
               "kind": "method",
               "signature": "(self, record: internal_logging.LogRecord) -> None",
               "summary": "",
-              "line": 1511,
+              "line": 1562,
               "deprecated": false
             },
             {
@@ -6688,7 +6697,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "",
-              "line": 1515,
+              "line": 1566,
               "deprecated": false
             },
             {
@@ -6697,7 +6706,7 @@
               "kind": "method",
               "signature": "(self, formatter: internal_logging.Formatter = None) -> str",
               "summary": "Render buffered records to a single plain-text string.",
-              "line": 1518,
+              "line": 1569,
               "deprecated": false
             }
           ]
@@ -6705,7 +6714,7 @@
         {
           "name": "TableMixin",
           "summary": "Mixin for formatting data as ASCII tables.",
-          "line": 1535,
+          "line": 1586,
           "bases": [],
           "members": [
             {
@@ -6714,7 +6723,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str",
               "summary": "Formats a list of lists as an ASCII table.",
-              "line": 1538,
+              "line": 1589,
               "deprecated": false
             },
             {
@@ -6723,7 +6732,7 @@
               "kind": "method",
               "signature": "(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None",
               "summary": "Logs a formatted table.",
-              "line": 1633,
+              "line": 1684,
               "deprecated": false
             },
             {
@@ -6732,7 +6741,7 @@
               "kind": "method",
               "signature": "(self, title: str, items: List[str], level: str = 'info') -> None",
               "summary": "Log a titled list of related lines as a single record.",
-              "line": 1667,
+              "line": 1718,
               "deprecated": false
             }
           ]
@@ -6740,7 +6749,7 @@
         {
           "name": "LoggingMixin",
           "summary": "Mixin class for logging utilities.",
-          "line": 1710,
+          "line": 1761,
           "bases": [
             "TableMixin"
           ],
@@ -6751,7 +6760,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "The patched logger for this class (one per class, created lazily).",
-              "line": 1757,
+              "line": 1808,
               "deprecated": false
             },
             {
@@ -6760,7 +6769,7 @@
               "kind": "method",
               "signature": "(self, logger: Optional[internal_logging.Logger]) -> None",
               "summary": "Route THIS instance's log output through *logger*.",
-              "line": 1775,
+              "line": 1826,
               "deprecated": false
             },
             {
@@ -6769,7 +6778,7 @@
               "kind": "method",
               "signature": "(cls) -> internal_logging.Logger",
               "summary": "A manager-registered sibling of ``logger`` (``<name>.class``).",
-              "line": 1805,
+              "line": 1856,
               "deprecated": false
             },
             {
@@ -6778,7 +6787,7 @@
               "kind": "method",
               "signature": "(cls)",
               "summary": "Access to Python's internal logging module (aliased).",
-              "line": 1821,
+              "line": 1872,
               "deprecated": false
             },
             {
@@ -6787,7 +6796,7 @@
               "kind": "classmethod",
               "signature": "(cls, level: int | str)",
               "summary": "Set log level for the class logger and its handlers.",
-              "line": 1826,
+              "line": 1877,
               "deprecated": false
             },
             {
@@ -6796,7 +6805,7 @@
               "kind": "classmethod",
               "signature": "(cls, filename: Optional[str], level: Union[int, str] = internal_logging.NOTSET) -> None",
               "summary": "Tee this class's log output to *filename* (or ``None`` to stop).",
-              "line": 1843,
+              "line": 1894,
               "deprecated": false
             },
             {
@@ -6805,7 +6814,7 @@
               "kind": "classmethod",
               "signature": "(cls, capacity: int = 2000, level: Union[int, str] = internal_logging.NOTSET) -> None",
               "summary": "Capture this class's log records into a capped ring buffer.",
-              "line": 1854,
+              "line": 1905,
               "deprecated": false
             },
             {
@@ -6814,7 +6823,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Stop ring-buffer capture and discard buffered records.",
-              "line": 1865,
+              "line": 1916,
               "deprecated": false
             },
             {
@@ -6823,7 +6832,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Drop buffered records but keep capturing.",
-              "line": 1870,
+              "line": 1921,
               "deprecated": false
             },
             {
@@ -6832,7 +6841,7 @@
               "kind": "classmethod",
               "signature": "(cls, target: Union[str, object, None] = None, mode: str = 'w', encoding: str = 'utf-8') -> str",
               "summary": "Render the ring buffer to text, optionally writing it to *target*.",
-              "line": 1875,
+              "line": 1926,
               "deprecated": false
             }
           ]

@@ -275,7 +275,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class LevelAwareFormatter(internal_logging.Formatter)`
   - methods: format
 - `class LoggerExt`
-  - methods: patch, strip_html, get_color, register_html_preset, get_html_preset, format_message_as_html
+  - methods: patch, set_default_text_handler, strip_html, get_color, register_html_preset, get_html_preset, format_message_as_html
 - `class DefaultTextLogHandler(internal_logging.Handler)`
   - methods: emit, get_color
 - `class RingBufferHandler(internal_logging.Handler)`

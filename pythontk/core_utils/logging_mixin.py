@@ -253,9 +253,13 @@ class LoggerExt:
     def _patch_logger_methods(logger: internal_logging.Logger) -> None:
         """Patch logger with additional methods."""
         # Handle methods that don't need self (take no args or non-self first arg)
+        # ``log_link`` is a pure string builder and genuinely needs no logger.
+        # ``set_text_handler`` / ``get_text_handler`` used to live here too,
+        # and that was the bug: bound without the logger they could only write
+        # a class attribute, so ``self.logger.set_text_handler(X)`` -- which
+        # reads as configuring THIS logger -- changed it for every unrelated
+        # class in the process.
         direct_methods = {
-            "set_text_handler": LoggerExt._set_text_handler,
-            "get_text_handler": LoggerExt._get_text_handler,
             "log_link": LoggerExt._log_link,
         }
         for name, method in direct_methods.items():
@@ -269,6 +273,8 @@ class LoggerExt:
             return wrapper
 
         wrapped_methods = {
+            "set_text_handler": LoggerExt._set_text_handler,
+            "get_text_handler": LoggerExt._get_text_handler,
             "setLevel": LoggerExt._set_level,
             "set_log_prefix": LoggerExt._set_log_prefix,
             "set_log_suffix": LoggerExt._set_log_suffix,
@@ -414,7 +420,7 @@ class LoggerExt:
                 kwargs.get("filename", "logfile.log")
             )
         elif handler_type == "text_widget":
-            handler_cls = LoggerExt._get_text_handler()
+            handler_cls = LoggerExt._get_text_handler(logger)
             # Check if the handler accepts monospace argument
             sig = inspect.signature(handler_cls)
             handler_kwargs = {"widget": kwargs.get("widget")}
@@ -514,17 +520,62 @@ class LoggerExt:
             handler.setLevel(level)
 
     @staticmethod
-    def _set_text_handler(handler: Union[type, object]) -> None:
-        """Set a custom text handler class or instance."""
+    def set_default_text_handler(handler: Union[type, object, None]) -> None:
+        """Set the process-wide DEFAULT text handler class or instance.
+
+        The deliberate form of what used to happen by accident. Before this,
+        every ``logger.set_text_handler(...)`` wrote a class attribute, so one
+        panel configuring its own logger silently gave every other logger in
+        the process the same handler -- and panels that call
+        ``setup_logging_redirect`` WITHOUT setting a handler (blendertk's
+        ``telescope_rig`` / ``shader_templates`` / ``mat_updater``, extapps'
+        ``substance_workflow``) were relying on that: whether their log pane
+        got a Qt handler depended on which unrelated panel had opened first.
+
+        A host that genuinely wants one Qt handler for the whole process --
+        uitk registering ``TextEditLogHandler`` at startup, say -- calls this
+        once. ``None`` restores :class:`DefaultTextLogHandler`. A per-logger
+        :meth:`_set_text_handler` still wins over it.
+        """
         LoggerExt._text_handler = handler
 
+    #: Attribute the per-logger handler is stashed under. Namespaced because
+    #: it lives on a stdlib ``Logger`` shared with every other library.
+    _TEXT_HANDLER_ATTR = "_ptk_text_handler"
+
     @staticmethod
-    def _get_text_handler() -> type:
-        if LoggerExt._text_handler is None:
+    def _set_text_handler(logger, handler: Union[type, object]) -> None:
+        """Set a custom text handler class or instance for THIS logger.
+
+        Stored on the logger, not on :class:`LoggerExt`. Assigning the class
+        attribute made one class's call reconfigure every logger in the
+        process -- which is why extapps' compositor attaches its handler by
+        hand instead of using this seam.
+
+        :attr:`LoggerExt._text_handler` remains the process-wide DEFAULT for a
+        caller that deliberately wants one; a per-logger handler wins over it.
+        """
+        setattr(logger, LoggerExt._TEXT_HANDLER_ATTR, handler)
+
+    @staticmethod
+    def _get_text_handler(logger=None) -> type:
+        """The text handler CLASS for *logger*, else the process default.
+
+        Always a class, whether a class or an instance was set, because
+        :meth:`_add_handler` constructs it.
+        """
+        handler = (
+            getattr(logger, LoggerExt._TEXT_HANDLER_ATTR, None)
+            if logger is not None
+            else None
+        )
+        if handler is None:
+            handler = LoggerExt._text_handler
+        if handler is None:
             return DefaultTextLogHandler
-        if isinstance(LoggerExt._text_handler, type):
-            return LoggerExt._text_handler  # it's a class
-        return LoggerExt._text_handler.__class__  # it's an instance
+        if isinstance(handler, type):
+            return handler  # it's a class
+        return handler.__class__  # it's an instance
 
     @staticmethod
     def _log_raw(self, message: str) -> None:

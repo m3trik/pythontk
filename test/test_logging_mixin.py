@@ -1409,5 +1409,117 @@ class CharWidthTest(BaseTestCase):
             LoggerExt._wcwidth_fn = None
 
 
+class TextHandlerScopeTest(unittest.TestCase):
+    """``set_text_handler`` looked per-logger and was process-global.
+
+    It is attached to every logger by ``_patch_logger_methods``, so
+    ``self.logger.set_text_handler(X)`` reads as configuring THIS logger. It
+    assigned ``LoggerExt._text_handler`` -- a class attribute -- because it
+    sat in the ``direct_methods`` map, the one for "methods that don't need
+    self". Setting it on one class therefore changed it for every unrelated
+    class in the process.
+
+    It had already cost a consumer: extapps' compositor slots attach their
+    handler by hand with the comment "``_set_text_handler`` would force this
+    handler process-wide", bypassing the seam that exists for exactly that job.
+
+    Per-logger now, with the class attribute kept as the process-wide DEFAULT
+    so a deliberate global still works.
+    """
+
+    def setUp(self):
+        from pythontk.core_utils.logging_mixin import LoggerExt
+
+        self._prior = LoggerExt._text_handler
+        self.addCleanup(setattr, LoggerExt, "_text_handler", self._prior)
+
+    @staticmethod
+    def _pair():
+        from pythontk import LoggingMixin
+
+        class Alpha(LoggingMixin):
+            pass
+
+        class Beta(LoggingMixin):
+            pass
+
+        return Alpha(), Beta()
+
+    def test_setting_on_one_logger_leaves_another_alone(self):
+        class Custom:
+            pass
+
+        a, b = self._pair()
+        before = b.logger.get_text_handler()
+        a.logger.set_text_handler(Custom)
+        self.assertIs(a.logger.get_text_handler(), Custom)
+        self.assertIs(
+            b.logger.get_text_handler(),
+            before,
+            "an unrelated class's text handler was changed process-wide",
+        )
+
+    def test_the_class_attribute_is_still_the_process_default(self):
+        """A deliberate global default must keep working -- the defect was the
+        per-logger call leaking into it, not the default existing."""
+        from pythontk.core_utils.logging_mixin import LoggerExt
+
+        class GlobalDefault:
+            pass
+
+        LoggerExt._text_handler = GlobalDefault
+        a, b = self._pair()
+        self.assertIs(a.logger.get_text_handler(), GlobalDefault)
+        self.assertIs(b.logger.get_text_handler(), GlobalDefault)
+
+    def test_a_per_logger_handler_wins_over_the_default(self):
+        from pythontk.core_utils.logging_mixin import LoggerExt
+
+        class GlobalDefault:
+            pass
+
+        class Mine:
+            pass
+
+        LoggerExt._text_handler = GlobalDefault
+        a, b = self._pair()
+        a.logger.set_text_handler(Mine)
+        self.assertIs(a.logger.get_text_handler(), Mine)
+        self.assertIs(b.logger.get_text_handler(), GlobalDefault)
+
+    def test_an_instance_still_resolves_to_its_class(self):
+        """Documented behaviour of the getter: it returns a CLASS whether a
+        class or an instance was set, because _add_handler constructs it."""
+
+        class Custom:
+            pass
+
+        a, _ = self._pair()
+        a.logger.set_text_handler(Custom())
+        self.assertIs(a.logger.get_text_handler(), Custom)
+
+    def test_set_default_text_handler_is_the_deliberate_global(self):
+        """The seam that replaces the accident: a host wanting one handler
+        process-wide asks for it, instead of getting it from whichever panel
+        happened to open first."""
+        from pythontk.core_utils.logging_mixin import DefaultTextLogHandler, LoggerExt
+
+        class Shared:
+            pass
+
+        a, b = self._pair()
+        LoggerExt.set_default_text_handler(Shared)
+        self.assertIs(a.logger.get_text_handler(), Shared)
+        self.assertIs(b.logger.get_text_handler(), Shared)
+        LoggerExt.set_default_text_handler(None)
+        self.assertIs(a.logger.get_text_handler(), DefaultTextLogHandler)
+
+    def test_the_default_is_unchanged_when_nothing_is_set(self):
+        from pythontk.core_utils.logging_mixin import DefaultTextLogHandler
+
+        a, _ = self._pair()
+        self.assertIs(a.logger.get_text_handler(), DefaultTextLogHandler)
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)
