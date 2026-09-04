@@ -56,7 +56,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ColorPair`
   - methods: auto
 - `class Palette(dict)`
-  - methods: alias, override, status, axes, channels, ui, diff
+  - methods: update, setdefault, copy, alias, override, status, axes, channels, ui, diff
 
 ### `core_utils/doc_audit.py` — Audit markdown code examples against the live package surface.
 - `class DocAudit(help_mixin.HelpMixin)`

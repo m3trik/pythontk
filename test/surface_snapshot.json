@@ -1,0 +1,2830 @@
+[
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "allow_large_images",
+    "qualname": "ImgUtils.allow_large_images",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "alpha_sequence",
+    "qualname": "StrUtils.alpha_sequence",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "append_path",
+    "qualname": "FileUtils.append_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "apply_affix",
+    "qualname": "StrUtils.apply_affix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "are_identical",
+    "qualname": "ImgUtils.are_identical",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "are_similar",
+    "qualname": "CoreUtils.are_similar",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "assemble_atlas",
+    "qualname": "ImgUtils.assemble_atlas",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "assert_pathlike",
+    "qualname": "ImgUtils.assert_pathlike",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "atlas_pixel_rects",
+    "qualname": "ImgUtils.atlas_pixel_rects",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "atomic_write_text",
+    "qualname": "FileUtils.atomic_write_text",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "bit_array_to_list",
+    "qualname": "IterUtils.bit_array_to_list",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "bspline_basis",
+    "qualname": "MathUtils.bspline_basis",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "bspline_clamped_knots",
+    "qualname": "MathUtils.bspline_clamped_knots",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "cached_property",
+    "qualname": "CoreUtils.cached_property",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "calculate_rotation_distance",
+    "qualname": "MathUtils.calculate_rotation_distance",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "calculate_uv_padding",
+    "qualname": "MathUtils.calculate_uv_padding",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "catenary",
+    "qualname": "MathUtils.catenary",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "catenary_sag",
+    "qualname": "MathUtils.catenary_sag",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "clamp",
+    "qualname": "MathUtils.clamp",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "clamp_range",
+    "qualname": "MathUtils.clamp_range",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "collapse_delimiter_runs",
+    "qualname": "StrUtils.collapse_delimiter_runs",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "collapse_integer_sequence",
+    "qualname": "IterUtils.collapse_integer_sequence",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.vid_utils._vid_utils",
+    "name": "compress_video",
+    "qualname": "VidUtils.compress_video",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "compute_atlas_layout",
+    "qualname": "ImgUtils.compute_atlas_layout",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "convert_f_to_l",
+    "qualname": "ImgUtils.convert_f_to_l",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "convert_i_to_l",
+    "qualname": "ImgUtils.convert_i_to_l",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "convert_length_unit",
+    "qualname": "MathUtils.convert_length_unit",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "convert_rgb_to_gray",
+    "qualname": "ImgUtils.convert_rgb_to_gray",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "convert_rgb_to_hsv",
+    "qualname": "ImgUtils.convert_rgb_to_hsv",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "convert_to_relative_path",
+    "qualname": "FileUtils.convert_to_relative_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "copy_file",
+    "qualname": "FileUtils.copy_file",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "create_dir",
+    "qualname": "FileUtils.create_dir",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "create_image",
+    "qualname": "ImgUtils.create_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "create_mask",
+    "qualname": "ImgUtils.create_mask",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "cross_product",
+    "qualname": "MathUtils.cross_product",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "cycle",
+    "qualname": "CoreUtils.cycle",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "delimit_affix",
+    "qualname": "StrUtils.delimit_affix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "depalettize_image",
+    "qualname": "ImgUtils.depalettize_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "describe_lock",
+    "qualname": "FileUtils.describe_lock",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "dilate_image",
+    "qualname": "ImgUtils.dilate_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "distance_between_points",
+    "qualname": "MathUtils.distance_between_points",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "dot_product",
+    "qualname": "MathUtils.dot_product",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "dropped_channels",
+    "qualname": "ImgUtils.dropped_channels",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "effective_mode",
+    "qualname": "ImgUtils.effective_mode",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "encode_hdr_for_web",
+    "qualname": "ImgUtils.encode_hdr_for_web",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "enforce_mode",
+    "qualname": "ImgUtils.enforce_mode",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "ensure_image",
+    "qualname": "ImgUtils.ensure_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "ensure_ktx2_encoder",
+    "qualname": "ImgUtils.ensure_ktx2_encoder",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "ensure_pot",
+    "qualname": "ImgUtils.ensure_pot",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "eval_expression",
+    "qualname": "MathUtils.eval_expression",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "evaluate_sampled_progress",
+    "qualname": "MathUtils.evaluate_sampled_progress",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "exceeds_path_length",
+    "qualname": "FileUtils.exceeds_path_length",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "extract_channels",
+    "qualname": "ImgUtils.extract_channels",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "fill",
+    "qualname": "ImgUtils.fill",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "fill_empty_texels",
+    "qualname": "ImgUtils.fill_empty_texels",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "fill_masked_area",
+    "qualname": "ImgUtils.fill_masked_area",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "filter_dict",
+    "qualname": "IterUtils.filter_dict",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "filter_list",
+    "qualname": "IterUtils.filter_list",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "filter_results",
+    "qualname": "IterUtils.filter_results",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "find_extrema_indices",
+    "qualname": "IterUtils.find_extrema_indices",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "find_flat_interior_indices",
+    "qualname": "IterUtils.find_flat_interior_indices",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "find_str",
+    "qualname": "StrUtils.find_str",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "find_str_and_format",
+    "qualname": "StrUtils.find_str_and_format",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "fit_hermite_slopes",
+    "qualname": "MathUtils.fit_hermite_slopes",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "fit_into_tile",
+    "qualname": "MathUtils.fit_into_tile",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "flatten",
+    "qualname": "IterUtils.flatten",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "flip_rect_v",
+    "qualname": "ImgUtils.flip_rect_v",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "format_bit_depth",
+    "qualname": "ImgUtils.format_bit_depth",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "format_bytes",
+    "qualname": "FileUtils.format_bytes",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "format_bytes_delta",
+    "qualname": "FileUtils.format_bytes_delta",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "format_path",
+    "qualname": "FileUtils.format_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "format_return",
+    "qualname": "CoreUtils.format_return",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "format_suffix",
+    "qualname": "StrUtils.format_suffix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "free_space",
+    "qualname": "FileUtils.free_space",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "gaussian_blur",
+    "qualname": "ImgUtils.gaussian_blur",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "generate_geometric_sequence",
+    "qualname": "MathUtils.generate_geometric_sequence",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "generate_mipmaps",
+    "qualname": "ImgUtils.generate_mipmaps",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "get_angle_from_three_points",
+    "qualname": "MathUtils.get_angle_from_three_points",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "get_angle_from_two_vectors",
+    "qualname": "MathUtils.get_angle_from_two_vectors",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "get_attributes",
+    "qualname": "CoreUtils.get_attributes",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "get_background",
+    "qualname": "ImgUtils.get_background",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "get_base_texture_name",
+    "qualname": "ImgUtils.get_base_texture_name",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "get_center_of_two_points",
+    "qualname": "MathUtils.get_center_of_two_points",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "get_classes_from_path",
+    "qualname": "FileUtils.get_classes_from_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "get_derived_type",
+    "qualname": "CoreUtils.get_derived_type",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "get_dir_contents",
+    "qualname": "FileUtils.get_dir_contents",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "get_file_contents",
+    "qualname": "FileUtils.get_file_contents",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "get_file_info",
+    "qualname": "FileUtils.get_file_info",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.vid_utils._vid_utils",
+    "name": "get_frame_rate",
+    "qualname": "VidUtils.get_frame_rate",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "get_image_info",
+    "qualname": "ImgUtils.get_image_info",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "get_image_size",
+    "qualname": "ImgUtils.get_image_size",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "get_images",
+    "qualname": "ImgUtils.get_images",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "get_json",
+    "qualname": "FileUtils.get_json",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "get_json_file",
+    "qualname": "FileUtils.get_json_file",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "get_kmeans_threshold",
+    "qualname": "MathUtils.get_kmeans_threshold",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "get_magnitude",
+    "qualname": "MathUtils.get_magnitude",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "get_mangled_name",
+    "qualname": "StrUtils.get_mangled_name",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "get_matching_hierarchy_items",
+    "qualname": "StrUtils.get_matching_hierarchy_items",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "get_object_path",
+    "qualname": "FileUtils.get_object_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.vid_utils._vid_utils",
+    "name": "get_sequence_start_number",
+    "qualname": "VidUtils.get_sequence_start_number",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "get_text_between_delimiters",
+    "qualname": "StrUtils.get_text_between_delimiters",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "get_trailing_integers",
+    "qualname": "StrUtils.get_trailing_integers",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "get_two_sides_of_asa_triangle",
+    "qualname": "MathUtils.get_two_sides_of_asa_triangle",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "get_vector_from_two_points",
+    "qualname": "MathUtils.get_vector_from_two_points",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.vid_utils._vid_utils",
+    "name": "get_video_frame_rate",
+    "qualname": "VidUtils.get_video_frame_rate",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "has_attribute",
+    "qualname": "CoreUtils.has_attribute",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "im_help",
+    "qualname": "ImgUtils.im_help",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "indices",
+    "qualname": "IterUtils.indices",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "infer_affix_mode",
+    "qualname": "StrUtils.infer_affix_mode",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "insert",
+    "qualname": "StrUtils.insert",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "insert_into_dict",
+    "qualname": "IterUtils.insert_into_dict",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "inset_atlas_rects",
+    "qualname": "ImgUtils.inset_atlas_rects",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "inset_rects_to_texel_centers",
+    "qualname": "ImgUtils.inset_rects_to_texel_centers",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "invert_channels",
+    "qualname": "ImgUtils.invert_channels",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "invert_grayscale_image",
+    "qualname": "ImgUtils.invert_grayscale_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "is_close_to_whole",
+    "qualname": "MathUtils.is_close_to_whole",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "is_cloud_placeholder",
+    "qualname": "FileUtils.is_cloud_placeholder",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "is_image_constant",
+    "qualname": "ImgUtils.is_image_constant",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "is_locked",
+    "qualname": "FileUtils.is_locked",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "is_rooted_path",
+    "qualname": "FileUtils.is_rooted_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "is_under",
+    "qualname": "FileUtils.is_under",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "is_valid",
+    "qualname": "FileUtils.is_valid",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "kelvin_to_linear_rgb",
+    "qualname": "ImgUtils.kelvin_to_linear_rgb",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "kmeans_1d",
+    "qualname": "MathUtils.kmeans_1d",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "kmeans_clustering",
+    "qualname": "MathUtils.kmeans_clustering",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "ktx2_available",
+    "qualname": "ImgUtils.ktx2_available",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "lerp",
+    "qualname": "MathUtils.lerp",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "linear_sum_assignment",
+    "qualname": "MathUtils.linear_sum_assignment",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "linear_to_srgb",
+    "qualname": "ImgUtils.linear_to_srgb",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "list_image_files",
+    "qualname": "ImgUtils.list_image_files",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "listify",
+    "qualname": "CoreUtils.listify",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "load_image",
+    "qualname": "ImgUtils.load_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "locking_processes",
+    "qualname": "FileUtils.locking_processes",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "majority_tile",
+    "qualname": "MathUtils.majority_tile",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "make_iterable",
+    "qualname": "IterUtils.make_iterable",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "max_axis_skew",
+    "qualname": "MathUtils.max_axis_skew",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "move_decimal_point",
+    "qualname": "MathUtils.move_decimal_point",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "move_file",
+    "qualname": "FileUtils.move_file",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "move_point_relative",
+    "qualname": "MathUtils.move_point_relative",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "move_point_relative_along_vector",
+    "qualname": "MathUtils.move_point_relative_along_vector",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "nearest_power_of_two",
+    "qualname": "MathUtils.nearest_power_of_two",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "nested_depth",
+    "qualname": "IterUtils.nested_depth",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "next_clear_offset",
+    "qualname": "MathUtils.next_clear_offset",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "next_version_path",
+    "qualname": "FileUtils.next_version_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "normalize",
+    "qualname": "MathUtils.normalize",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "open_explorer",
+    "qualname": "FileUtils.open_explorer",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "pack_channel_into_alpha",
+    "qualname": "ImgUtils.pack_channel_into_alpha",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "pack_channels",
+    "qualname": "ImgUtils.pack_channels",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "parse_method_args",
+    "qualname": "CoreUtils.parse_method_args",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "path_length_limit",
+    "qualname": "FileUtils.path_length_limit",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "point_segment_distance",
+    "qualname": "MathUtils.point_segment_distance",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "radial_gradient",
+    "qualname": "ImgUtils.radial_gradient",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "randomize",
+    "qualname": "CoreUtils.randomize",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "rasterize_height_fields",
+    "qualname": "ImgUtils.rasterize_height_fields",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "rasterize_shadow",
+    "qualname": "ImgUtils.rasterize_shadow",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "rasterize_silhouette",
+    "qualname": "ImgUtils.rasterize_silhouette",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "rasterize_uv_triangles",
+    "qualname": "ImgUtils.rasterize_uv_triangles",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "register_dds_codec",
+    "qualname": "ImgUtils.register_dds_codec",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "register_ktx2_encoder",
+    "qualname": "ImgUtils.register_ktx2_encoder",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "relativize_output_dir",
+    "qualname": "FileUtils.relativize_output_dir",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "remap",
+    "qualname": "MathUtils.remap",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "remap_file_paths",
+    "qualname": "FileUtils.remap_file_paths",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "remove_duplicates",
+    "qualname": "IterUtils.remove_duplicates",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "replace_color",
+    "qualname": "ImgUtils.replace_color",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "replace_delimited",
+    "qualname": "StrUtils.replace_delimited",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "replace_placeholders",
+    "qualname": "StrUtils.replace_placeholders",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "resize_image",
+    "qualname": "ImgUtils.resize_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "resolve_falloff_profile",
+    "qualname": "MathUtils.resolve_falloff_profile",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.vid_utils._vid_utils",
+    "name": "resolve_ffmpeg",
+    "qualname": "VidUtils.resolve_ffmpeg",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "resolve_ktx2_encoder",
+    "qualname": "ImgUtils.resolve_ktx2_encoder",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "resolve_name_collisions",
+    "qualname": "StrUtils.resolve_name_collisions",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "resolve_output_dir",
+    "qualname": "FileUtils.resolve_output_dir",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "resolve_placeholders",
+    "qualname": "StrUtils.resolve_placeholders",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "retain_suffix",
+    "qualname": "StrUtils.retain_suffix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "reveal_in_file_manager",
+    "qualname": "FileUtils.reveal_in_file_manager",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "ricker",
+    "qualname": "MathUtils.ricker",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "rindex",
+    "qualname": "IterUtils.rindex",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "round_to_aggressive_preferred",
+    "qualname": "MathUtils.round_to_aggressive_preferred",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "round_to_preferred",
+    "qualname": "MathUtils.round_to_preferred",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "round_value",
+    "qualname": "MathUtils.round_value",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "rreplace",
+    "qualname": "StrUtils.rreplace",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "safe_normalize",
+    "qualname": "MathUtils.safe_normalize",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "sanitize",
+    "qualname": "StrUtils.sanitize",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "save_image",
+    "qualname": "ImgUtils.save_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "sequential_suffixes",
+    "qualname": "StrUtils.sequential_suffixes",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "set_attributes",
+    "qualname": "CoreUtils.set_attributes",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "set_bit_depth",
+    "qualname": "ImgUtils.set_bit_depth",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "set_case",
+    "qualname": "StrUtils.set_case",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "set_contrast",
+    "qualname": "ImgUtils.set_contrast",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "set_json",
+    "qualname": "FileUtils.set_json",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "set_json_file",
+    "qualname": "FileUtils.set_json_file",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "smoothstep",
+    "qualname": "MathUtils.smoothstep",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "snap_atlas_rects",
+    "qualname": "ImgUtils.snap_atlas_rects",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "split_affix",
+    "qualname": "StrUtils.split_affix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "split_delimited_string",
+    "qualname": "StrUtils.split_delimited_string",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "split_list",
+    "qualname": "IterUtils.split_list",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "srgb_to_linear",
+    "qualname": "ImgUtils.srgb_to_linear",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "step_offset",
+    "qualname": "MathUtils.step_offset",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "strip_ansi",
+    "qualname": "StrUtils.strip_ansi",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "strip_any_affix",
+    "qualname": "StrUtils.strip_any_affix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "strip_known_affix",
+    "qualname": "StrUtils.strip_known_affix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "strip_suffix",
+    "qualname": "StrUtils.strip_suffix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "swizzle_channels",
+    "qualname": "ImgUtils.swizzle_channels",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "teardown_guard",
+    "qualname": "CoreUtils.teardown_guard",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "time_stamp",
+    "qualname": "StrUtils.time_stamp",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "truncate",
+    "qualname": "StrUtils.truncate",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "udim_to_tile",
+    "qualname": "MathUtils.udim_to_tile",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "unique_dir_stems",
+    "qualname": "ImgUtils.unique_dir_stems",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "uv_tile_margin",
+    "qualname": "MathUtils.uv_tile_margin",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "validate_image_integrity",
+    "qualname": "ImgUtils.validate_image_integrity",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "write_to_file",
+    "qualname": "FileUtils.write_to_file",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "xyz_rotation",
+    "qualname": "MathUtils.xyz_rotation",
+    "tier": "bare"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ActiveShotChanged",
+    "qualname": "ActiveShotChanged",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.naming_convention",
+    "name": "AffixRule",
+    "qualname": "AffixRule",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_installer",
+    "name": "AppInstaller",
+    "qualname": "AppInstaller",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_launcher",
+    "name": "AppLauncher",
+    "qualname": "AppLauncher",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "AppSpec",
+    "qualname": "AppSpec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.instancing.assembly_sorter",
+    "name": "AssemblySorter",
+    "qualname": "AssemblySorter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.audio_utils._audio_utils",
+    "name": "AudioUtils",
+    "qualname": "AudioUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.math_utils.noise",
+    "name": "BandLimitedNoise",
+    "qualname": "BandLimitedNoise",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "BatchComplete",
+    "qualname": "BatchComplete",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.map_compositor",
+    "name": "BatchResult",
+    "qualname": "BatchResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
+    "name": "BuilderObject",
+    "qualname": "BuilderObject",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
+    "name": "BuilderStep",
+    "qualname": "BuilderStep",
+    "tier": "root"
+  },
+  {
+    "kind": "dict",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "CARRIER_BY_EXTENSION",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "dict",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "CARRIER_EXTENSIONS",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "str",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "CARRIER_PARAM",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.cli",
+    "name": "CLI",
+    "qualname": "CLI",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.temp_artifacts",
+    "name": "CachedArtifact",
+    "qualname": "CachedArtifact",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.job",
+    "name": "Call",
+    "qualname": "Call",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.cancel_scope",
+    "name": "CancelScope",
+    "qualname": "CancelScope",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.class_property",
+    "name": "ClassProperty",
+    "qualname": "ClassProperty",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.preset_store",
+    "name": "Codec",
+    "qualname": "Codec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.color",
+    "name": "Color",
+    "qualname": "Color",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.color",
+    "name": "ColorPair",
+    "qualname": "ColorPair",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
+    "name": "ColumnMap",
+    "qualname": "ColumnMap",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils._core_utils",
+    "name": "CoreUtils",
+    "qualname": "CoreUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.credentials",
+    "name": "Credentials",
+    "qualname": "Credentials",
+    "tier": "root"
+  },
+  {
+    "kind": "dict",
+    "module": "pythontk.file_utils.workspace",
+    "name": "DEFAULT_FILE_RULES",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "Deliverer",
+    "qualname": "Deliverer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.output_template",
+    "name": "DeliveryBudget",
+    "qualname": "DeliveryBudget",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.hierarchy_utils.hierarchy_analyzer",
+    "name": "DifferenceType",
+    "qualname": "DifferenceType",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.doc_audit",
+    "name": "DocAudit",
+    "qualname": "DocAudit",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.execution_monitor._execution_monitor",
+    "name": "ExecutionMonitor",
+    "qualname": "ExecutionMonitor",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.export_verify",
+    "name": "ExportVerifier",
+    "qualname": "ExportVerifier",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils.exposure_equalizer",
+    "name": "ExposureEqualizer",
+    "qualname": "ExposureEqualizer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.fbx_file",
+    "name": "FbxFile",
+    "qualname": "FbxFile",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.fbx_media",
+    "name": "FbxMedia",
+    "qualname": "FbxMedia",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.schema_spec",
+    "name": "FieldDoc",
+    "qualname": "FieldDoc",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.file_naming",
+    "name": "FileNaming",
+    "qualname": "FileNaming",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "FileUtils",
+    "qualname": "FileUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.vid_utils.frame_extractor",
+    "name": "FrameExtractor",
+    "qualname": "FrameExtractor",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.str_utils.fuzzy_matcher",
+    "name": "FuzzyMatcher",
+    "qualname": "FuzzyMatcher",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.qc_log",
+    "name": "GateError",
+    "qualname": "GateError",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.git",
+    "name": "Git",
+    "qualname": "Git",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.glb_reader",
+    "name": "GlbReader",
+    "qualname": "GlbReader",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "HandoffBridge",
+    "qualname": "HandoffBridge",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "HandoffRequest",
+    "qualname": "HandoffRequest",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.help_mixin",
+    "name": "HelpMixin",
+    "qualname": "HelpMixin",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.hierarchy_utils.hierarchy_analyzer",
+    "name": "HierarchyAnalyzer",
+    "qualname": "HierarchyAnalyzer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.hierarchy_utils.hierarchy_diff",
+    "name": "HierarchyDiff",
+    "qualname": "HierarchyDiff",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.hierarchy_utils.hierarchy_analyzer",
+    "name": "HierarchyDifference",
+    "qualname": "HierarchyDifference",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.hierarchy_utils.hierarchy_indexer",
+    "name": "HierarchyIndexer",
+    "qualname": "HierarchyIndexer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.hierarchy_utils.hierarchy_matching",
+    "name": "HierarchyMatching",
+    "qualname": "HierarchyMatching",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.hierarchy_utils.hierarchy_path",
+    "name": "HierarchyPath",
+    "qualname": "HierarchyPath",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.shadow_horizon",
+    "name": "HorizonMap",
+    "qualname": "HorizonMap",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.str_utils.hotkey_utils",
+    "name": "HotkeyUtils",
+    "qualname": "HotkeyUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils.image_curator",
+    "name": "ImageCurator",
+    "qualname": "ImageCurator",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "ImageFormat",
+    "qualname": "ImageFormat",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "ImgUtils",
+    "qualname": "ImgUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "IterUtils",
+    "qualname": "IterUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "Codec",
+    "module": "pythontk.core_utils.preset_store",
+    "name": "JSON_CODEC",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
+    "name": "KeyStash",
+    "qualname": "KeyStash",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils.ktx2_encoder",
+    "name": "Ktx2Encoder",
+    "qualname": "Ktx2Encoder",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.logging_mixin",
+    "name": "LevelAwareFormatter",
+    "qualname": "LevelAwareFormatter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.process_stream",
+    "name": "LogTailer",
+    "qualname": "LogTailer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.logging_mixin",
+    "name": "LoggerExt",
+    "qualname": "LoggerExt",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.logging_mixin",
+    "name": "LoggingMixin",
+    "qualname": "LoggingMixin",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.plugin_core",
+    "name": "MainThreadMarshaller",
+    "qualname": "MainThreadMarshaller",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
+    "name": "ManifestModel",
+    "qualname": "ManifestModel",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.map_compositor",
+    "name": "MapCompositor",
+    "qualname": "MapCompositor",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.map_factory._map_factory",
+    "name": "MapFactory",
+    "qualname": "MapFactory",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.map_optimizer",
+    "name": "MapOptimizer",
+    "qualname": "MapOptimizer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.map_registry",
+    "name": "MapRegistry",
+    "qualname": "MapRegistry",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.map_registry",
+    "name": "MapType",
+    "qualname": "MapType",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils.mask_generator",
+    "name": "MaskGenerator",
+    "qualname": "MaskGenerator",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.mat_report",
+    "name": "MatReport",
+    "qualname": "MatReport",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "MathUtils",
+    "qualname": "MathUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert._mesh_convert",
+    "name": "MeshConvert",
+    "qualname": "MeshConvert",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_ops",
+    "name": "MeshOps",
+    "qualname": "MeshOps",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.metadata",
+    "name": "Metadata",
+    "qualname": "Metadata",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.module_reloader",
+    "name": "ModuleReloader",
+    "qualname": "ModuleReloader",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_plan",
+    "name": "MovePlan",
+    "qualname": "MovePlan",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.namedtuple_container",
+    "name": "NamedTupleContainer",
+    "qualname": "NamedTupleContainer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.namespace_handler",
+    "name": "NamespaceHandler",
+    "qualname": "NamespaceHandler",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.naming_convention",
+    "name": "NamingConvention",
+    "qualname": "NamingConvention",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils._net_utils",
+    "name": "NetUtils",
+    "qualname": "NetUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.map_compositor",
+    "name": "NormalOutputMode",
+    "qualname": "NormalOutputMode",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
+    "name": "ObjectStatus",
+    "qualname": "ObjectStatus",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.map_optimizer",
+    "name": "Op",
+    "qualname": "Op",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.plugin_core",
+    "name": "OpRegistry",
+    "qualname": "OpRegistry",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.cancel_scope",
+    "name": "OperationCancelled",
+    "qualname": "OperationCancelled",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.output_template",
+    "name": "OutputSpec",
+    "qualname": "OutputSpec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.process_stream",
+    "name": "OutputStream",
+    "qualname": "OutputStream",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.output_template",
+    "name": "OutputTemplate",
+    "qualname": "OutputTemplate",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.output_template",
+    "name": "OutputTemplates",
+    "qualname": "OutputTemplates",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv_pack",
+    "name": "PackIslandsResult",
+    "qualname": "PackIslandsResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.package_manager",
+    "name": "PackageManager",
+    "qualname": "PackageManager",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.color",
+    "name": "Palette",
+    "qualname": "Palette",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "Payload",
+    "qualname": "Payload",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
+    "name": "PlannedShot",
+    "qualname": "PlannedShot",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.plate_emitter",
+    "name": "PlateEmitter",
+    "qualname": "PlateEmitter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.installer",
+    "name": "PluginInstaller",
+    "qualname": "PluginInstaller",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.pointcloud",
+    "name": "PointCloud",
+    "qualname": "PointCloud",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.polyline",
+    "name": "Polyline",
+    "qualname": "Polyline",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.preset_store",
+    "name": "PresetStore",
+    "qualname": "PresetStore",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.preview.bridge",
+    "name": "PreviewBridge",
+    "qualname": "PreviewBridge",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.preview.deliverer",
+    "name": "PreviewDeliverer",
+    "qualname": "PreviewDeliverer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.preview.deliverer",
+    "name": "PreviewPassContext",
+    "qualname": "PreviewPassContext",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.preview.server",
+    "name": "PreviewServer",
+    "qualname": "PreviewServer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.process_stream",
+    "name": "ProcessReader",
+    "qualname": "ProcessReader",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.math_utils.progression",
+    "name": "ProgressionCurves",
+    "qualname": "ProgressionCurves",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.qc_log",
+    "name": "QcGate",
+    "qualname": "QcGate",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.qc_log",
+    "name": "QcLog",
+    "qualname": "QcLog",
+    "tier": "root"
+  },
+  {
+    "kind": "str",
+    "module": "pythontk.core_utils.script_template",
+    "name": "ROUND_TRIP",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "dict",
+    "module": "pythontk.file_utils.workspace",
+    "name": "RULE_NICE_NAMES",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.rail_surface",
+    "name": "RailSurface",
+    "qualname": "RailSurface",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.range_resolver",
+    "name": "RangeResolver",
+    "qualname": "RangeResolver",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.region_masks",
+    "name": "RegionGroup",
+    "qualname": "RegionGroup",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.region_masks",
+    "name": "RegionGroupRegistry",
+    "qualname": "RegionGroupRegistry",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.region_masks",
+    "name": "RegionMaskManifest",
+    "qualname": "RegionMaskManifest",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.region_masks",
+    "name": "RegionMaskPacker",
+    "qualname": "RegionMaskPacker",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.module_reloader",
+    "name": "ReloadReport",
+    "qualname": "ReloadReport",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.remote_file",
+    "name": "RemoteFile",
+    "qualname": "RemoteFile",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.file_naming",
+    "name": "RenamePlan",
+    "qualname": "RenamePlan",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.job",
+    "name": "Result",
+    "qualname": "Result",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.client",
+    "name": "RpcClient",
+    "qualname": "RpcClient",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.job",
+    "name": "RpcJob",
+    "qualname": "RpcJob",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.plugin_core",
+    "name": "RpcPlugin",
+    "qualname": "RpcPlugin",
+    "tier": "root"
+  },
+  {
+    "kind": "str",
+    "module": "pythontk.core_utils.script_template",
+    "name": "SAVE_AS",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "str",
+    "module": "pythontk.core_utils.script_template",
+    "name": "SEND_TO",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "Palette",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "SHOT_PALETTE",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.ssh_client",
+    "name": "SSHClient",
+    "qualname": "SSHClient",
+    "tier": "root"
+  },
+  {
+    "kind": "frozenset",
+    "module": "pythontk.core_utils.engines.shots.shot_detection",
+    "name": "STANDARD_TRANSFORM_ATTRS",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ScenePersistence",
+    "qualname": "ScenePersistence",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.schema_spec",
+    "name": "SchemaError",
+    "qualname": "SchemaError",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.schema_spec",
+    "name": "SchemaSpec",
+    "qualname": "SchemaSpec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.temp_artifacts",
+    "name": "ScratchTwins",
+    "qualname": "ScratchTwins",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "ScriptLaunchBridge",
+    "qualname": "ScriptLaunchBridge",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "ScriptLaunchDeliverer",
+    "qualname": "ScriptLaunchDeliverer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "ScriptLaunchSpec",
+    "qualname": "ScriptLaunchSpec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "ScriptRoundTripDeliverer",
+    "qualname": "ScriptRoundTripDeliverer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "ScriptRunDeliverer",
+    "qualname": "ScriptRunDeliverer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.script_run",
+    "name": "ScriptRunResult",
+    "qualname": "ScriptRunResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.script_run",
+    "name": "ScriptRunner",
+    "qualname": "ScriptRunner",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.script_template",
+    "name": "ScriptTemplate",
+    "qualname": "ScriptTemplate",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "SettingsChanged",
+    "qualname": "SettingsChanged",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils.shadow_atlas",
+    "name": "ShadowAtlas",
+    "qualname": "ShadowAtlas",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.shadow_horizon",
+    "name": "ShadowHorizon",
+    "qualname": "ShadowHorizon",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.shadow_projection",
+    "name": "ShadowModel",
+    "qualname": "ShadowModel",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.shadow_projection",
+    "name": "ShadowProjection",
+    "qualname": "ShadowProjection",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.shadow_projection",
+    "name": "ShadowRaster",
+    "qualname": "ShadowRaster",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ShotBlock",
+    "qualname": "ShotBlock",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ShotDefined",
+    "qualname": "ShotDefined",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_detection",
+    "name": "ShotDetection",
+    "qualname": "ShotDetection",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_ledger",
+    "name": "ShotEditLedger",
+    "qualname": "ShotEditLedger",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_engine",
+    "name": "ShotManifest",
+    "qualname": "ShotManifest",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_plan",
+    "name": "ShotMove",
+    "qualname": "ShotMove",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_plan",
+    "name": "ShotPlanner",
+    "qualname": "ShotPlanner",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ShotRemoved",
+    "qualname": "ShotRemoved",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ShotStore",
+    "qualname": "ShotStore",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ShotUpdated",
+    "qualname": "ShotUpdated",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.singleton_mixin",
+    "name": "SingletonMixin",
+    "qualname": "SingletonMixin",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
+    "name": "StashChanged",
+    "qualname": "StashChanged",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
+    "name": "StashedClip",
+    "qualname": "StashedClip",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.status_badge",
+    "name": "StatusBadge",
+    "qualname": "StatusBadge",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
+    "name": "StepStatus",
+    "qualname": "StepStatus",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.step_toggle",
+    "name": "StepToggle",
+    "qualname": "StepToggle",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "StoreEvent",
+    "qualname": "StoreEvent",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "StoreInvalidated",
+    "qualname": "StoreInvalidated",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "StrUtils",
+    "qualname": "StrUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.symbol_record",
+    "name": "SymbolRecord",
+    "qualname": "SymbolRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.logging_mixin",
+    "name": "TableMixin",
+    "qualname": "TableMixin",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.task_factory",
+    "name": "TaskFactory",
+    "qualname": "TaskFactory",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.process_stream",
+    "name": "TeeStream",
+    "qualname": "TeeStream",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.temp_artifacts",
+    "name": "TempArtifacts",
+    "qualname": "TempArtifacts",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.template_set",
+    "name": "TemplateSet",
+    "qualname": "TemplateSet",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.test_sandbox",
+    "name": "TestSandbox",
+    "qualname": "TestSandbox",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv_transfer",
+    "name": "TransferTable",
+    "qualname": "TransferTable",
+    "tier": "root"
+  },
+  {
+    "kind": "tuple",
+    "module": "pythontk.file_utils.usd",
+    "name": "USD_EXTENSIONS",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.usd",
+    "name": "UsdFile",
+    "qualname": "UsdFile",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.usd",
+    "name": "UsdMeshWriter",
+    "qualname": "UsdMeshWriter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.usd",
+    "name": "UsdzPackager",
+    "qualname": "UsdzPackager",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.user_config",
+    "name": "UserConfig",
+    "qualname": "UserConfig",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv_pack",
+    "name": "UvPack",
+    "qualname": "UvPack",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv_transfer",
+    "name": "UvTransfer",
+    "qualname": "UvTransfer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.uv_unwrap._uv_unwrap",
+    "name": "UvUnwrap",
+    "qualname": "UvUnwrap",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.schema_spec",
+    "name": "ValidationResult",
+    "qualname": "ValidationResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.vid_utils._vid_utils",
+    "name": "VidUtils",
+    "qualname": "VidUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "str",
+    "module": "pythontk.file_utils.workspace",
+    "name": "WORKSPACE_MARKER",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.math_utils.weights",
+    "name": "Weights",
+    "qualname": "Weights",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.workspace",
+    "name": "Workspace",
+    "qualname": "Workspace",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.workspace",
+    "name": "WorkspaceTemplates",
+    "qualname": "WorkspaceTemplates",
+    "tier": "root"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.core_utils.module_reloader",
+    "name": "reload_package",
+    "qualname": "reload_package",
+    "tier": "root"
+  }
+]

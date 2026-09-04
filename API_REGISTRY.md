@@ -296,9 +296,12 @@ Lightweight, DCC-agnostic color primitives.
   - `Color.with_alpha(self, a: Union[int, float]) -> 'Color'` — Return a copy with a new alpha (int 0–255 or float 0.0–1.0).
   - `Color.blend(self, other: 'Color', t: float = 0.5) -> 'Color'` — Linear interpolation towards *other* by *t* (0.0 = self, 1.0 = other).
   - `Color.subtle_bg(self, value: float = 0.24, sat_factor: float = 1.0) -> 'Color'` — Derive a tinted dark-theme background from this colour.
-- **[`class ColorPair`](pythontk/pythontk/core_utils/color.py#L177)** — Foreground / background pair for themed UIs.
+- **[`class ColorPair`](pythontk/pythontk/core_utils/color.py#L176)** — Foreground / background pair for themed UIs.
   - `ColorPair.auto(cls, fg: Union[str, 'Color'], value: float = 0.24, sat_factor: float = 1.0) -> 'ColorPair'` *(class)* — Derive background automatically from foreground for dark themes.
-- **[`class Palette(dict)`](pythontk/pythontk/core_utils/color.py#L254)** — Named color collection with auto-wrapping and alias support.
+- **[`class Palette(dict)`](pythontk/pythontk/core_utils/color.py#L253)** — Named color collection with auto-wrapping and alias support.
+  - `Palette.update(self, mapping=None, **kwargs: object) -> None` — Wrap on update, as ``__setitem__`` does.
+  - `Palette.setdefault(self, key: str, default: object = None) -> object` — Wrap the inserted default, and return the WRAPPED value -- callers
+  - `Palette.copy(self) -> 'Palette'` — A Palette, not a plain dict: ``dict.copy`` drops the subclass, and
   - `Palette.alias(self, mapping: Dict[str, str]) -> 'Palette'` — Return a new Palette with additional keys pointing to existing values.
   - `Palette.override(self, **kwargs: object) -> 'Palette'` — Return a new Palette with selected entries replaced.
   - `Palette.status(cls) -> 'Palette'` *(class)* — Standard severity palette for dark-theme UIs.
@@ -1139,7 +1142,7 @@ Reusable module attribute resolver for package-style imports.
 - **[`class Placeholder`](pythontk/pythontk/core_utils/namespace_handler.py#L7)**
   - `Placeholder.info(self) -> dict`
   - `Placeholder.create(self, *args, **kwargs)`
-- **[`class NamespaceHandler(LoggingMixin)`](pythontk/pythontk/core_utils/namespace_handler.py#L40)** — A NamespaceHandler that manages its own internal dictionary without attaching
+- **[`class NamespaceHandler(LoggingMixin)`](pythontk/pythontk/core_utils/namespace_handler.py#L65)** — A NamespaceHandler that manages its own internal dictionary without attaching
   - `NamespaceHandler.placeholders(self) -> dict[str, Any]` *(property)*
   - `NamespaceHandler.is_placeholder(self, value: Any) -> bool`
   - `NamespaceHandler.get_placeholder(self, key: str) -> Optional[Placeholder]`

@@ -16,7 +16,11 @@ from typing import List
 import numpy as np
 from PIL import Image
 
-from pythontk.core_utils.engines.textures.map_compositor import BatchResult, MapCompositor, NormalOutputMode
+from pythontk.core_utils.engines.textures.map_compositor import (
+    BatchResult,
+    MapCompositor,
+    NormalOutputMode,
+)
 
 
 class _CapturingHandler(logging.Handler):
@@ -59,17 +63,12 @@ class _LoggerCaptureMixin:
         return handler
 
 
-class TestEnginePurity(unittest.TestCase):
-    """The engine module must not import Qt."""
-
-    def test_no_qt_imports(self):
-        import pythontk.core_utils.engines.textures.map_compositor as eng
-
-        forbidden = {"qtpy", "PySide2", "PySide6", "PyQt5", "PyQt6"}
-        with open(eng.__file__, "r", encoding="utf-8") as f:
-            src = f.read()
-        for name in forbidden:
-            self.assertNotIn(name, src, f"compositor.py should not reference {name}")
+# The engine's "must not import Qt" guard used to live here as a substring
+# search over this one module. It is superseded by
+# test_packaging_metadata.TestNoDccImports, which walks the AST of all 142
+# modules and distinguishes a module-level import (the real hazard) from a
+# lazily-resolved one -- where the substring version read its own comments as
+# violations and would have missed ``import  maya`` with two spaces.
 
 
 class TestComposite(unittest.TestCase, _LoggerCaptureMixin):
@@ -299,8 +298,12 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
         c_b = Image.new("RGB", size, (0, 0, 255))
         c_b.putpixel((7, 7), (4, 5, 6))
         paths = {}
-        for stem, im in [("A_Height", h_a), ("B_Height", h_b),
-                         ("A_Base_Color", c_a), ("B_Base_Color", c_b)]:
+        for stem, im in [
+            ("A_Height", h_a),
+            ("B_Height", h_b),
+            ("A_Base_Color", c_a),
+            ("B_Base_Color", c_b),
+        ]:
             paths[stem] = os.path.join(self.tmp, f"{stem}.png")
             im.save(paths[stem])
         sorted_images = {
@@ -336,13 +339,19 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
         c_b = Image.new("RGB", size, (0, 0, 255))
         c_b.putpixel((7, 7), (4, 5, 6))
         paths = {}
-        for stem, im in [("A_Height", h_a), ("B_Height", h_b),
-                         ("A_Base_Color", c_a), ("B_Base_Color", c_b)]:
+        for stem, im in [
+            ("A_Height", h_a),
+            ("B_Height", h_b),
+            ("A_Base_Color", c_a),
+            ("B_Base_Color", c_b),
+        ]:
             paths[stem] = os.path.join(self.tmp, f"{stem}.png")
             im.save(paths[stem])
         sorted_images = {
-            "Height": [(paths["A_Height"], _load(paths["A_Height"])),
-                       (paths["B_Height"], _load(paths["B_Height"]))],
+            "Height": [
+                (paths["A_Height"], _load(paths["A_Height"])),
+                (paths["B_Height"], _load(paths["B_Height"])),
+            ],
             "Base_Color": [(paths["A_Base_Color"], c_a), (paths["B_Base_Color"], c_b)],
         }
         self.assertEqual(sorted_images["Height"][0][1].mode, "I;16")
@@ -411,8 +420,12 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
         'Composite failed' for every layer."""
         size = (8, 8)
         layers = {}
-        for stem, color in [("A_Base_Color", (255, 0, 0)), ("B_Base_Color", (0, 0, 255)),
-                            ("A_Height", 100), ("B_Height", 150)]:
+        for stem, color in [
+            ("A_Base_Color", (255, 0, 0)),
+            ("B_Base_Color", (0, 0, 255)),
+            ("A_Height", 100),
+            ("B_Height", 150),
+        ]:
             im = Image.new("RGB" if "Base" in stem else "L", size, color)
             im.putpixel((0, 0), (9, 9, 9) if "Base" in stem else 9)  # break uniformity
             layers[stem] = (os.path.join(self.tmp, f"{stem}.png"), im)
@@ -567,9 +580,7 @@ class TestOutputTemplateScoping(unittest.TestCase, _LoggerCaptureMixin):
         self.assertTrue(os.path.isfile(os.path.join(self.out, "mat_MSAO.png")))
 
         # The foreign set gained nothing …
-        produced = {
-            n for n in os.listdir(self.out) if n.startswith("UNRELATED_")
-        }
+        produced = {n for n in os.listdir(self.out) if n.startswith("UNRELATED_")}
         self.assertEqual(
             produced,
             {os.path.basename(p) for p in planted},
@@ -843,7 +854,9 @@ class TestSeedMasks(unittest.TestCase, _LoggerCaptureMixin):
         a = Image.new("RGB", (10, 10), (0, 0, 0))
         for xy in [(0, 0), (9, 0), (0, 9)]:
             a.putpixel(xy, (7, 7, 7))
-        self.assertIsNone(MapCompositor._solid_background([np.asarray(a.convert("RGBA"))]))
+        self.assertIsNone(
+            MapCompositor._solid_background([np.asarray(a.convert("RGBA"))])
+        )
 
     def test_overlap_warning(self):
         # Two layers whose masks coincide → warn (shared UV space).
@@ -1089,9 +1102,12 @@ class TestEdgeHaloPreservation(unittest.TestCase, _LoggerCaptureMixin):
         self.assertEqual(out_arr.shape, src_arr.shape)
         # Every pixel must round-trip byte-identical; the fill_transparent_rgb
         # path must not touch fully-opaque content.
-        diff = (out_arr.astype(int) - src_arr.astype(int))
-        self.assertEqual(int(np.abs(diff).max()), 0,
-                         "clean L-mode roughness must round-trip byte-identical")
+        diff = out_arr.astype(int) - src_arr.astype(int)
+        self.assertEqual(
+            int(np.abs(diff).max()),
+            0,
+            "clean L-mode roughness must round-trip byte-identical",
+        )
 
     def test_multi_layer_subsequent_partial_alpha_does_not_darken_base(self):
         # Two roughness layers: first is solid opaque content; second has

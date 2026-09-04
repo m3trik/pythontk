@@ -41,6 +41,30 @@ jobs:
           file: ./test/coverage.xml
           fail_ci_if_error: false
 
+  lint:
+    # ``ruff check`` only -- NOT ``ruff format --check``. The lint rule set is
+    # small and the tree is clean against it, so this gates real defects
+    # (undefined names, unused imports) from day one. Formatting is a
+    # separate question: 114 files predate the current ruff and would fail
+    # a format gate today, which would make this job red on arrival and
+    # therefore ignored. Pinned, because an unpinned ruff turns an upstream
+    # rule addition into a red PR nobody changed.
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ruff
+        run: pip install ruff==0.15.17
+
+      - name: ruff check
+        run: ruff check .
+
   api-registry:
     # Content-hash staleness gate for the committed API_INDEX.md /
     # API_REGISTRY.md (root CLAUDE.md documents --check as the CI gate; before

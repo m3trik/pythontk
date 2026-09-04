@@ -42,8 +42,11 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `net_utils/preview_server.py::PreviewServer.url` — was `(self) -> Optional[str]`
 - `net_utils/preview_server.py::PreviewServer.version` — was `(self) -> int`
 
-## Added (147)
+## Added (150)
 
+- `core_utils/color.py::Palette.copy(self) -> 'Palette'`
+- `core_utils/color.py::Palette.setdefault(self, key: str, default: object = None) -> object`
+- `core_utils/color.py::Palette.update(self, mapping=None, **kwargs: object) -> None`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash(class)`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.active(cls) -> 'KeyStash'`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.add_clip(self, objects: List[str], curves: List[Dict[str, Any]], label: Optional[str] = None, source_shot_id: Optional[int] = None, metadata: Optional[Dict[str, Any]] = None) -> StashedClip`

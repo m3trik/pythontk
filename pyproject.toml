@@ -55,7 +55,9 @@ where = ["."]
 include = ["pythontk*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.ui", "*.json", "*.txt", "*.md", "*.gif", "*.html", "*.js", "*.glsl"]
+# Keep byte-identical to the recursive-include line in MANIFEST.in -- see the
+# note there. Gated by test_packaging_metadata.TestDataFileParity.
+"*" = ["*.gif", "*.glsl", "*.html", "*.js", "*.json", "*.md", "*.png", "*.txt", "*.ui"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

@@ -159,7 +159,23 @@ DEFAULT_INCLUDE = {
     "core_utils.package_manager": "PackageManager",
     "core_utils.git": "Git",
     "core_utils.class_property": "ClassProperty",
-    "core_utils.logging_mixin": ["LoggingMixin", "TableMixin"],
+    # LoggerExt / LevelAwareFormatter are reached by raw module path today
+    # (uitk's example wiring, mayatk's scene_audit), which is a published
+    # dependency on a private path -- register them so the surface says so.
+    "core_utils.logging_mixin": [
+        "LoggingMixin",
+        "TableMixin",
+        "LoggerExt",
+        "LevelAwareFormatter",
+    ],
+    # Same case: mayatk's blender_bridge imports ScriptTemplate and the three
+    # mode constants straight from this module.
+    "core_utils.script_template": [
+        "ScriptTemplate",
+        "SEND_TO",
+        "SAVE_AS",
+        "ROUND_TRIP",
+    ],
     "core_utils.namespace_handler": "NamespaceHandler",
     "core_utils.namedtuple_container": "NamedTupleContainer",
     "core_utils.color": ["Color", "ColorPair", "Palette"],

@@ -1,4 +1,8 @@
 include LICENSE
 include README.md
 include pyproject.toml
-recursive-include pythontk *.ui *.gif *.png *.json *.html *.js *.glsl
+# Keep this list byte-identical to [tool.setuptools.package-data] in
+# pyproject.toml -- one governs the sdist, the other the wheel, and a
+# pattern in only one ships the file to only one channel. Gated by
+# test_packaging_metadata.TestDataFileParity.
+recursive-include pythontk *.gif *.glsl *.html *.js *.json *.md *.png *.txt *.ui

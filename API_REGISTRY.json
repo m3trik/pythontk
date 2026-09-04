@@ -1250,7 +1250,7 @@
               "kind": "method",
               "signature": "(self, other: 'Color', t: float = 0.5) -> 'Color'",
               "summary": "Linear interpolation towards *other* by *t* (0.0 = self, 1.0 = other).",
-              "line": 127,
+              "line": 126,
               "deprecated": false
             },
             {
@@ -1259,7 +1259,7 @@
               "kind": "method",
               "signature": "(self, value: float = 0.24, sat_factor: float = 1.0) -> 'Color'",
               "summary": "Derive a tinted dark-theme background from this colour.",
-              "line": 137,
+              "line": 136,
               "deprecated": false
             }
           ]
@@ -1267,7 +1267,7 @@
         {
           "name": "ColorPair",
           "summary": "Foreground / background pair for themed UIs.",
-          "line": 177,
+          "line": 176,
           "bases": [],
           "members": [
             {
@@ -1276,7 +1276,7 @@
               "kind": "classmethod",
               "signature": "(cls, fg: Union[str, 'Color'], value: float = 0.24, sat_factor: float = 1.0) -> 'ColorPair'",
               "summary": "Derive background automatically from foreground for dark themes.",
-              "line": 205,
+              "line": 204,
               "deprecated": false
             }
           ]
@@ -1284,18 +1284,45 @@
         {
           "name": "Palette",
           "summary": "Named color collection with auto-wrapping and alias support.",
-          "line": 254,
+          "line": 253,
           "bases": [
             "dict"
           ],
           "members": [
+            {
+              "name": "update",
+              "qualname": "Palette.update",
+              "kind": "method",
+              "signature": "(self, mapping=None, **kwargs: object) -> None",
+              "summary": "Wrap on update, as ``__setitem__`` does.",
+              "line": 287,
+              "deprecated": false
+            },
+            {
+              "name": "setdefault",
+              "qualname": "Palette.setdefault",
+              "kind": "method",
+              "signature": "(self, key: str, default: object = None) -> object",
+              "summary": "Wrap the inserted default, and return the WRAPPED value -- callers",
+              "line": 297,
+              "deprecated": false
+            },
+            {
+              "name": "copy",
+              "qualname": "Palette.copy",
+              "kind": "method",
+              "signature": "(self) -> 'Palette'",
+              "summary": "A Palette, not a plain dict: ``dict.copy`` drops the subclass, and",
+              "line": 305,
+              "deprecated": false
+            },
             {
               "name": "alias",
               "qualname": "Palette.alias",
               "kind": "method",
               "signature": "(self, mapping: Dict[str, str]) -> 'Palette'",
               "summary": "Return a new Palette with additional keys pointing to existing values.",
-              "line": 290,
+              "line": 334,
               "deprecated": false
             },
             {
@@ -1304,7 +1331,7 @@
               "kind": "method",
               "signature": "(self, **kwargs: object) -> 'Palette'",
               "summary": "Return a new Palette with selected entries replaced.",
-              "line": 306,
+              "line": 350,
               "deprecated": false
             },
             {
@@ -1313,7 +1340,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'Palette'",
               "summary": "Standard severity palette for dark-theme UIs.",
-              "line": 321,
+              "line": 365,
               "deprecated": false
             },
             {
@@ -1322,7 +1349,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'Palette'",
               "summary": "Standard XYZ / RGB axis colours (Maya / 3D convention).",
-              "line": 351,
+              "line": 395,
               "deprecated": false
             },
             {
@@ -1331,7 +1358,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'Palette'",
               "summary": "Standard transform-attribute colours for animation editors.",
-              "line": 364,
+              "line": 408,
               "deprecated": false
             },
             {
@@ -1340,7 +1367,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'Palette'",
               "summary": "Common UI element colours for dark themes.",
-              "line": 394,
+              "line": 438,
               "deprecated": false
             },
             {
@@ -1349,7 +1376,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'Palette'",
               "summary": "Comparison / diff palette for dark-theme tree views.",
-              "line": 420,
+              "line": 464,
               "deprecated": false
             }
           ]
@@ -7165,7 +7192,7 @@
         {
           "name": "NamespaceHandler",
           "summary": "A NamespaceHandler that manages its own internal dictionary without attaching",
-          "line": 40,
+          "line": 65,
           "bases": [
             "LoggingMixin"
           ],
@@ -7176,7 +7203,7 @@
               "kind": "property",
               "signature": "(self) -> dict[str, Any]",
               "summary": "",
-              "line": 99,
+              "line": 124,
               "deprecated": false
             },
             {
@@ -7185,7 +7212,7 @@
               "kind": "method",
               "signature": "(self, value: Any) -> bool",
               "summary": "",
-              "line": 102,
+              "line": 127,
               "deprecated": false
             },
             {
@@ -7194,7 +7221,7 @@
               "kind": "method",
               "signature": "(self, key: str) -> Optional[Placeholder]",
               "summary": "",
-              "line": 105,
+              "line": 130,
               "deprecated": false
             },
             {
@@ -7203,7 +7230,7 @@
               "kind": "method",
               "signature": "(self, key: str, placeholder: Placeholder)",
               "summary": "",
-              "line": 108,
+              "line": 133,
               "deprecated": false
             },
             {
@@ -7212,7 +7239,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "",
-              "line": 112,
+              "line": 137,
               "deprecated": false
             },
             {
@@ -7221,7 +7248,7 @@
               "kind": "method",
               "signature": "(self, key: str) -> bool",
               "summary": "",
-              "line": 116,
+              "line": 141,
               "deprecated": false
             },
             {
@@ -7230,7 +7257,7 @@
               "kind": "method",
               "signature": "(self, inc_placeholders=False)",
               "summary": "",
-              "line": 197,
+              "line": 228,
               "deprecated": false
             },
             {
@@ -7239,7 +7266,7 @@
               "kind": "method",
               "signature": "(self, inc_placeholders=False)",
               "summary": "",
-              "line": 203,
+              "line": 234,
               "deprecated": false
             },
             {
@@ -7248,7 +7275,7 @@
               "kind": "method",
               "signature": "(self, inc_placeholders=False)",
               "summary": "",
-              "line": 209,
+              "line": 240,
               "deprecated": false
             },
             {
@@ -7257,7 +7284,7 @@
               "kind": "method",
               "signature": "(self, key: str, default: Any = None) -> Any",
               "summary": "",
-              "line": 215,
+              "line": 246,
               "deprecated": false
             },
             {
@@ -7266,7 +7293,7 @@
               "kind": "method",
               "signature": "(self, key: str) -> bool",
               "summary": "",
-              "line": 221,
+              "line": 252,
               "deprecated": false
             },
             {
@@ -7275,7 +7302,7 @@
               "kind": "method",
               "signature": "(self, key: str, default: Any = None) -> Any",
               "summary": "Return the resolved value for *key* if cached, else *default*.",
-              "line": 224,
+              "line": 255,
               "deprecated": false
             },
             {
@@ -7284,7 +7311,7 @@
               "kind": "method",
               "signature": "(self, key: str) -> Optional[Any]",
               "summary": "",
-              "line": 252,
+              "line": 283,
               "deprecated": false
             },
             {
@@ -7293,7 +7320,7 @@
               "kind": "method",
               "signature": "(self, key: str, default: Any = None, resolve_placeholders: bool = True) -> Any",
               "summary": "",
-              "line": 259,
+              "line": 290,
               "deprecated": false
             },
             {
@@ -7302,7 +7329,7 @@
               "kind": "method",
               "signature": "(self, key: str) -> bool",
               "summary": "Returns True if this key is currently being resolved (to prevent recursion).",
-              "line": 267,
+              "line": 298,
               "deprecated": false
             }
           ]
@@ -12293,7 +12320,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, light=None, ground=0.0, size=512, *, up=1, direction=None, source_size=0.0, max_stretch=None, canvas=None, contact=None, radius=None, height=None, padding=0.04, uniform_alpha=True, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.0)",
               "summary": "Rasterize the shadow world-space meshes cast onto the ground plane.",
-              "line": 3036,
+              "line": 3046,
               "deprecated": false
             },
             {
@@ -12302,7 +12329,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Convert an RGB Image data array to grayscale (luma weights).",
-              "line": 3253,
+              "line": 3263,
               "deprecated": false
             },
             {
@@ -12311,7 +12338,7 @@
               "kind": "staticmethod",
               "signature": "(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]",
               "summary": "Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.",
-              "line": 3269,
+              "line": 3279,
               "deprecated": false
             },
             {
@@ -12320,7 +12347,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert an RGB image to HSV mode.",
-              "line": 3329,
+              "line": 3339,
               "deprecated": false
             },
             {
@@ -12329,7 +12356,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a high-bit-depth grayscale image to 8-bit 'L'.",
-              "line": 3344,
+              "line": 3354,
               "deprecated": false
             },
             {
@@ -12338,7 +12365,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a float grayscale image to 8-bit 'L', rescaling the unit range.",
-              "line": 3375,
+              "line": 3385,
               "deprecated": false
             },
             {
@@ -12347,7 +12374,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 3415,
+              "line": 3425,
               "deprecated": false
             },
             {
@@ -12356,7 +12383,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 3511,
+              "line": 3521,
               "deprecated": false
             },
             {
@@ -12365,7 +12392,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 3664,
+              "line": 3674,
               "deprecated": false
             },
             {
@@ -12374,7 +12401,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 3676,
+              "line": 3686,
               "deprecated": false
             },
             {
@@ -12383,7 +12410,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, percentile=None)",
               "summary": "Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.",
-              "line": 3694,
+              "line": 3704,
               "deprecated": false
             },
             {
@@ -12392,7 +12419,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> List[Image.Image]",
               "summary": "Generate a mipmap chain for an image.",
-              "line": 3756,
+              "line": 3766,
               "deprecated": false
             },
             {
@@ -12401,7 +12428,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 3783,
+              "line": 3793,
               "deprecated": false
             },
             {
@@ -12410,7 +12437,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 3803,
+              "line": 3813,
               "deprecated": false
             },
             {
@@ -12419,7 +12446,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 3844,
+              "line": 3854,
               "deprecated": false
             },
             {
@@ -12428,7 +12455,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 3905,
+              "line": 3915,
               "deprecated": false
             }
           ]
@@ -12853,7 +12880,7 @@
               "kind": "staticmethod",
               "signature": "(values, value_tolerance=1e-05)",
               "summary": "Return indices of redundant interior keys in flat segments.",
-              "line": 679,
+              "line": 681,
               "deprecated": false
             },
             {
@@ -12862,7 +12889,7 @@
               "kind": "staticmethod",
               "signature": "(values: Sequence[float], value_tolerance: float = 1e-05) -> 'np.ndarray'",
               "summary": "Return the indices that define a sampled curve's shape.",
-              "line": 750,
+              "line": 752,
               "deprecated": false
             }
           ]
