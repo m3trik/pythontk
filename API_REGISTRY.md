@@ -1190,11 +1190,13 @@ Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 <a id="core_utils--package_manager"></a>
 ### `core_utils/package_manager.py`
 
-- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L503)** — A class that encapsulates package management functionalities using pip.
+- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L557)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.install_targeted(self, specs, target_dir, upgrade=False) -> List[str]` — Resolver-aware install into a directory an embedded host imports from.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
-  - `PackageManager.start_version_check(self, package_name=None, python_path=None) -> None` — Start a version check in a background thread.
+  - `PackageManager.start_version_check(self, package_name=None, python_path=None) -> threading.Thread` — Start a version check in a background thread.
+  - `PackageManager.version_check_running(self) -> bool` *(property)* — Whether a background version check is currently in flight.
+  - `PackageManager.wait_for_version_check(self, timeout: Optional[float] = None) -> bool` — Wait for the background version check to finish.
   - `PackageManager.new_version_available(self) -> bool` *(property)* — Check if a new version of the package is available.
   - `PackageManager.installed_ver(self) -> str` *(property)* — Get the installed version of the package.
   - `PackageManager.latest_ver(self) -> str` *(property)* — Get the latest version of the package from PyPI.

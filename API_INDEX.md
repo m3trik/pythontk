@@ -318,7 +318,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: pip, install_targeted, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
+  - methods: pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
 
 ### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - `class Codec`

@@ -42,7 +42,7 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `net_utils/preview_server.py::PreviewServer.url` — was `(self) -> Optional[str]`
 - `net_utils/preview_server.py::PreviewServer.version` — was `(self) -> int`
 
-## Added (154)
+## Added (156)
 
 - `core_utils/color.py::Palette.copy(self) -> 'Palette'`
 - `core_utils/color.py::Palette.setdefault(self, key: str, default: object = None) -> object`
@@ -94,6 +94,8 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `core_utils/execution_monitor/_sidecar.py::run_watchdog(pid: int, heartbeat_path: str, timeout: float, check_interval: float = 1.0, kill_tree: bool = True, stop_file: str | None = None) -> int`
 - `core_utils/execution_monitor/_sidecar.py::watch_parent(root, pid: int | None, on_gone=None) -> None`
 - `core_utils/logging_mixin.py::LoggerExt.set_default_text_handler(handler: Union[type, object, None]) -> None`
+- `core_utils/package_manager.py::PackageManager.version_check_running(self) -> bool`
+- `core_utils/package_manager.py::PackageManager.wait_for_version_check(self, timeout: Optional[float] = None) -> bool`
 - `core_utils/test_sandbox.py::TestSandbox(class)`
 - `core_utils/test_sandbox.py::TestSandbox.activate(cls) -> str`
 - `core_utils/test_sandbox.py::TestSandbox.browser(cls) -> None`
@@ -199,7 +201,7 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `net_utils/remote_file.py::RemoteFile.probe(cls, url: str, *, timeout: Optional[float] = None) -> Optional[str]`
 - `net_utils/remote_file.py::RemoteFile.read_bytes(cls, url: str, *, timeout: Optional[float] = None, reject_html: bool = True) -> bytes`
 
-## Signature changed (4)
+## Signature changed (5)
 
 - `core_utils/execution_monitor/_execution_monitor.py::ExecutionMonitor.is_escape_pressed`
   - was: `()`
@@ -207,6 +209,9 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `core_utils/execution_monitor/_execution_monitor.py::ExecutionMonitor.show_long_execution_dialog`
   - was: `(title, message, force_action=None)`
   - now: `(title, message, force_action=None, finished=None)`
+- `core_utils/package_manager.py::PackageManager.start_version_check`
+  - was: `(self, package_name=None, python_path=None) -> None`
+  - now: `(self, package_name=None, python_path=None) -> threading.Thread`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_to_glb`
   - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str`
   - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = ()) -> str`

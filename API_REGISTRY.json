@@ -7549,7 +7549,7 @@
         {
           "name": "PackageManager",
           "summary": "A class that encapsulates package management functionalities using pip.",
-          "line": 503,
+          "line": 557,
           "bases": [
             "_PkgVersionCheck",
             "_PkgVersionUtils",
@@ -7563,7 +7563,7 @@
               "kind": "method",
               "signature": "(self, command, output_as_string=False)",
               "summary": "Execute a pip command and return the output.",
-              "line": 541,
+              "line": 595,
               "deprecated": false
             },
             {
@@ -7572,7 +7572,7 @@
               "kind": "method",
               "signature": "(self, specs, target_dir, upgrade=False) -> List[str]",
               "summary": "Resolver-aware install into a directory an embedded host imports from.",
-              "line": 546,
+              "line": 600,
               "deprecated": false
             },
             {
@@ -7581,16 +7581,34 @@
               "kind": "staticmethod",
               "signature": "(paths: List[Union[str, Path]]) -> List[Path]",
               "summary": "Sort a list of local repository paths based on their pyproject.toml dependencies.",
-              "line": 717,
+              "line": 771,
               "deprecated": false
             },
             {
               "name": "start_version_check",
               "qualname": "PackageManager.start_version_check",
               "kind": "method",
-              "signature": "(self, package_name=None, python_path=None) -> None",
+              "signature": "(self, package_name=None, python_path=None) -> threading.Thread",
               "summary": "Start a version check in a background thread.",
-              "line": 234,
+              "line": 236,
+              "deprecated": false
+            },
+            {
+              "name": "version_check_running",
+              "qualname": "PackageManager.version_check_running",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "Whether a background version check is currently in flight.",
+              "line": 284,
+              "deprecated": false
+            },
+            {
+              "name": "wait_for_version_check",
+              "qualname": "PackageManager.wait_for_version_check",
+              "kind": "method",
+              "signature": "(self, timeout: Optional[float] = None) -> bool",
+              "summary": "Wait for the background version check to finish.",
+              "line": 289,
               "deprecated": false
             },
             {
@@ -7599,7 +7617,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "Check if a new version of the package is available.",
-              "line": 258,
+              "line": 309,
               "deprecated": false
             },
             {
@@ -7608,7 +7626,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Get the installed version of the package.",
-              "line": 274,
+              "line": 325,
               "deprecated": false
             },
             {
@@ -7617,7 +7635,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Get the latest version of the package from PyPI.",
-              "line": 283,
+              "line": 334,
               "deprecated": false
             },
             {
@@ -7626,7 +7644,7 @@
               "kind": "method",
               "signature": "(self, package_name=None, python_path=None) -> None",
               "summary": "Check the installed and latest versions of the package.",
-              "line": 291,
+              "line": 342,
               "deprecated": false
             },
             {
@@ -7635,7 +7653,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, change: str = 'increment', version_part: str = 'patch', max_version_parts: tuple = (99, 99), version_regex: str = '__version__\\\\s*=\\\\s*[\\'\\\\\"](\\\\d+)\\\\.(\\\\d+)\\\\.(\\\\d+)[\\'\\\\\"]') -> str",
               "summary": "Update the version number in a text file.",
-              "line": 334,
+              "line": 385,
               "deprecated": false
             },
             {
@@ -7644,7 +7662,7 @@
               "kind": "staticmethod",
               "signature": "(file_path=None, inc=None, exc=None) -> list",
               "summary": "Update the requirements.txt file with current versions of packages.",
-              "line": 441,
+              "line": 492,
               "deprecated": false
             },
             {
@@ -7653,7 +7671,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Install a package.",
-              "line": 35,
+              "line": 36,
               "deprecated": false
             },
             {
@@ -7662,7 +7680,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Uninstall a package.",
-              "line": 43,
+              "line": 44,
               "deprecated": false
             },
             {
@@ -7671,7 +7689,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "List installed packages as a ``{name: version}`` dict.",
-              "line": 51,
+              "line": 52,
               "deprecated": false
             },
             {
@@ -7680,7 +7698,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Show details of a specific package.",
-              "line": 77,
+              "line": 78,
               "deprecated": false
             },
             {
@@ -7689,7 +7707,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Update a package to the latest version.",
-              "line": 85,
+              "line": 86,
               "deprecated": false
             },
             {
@@ -7698,7 +7716,7 @@
               "kind": "method",
               "signature": "(self, package_name)",
               "summary": "Get the installed version of a package.",
-              "line": 93,
+              "line": 94,
               "deprecated": false
             },
             {
@@ -7707,7 +7725,7 @@
               "kind": "method",
               "signature": "(self, package_name, timeout=None)",
               "summary": "Get the latest version of a package from PyPI using the standard library.",
-              "line": 104,
+              "line": 105,
               "deprecated": false
             },
             {
@@ -7716,7 +7734,7 @@
               "kind": "method",
               "signature": "(self, package_names, timeout=None)",
               "summary": "Latest index version for several packages at once.",
-              "line": 139,
+              "line": 140,
               "deprecated": false
             },
             {
@@ -7725,7 +7743,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "List all outdated packages.",
-              "line": 178,
+              "line": 179,
               "deprecated": false
             },
             {
@@ -7734,7 +7752,7 @@
               "kind": "method",
               "signature": "(self, package_name: str) -> bool",
               "summary": "Efficiently check if a specific package is outdated.",
-              "line": 196,
+              "line": 197,
               "deprecated": false
             }
           ]

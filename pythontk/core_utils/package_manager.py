@@ -4,8 +4,9 @@ import sys
 import re
 import json
 import subprocess
+import threading
 from pathlib import Path
-from typing import List, Union
+from typing import List, Optional, Union
 from pythontk.core_utils import help_mixin
 
 
@@ -215,6 +216,7 @@ class _PkgVersionCheck:
     _python_path: str = None
     _installed_ver: str = ""
     _latest_ver: str = ""
+    _version_check_thread: Optional[threading.Thread] = None
 
     def __init__(self, package_name=None, python_path=None):
         """Initialize the _PkgVersionCheck.
@@ -231,14 +233,25 @@ class _PkgVersionCheck:
         else:
             self._python_path = sys.executable
 
-    def start_version_check(self, package_name=None, python_path=None) -> None:
+    def start_version_check(
+        self, package_name=None, python_path=None
+    ) -> threading.Thread:
         """Start a version check in a background thread.
+
+        The thread is returned and kept on the instance, so a host can ask
+        whether it is still running (:attr:`version_check_running`) and await it
+        at shutdown (:meth:`wait_for_version_check`). A check already in flight
+        is reused rather than duplicated.
 
         Parameters:
             package_name (str, optional): The name of the package to check.
                 If not provided, uses the value set in __init__ or the class default.
             python_path (str, optional): Path to the Python interpreter to use.
                 If not provided, uses the value set in __init__ or the class default.
+
+        Returns:
+            threading.Thread: The running check -- a new one, or the live one
+            when a check was already in flight.
         """
         if package_name:
             self._package_name = package_name
@@ -249,10 +262,48 @@ class _PkgVersionCheck:
         if not self._package_name:
             raise ValueError("Package name must be provided")
 
-        # Start a background thread to check versions
-        import threading
+        # A check already in flight is not duplicated. check_version is a pip
+        # subprocess against another interpreter plus a PyPI round trip, and
+        # the live caller (tentacle's HudSlots) starts one from a Qt slot
+        # CONSTRUCTOR -- so every construction of that panel used to launch
+        # another, with no handle able to observe or await any of them.
+        thread = self._version_check_thread
+        if thread is not None and thread.is_alive():
+            return thread
 
-        threading.Thread(target=self.check_version, daemon=True).start()
+        thread = threading.Thread(
+            target=self.check_version,
+            name=f"ptk-version-check-{self._package_name}",
+            daemon=True,
+        )
+        self._version_check_thread = thread
+        thread.start()
+        return thread
+
+    @property
+    def version_check_running(self) -> bool:
+        """Whether a background version check is currently in flight."""
+        thread = self._version_check_thread
+        return bool(thread is not None and thread.is_alive())
+
+    def wait_for_version_check(self, timeout: Optional[float] = None) -> bool:
+        """Wait for the background version check to finish.
+
+        Daemon threads are killed mid-flight at interpreter exit, which is fine
+        for a poll but leaves a host with no way to shut down tidily.
+
+        Parameters:
+            timeout: Seconds to wait; ``None`` waits indefinitely.
+
+        Returns:
+            bool: True if no check is in flight -- including when none was ever
+            started. False means the timeout lapsed first.
+        """
+        thread = self._version_check_thread
+        if thread is None:
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
 
     @property
     def new_version_available(self) -> bool:
@@ -453,7 +504,7 @@ class _PkgVersionUtils:
         """
         import os
         import inspect
-        import pkg_resources
+        from importlib import metadata
         from pythontk.iter_utils._iter_utils import IterUtils
 
         # Determine the caller's directory
@@ -476,12 +527,15 @@ class _PkgVersionUtils:
                     package_name = line.strip().split("==")[0]
                     if package_name in IterUtils.filter_list([package_name], inc, exc):
                         try:
-                            version = pkg_resources.get_distribution(
-                                package_name
-                            ).version
+                            version = metadata.version(package_name)
                             updated_lines.append(f"{package_name}=={version}\n")
                         except Exception as e:
+                            # Keep the line. The file is written back from
+                            # updated_lines, so skipping the append here
+                            # DELETED the requirement -- one uninstalled
+                            # package silently dropped a dependency.
                             print(f"Error updating version for {package_name}: {e}")
+                            updated_lines.append(line)
                     else:
                         updated_lines.append(line)
                 else:
