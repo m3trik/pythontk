@@ -7,10 +7,12 @@ collects them and resolves the best converter for a target map type. Split out
 of the monolithic ``map_factory`` module so the registry plumbing stays free of
 the factory orchestrator and its workflow handlers.
 """
+
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Union
 from collections import defaultdict
 import inspect
+import warnings
 
 
 @dataclass
@@ -35,18 +37,29 @@ class ConversionRegistry:
         self._pending_plugins = set()
 
     def add_plugin(self, cls):
-        """Register a class to be scanned for conversions later."""
+        """Register a class to be scanned for conversions on first lookup.
+
+        *cls* must define ``register_conversions(registry)``. The scan is
+        deferred so importing the engine does no registration work.
+
+        Raises:
+            TypeError: *cls* defines no ``register_conversions``. This used to
+                be accepted and then fall through to ``register_from_class``,
+                which finds nothing unless the class carries ``_conversion_info``
+                members -- so a plugin that simply forgot the classmethod
+                registered silently and contributed nothing.
+        """
+        if not hasattr(cls, "register_conversions"):
+            raise TypeError(
+                f"{getattr(cls, '__name__', cls)!r} cannot be a conversion "
+                "plugin: it defines no register_conversions(registry)."
+            )
         self._pending_plugins.add(cls)
 
     def _scan_pending(self):
-        """Scan any pending plugins."""
+        """Scan any pending plugins (once each, on first lookup)."""
         while self._pending_plugins:
-            cls = self._pending_plugins.pop()
-            if hasattr(cls, "register_conversions"):
-                cls.register_conversions(self)
-            else:
-                # Fallback for backward compatibility or mixed usage
-                self.register_from_class(cls)
+            self._pending_plugins.pop().register_conversions(self)
 
     def register(
         self,
@@ -93,7 +106,23 @@ class ConversionRegistry:
         )
 
     def register_from_class(self, cls):
-        """Register all decorated conversion methods from a class."""
+        """Register all decorated conversion methods from a class.
+
+        .. deprecated::
+            Define ``register_conversions(registry)`` on the class and hand it
+            to :meth:`add_plugin` instead. Nothing in the ecosystem sets the
+            ``_conversion_info`` attribute this scans for -- no decorator
+            produces it -- so this has never registered anything; it was
+            reachable only as ``_scan_pending``'s fallback, measured at zero
+            invocations. Slated for removal next release.
+        """
+        warnings.warn(
+            "ConversionRegistry.register_from_class is deprecated and will be "
+            "removed in the next release; define register_conversions(registry) "
+            "on the class and pass it to add_plugin instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if cls in self._registered_classes:
             return
 

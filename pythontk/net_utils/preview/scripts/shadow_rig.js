@@ -1215,9 +1215,13 @@ function feedSource(THREE, plane) {
   u.uOrigin.value.setFromMatrixPosition(contact);
   u.uAxisA.value.fromArray(plane.horizon.frameA).transformDirection(contact);
   u.uAxisB.value.fromArray(plane.horizon.frameB).transformDirection(contact);
-  // The frame's up: bearing runs from A toward B, so B x A is the vertical
-  // (X x Z is -Y in a right-handed Y-up file).
-  u.uAxisUp.value.crossVectors(u.uAxisB.value, u.uAxisA.value).normalize();
+  // The frame's up is the contact's own +Y, NOT a cross product of A and B.
+  // The two DCCs bake with opposite bearing senses -- Maya's frame is (X, Z),
+  // Blender's arrives as (X, -Z) -- so cross(B, A) is +Y for one and -Y for
+  // the other, which puts every Blender-exported source below the horizon and
+  // draws nothing. The map's up is the exporter's up, whatever the bearing
+  // sense; the rig already assumes the contact stands on the world ground.
+  u.uAxisUp.value.set(0, 1, 0).transformDirection(contact);
   // The ground plane's height along that up, from any point on it. The map's
   // intervals were baked as elevations seen FROM this plane, and the shared
   // body projects every fragment onto it.

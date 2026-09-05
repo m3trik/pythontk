@@ -11,11 +11,17 @@ Architecture (split out of the original single-file module):
     handlers     -- ``WorkflowHandler`` strategies (ORM, MRAO, mask, ...)
     _map_factory -- ``MapFactory`` orchestrator (the public entry point)
 
+``processor`` and ``handlers`` call MapFactory's stateless primitives at runtime
+but cannot import it at module load -- MapFactory names the handler classes at
+class-definition time -- so each resolves the name through its own module-level
+``__getattr__``. Importing this package has no side effects.
+
 Public API is unchanged: ``from pythontk import MapFactory`` resolves through the
 lazy root exactly as before. The engine was relocated from ``img_utils`` into the
 ``core_utils/engines/textures`` domain-engine namespace, so the *internal* path is
 now ``from pythontk.core_utils.engines.textures.map_factory import MapFactory``.
 """
+
 from .conversions import MapConversion, ConversionRegistry
 from .processor import TextureProcessor
 from .handlers import (
@@ -30,17 +36,6 @@ from .handlers import (
     SeparateMetallicRoughnessHandler,
 )
 from ._map_factory import MapFactory
-
-# Late-bind MapFactory into the submodules that call its stateless primitive
-# library at runtime. processor/handlers cannot import it at module load --
-# MapFactory references the handler classes at class-definition time, which
-# would form a circular import -- so the resolved class is injected here, after
-# every collaborator is defined.
-from . import processor as _processor
-from . import handlers as _handlers
-
-_processor.MapFactory = MapFactory
-_handlers.MapFactory = MapFactory
 
 __all__ = [
     "MapFactory",

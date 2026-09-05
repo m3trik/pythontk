@@ -124,7 +124,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 <a id="audio_utils--_audio_utils"></a>
 ### `audio_utils/_audio_utils.py`
 
-- **[`class AudioUtils(HelpMixin)`](pythontk/pythontk/audio_utils/_audio_utils.py#L15)** — Utility helpers for portable audio-file preparation.
+- **[`class AudioUtils(HelpMixin)`](pythontk/pythontk/audio_utils/_audio_utils.py#L14)** — Utility helpers for portable audio-file preparation.
   - `AudioUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Resolve the ffmpeg executable from PATH or a managed install.
   - `AudioUtils.is_playable_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is already timeline-playable.
   - `AudioUtils.is_supported_source_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is accepted as conversion source.
@@ -634,7 +634,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 ``MapFactory`` -- the texture-map workflow orchestrator.
 
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L67)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L68)** — Refactored factory with pluggable workflow system.
   - `MapFactory.map_types(cls) -> Dict[str, Tuple[str, ...]]` — ``{canonical_key: (canonical, *aliases)}`` for every registered map.
   - `MapFactory.passthrough_maps(cls) -> List[str]` — Maps passed through to the output when no handler consumes them.
   - `MapFactory.packed_grayscale_maps(cls) -> List[str]` — Maps that scale down by ``mask_map_scale`` (packed/mask data).
@@ -689,9 +689,9 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 Map-conversion registry primitives for the texture MapFactory.
 
-- **[`class MapConversion`](pythontk/pythontk/core_utils/engines/textures/map_factory/conversions.py#L17)** — Defines a single map conversion operation.
-- **[`class ConversionRegistry`](pythontk/pythontk/core_utils/engines/textures/map_factory/conversions.py#L26)** — Central registry for all map type conversions.
-  - `ConversionRegistry.add_plugin(self, cls)` — Register a class to be scanned for conversions later.
+- **[`class MapConversion`](pythontk/pythontk/core_utils/engines/textures/map_factory/conversions.py#L19)** — Defines a single map conversion operation.
+- **[`class ConversionRegistry`](pythontk/pythontk/core_utils/engines/textures/map_factory/conversions.py#L28)** — Central registry for all map type conversions.
+  - `ConversionRegistry.add_plugin(self, cls)` — Register a class to be scanned for conversions on first lookup.
   - `ConversionRegistry.register(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)` — Register a new conversion strategy.
   - `ConversionRegistry.register_from_class(self, cls)` — Register all decorated conversion methods from a class.
   - `ConversionRegistry.get_conversions_for(self, target_type: str) -> List[MapConversion]` — Get all conversions that can produce target type.
@@ -701,41 +701,41 @@ Map-conversion registry primitives for the texture MapFactory.
 
 Workflow handlers (Strategy pattern) for the texture MapFactory.
 
-- **[`class WorkflowHandler(ABC)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L25)** — Abstract base for workflow-specific map processing.
+- **[`class WorkflowHandler(ABC)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L47)** — Abstract base for workflow-specific map processing.
   - `WorkflowHandler.can_handle(self, context: TextureProcessor) -> bool` — Check if this handler should process the workflow.
   - `WorkflowHandler.process(self, context: TextureProcessor) -> Optional[str]` — Process and return the output map path.
   - `WorkflowHandler.get_consumed_types(self) -> List[str]` — Return list of map types this handler consumes.
   - `WorkflowHandler.is_explicitly_requested(self, context: TextureProcessor, map_type: str) -> bool` — Check if a map type is explicitly requested in the config.
   - `WorkflowHandler.packing_enabled(self, context: TextureProcessor) -> bool` — Whether packed-map generation is enabled for this run.
-- **[`class ORMMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L64)** — Handles Unreal Engine / glTF ORM packing.
+- **[`class ORMMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L86)** — Handles Unreal Engine / glTF ORM packing.
   - `ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `ORMMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L153)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
+- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L175)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
   - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L247)** — Handles Unity HDRP Mask Map (MSAO).
+- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L269)** — Handles Unity HDRP Mask Map (MSAO).
   - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L373)** — Handles packed Metallic+Smoothness.
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L395)** — Handles packed Metallic+Smoothness.
   - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L446)** — Handles separate metallic and roughness maps.
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L468)** — Handles separate metallic and roughness maps.
   - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
   - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L483)** — Handles base color / albedo with optional packing.
+- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L505)** — Handles base color / albedo with optional packing.
   - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L635)** — Handles normal map format conversion.
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L657)** — Handles normal map format conversion.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L813)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L835)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -745,7 +745,7 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 ``TextureProcessor`` -- shared processing context for the MapFactory.
 
-- **[`class TextureProcessor`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L42)** — Shared context and processor for all map operations.
+- **[`class TextureProcessor`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L63)** — Shared context and processor for all map operations.
   - `TextureProcessor.output_path_for(self, map_type: str, ext: Optional[str] = None) -> str` — The canonical path ``save_map`` writes ``map_type`` to.
   - `TextureProcessor.get_cached_image(self, path: str) -> 'Image.Image'` — Load an image with caching to avoid redundant disk I/O.
   - `TextureProcessor.save_map(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str` — Saves and optimizes a map, enforcing mode and naming conventions.

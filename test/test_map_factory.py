@@ -1549,5 +1549,72 @@ class TestMapFactoryCancellation(unittest.TestCase):
         self.assertEqual(len(seen), self.SETS)
 
 
+class TestConversionPluginSeam(unittest.TestCase):
+    """``ConversionRegistry`` carried two registration protocols, and only one
+    of them could ever run.
+
+    ``_scan_pending`` preferred ``cls.register_conversions(registry)`` and fell
+    back to ``register_from_class``, which scans members for a
+    ``_conversion_info`` attribute. Nothing in any of the seven ecosystem
+    packages sets ``_conversion_info`` -- there is no decorator that produces
+    it -- and the one registered plugin (``MapFactory``) defines
+    ``register_conversions``, so the fallback was measured at zero invocations
+    while five real conversions resolved. Its practical effect was to turn a
+    plugin that forgot ``register_conversions`` into a silent no-op.
+    """
+
+    def test_a_plugin_without_register_conversions_is_refused(self):
+        """Previously accepted, then silently contributed nothing."""
+        registry = ConversionRegistry()
+
+        class NotAPlugin:
+            pass
+
+        with self.assertRaises(TypeError) as caught:
+            registry.add_plugin(NotAPlugin)
+        self.assertIn("register_conversions", str(caught.exception))
+
+    def test_a_valid_plugin_is_still_scanned_lazily(self):
+        """The deferral is the point of ``add_plugin``: no registration work
+        happens until the first lookup."""
+        registry = ConversionRegistry()
+        scanned = []
+
+        class Plugin:
+            @classmethod
+            def register_conversions(cls, reg):
+                scanned.append(reg)
+                reg.register(
+                    target_type="Widget",
+                    source_types=["Gadget"],
+                    converter=lambda inv, ctx: "converted",
+                )
+
+        registry.add_plugin(Plugin)
+        self.assertEqual(scanned, [], "add_plugin scanned eagerly")
+        found = registry.get_conversions_for("Widget")
+        self.assertEqual(len(scanned), 1)
+        self.assertEqual(len(found), 1)
+        # Scanned once, not on every lookup.
+        registry.get_conversions_for("Widget")
+        self.assertEqual(len(scanned), 1)
+
+    def test_register_from_class_is_deprecated(self):
+        registry = ConversionRegistry()
+
+        class Legacy:
+            pass
+
+        with self.assertWarns(DeprecationWarning) as caught:
+            registry.register_from_class(Legacy)
+        self.assertIn("register_conversions", str(caught.warning))
+
+    def test_the_live_registration_path_is_unaffected(self):
+        """Guards the deletion: MapFactory's own conversions still resolve."""
+        registry = ConversionRegistry()
+        registry.add_plugin(MapFactory)
+        self.assertTrue(registry.get_conversions_for("Metallic"))
+
+
 if __name__ == "__main__":
     unittest.main()
