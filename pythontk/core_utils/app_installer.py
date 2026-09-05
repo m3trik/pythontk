@@ -289,11 +289,27 @@ class AppInstaller:
             return True
         if callable(prompt):
             return bool(prompt(question))
-        if not (sys.stdin and sys.stdin.isatty()):
+        if not AppInstaller._console_can_answer():
             return None
         sys.stdout.write(f"\n{question} [y/N] ")
         sys.stdout.flush()
         return sys.stdin.readline().strip().lower() in ("y", "yes")
+
+    @staticmethod
+    def _console_can_answer() -> bool:
+        """True when ``sys.stdin`` is an interactive terminal a person can type
+        into. Anything else -- no stdin (``pythonw``), a closed stream (raises
+        on ``isatty``), or a DCC's console proxy that has no ``isatty`` at all
+        (Maya's GUI ``StandardInput``) -- is "nobody to ask", never an error
+        and never a read that would block a host application forever."""
+        stdin = sys.stdin
+        probe = getattr(stdin, "isatty", None) if stdin is not None else None
+        if probe is None:
+            return False
+        try:
+            return bool(probe())
+        except (ValueError, OSError):  # closed stream / unusable descriptor
+            return False
 
     # ------------------------------------------------------------------
     # Internal — download / verify / extract

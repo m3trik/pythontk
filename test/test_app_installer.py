@@ -1,5 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
+import io
 import sys
 import unittest
 import os
@@ -676,6 +677,24 @@ class TestAppInstaller(unittest.TestCase):
             self.assertTrue(AppInstaller.consent(True, "Install?"))
             fake_sys.stdin.readline.return_value = "\n"
             self.assertFalse(AppInstaller.consent(True, "Install?"))
+
+    def test_consent_console_proxy_without_isatty_is_nobody_to_ask(self):
+        """A DCC's GUI console proxy (Maya's ``StandardInput``) has no
+        ``isatty`` at all, and a closed stream raises on it. Both mean
+        "nobody to ask" (None): never a traceback, never a blocking read.
+        Added: 2026-09-05 (7 errors in mayatk's GUI pass)."""
+
+        class ConsoleProxy:  # Maya GUI: readline only, no isatty
+            def readline(self):
+                raise AssertionError("must not block on a console proxy")
+
+        closed = io.StringIO()
+        closed.close()  # isatty() raises ValueError on a closed stream
+        for label, stdin in (("no isatty", ConsoleProxy()), ("closed", closed)):
+            with self.subTest(label):
+                with patch("pythontk.core_utils.app_installer.sys") as fake_sys:
+                    fake_sys.stdin = stdin
+                    self.assertIsNone(AppInstaller.consent(True, "Install?"))
 
     # ------------------------------------------------------------------
     # resolve_ffmpeg catalog fallback
