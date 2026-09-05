@@ -6,6 +6,7 @@ The engine emits status via ``self.logger`` (LoggingMixin). Tests attach
 an in-memory handler to capture records without going through Qt.
 """
 
+import io
 import logging
 import os
 import shutil
@@ -16,6 +17,7 @@ from typing import List
 import numpy as np
 from PIL import Image
 
+from pythontk.core_utils.engines.textures import map_compositor as mc_module
 from pythontk.core_utils.engines.textures.map_compositor import (
     BatchResult,
     MapCompositor,
@@ -1797,6 +1799,89 @@ class TestModelessPackedTypeComposite(unittest.TestCase, _LoggerCaptureMixin):
     def test_mrao_composites_without_keyerror(self):
         out = self._run("MRAO")
         self.assertTrue(os.path.exists(out))
+
+
+class TestWriterRouting(unittest.TestCase, _LoggerCaptureMixin):
+    """The engine's two writes were raw ``PIL.Image.save``.
+
+    Every other texture write goes through ``ImgUtils.save_image``, which
+    routes by extension: PIL for the ordinary containers, OpenCV for the float
+    formats (EXR/HDR), the external encoder for KTX2, plus bit-depth and lossy
+    handling. Raw PIL cannot write ``.exr`` or ``.hdr`` at all -- and the
+    engine *discovers its inputs* with ``ImgUtils.texture_file_types``, which
+    lists both, then takes the output extension from the first input. So an
+    EXR set raised ``ValueError: unknown file extension: .exr`` out of
+    ``process_batch`` with nothing written.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mc_writer_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _island(cols, size=16, mode="RGB", fg=(255, 0, 0), bg=(0, 0, 0)):
+        im = Image.new(mode, (size, size), bg)
+        for y in range(size):
+            for x in cols:
+                im.putpixel((x, y), fg)
+        return im
+
+    def test_an_exr_set_is_written_instead_of_raising(self):
+        MapCompositor().process_batch(
+            {
+                "Base_Color": [
+                    ("a.exr", self._island(range(0, 6))),
+                    ("b.exr", self._island(range(10, 16))),
+                ]
+            },
+            self.tmp,
+            name="AB",
+        )
+        out = os.path.join(self.tmp, "AB_Base_Color.exr")
+        self.assertTrue(os.path.isfile(out), f"not written: {os.listdir(self.tmp)}")
+        self.assertGreater(os.path.getsize(out), 0)
+
+    def test_the_normal_map_counterpart_is_written_through_the_same_writer(self):
+        """The second raw save: the inverted-green counterpart map."""
+        engine = MapCompositor()
+        engine.process_batch(
+            {
+                "Normal_OpenGL": [
+                    ("a.exr", self._island(range(0, 6), fg=(128, 128, 255))),
+                    ("b.exr", self._island(range(10, 16), fg=(128, 128, 255))),
+                ]
+            },
+            self.tmp,
+            name="AB",
+        )
+        written = sorted(os.listdir(self.tmp))
+        self.assertTrue(
+            any(f.endswith(".exr") for f in written), f"nothing written: {written}"
+        )
+
+    def test_png_output_is_unchanged(self):
+        """The routing change must not alter the ordinary path."""
+        MapCompositor().process_batch(
+            {
+                "Base_Color": [
+                    ("a.png", self._island(range(0, 6))),
+                    ("b.png", self._island(range(10, 16))),
+                ]
+            },
+            self.tmp,
+            name="AB",
+        )
+        out = os.path.join(self.tmp, "AB_Base_Color.png")
+        self.assertTrue(os.path.isfile(out))
+        self.assertEqual(Image.open(out).size, (16, 16))
+
+    def test_the_module_guards_its_optional_imports(self):
+        """Its six siblings in the engine tolerate a missing Pillow; this one
+        imported it bare, so an install without Pillow failed at import."""
+        source = io.open(mc_module.__file__, encoding="utf-8").read()
+        self.assertIn("except ImportError", source)
 
 
 if __name__ == "__main__":

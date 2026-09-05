@@ -15,8 +15,17 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Tuple
 
-import numpy as np
-from PIL import Image
+try:
+    import numpy as np
+except ImportError as e:
+    print(f"# ImportError: {__file__}\n\t{e}")
+    np = None  # type: ignore
+try:
+    from PIL import Image
+except ImportError as e:
+    print(f"# ImportError: {__file__}\n\t{e}")
+    Image = None  # type: ignore
+
 import pythontk as ptk
 
 Layers = List[Tuple[str, Image.Image]]
@@ -252,9 +261,7 @@ class MapCompositor(ptk.LoggingMixin):
 
         # Strip non-config metadata before forwarding to prepare_maps.
         workflow_config = {
-            k: v
-            for k, v in presets[self.output_template].items()
-            if k != "description"
+            k: v for k, v in presets[self.output_template].items() if k != "description"
         }
 
         self.logger.log_raw("")
@@ -433,8 +440,7 @@ class MapCompositor(ptk.LoggingMixin):
             if n < 2 * len(arrays):
                 continue
             share = min(
-                float(cls._background_pixels(arr, candidate).mean())
-                for arr in arrays
+                float(cls._background_pixels(arr, candidate).mean()) for arr in arrays
             )
             if share >= cls._BG_MIN_SHARE and share > best_share:
                 best_share, best = share, candidate
@@ -511,7 +517,9 @@ class MapCompositor(ptk.LoggingMixin):
         combined: List[Optional[np.ndarray]] = [None] * n_layers
         for typ in used:
             for i, content in enumerate(per_type[typ]):
-                combined[i] = content if combined[i] is None else (combined[i] | content)
+                combined[i] = (
+                    content if combined[i] is None else (combined[i] | content)
+                )
         masks = [Image.fromarray(c.astype(np.uint8) * 255, mode="L") for c in combined]
         self._warn_on_mask_overlap(masks)
         return masks
@@ -609,7 +617,13 @@ class MapCompositor(ptk.LoggingMixin):
         mode = result.mode
         bit_depth = ptk.ImgUtils.format_bit_depth(mode)
         out_path = os.path.join(output_dir, f"{name}_{typ}.{ext}")
-        result.save(out_path)
+        # save_image, not Image.save: it dispatches on the extension, and this
+        # engine discovers its inputs with ImgUtils.texture_file_types -- which
+        # lists exr and hdr -- then takes `ext` from the first input. Raw PIL
+        # cannot write either, so an EXR set raised ValueError with nothing
+        # written. It also carries the bit-depth, compression and lossy rules
+        # every other texture write in the package already goes through.
+        ptk.ImgUtils.save_image(result, out_path)
         # Track the post-optimization path — optimization can resolve a
         # different filename, and the template post-pass must be handed the
         # file that actually exists.
@@ -903,7 +917,7 @@ class MapCompositor(ptk.LoggingMixin):
         new_type = registry.counterpart_normal_spelling(typ, dst_set)
         inverted = ptk.invert_channels(result, "g")
         inverted_path = os.path.join(output_dir, f"{name}_{new_type}.{info.ext}")
-        inverted.save(inverted_path)
+        ptk.ImgUtils.save_image(inverted, inverted_path)
         self._record_written(inverted_path)
         title = (
             f"{new_type.rstrip('_')} {info.mode} {info.bit_depth} "
