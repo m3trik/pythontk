@@ -8,6 +8,7 @@ Tests for MapFactory grouping/filtering helpers used by mayatk.MatUpdater:
 These drive multi-set detection and PBR map dedup. They have no on-disk
 side effects — pure dict transforms.
 """
+
 import os
 import unittest
 
@@ -142,7 +143,9 @@ class FilterRedundantMapsTest(BaseTestCase):
             "Ambient_Occlusion": ["/x/asset_AO.png"],
         }
         MapFactory.filter_redundant_maps(d, config={"mask_map": False})
-        self.assertNotIn("MSAO", d, "Redundant MSAO should be dropped for an unpacked preset")
+        self.assertNotIn(
+            "MSAO", d, "Redundant MSAO should be dropped for an unpacked preset"
+        )
         self.assertIn("Metallic", d)
         self.assertIn("Roughness", d)
         self.assertIn("Ambient_Occlusion", d)
@@ -161,11 +164,20 @@ class FilterRedundantMapsTest(BaseTestCase):
         self.assertNotIn("Roughness", d)
         self.assertNotIn("Ambient_Occlusion", d)
 
-    def test_unpacked_preset_keeps_packed_when_no_separates(self):
-        """mask_map=False but only MSAO present -> keep it (sole source of channels)."""
+    def test_unpacked_preset_keeps_unreadable_lone_packed(self):
+        """mask_map=False, only MSAO, and it cannot be read -> keep it.
+
+        A lone packed map is unpacked for an unpacked preset (see
+        ``test_a_lone_packed_map_is_unpacked_for_an_unpacked_preset``), but only
+        when its channels can actually be recovered. This path is the lossless
+        fallback: the entry is not a readable file, so extraction returns
+        nothing and dropping the packed map would lose every channel it holds.
+        """
         d = {"MSAO": ["/x/asset_MSAO.png"]}
         MapFactory.filter_redundant_maps(d, config={"mask_map": False})
-        self.assertIn("MSAO", d, "Packed map kept when no separate components exist")
+        self.assertIn(
+            "MSAO", d, "Packed map kept when its channels cannot be recovered"
+        )
 
     def test_force_packed_overrides_unpacked_preset(self):
         """force_packed_maps=True keeps the packed map even when its flag is off."""
@@ -262,10 +274,7 @@ class CoverageAwareRedundancyTest(BaseTestCase):
         path = os.path.join(self.tmp, name)
         Image.merge(
             "RGBA",
-            [
-                Image.new("L", (8, 8), v)
-                for v in (30, ao, 0, 90)
-            ],
+            [Image.new("L", (8, 8), v) for v in (30, ao, 0, 90)],
         ).save(path)
         return path
 
@@ -323,6 +332,88 @@ class CoverageAwareRedundancyTest(BaseTestCase):
         }
         MapFactory.filter_redundant_maps(d, config={"mask_map": False})
         self.assertNotIn("Detail_Mask", d)
+
+    def test_a_lone_packed_map_is_unpacked_for_an_unpacked_preset(self):
+        """MSAO alone + mask_map=False -> every channel extracted, MSAO dropped.
+
+        A preset has to mean the same thing whatever the material happened to
+        start with. It already did once ANY loose component was present -- the
+        uncovered channels were extracted and the packing retired -- and a set
+        carrying only the packing was the one case that quietly kept it, so the
+        same material under the same preset came out packed or unpacked
+        depending on whether a stray loose map happened to sit beside it.
+        """
+        import os
+
+        d = {"MSAO": [self._msao()]}
+        report = MapFactory.filter_redundant_maps(d, config={"mask_map": False})
+
+        self.assertNotIn(
+            "MSAO", d, "a lone packing must not survive an unpacked preset"
+        )
+        for map_type in ("Metallic", "Ambient_Occlusion", "Smoothness"):
+            self.assertIn(map_type, d, f"{map_type} was not extracted from the MSAO")
+            self.assertTrue(
+                os.path.isfile(d[map_type][0]), f"extracted {map_type} not on disk"
+            )
+            self.assertIn(map_type, report["extracted"])
+        self.assertIn("MSAO", report["dropped"])
+
+    def test_a_packing_that_carries_nothing_checkable_is_kept(self):
+        """All-optional channels + nothing loose -> keep it, don't vanish it.
+
+        The unpacked branch drops the packing once its channels are accounted
+        for, and a packing whose ``carried_types()`` is empty accounts for
+        nothing — so without a guard it would be dropped with nothing put in
+        its place. ``MapType.__post_init__`` blocks the no-``channels`` shape,
+        which leaves this one: every channel marked optional.
+        """
+        from pythontk.core_utils.engines.textures.map_registry import (
+            MapRegistry,
+            MapType,
+        )
+
+        saved = dict(MapRegistry._maps)
+        try:
+            MapRegistry().register(
+                MapType(
+                    name="Filler_Pack",
+                    aliases=["FillerPack"],
+                    is_packed=True,
+                    replaces=["Detail_Mask"],
+                    config_key="filler_pack",
+                    channels={"r": "Detail_Mask?", "g": "Detail_Mask?"},
+                )
+            )
+            self.assertEqual(
+                MapRegistry().get("Filler_Pack").carried_types(),
+                [],
+                "fixture is wrong: this type must carry nothing non-optional",
+            )
+
+            d = {"Filler_Pack": [self._loose("asset_FillerPack.png")]}
+            MapFactory.filter_redundant_maps(d, config={"filler_pack": False})
+            self.assertIn("Filler_Pack", d, "a packing was dropped for nothing")
+        finally:
+            MapRegistry._maps.clear()
+            MapRegistry._maps.update(saved)
+            MapRegistry._invalidate_caches()
+
+    def test_a_lone_packed_map_survives_a_packed_preset(self):
+        """mask_map=True -> the packing is the requested output; nothing unpacks."""
+        d = {"MSAO": [self._msao()]}
+        report = MapFactory.filter_redundant_maps(d, config={"mask_map": True})
+
+        self.assertIn("MSAO", d)
+        self.assertEqual(report["extracted"], {})
+
+    def test_a_lone_packed_map_is_kept_when_extraction_is_disabled(self):
+        """extract_missing=False -> the lossless direction, even for a real file."""
+        d = {"MSAO": [self._msao()]}
+        MapFactory.filter_redundant_maps(
+            d, config={"mask_map": False}, extract_missing=False
+        )
+        self.assertIn("MSAO", d)
 
     def test_extraction_disabled_keeps_packed_over_losing_data(self):
         """extract_missing=False with an uncovered channel: packed map stays."""
@@ -567,7 +658,7 @@ class PackedVsPackedExtractionTest(BaseTestCase):
         super().setUp()
         import pythontk as ptk
 
-        self._artifacts = ptk.TempArtifacts("packed_conflict")
+        self._artifacts = ptk.TempArtifacts("packed_conflict", policy="scoped")
         self.tmp = self._artifacts.dir_path()
 
     def tearDown(self):
@@ -579,9 +670,9 @@ class PackedVsPackedExtractionTest(BaseTestCase):
         from PIL import Image
 
         path = os.path.join(self.tmp, name)
-        Image.merge(
-            "RGBA", [Image.new("L", (8, 8), v) for v in (30, ao, 0, 90)]
-        ).save(path)
+        Image.merge("RGBA", [Image.new("L", (8, 8), v) for v in (30, ao, 0, 90)]).save(
+            path
+        )
         return path
 
     def _metallic_smoothness(self, name="asset_MetallicSmoothness.png"):
@@ -739,7 +830,7 @@ class ResolveNormalMapsTest(BaseTestCase):
         super().setUp()
         import pythontk as ptk
 
-        self._artifacts = ptk.TempArtifacts("resolve_normals")
+        self._artifacts = ptk.TempArtifacts("resolve_normals", policy="scoped")
         self.tmp = self._artifacts.dir_path()
 
     def tearDown(self):
@@ -913,8 +1004,12 @@ class UdimGroupingTest(BaseTestCase):
         )
 
     def test_two_tiles_do_not_collide_on_output(self):
-        a = MapFactory.resolve_texture_filename("/x/rock_Normal.1001.png", "Normal_OpenGL")
-        b = MapFactory.resolve_texture_filename("/x/rock_Normal.1002.png", "Normal_OpenGL")
+        a = MapFactory.resolve_texture_filename(
+            "/x/rock_Normal.1001.png", "Normal_OpenGL"
+        )
+        b = MapFactory.resolve_texture_filename(
+            "/x/rock_Normal.1002.png", "Normal_OpenGL"
+        )
         self.assertNotEqual(a, b)
         self.assertTrue(a.endswith("rock_Normal_OpenGL.1001.png"), a)
 

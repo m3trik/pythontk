@@ -56,7 +56,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ColorPair`
   - methods: auto
 - `class Palette(dict)`
-  - methods: alias, override, status, axes, channels, ui, diff
+  - methods: update, setdefault, copy, alias, override, status, axes, channels, ui, diff
 
 ### `core_utils/doc_audit.py` — Audit markdown code examples against the live package surface.
 - `class DocAudit(help_mixin.HelpMixin)`
@@ -65,6 +65,13 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/instancing/assembly_sorter.py` — Sort separated mesh parts into repeated-assembly copies.
 - `class AssemblySorter`
   - methods: sort
+
+### `core_utils/engines/key_stash/key_stash_model.py` — Key stash — park keyframes outside the working animation, retrieve later.
+- `class StashedClip`
+  - methods: times, start, end, duration, key_count, rescale, to_dict, from_dict
+- `class StashChanged`
+- `class KeyStash(_KeyStashInternal)`
+  - methods: add_clip, get_clip, remove_clip, clips_for_object, clips_for_shot, is_empty, set_preview, clear_preview, add_listener, remove_listener, batch_update, rescale_to_fps, mark_dirty, save, to_dict, from_dict, set_persistence, active, invalidate, add_invalidation_listener, remove_invalidation_listener, offset_for, gate_range
 
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py` — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - `class Behaviors(_BehaviorsInternal)`
@@ -130,7 +137,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class BatchComplete(StoreEvent)`
 - `class StoreInvalidated(StoreEvent)`
 - `class ShotStore(_ShotStoreInternal)`
-  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs
+  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
 
 ### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
 - `class ShotBoundaryConflict(RuntimeError)`
@@ -217,18 +224,20 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`
   - methods: groups, add_group, validate, rasterize, write, preview
 
-### `core_utils/execution_monitor/_dialog_viewer.py` — Subprocess-based dialog viewer for custom button labels.
-- `run(title: str, message: str, force_label: str | None = None)`
-
 ### `core_utils/execution_monitor/_execution_monitor.py`
 - `class ExecutionMonitor`
   - methods: escape_hold_source, is_foreground_process, is_escape_pressed, set_interpreter, on_long_execution, show_long_execution_dialog, execution_monitor, external_watchdog
 
-### `core_utils/execution_monitor/_gif_viewer.py`
-- `run(gif_path, target_size=DEFAULT_SIZE, pos=None)`
-
-### `core_utils/execution_monitor/_spinner.py` — Lightweight canvas-based spinner for task-indicator overlay.
-- `run(size=DEFAULT_SIZE, pos=None)`
+### `core_utils/execution_monitor/_sidecar.py` — Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
+- `process_alive(pid: int) -> bool`
+- `kill_process(pid: int, tree: bool = True) -> None`
+- `run_watchdog(pid: int, heartbeat_path: str, timeout: float, check_interval: float = 1.0, kill_tree: bool = True, stop_file: str | None = None) -> int`
+- `watch_parent(root, pid: int | None, on_gone=None) -> None`
+- `run_indicator(size: int | None = None, pos=None, gif_path: str | None = None, parent_pid: int | None = None) -> int`
+- `build_dialog(root, title: str, message: str, force_label: str | None = None) -> list`
+- `fit_and_center(root) -> None`
+- `run_dialog(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int`
+- `main(argv=None) -> int`
 
 ### `core_utils/git.py`
 - `class Git`
@@ -266,7 +275,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class LevelAwareFormatter(internal_logging.Formatter)`
   - methods: format
 - `class LoggerExt`
-  - methods: patch, strip_html, get_color, register_html_preset, get_html_preset, format_message_as_html
+  - methods: patch, set_default_text_handler, strip_html, get_color, register_html_preset, get_html_preset, format_message_as_html
 - `class DefaultTextLogHandler(internal_logging.Handler)`
   - methods: emit, get_color
 - `class RingBufferHandler(internal_logging.Handler)`
@@ -309,7 +318,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: pip, install_targeted, get_local_dependency_order, start_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
+  - methods: pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
 
 ### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - `class Codec`
@@ -374,13 +383,17 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class TemplateSet`
   - methods: names, source, exists, user_dir, builtin_dir, active, delete, rename, path, raw, validate, load, skeleton, save, write_skeleton, markdown
 
+### `core_utils/test_sandbox.py` — Process-level test isolation -- keep a test run off the developer's machine.
+- `class TestSandbox(_TestSandboxInternal)`
+  - methods: browser, temp, activate, is_active
+
 ### `core_utils/user_config.py` — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - `class UserConfig`
-  - methods: path_for, load_file, resolve, deep_merge, expand, user_config_root
+  - methods: path_for, load_file, save_file, resolve, deep_merge, expand, user_config_root
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, relativize_output_dir, path_length_limit, exceeds_path_length, free_space, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
+  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, relativize_output_dir, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -390,7 +403,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: conversion_timeout, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, apply_glb_lightmaps, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, apply_glb_fades, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+  - methods: conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, apply_glb_fades, prune_glb_animations, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
@@ -403,17 +416,23 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class FbxFile(_FbxFileInternal)`
   - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, connections
 
+### `file_utils/mesh_convert/fbx_media.py` — Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
+- `class FbxMedia(_FbxMediaInternal)`
+  - methods: embedded, downsize, rewrite
+
 ### `file_utils/mesh_convert/glb_clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - `class GlbClips(_GlbClipsInternal)`
   - methods: rebuild
 
-### `file_utils/mesh_convert/glb_fades.py` — Write authored opacity ramps into a GLB as ``KHR_animation_pointer`` channels.
+### `file_utils/mesh_convert/glb_fades.py` — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
+- `class PointerChannel`
+  - methods: components, accessor_type, base
 - `class GlbFades(_GlbFadesInternal)`
-  - methods: apply
+  - methods: apply, apply_channels
 
 ### `file_utils/mesh_convert/glb_reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - `class GlbReader(_GlbReaderInternal)`
-  - methods: load, counts, image_mimes, extensions, skins_summary, accessor, animations, animation, clip_spans, channel_table, sample, nan_findings, node_index, parent_of, local_matrix, world_matrix, world_position, walk
+  - methods: load, counts, image_mimes, extensions, skins_summary, accessor, animations, animation, clip_spans, motion_span, channel_table, sample, nan_findings, node_index, parent_of, local_matrix, world_matrix, world_position, walk
 
 ### `file_utils/mesh_ops.py` — File-level mesh processing via PyMeshLab (optional dependency).
 - `class OpSpec`
@@ -468,6 +487,19 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RailSurface`
   - methods: grid_points
 
+### `geo_utils/shadow_horizon.py` — Coverage-aware horizon maps: a ground shadow that follows the light at runtime.
+- `class HorizonMap(NamedTuple)`
+  - methods: encode_angle, decode_cot, layers, tiles, layout, tile_index, tile_rects, to_rgba, from_rgba, texel_positions, uv, taps, mask_bits, alpha
+- `class ShadowHorizon`
+  - methods: shader_source, layout, range_for, bake, measure, bake_adaptive
+
+### `geo_utils/shadow_projection.py` — Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC.
+- `class ShadowModel(NamedTuple)`
+  - methods: near, length, across, rect, placement
+- `class ShadowProjection`
+  - methods: horizontal_axes, far_point, model, project, to_frame, fractions
+- `class ShadowRaster(NamedTuple)`
+
 ### `geo_utils/uv_pack.py` — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 - `class PackIslandsResult`
 - `class UvPack(HelpMixin)`
@@ -481,7 +513,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -498,6 +530,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `img_utils/mask_generator.py` — Background mask generation via rembg (optional dependency).
 - `class MaskGenerator`
   - methods: is_available, generate_masks
+
+### `img_utils/shadow_atlas.py` — One atlas per shadow-rig type: equal cells, a tile rewritten in place.
+- `class ShadowAtlas`
+  - methods: grid, cell_pixel_rect, uv_rect, pack, write_tile, uv_corners
 
 ### `iter_utils/_iter_utils.py`
 - `class IterUtils(HelpMixin)`
@@ -527,15 +563,23 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Credentials`
   - methods: get_password, get_credential, set_credential
 
-### `net_utils/preview_server.py` — Localhost static-file server for live browser / WebXR previews.
-- `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
-  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, apply_settings, open_in_browser
+### `net_utils/preview/bridge.py` — The hand-off bridge whose target is a live preview page.
+- `class PreviewBridge(HandoffBridge)`
+  - methods: lightmap_search_dirs, params_defaults, url, scope_objects, push, publish_file, sidecar_summary, lightmap_summary, stop
+
+### `net_utils/preview/deliverer.py` — FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 - `class PreviewPassContext`
   - methods: logger, sidecar, lightmap_search_dirs
 - `class PreviewDeliverer(Deliverer)`
   - methods: ensure_server, publish, deliver
-- `class PreviewBridge(HandoffBridge)`
-  - methods: lightmap_search_dirs, params_defaults, url, scope_objects, push, publish_file, sidecar_summary, lightmap_summary, stop
+
+### `net_utils/preview/server.py` — Localhost static-file server for live browser / WebXR previews.
+- `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
+  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, apply_settings, open_in_browser
+
+### `net_utils/remote_file.py` — Read a file by ``http(s)`` URL with the same surface as a local read.
+- `class RemoteFile(_RemoteFileInternal)`
+  - methods: is_url, normalize, open, read_bytes, probe
 
 ### `net_utils/rpc/client.py` — Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 - `class RpcClient`

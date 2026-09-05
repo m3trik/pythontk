@@ -37,6 +37,8 @@ format: a third-party glTF tool opens it and gets a sane, if plainer, result.
   FBX  ---------------------------------------------  carries geometry, UVs (incl. lightmap UV),
         |                                             materials, embedded textures, and the
         |                                             `data_export` node's user properties
+        |  PreviewDeliverer.PAYLOAD_PASSES
+        |    downsize_textures  embedded PNG/JPEG to the delivery ceiling (FbxMedia)
         |  MeshConvert.fbx_to_glb  ->  FBX2glTF --binary --user-properties
         v
   GLB   (raw conversion)
@@ -66,11 +68,11 @@ Ownership, because it decides where a fix goes:
 | Layer | Owns |
 |---|---|
 | `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page **and the active viewer scripts** |
-| `pythontk.PreviewDeliverer` | FBX → GLB → publish, and the ordered **pass registry** (`EDIT_PASSES` / `FILE_PASSES`) that runs between them |
+| `pythontk.PreviewDeliverer` | FBX → GLB → publish, and the ordered **pass registries** (`PAYLOAD_PASSES` before the conversion, `EDIT_PASSES` / `FILE_PASSES` after it) |
 | `pythontk.PreviewBridge` | the glTF-appropriate export defaults and the `push()` / `publish_file()` / `url` / `stop()` surface |
 | `pythontk.MeshConvert` | every GLB edit, the sidecar envelope schema, the lightmap binding, **the published rendering policy** |
-| `preview_viewer.html` | rebinding the carrier slot to a real `lightMap`, scale/framing, and **spending** the rendering policy it reads out of the file |
-| `preview_scripts/*.js` | optional behaviour the page gains by activation, never by being edited |
+| `net_utils/preview/viewer.html` | rebinding the carrier slot to a real `lightMap`, scale/framing, and **spending** the rendering policy it reads out of the file |
+| `net_utils/preview/scripts/*.js` | optional behaviour the page gains by activation, never by being edited |
 | `mayatk` / `blendertk` | reading the host's selection, exporting the FBX, reading scene state |
 
 Both DCC bridges are under 80 lines, most of that docstring. Everything else is shared, because
@@ -103,8 +105,7 @@ preview.scope_objects("visible")  # what that scope resolves to, without pushing
 `scope_objects` is public because a *caller* needs the answer: pushing blind collapses "nothing
 selected", "the scene is empty" and "the export failed" into one failure message, and the first two
 are the user's own next action. An unknown scope resolves to the selection — a scope must never
-silently *widen* a push. `push(whole_scene=True)` remains as a deprecated alias for `scope="all"`,
-for one release.
+silently *widen* a push.
 
 ### Publishing a GLB you already have
 
@@ -173,11 +174,14 @@ class DracoPreview(ptk.PreviewDeliverer):
         encode(context.glb)          # context: .glb .edit .payload .request .results .logger
 ```
 
-`EDIT_PASSES` run inside **one** open GLB edit session (sidecar → prune → lightmaps); `FILE_PASSES`
-run on the **closed** file (optimize). The split is real rather than stylistic: a file pass rewrites
-the container — repacking the BIN chunk, re-encoding payloads — which is exactly what an open edit
-session cannot have happening underneath it, and `context.edit` is `None` there so a stale handle
-fails loudly instead of writing through dead buffers.
+`PAYLOAD_PASSES` run on the exported **FBX** before the converter reads it (downsize embedded
+textures to the delivery ceiling — see *Cost and budget*); `EDIT_PASSES` run inside **one** open GLB
+edit session (sidecar → prune → lightmaps); `FILE_PASSES` run on the **closed** file (optimize). The
+split is real rather than stylistic: a file pass rewrites the container — repacking the BIN chunk,
+re-encoding payloads — which is exactly what an open edit session cannot have happening underneath
+it, and `context.edit` is `None` there so a stale handle fails loudly instead of writing through dead
+buffers. A payload pass may replace `context.payload.primary` with a rewritten scratch file; the
+conversion reads the payload after them.
 
 Each pass is guarded **individually**. A deliverable missing one repair still beats no deliverable,
 and the alternative failed in the worst direction: one early failure took the lightmap wiring down
@@ -210,11 +214,23 @@ A module's default export receives the viewer API: `THREE`, `scene`, `renderer`,
 an optional module must never make a good preview *look* broken, because the one place this is read
 is a headset where the console is not visible.
 
-Two ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push) and
+Three ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push),
 **`inspect`** (draw calls, materials and *decoded* texture memory read off the renderer — the two
-numbers a GLB's size does not tell you). Both are checkboxes on the WebXR Preview option box,
-which passes an explicit list every push: the panel is authoritative, so a script registered on
-the server by other code is cleared by the next push from there.
+numbers a GLB's size does not tell you) and **`shadow_rig`** (the runtime half of the DCC shadow
+rigs: reads the `extras.shadow_web` manifest `MeshConvert.apply_glb_shadows` writes during the
+conversion, gives every plane one `ShaderMaterial` — projected silhouettes and horizon maps in one
+program — batches the projected planes that share an atlas and carry no fade into an
+`InstancedMesh`, and re-places each plane from its source and contact nodes every frame with a port
+of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md`). The first two
+are checkboxes on the WebXR Preview option box, which passes an explicit list every push: the panel
+is authoritative, so a script registered on the server by other code is cleared by the next push
+from there. `shadow_rig` is **on by itself**: `PreviewServer.AUTO_SCRIPTS` maps it to the extras key
+it reads, and `publish()` activates it — appended to whatever the push named — for any GLB whose
+root extras carry `shadow_web` (the JSON chunk is probed, never the geometry). Opt out by removing
+the registry entry or with `remove_script("shadow_rig")` after the push. One caveat of the page's
+loading order: scripts and the asset load concurrently and the first `load` is not held for the
+imports, so a deliverable small enough to parse before a 40 KB module arrives shows still planes
+until the next push (the script says so in the console); a production GLB is never that small.
 
 ## Does WebXR use OpenGL?
 
@@ -550,30 +566,56 @@ channel names takes the file has no clips for — that warning is the one to rea
 
 ## Cost and budget
 
-Timings, measured end to end on a production assembly (324 MB FBX, 757 mesh transforms over 537
-instanced shapes, 98k triangles, 12 shots, 48 baked objects, ~295 MB of embedded PNG):
+Timings, measured end to end on a production assembly (366 MB FBX, 2485 nodes over 757 mesh
+transforms and 537 instanced shapes, 98k triangles, one 1591-frame take, 47 baked objects, 353 MB
+of embedded 4096² PNG), with the shipped methods wrapped and the machine otherwise idle:
 
 | Stage | Cost | Share |
 |---|---|---|
-| FBX write (Maya, 12-take split) | ~18 s | 5% |
-| **FBX2glTF conversion** | **345 s** | **91%** |
-| Scene sidecar (incl. ORM repack) | 17.4 s | 5% |
-| Lightmap wiring | 1.9 s | <1% |
-| Texture optimize | 7.1 s | 2% |
+| FBX write (Maya) | 6.7 s | 2% |
+| **FBX2glTF conversion** | **~365 s** | **87%** |
+| Passes inside the conversion (sidecar incl. ORM repack 17 s; dedupe, clips, fades) | 22 s | 5% |
+| Lightmap wiring | 3.1 s | <1% |
+| Texture optimize (WebP) | 20.9 s | 5% |
 | Publish | 0.03 s | — |
+| **Push** | **419 s** | |
 
-**The external converter is the pipeline.** It is a third-party binary and its cost tracks the size
-of the FBX handed to it — which is dominated by embedded textures the pass afterwards throws away:
-295.1 MB of images become **5.9 MB**, a 50× reduction, *after* FBX2glTF has spent five minutes
-copying the full-resolution originals into a GLB. Pre-shrinking the textures before the FBX write is
-therefore the one large lever left (the scene exporters already have the staging machinery for it;
-the preview does not), and it is tracked in `.claude/BACKLOG.md` rather than done casually — it
-means rewriting live file-node paths and restoring them, in a session that may crash.
+**The converter is the push, and its cost is the bake, not the bytes.** FBX2glTF evaluates every
+node at every frame of every take (24 fps) whether or not the node is animated. Measured on the
+same payload: strip every animation object and it converts in **148 s**; a 12 MB *textureless*
+export of the same scene still takes **over 300 s** (it timed out under the old size-derived budget
+and lost the push — `MeshConvert.conversion_timeout` now also reads nodes × frames out of the file's
+own census, `bake_node_frames`); resize every embedded texture to 2048 *before* the conversion (now the payload pass) and
+the converter drops to ~290 s — real, but a fifth. So the larger levers are on the DCC side, in what the
+export ships: the take and timeline range (~250 s of this push, ~63 µs per node-frame) and the node
+count (602 hidden rig helpers are 24% of the nodes). Both are priced maintainer decisions in
+`.claude/BACKLOG.md`.
 
-Cheaper wins already taken: `dedupe_glb_images` collapses the byte-identical copies FBX2glTF emits
-per material (measured: 6 images, 10.2 MB, removed *before* the texture pass pays to encode them),
-and the preview releases its consumed FBX as soon as the GLB exists instead of leaving it for the
-7-day sweep (measured: 324 MB per push, 3.1 GB found accumulated).
+What each option box row costs on the same scene (ratios rather than absolutes for the last three:
+those runs shared the machine with the experiments above):
+
+| Option | Effect |
+|---|---|
+| Include Textures **off** | FBX 366 → 12 MB, no sidecar textures, no optimize pass — and the conversion still takes minutes |
+| Scene Sidecar **off** | saves the 17 s ORM repack; the preview then shows FBX2glTF's own packing, which reads metallic 1 on grayscale source sets |
+| Texture Format **KTX2** | texture pass 57 s instead of 21 s (`toktx`, UASTC for data maps / ETC1S for colour) and 42 MB instead of 35 MB on the wire — the win is GPU memory, not the push |
+| Include Animation **on** | push 719 s: Maya's FBX write becomes 84 s (it bakes complex animation), the FBX 482 MB, the conversion 616 s, and the GLB 101 MB — 73 MB of it animation accessors |
+| Scope **visible**, both viewer scripts | push 306 s: the hidden rig helpers (24% of the nodes) stay behind, and with them about a quarter of the bake; the two viewer scripts cost nothing measurable |
+| External GLB (`publish_file`) | milliseconds: no export, no conversion |
+
+The server half is a rounding error everywhere: publishing a 50 MB GLB is 8 ms moved / 75 ms
+copied, a manifest poll round-trips in 1.5 ms, the page re-sync on publish is 0.3 ms, a viewer
+script is one file copy, and loopback serves the asset at ~370 MB/s.
+
+Cheaper wins taken on the Python side (~44 s of the push): `dedupe_glb_images` collapses the
+byte-identical copies FBX2glTF emits per material before anything pays to encode them; the preview
+releases its consumed FBX (and the SDK's extracted `.fbm`) as soon as the GLB exists instead of
+leaving ~700 MB per push to the 7-day sweep; `PreviewDeliverer.PAYLOAD_PASSES` downsizes the FBX's
+embedded textures to the delivery ceiling first (`FbxMedia.downsize`, 7.5 s) so the raw GLB the
+converter hands back is 96 MB rather than 340 MB and every later pass reads a 2K file
+(re-measured quiet, end to end, the push went from 419 s to 333 s: the converter ~365 → ~290 s, the sidecar's inline passes 17 → 9 s, the optimize pass 21 → 10 s); the lossless-WebP effort is 75 rather than 100 (identical bytes, 14% less of the
+optimize pass, whose critical path is one 2K normal map's encode); and the packed ORM the sidecar
+embeds is written at PNG level 1, since the texture pass re-encodes it anyway.
 
 **Texture budget is the whole file.** Before the optimize pass a delivery measured 94.7 MB, of which
 87.8 MB (93%) was uncompressed source PNG — a 24 MB normal map, a 20 MB character texture — against

@@ -8,10 +8,14 @@ Run with:
     python test_package_manager.py
 """
 
+import inspect
+import io
 import sys
 import tempfile
+import threading
 import os
 import unittest
+from importlib import metadata
 
 from pythontk.core_utils.package_manager import (
     PackageManager,
@@ -610,6 +614,119 @@ class InstallTargetedTest(BaseTestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 self.pm.install_targeted("x", target_dir="X:/t")
         self.assertIn("no install report", str(ctx.exception))
+
+
+class PkgVersionCheckThreadTest(BaseTestCase):
+    """``start_version_check`` spawned a bare daemon thread and dropped it.
+
+    No handle, no join, no dedup -- and ``check_version`` is a pip subprocess
+    against another interpreter plus a PyPI round trip. tentacle's
+    ``HudSlots.__init__`` calls it, so every construction of that panel started
+    another one: five constructions were measured as five concurrent threads
+    with nothing able to observe or await any of them.
+    """
+
+    class _Probe(_PkgVersionCheck):
+        """Stands in for the pip subprocess + PyPI round trip."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.runs = 0
+
+        def check_version(self, package_name=None, python_path=None):
+            self.runs += 1
+            self.started.set()
+            self.release.wait(5)
+
+    def _probe(self):
+        probe = self._Probe(package_name="tentacletk")
+        self.addCleanup(probe.release.set)
+        return probe
+
+    def test_the_thread_handle_is_retained_and_joinable(self):
+        probe = self._probe()
+        thread = probe.start_version_check()
+        self.assertIsInstance(thread, threading.Thread)
+        self.assertTrue(probe.started.wait(5))
+        self.assertTrue(probe.version_check_running)
+
+        probe.release.set()
+        self.assertTrue(probe.wait_for_version_check(5))
+        self.assertFalse(probe.version_check_running)
+
+    def test_a_check_already_in_flight_is_not_duplicated(self):
+        """The tentacle case: a panel that polls in its constructor."""
+        probe = self._probe()
+        first = probe.start_version_check()
+        self.assertTrue(probe.started.wait(5))
+
+        for _ in range(4):
+            self.assertIs(probe.start_version_check(), first)
+        self.assertEqual(probe.runs, 1, "duplicate pollers were launched")
+
+    def test_a_finished_check_can_be_started_again(self):
+        """Deduplication must not turn into a one-shot latch."""
+        probe = self._probe()
+        probe.start_version_check()
+        self.assertTrue(probe.started.wait(5))
+        probe.release.set()
+        self.assertTrue(probe.wait_for_version_check(5))
+
+        probe.started.clear()
+        second = probe.start_version_check()
+        self.assertTrue(probe.started.wait(5))
+        self.assertEqual(probe.runs, 2)
+        second.join(5)
+
+    def test_waiting_with_no_check_started_is_true(self):
+        self.assertTrue(_PkgVersionCheck(package_name="x").wait_for_version_check(0))
+        self.assertFalse(_PkgVersionCheck(package_name="x").version_check_running)
+
+    def test_the_thread_is_named_for_debugging(self):
+        probe = self._probe()
+        thread = probe.start_version_check()
+        self.assertIn("tentacletk", thread.name)
+        self.assertTrue(thread.daemon)
+
+
+class UpdateRequirementsTest(BaseTestCase):
+    """``update_requirements`` resolved versions through ``pkg_resources``.
+
+    That is a setuptools import, deprecated since setuptools 67.5 and removed
+    outright in 81 -- a hard ImportError on any interpreter with a current
+    setuptools, in a package that targets Maya and Blender's bundled Pythons.
+    ``importlib.metadata`` has been stdlib since 3.8 and the package floor is
+    3.9.
+    """
+
+    def _requirements(self, text):
+        path = os.path.join(
+            tempfile.mkdtemp(prefix="ptk_requirements_"), "requirements.txt"
+        )
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def test_pkg_resources_is_not_imported(self):
+        source = io.open(
+            inspect.getsourcefile(_PkgVersionUtils), encoding="utf-8"
+        ).read()
+        self.assertNotIn("pkg_resources", source)
+
+    def test_an_installed_package_is_pinned_to_its_version(self):
+        path = self._requirements("# comment\n\npackaging\n")
+        result = _PkgVersionUtils.update_requirements(file_path=path)
+        pinned = [line for line in result if line.startswith("packaging==")]
+        self.assertEqual(len(pinned), 1, f"not pinned: {result}")
+        self.assertEqual(pinned[0].split("==")[1], metadata.version("packaging"))
+
+    def test_an_absent_package_keeps_its_line(self):
+        """The lookup failure is reported, not allowed to drop the line."""
+        path = self._requirements("definitely-not-installed-xyz==1.2.3\n")
+        result = _PkgVersionUtils.update_requirements(file_path=path)
+        self.assertEqual(result, ["definitely-not-installed-xyz==1.2.3"])
 
 
 if __name__ == "__main__":

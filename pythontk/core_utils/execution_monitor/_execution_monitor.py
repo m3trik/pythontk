@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import sys
 import ctypes
+import glob
+import inspect
 import threading
 import _thread
 import os
 import time
 import subprocess
-import tempfile
 from functools import wraps
+
+from pythontk.core_utils.execution_monitor import _sidecar
 
 
 class _EscapeHoldDetector:
@@ -67,10 +70,23 @@ class ExecutionMonitor:
     chose. The async-exception paths survive solely behind the explicit
     *Force Stop* / *Force Quit* buttons, which the user opts into knowing the
     operation cannot be stopped safely.
+
+    Out-of-process UI
+    -----------------
+    The cursor indicator, the long-execution dialog and the external watchdog
+    all run as sidecar processes (``_sidecar.py``) under the interpreter
+    :meth:`_get_python_executable` resolves — a Tk window in this process
+    could not animate or answer while the main thread is blocked. Hosts whose
+    bundled python is not discoverable pin it with :meth:`set_interpreter`.
     """
 
     _x11_lib = None
     _x11_display = None
+    _interpreter_override = None
+
+    #: Prefix namespace for the watchdog heartbeat files (a ``TempArtifacts``
+    #: store: a crash leftover is reclaimed by a later run's stale sweep).
+    _TEMP_PREFIX = "execution_monitor"
 
     @staticmethod
     def escape_hold_source(hold_seconds: float = 0.4, require_foreground: bool = True):
@@ -162,19 +178,18 @@ class ExecutionMonitor:
             return True
 
     @staticmethod
-    def is_escape_pressed():
+    def is_escape_pressed() -> bool:
         """Check if the Escape key is currently pressed (Windows & Linux).
 
         Reports raw physical key state — it does **not** consider window focus.
         Callers driving cancellation should gate on :meth:`is_foreground_process`
-        and require a sustained hold; see :meth:`_escape_hold_source`.
+        and require a sustained hold; see :meth:`escape_hold_source`.
         """
         try:
             if sys.platform == "win32":
-                # VK_ESCAPE is 0x1B
-                # GetAsyncKeyState returns a 16-bit integer.
-                # The most significant bit indicates whether the key is currently up or down.
-                return ctypes.windll.user32.GetAsyncKeyState(0x1B) & 0x8000
+                # VK_ESCAPE is 0x1B; the most significant bit of the 16-bit
+                # GetAsyncKeyState result is the "currently down" flag.
+                return bool(ctypes.windll.user32.GetAsyncKeyState(0x1B) & 0x8000)
 
             elif sys.platform.startswith("linux"):
                 try:
@@ -228,60 +243,64 @@ class ExecutionMonitor:
 
         return False
 
-    _interpreter_override = None
-
     @classmethod
     def set_interpreter(cls, path):
         """Set a custom Python interpreter to use for subprocesses.
 
-        Args:
+        Parameters:
             path (str): Absolute path to the python executable.
         """
         cls._interpreter_override = path
 
     @staticmethod
+    def _looks_like_python(path: str) -> bool:
+        name = os.path.splitext(os.path.basename(path))[0].lower()
+        return "python" in name or name.endswith("py") or name == "hython"
+
+    @staticmethod
     def _get_python_executable():
-        """
-        Get the path to the Python interpreter.
-        Returns _interpreter_override if set, otherwise attempts to resolve the interpreter from sys.executable.
+        """Path of a python interpreter for the sidecar processes, or ``None``.
+
+        :meth:`set_interpreter` wins. Otherwise ``sys.executable`` when it is
+        itself a python; else a companion beside it (``maya.exe`` → ``mayapy``,
+        ``3dsmax`` → ``3dsmaxpy``, a sibling ``python``/``hython``); else the
+        python bundled under ``sys.prefix`` (Blender: ``<ver>/python/bin``).
+
+        ``None``, never the host binary: every caller hands the result a python
+        *script* to run, and inside a host with no discoverable interpreter the
+        "spinner" used to be a second copy of the host application.
         """
         if ExecutionMonitor._interpreter_override:
             return ExecutionMonitor._interpreter_override
 
-        executable = sys.executable
-        if not executable:
-            return sys.executable
-
-        # If the executable looks like a python interpreter, return it.
-        name = os.path.basename(executable).lower()
-        name_no_ext = os.path.splitext(name)[0]
-        if (
-            "python" in name_no_ext
-            or name_no_ext.endswith("py")
-            or name_no_ext == "hython"
-        ):
+        executable = sys.executable or ""
+        if executable and ExecutionMonitor._looks_like_python(executable):
             return executable
 
-        # Otherwise, look for a companion interpreter in the same directory.
-        dir_path = os.path.dirname(executable)
+        ext = ".exe" if sys.platform == "win32" else ""
+        candidates = []
+        if executable:
+            dir_path = os.path.dirname(executable)
+            # {app}py beside the app (mayabatch → mayapy), then generic names.
+            base = os.path.splitext(os.path.basename(executable))[0].lower()
+            base = base.replace("batch", "")
+            for name in (base + "py", "python", "python3", "hython"):
+                candidates.append(os.path.join(dir_path, name + ext))
+        prefixes = dict.fromkeys(
+            p for p in (sys.prefix, sys.base_prefix, sys.exec_prefix) if p
+        )
+        for prefix in prefixes:
+            candidates.append(os.path.join(prefix, "python" + ext))
+            candidates.append(os.path.join(prefix, "bin", "python" + ext))
+            candidates.append(os.path.join(prefix, "bin", "python3" + ext))
+            candidates.extend(
+                sorted(glob.glob(os.path.join(prefix, "bin", "python3.*")))
+            )
 
-        # 1. Try generic naming convention: {app}py.exe (e.g. app -> apppy)
-        # Handle 'batch' variations (e.g. appbatch -> apppy)
-        base_name = name_no_ext.replace("batch", "")
-        candidates = [base_name + "py"]
-
-        # 2. Try standard python executable names
-        candidates.extend(["python", "python3", "hython"])
-
-        extensions = [".exe"] if sys.platform == "win32" else [""]
-
-        for cand in candidates:
-            for ext in extensions:
-                path = os.path.join(dir_path, cand + ext)
-                if os.path.exists(path):
-                    return path
-
-        return executable
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+        return None
 
     @staticmethod
     def _get_cursor_pos():
@@ -301,7 +320,11 @@ class ExecutionMonitor:
 
     @staticmethod
     def _hidden_startupinfo():
-        """STARTUPINFO that suppresses the console window (None off Windows)."""
+        """STARTUPINFO that suppresses the console window (None off Windows).
+
+        Shared with ``package_manager``'s pip runner, which needs the
+        STARTUPINFO alone (it captures the output).
+        """
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -310,25 +333,53 @@ class ExecutionMonitor:
         return None
 
     @staticmethod
+    def _hidden_popen_kwargs() -> dict:
+        """``Popen`` kwargs that keep a sidecar silent and windowless.
+
+        A console interpreter (``python.exe``, ``mayapy.exe``) flashes a console
+        window otherwise; both the STARTUPINFO hide and ``CREATE_NO_WINDOW`` are
+        set because each covers cases the other does not.
+        """
+        kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if sys.platform == "win32":
+            kwargs["startupinfo"] = ExecutionMonitor._hidden_startupinfo()
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        return kwargs
+
+    @staticmethod
     def _helper_script_path(name):
-        """Absolute path to a helper script shipped beside this module, or None."""
+        """Absolute path to a helper file shipped beside this module, or None."""
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
         return path if os.path.exists(path) else None
 
     @staticmethod
-    def _start_spinner_process(indicator=True):
-        """Starts a subprocess to display a busy indicator near the cursor.
+    def _sidecar_command(command: str, *args: str):
+        """``[python, _sidecar.py, command, *args]`` or ``None`` when no script
+        or interpreter is available."""
+        script = ExecutionMonitor._helper_script_path("_sidecar.py")
+        executable = ExecutionMonitor._get_python_executable()
+        if not script or not executable:
+            return None
+        return [executable, script, command, *args]
 
-        Args:
+    @staticmethod
+    def _parent_pid_arg() -> str:
+        """The flag that makes a sidecar WINDOW close itself when we die."""
+        return f"--parent-pid={os.getpid()}"
+
+    @staticmethod
+    def _start_indicator_process(indicator=True):
+        """Start the sidecar busy indicator near the cursor; returns the ``Popen``
+        or ``None``.
+
+        Parameters:
             indicator (bool|str): True shows the canvas-drawn spinner.
                 A string is treated as a path to an animated GIF (absolute,
-                or relative to this package — e.g. ``"task_indicator.gif"``)
-                shown via the GIF viewer; if the file is missing, falls back
-                to the canvas spinner.
+                or relative to this package — e.g. ``"task_indicator.gif"``);
+                if the file is missing, falls back to the canvas spinner.
         """
         try:
-            cmd_extra = []
-            script_path = None
+            extra = []
             if isinstance(indicator, str):
                 gif_path = (
                     indicator
@@ -336,43 +387,61 @@ class ExecutionMonitor:
                     else ExecutionMonitor._helper_script_path(indicator)
                 )
                 if gif_path:
-                    script_path = ExecutionMonitor._helper_script_path("_gif_viewer.py")
-                    cmd_extra = [gif_path]
-            if script_path is None:
-                script_path = ExecutionMonitor._helper_script_path("_spinner.py")
-                cmd_extra = []
-            if script_path is None:
-                return None
-
-            executable = ExecutionMonitor._get_python_executable()
-
-            cmd = [executable, script_path, *cmd_extra]
+                    extra.append(f"--gif={gif_path}")
             pos = ExecutionMonitor._get_cursor_pos()
             if pos:
                 # '=' form is required: on a monitor left/above the primary the
                 # coordinates are negative, and a separate "-122,-341" token is
                 # parsed by argparse as an option flag (exit 2, no spinner).
-                cmd.append(f"--pos={pos[0]},{pos[1]}")
+                extra.append(f"--pos={pos[0]},{pos[1]}")
 
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                startupinfo=ExecutionMonitor._hidden_startupinfo(),
+            cmd = ExecutionMonitor._sidecar_command(
+                "indicator", ExecutionMonitor._parent_pid_arg(), *extra
             )
-            return process
+            if cmd is None:
+                return None
+            return subprocess.Popen(cmd, **ExecutionMonitor._hidden_popen_kwargs())
         except Exception:
             return None
 
     @staticmethod
-    def _stop_spinner_process(process):
-        """Stops the spinner subprocess."""
+    def _stop_indicator_process(process):
+        """Stop the indicator subprocess."""
         if process:
             process.terminate()
             try:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 process.kill()
+
+    @staticmethod
+    def _wait_child(process, finished=None, poll_interval: float = 0.1):
+        """Wait for a sidecar; returns its exit code, or ``None`` if *finished*
+        was set first — the child is then terminated, because whatever it was
+        about to answer no longer applies."""
+        while True:
+            code = process.poll()
+            if code is not None:
+                return code
+            if finished is None:
+                time.sleep(poll_interval)
+            elif finished.wait(poll_interval):
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+                return None
+
+    @staticmethod
+    def _accepts_finished(callback) -> bool:
+        """True if *callback* can take the ``finished`` keyword."""
+        try:
+            params = inspect.signature(callback).parameters
+        except (TypeError, ValueError):
+            return False
+        return "finished" in params or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
 
     @staticmethod
     def _handle_callback_result(result, cancel_scope=None):
@@ -413,38 +482,48 @@ class ExecutionMonitor:
         cancel_scope=None,
         escape_hold_seconds=0.4,
     ):
-        """
-        Decorator that triggers a callback if the decorated function
-        takes longer than `threshold` seconds to execute.
+        """Decorator that triggers a callback if the decorated function takes
+        longer than `threshold` seconds to execute.
 
-        Args:
+        Parameters:
             threshold (float): Time in seconds before callback is triggered.
             callback (callable): Function to call if threshold is exceeded.
-                                 Returning False requests cancellation (see
-                                 :meth:`_handle_callback_result`).
-            interval (float|bool, optional): If True, repeats every `threshold` seconds.
-                                             If float, repeats every `interval` seconds.
-            allow_escape_cancel (bool): If True, a sustained Escape hold (while this
-                                 process owns the focused window) requests cancellation.
-            indicator (bool|str, optional): If True, displays a spinner overlay near the cursor.
-                                            A string is a path to an animated GIF to show instead.
-                                            Runs in a separate process to ensure animation during blocking tasks.
-            cancel_scope (CancelScope, optional): Scope to flag instead of interrupting
-                                 the main thread. Strongly preferred — see the class
-                                 docstring for why the interrupt path is unsafe.
+                Returning False requests cancellation (see
+                :meth:`_handle_callback_result`). A callback that declares a
+                ``finished`` parameter receives the ``threading.Event`` set
+                when the function returns, so a blocking prompt can dismiss
+                itself. An answer that arrives after the function finished is
+                discarded either way.
+            interval (float|bool, optional): If True, repeats every `threshold`
+                seconds. If float, repeats every `interval` seconds.
+            allow_escape_cancel (bool): If True, a sustained Escape hold (while
+                this process owns the focused window) requests cancellation.
+            indicator (bool|str, optional): If True, displays a spinner overlay
+                near the cursor. A string is a path to an animated GIF to show
+                instead. Runs in a separate process so it animates during
+                blocking tasks.
+            cancel_scope (CancelScope, optional): Scope to flag instead of
+                interrupting the main thread. Strongly preferred — see the
+                class docstring for why the interrupt path is unsafe. With a
+                scope, an Esc request does not end monitoring: the flag is only
+                a request, and the threshold callback is where an operation
+                that ignores it gets explained (and force-stopped).
             escape_hold_seconds (float): Sustained hold required before Esc counts.
         """
         # If interval is True, use threshold as the interval
         repeat_interval = threshold if interval is True else interval
+        pass_finished = ExecutionMonitor._accepts_finished(callback)
 
         def decorator(func):
             @wraps(func)
             def wrapper(*args, **kwargs):
-                stop_event = threading.Event()
+                finished = threading.Event()
 
-                spinner_process = None
+                indicator_process = None
                 if indicator:
-                    spinner_process = ExecutionMonitor._start_spinner_process(indicator)
+                    indicator_process = ExecutionMonitor._start_indicator_process(
+                        indicator
+                    )
 
                 escape_detector = (
                     _EscapeHoldDetector(escape_hold_seconds)
@@ -461,58 +540,81 @@ class ExecutionMonitor:
                         _thread.interrupt_main()
 
                 def wait_for_stop_or_timeout(duration):
-                    """Returns "stop" if the function finished, "abort" if Esc
-                    requested cancellation (requested once, here), or None on
-                    timeout."""
+                    """Returns "stop" if the function finished, "abort" if the
+                    legacy Esc interrupt was sent (once, here), or None on
+                    timeout. With a scope an Esc hold only sets the flag (again
+                    after a reset — the flag itself is the one-shot guard) and
+                    the wait carries on."""
                     if escape_detector is None:
-                        return "stop" if stop_event.wait(duration) else None
+                        return "stop" if finished.wait(duration) else None
 
                     # Polling
                     remaining = duration
                     step = 0.1
                     while remaining > 0:
                         wait_time = min(step, remaining)
-                        if stop_event.wait(wait_time):
+                        if finished.wait(wait_time):
                             return "stop"
-                        if escape_detector():
+                        if cancel_scope is None:
+                            if escape_detector():
+                                request_cancel("escape")
+                                return "abort"
+                        elif escape_detector() and not cancel_scope.cancelled:
+                            # Detector first: it tracks the hold, and must see
+                            # the release even while a request is pending.
                             request_cancel("escape")
-                            return "abort"
                         remaining -= wait_time
                     return None
+
+                def invoke_callback():
+                    """Run the callback and act on its answer; True to stop.
+
+                    A failing callback must not take the monitor thread (and
+                    the Esc watch) down with it. An answer that arrives after
+                    the function already returned is moot — acting on it would
+                    cancel or interrupt whatever runs next.
+                    """
+                    try:
+                        result = (
+                            callback(finished=finished) if pass_finished else callback()
+                        )
+                    except Exception:
+                        return False
+                    if finished.is_set():
+                        return True
+                    return ExecutionMonitor._handle_callback_result(
+                        result, cancel_scope
+                    )
 
                 def timer_func():
                     # Wait for the initial threshold
                     if wait_for_stop_or_timeout(threshold):
-                        return  # Function finished, or Esc already fired.
+                        return  # Function finished, or the legacy Esc fired.
 
-                    stopped = ExecutionMonitor._handle_callback_result(
-                        callback(), cancel_scope
-                    )
+                    stopped = invoke_callback()
 
                     # If repeat_interval is set, keep repeating
                     while not stopped and repeat_interval:
                         if wait_for_stop_or_timeout(repeat_interval):
                             return
-                        stopped = ExecutionMonitor._handle_callback_result(
-                            callback(), cancel_scope
-                        )
+                        stopped = invoke_callback()
 
                     # Monitoring is over, but the Esc-cancel contract lasts for
                     # the whole execution — keep polling until the function ends.
-                    if allow_escape_cancel:
+                    if escape_detector is not None:
                         while wait_for_stop_or_timeout(60.0) is None:
                             pass
 
-                t = threading.Thread(target=timer_func)
+                t = threading.Thread(target=timer_func, name="ExecutionMonitor")
                 t.daemon = True
                 t.start()
 
                 try:
                     result = func(*args, **kwargs)
                 finally:
-                    stop_event.set()
-                    if spinner_process:
-                        ExecutionMonitor._stop_spinner_process(spinner_process)
+                    finished.set()
+                    if indicator_process:
+                        ExecutionMonitor._stop_indicator_process(indicator_process)
                 return result
 
             return wrapper
@@ -520,22 +622,54 @@ class ExecutionMonitor:
         return decorator
 
     @staticmethod
-    def show_long_execution_dialog(title, message, force_action=None):
+    def _run_dialog_sidecar(title, message, force_label=None, finished=None):
+        """Run the Tk dialog sidecar; returns its exit code, or ``None`` when it
+        is unavailable, crashed, or was dismissed because *finished* fired."""
+        try:
+            extra = [ExecutionMonitor._parent_pid_arg()]
+            if force_label:
+                extra.append(f"--force-label={force_label}")
+            cmd = ExecutionMonitor._sidecar_command(
+                "dialog", *extra, "--", title, message
+            )
+            if cmd is None:
+                return None
+            process = subprocess.Popen(cmd, **ExecutionMonitor._hidden_popen_kwargs())
+            code = ExecutionMonitor._wait_child(process, finished)
+        except Exception:
+            return None
+        known = (
+            _sidecar.DIALOG_KEEP_WAITING,
+            _sidecar.DIALOG_CANCEL,
+            _sidecar.DIALOG_FORCE,
+            _sidecar.DIALOG_CLOSED,
+        )
+        return code if code in known else None
+
+    @staticmethod
+    def show_long_execution_dialog(title, message, force_action=None, finished=None):
         """Show a dialog to ask the user how to proceed with a long operation.
 
-        Uses a subprocess-based tkinter dialog for custom button labels (VS Code style).
+        The Tk sidecar dialog (custom button labels, VS Code style) is the
+        primary path on every platform; native fallbacks when it cannot run:
+        ``MessageBoxW`` on Windows, zenity / kdialog on Linux.
 
-        Args:
+        Parameters:
             title (str): Dialog window title.
             message (str): Body text.
             force_action (str|None): Controls the force button.
                 ``None``  – no force button (default, 2-button dialog).
                 ``"interrupt"`` – show *Force Stop* (raises SystemExit in main thread).
                 ``"kill"``      – show *Force Quit* (terminates the host process).
+            finished (threading.Event|None): Set when the operation ends; the
+                sidecar dialog is then dismissed and ``"STOP_MONITORING"``
+                returned — there is nothing left to ask. The native fallbacks
+                block and cannot be dismissed early.
 
         Returns:
             bool/str: True to continue waiting, False to abort,
-                      ``"FORCE_INTERRUPT"`` or ``"FORCE_KILL"`` for the force action.
+                ``"FORCE_INTERRUPT"`` or ``"FORCE_KILL"`` for the force action,
+                ``"STOP_MONITORING"`` if the operation finished first.
         """
         # Map force_action to button label and return sentinel
         if force_action == "interrupt":
@@ -548,33 +682,21 @@ class ExecutionMonitor:
             force_label = None
             force_sentinel = None
 
+        if finished is not None and finished.is_set():
+            return "STOP_MONITORING"  # nothing left to ask
+        code = ExecutionMonitor._run_dialog_sidecar(
+            title, message, force_label, finished
+        )
+        if code in (_sidecar.DIALOG_KEEP_WAITING, _sidecar.DIALOG_CLOSED):
+            return True
+        if code == _sidecar.DIALOG_CANCEL:
+            return False
+        if code == _sidecar.DIALOG_FORCE:
+            return force_sentinel or True
+        if finished is not None and finished.is_set():
+            return "STOP_MONITORING"
+
         if sys.platform == "win32":
-            # Use custom tkinter dialog for better button labels
-            try:
-                script_path = ExecutionMonitor._helper_script_path("_dialog_viewer.py")
-                if script_path:
-                    executable = ExecutionMonitor._get_python_executable()
-
-                    cmd = [executable, script_path, title, message]
-                    if force_label:
-                        cmd.append(force_label)
-
-                    result = subprocess.run(
-                        cmd, startupinfo=ExecutionMonitor._hidden_startupinfo()
-                    )
-
-                    # Exit codes: 0=Keep Waiting, 10=Cancel, 2=Force, 3=Closed
-                    if result.returncode == 0 or result.returncode == 3:
-                        return True  # Keep Waiting (or window closed)
-                    elif result.returncode == 10:
-                        return False  # Cancel/Stop Operation
-                    elif result.returncode == 2:
-                        return force_sentinel
-                    return True
-            except Exception:
-                pass
-
-            # Fallback to MessageBox if custom dialog fails
             try:
                 if force_label:
                     # MB_YESNOCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL | MB_TOPMOST
@@ -601,8 +723,8 @@ class ExecutionMonitor:
         elif sys.platform.startswith("linux"):
             # NOTE: do not re-import subprocess here — a local import would
             # shadow the module-level one for the WHOLE function, making the
-            # win32 branch above raise UnboundLocalError (silently caught, so
-            # the custom dialog never showed on Windows).
+            # sidecar branch above raise UnboundLocalError (silently caught, so
+            # the custom dialog never showed).
             import shutil
 
             # Try Zenity (GNOME/Standard)
@@ -694,16 +816,18 @@ class ExecutionMonitor:
         cancel_scope=None,
         escape_hold_seconds: float = 0.4,
     ):
-        """
-        Decorator that monitors execution time and (optionally) prompts the user via a native
-        dialog if the threshold is exceeded. Can also (optionally) enable an external heartbeat
-        watchdog that can force-kill the process if the host application hard-hangs.
+        """Decorator that monitors execution time and (optionally) prompts the
+        user via a native dialog if the threshold is exceeded. Can also
+        (optionally) enable an external heartbeat watchdog that can force-kill
+        the process if the host application hard-hangs.
 
-        Args:
+        Parameters:
             threshold (float): Time in seconds before warning.
             message (str): Message to display in the dialog/logs.
             logger (logging.Logger, optional): Logger to use for status updates.
-            allow_escape_cancel (bool): If True, holding Escape will interrupt the main thread immediately.
+            allow_escape_cancel (bool): If True, a sustained Esc hold requests
+                cancellation (flags *cancel_scope*; interrupts the main thread
+                only on the legacy no-scope path).
             show_dialog (bool): If False, do not show a blocking dialog; only log warnings.
             force_action (str|None): Controls the force button in the dialog.
                 ``None`` (default) – no force button; dialog shows only Keep Waiting / Cancel.
@@ -712,7 +836,8 @@ class ExecutionMonitor:
                 ``"kill"``         – adds a *Force Quit* button that terminates the entire
                                      host process (use as a last resort).
             watchdog_timeout (float|None): If set, starts an external watchdog that kills this process
-                if the heartbeat stalls for longer than this many seconds.
+                if the heartbeat stalls for longer than this many seconds. See
+                :meth:`external_watchdog` for what "stalls" can mean.
             watchdog_heartbeat_interval (float): Heartbeat write interval in seconds.
             watchdog_check_interval (float): Watchdog polling interval in seconds.
             watchdog_kill_tree (bool): If True, attempt to kill child processes too.
@@ -727,7 +852,7 @@ class ExecutionMonitor:
 
         _dialog_shown = [False]
 
-        def callback():
+        def callback(finished=None):
             full_msg = f"{message} (taking longer than {threshold}s...)"
             if logger:
                 logger.warning(full_msg)
@@ -760,6 +885,7 @@ class ExecutionMonitor:
                 "You can keep waiting or cancel the operation."
                 f"{esc_hint}{effect_hint}",
                 force_action=force_action,
+                finished=finished,
             )
 
             if logger:
@@ -771,6 +897,8 @@ class ExecutionMonitor:
                     logger.critical("Force stopping operation by user request.")
                 elif result == "FORCE_KILL":
                     logger.critical("Force quitting application by user request.")
+                elif result == "STOP_MONITORING":
+                    logger.debug("Operation finished while the dialog was open.")
 
             return result
 
@@ -809,12 +937,24 @@ class ExecutionMonitor:
         return decorator
 
     @staticmethod
-    def _default_heartbeat_path(tag: str = "execution_monitor") -> str:
+    def _default_heartbeat_path(tag: str = "watchdog") -> str:
+        """A heartbeat file path in the ``execution_monitor_`` temp namespace.
+
+        Allocated through ``TempArtifacts`` rather than a bare temp path: when
+        the watchdog fires, this process is killed and no ``finally`` runs, so
+        the file's only reclamation is the next run's age-gated sweep.
+        """
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
         safe_tag = "".join(
             c if c.isalnum() or c in ("-", "_", ".") else "_" for c in (tag or "")
         )
-        filename = f"{safe_tag}_hb_{os.getpid()}.txt"
-        return os.path.join(tempfile.gettempdir(), filename)
+        # An hour: a live heartbeat is rewritten every second, and a watchdog
+        # timeout is seconds to minutes — anything older is a leftover.
+        store = TempArtifacts(
+            ExecutionMonitor._TEMP_PREFIX, policy="detached", max_age_days=1 / 24
+        )
+        return store.path(".txt", name=f"{safe_tag}_hb_{os.getpid()}")
 
     @staticmethod
     def _start_heartbeat_writer(heartbeat_path: str, interval: float, logger=None):
@@ -866,119 +1006,34 @@ class ExecutionMonitor:
         kill_tree: bool,
         logger=None,
     ):
-        """Spawn a small external watchdog process that kills `pid` if heartbeat stalls."""
+        """Spawn the sidecar watchdog that kills `pid` if the heartbeat stalls.
 
-        # Use an inline Python program to avoid PYTHONPATH/import issues.
-        # Args: pid heartbeat_path timeout check_interval kill_tree stop_file
+        Runs under :meth:`_get_python_executable`, never ``sys.executable``:
+        inside Maya that is ``maya.exe``, and the safety valve for a hung Maya
+        would have launched a second Maya.
+        """
         stop_file = heartbeat_path + ".stop"
-        code = r"""
-import os, sys, time, subprocess, signal
-
-pid = int(sys.argv[1])
-heartbeat_path = sys.argv[2]
-timeout = float(sys.argv[3])
-check_interval = float(sys.argv[4])
-kill_tree = sys.argv[5].lower() in ("1","true","yes","y")
-stop_file = sys.argv[6]
-
-is_win = sys.platform == "win32"
-
-def process_alive(p):
-    if is_win:
-        # Avoid heavy polling; attempt a lightweight OpenProcess.
-        try:
-            import ctypes
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, p)
-            if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
-                return True
-            return False
-        except Exception:
-            return True
-    else:
-        try:
-            os.kill(p, 0)
-            return True
-        except Exception:
-            return False
-
-def kill_process(p):
-    if is_win:
-        cmd = ["taskkill", "/PID", str(p), "/F"]
-        if kill_tree:
-            cmd.insert(3, "/T")
-        try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
-    else:
-        try:
-            if kill_tree:
-                try:
-                    os.killpg(os.getpgid(p), signal.SIGKILL)
-                    return
-                except Exception:
-                    pass
-            os.kill(p, signal.SIGKILL)
-        except Exception:
-            pass
-
-start = time.time()
-
-while True:
-    if os.path.exists(stop_file):
-        break
-
-    # If process is gone, exit
-    if not process_alive(pid):
-        break
-
-    now = time.time()
-
-    # If heartbeat doesn't exist yet, allow a grace period
-    if not os.path.exists(heartbeat_path):
-        if now - start > timeout:
-            kill_process(pid)
-            break
-        time.sleep(check_interval)
-        continue
-
-    try:
-        age = now - os.path.getmtime(heartbeat_path)
-    except Exception:
-        age = timeout + 1.0
-
-    if age > timeout:
-        kill_process(pid)
-        break
-
-    time.sleep(check_interval)
-"""
-
         args = [
-            sys.executable,
-            "-c",
-            code,
             str(int(pid)),
             str(heartbeat_path),
-            str(float(timeout)),
-            str(float(check_interval)),
-            "1" if kill_tree else "0",
+            f"--timeout={float(timeout)}",
+            f"--check-interval={float(check_interval)}",
+            "--stop-file",
             str(stop_file),
         ]
+        if kill_tree:
+            args.append("--kill-tree")
+        cmd = ExecutionMonitor._sidecar_command("watchdog", *args)
+        if cmd is None:
+            if logger:
+                logger.warning(
+                    "External watchdog skipped: no python interpreter resolved "
+                    "(see ExecutionMonitor.set_interpreter)."
+                )
+            return None, None
 
         try:
-            # Detach from console on Windows to reduce UI interference.
-            creationflags = 0
-            if sys.platform == "win32":
-                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            proc = subprocess.Popen(
-                args,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creationflags,
-            )
+            proc = subprocess.Popen(cmd, **ExecutionMonitor._hidden_popen_kwargs())
         except Exception as e:
             if logger:
                 logger.warning(f"Failed to start watchdog subprocess: {e}")
@@ -994,6 +1049,7 @@ while True:
             try:
                 if proc and proc.poll() is None:
                     proc.terminate()
+                    proc.wait(timeout=1)
             except Exception:
                 pass
             try:
@@ -1024,6 +1080,10 @@ while True:
             - Works on Windows and Linux.
             - If the entire process is frozen, the watchdog can still kill it.
             - This is an aggressive safety valve; prefer cooperative cancellation when possible.
+            - The heartbeat is written by a Python thread, so a long native call
+              that holds the GIL (many DCC commands do) starves it exactly like a
+              hang would. Size `timeout` for the longest legitimate native call,
+              not for "how long a hang takes to notice".
         """
 
         def decorator(func):

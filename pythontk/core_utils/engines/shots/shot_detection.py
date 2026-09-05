@@ -43,7 +43,12 @@ __all__ = ["STANDARD_TRANSFORM_ATTRS", "ShotDetection"]
 
 
 class ShotDetection:
-    """ShotDetection — module namespace."""
+    """Shot-boundary detection math over plain animation data.
+
+    Clusters key times into segments by gap and derives shot boundaries
+    from them. Takes and returns plain values, so the same algorithm backs
+    the Maya and Blender acquisitions.
+    """
 
     @staticmethod
     def cluster_segments_by_gap(

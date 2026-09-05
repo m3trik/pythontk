@@ -9,14 +9,27 @@ an in-memory handler to capture records without going through Qt.
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import unittest
+
+try:  # the EXR writer routes through OpenCV; CI runners ship without it
+    import cv2  # noqa: F401
+
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 from typing import List
 
 import numpy as np
 from PIL import Image
 
-from pythontk.core_utils.engines.textures.map_compositor import BatchResult, MapCompositor, NormalOutputMode
+from pythontk.core_utils.engines.textures import map_compositor as mc_module
+from pythontk.core_utils.engines.textures.map_compositor import (
+    BatchResult,
+    MapCompositor,
+    NormalOutputMode,
+)
 
 
 class _CapturingHandler(logging.Handler):
@@ -59,17 +72,12 @@ class _LoggerCaptureMixin:
         return handler
 
 
-class TestEnginePurity(unittest.TestCase):
-    """The engine module must not import Qt."""
-
-    def test_no_qt_imports(self):
-        import pythontk.core_utils.engines.textures.map_compositor as eng
-
-        forbidden = {"qtpy", "PySide2", "PySide6", "PyQt5", "PyQt6"}
-        with open(eng.__file__, "r", encoding="utf-8") as f:
-            src = f.read()
-        for name in forbidden:
-            self.assertNotIn(name, src, f"compositor.py should not reference {name}")
+# The engine's "must not import Qt" guard used to live here as a substring
+# search over this one module. It is superseded by
+# test_packaging_metadata.TestNoDccImports, which walks the AST of all 142
+# modules and distinguishes a module-level import (the real hazard) from a
+# lazily-resolved one -- where the substring version read its own comments as
+# violations and would have missed ``import  maya`` with two spaces.
 
 
 class TestComposite(unittest.TestCase, _LoggerCaptureMixin):
@@ -299,8 +307,12 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
         c_b = Image.new("RGB", size, (0, 0, 255))
         c_b.putpixel((7, 7), (4, 5, 6))
         paths = {}
-        for stem, im in [("A_Height", h_a), ("B_Height", h_b),
-                         ("A_Base_Color", c_a), ("B_Base_Color", c_b)]:
+        for stem, im in [
+            ("A_Height", h_a),
+            ("B_Height", h_b),
+            ("A_Base_Color", c_a),
+            ("B_Base_Color", c_b),
+        ]:
             paths[stem] = os.path.join(self.tmp, f"{stem}.png")
             im.save(paths[stem])
         sorted_images = {
@@ -336,13 +348,19 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
         c_b = Image.new("RGB", size, (0, 0, 255))
         c_b.putpixel((7, 7), (4, 5, 6))
         paths = {}
-        for stem, im in [("A_Height", h_a), ("B_Height", h_b),
-                         ("A_Base_Color", c_a), ("B_Base_Color", c_b)]:
+        for stem, im in [
+            ("A_Height", h_a),
+            ("B_Height", h_b),
+            ("A_Base_Color", c_a),
+            ("B_Base_Color", c_b),
+        ]:
             paths[stem] = os.path.join(self.tmp, f"{stem}.png")
             im.save(paths[stem])
         sorted_images = {
-            "Height": [(paths["A_Height"], _load(paths["A_Height"])),
-                       (paths["B_Height"], _load(paths["B_Height"]))],
+            "Height": [
+                (paths["A_Height"], _load(paths["A_Height"])),
+                (paths["B_Height"], _load(paths["B_Height"])),
+            ],
             "Base_Color": [(paths["A_Base_Color"], c_a), (paths["B_Base_Color"], c_b)],
         }
         self.assertEqual(sorted_images["Height"][0][1].mode, "I;16")
@@ -411,8 +429,12 @@ class TestProcessBatch(unittest.TestCase, _LoggerCaptureMixin):
         'Composite failed' for every layer."""
         size = (8, 8)
         layers = {}
-        for stem, color in [("A_Base_Color", (255, 0, 0)), ("B_Base_Color", (0, 0, 255)),
-                            ("A_Height", 100), ("B_Height", 150)]:
+        for stem, color in [
+            ("A_Base_Color", (255, 0, 0)),
+            ("B_Base_Color", (0, 0, 255)),
+            ("A_Height", 100),
+            ("B_Height", 150),
+        ]:
             im = Image.new("RGB" if "Base" in stem else "L", size, color)
             im.putpixel((0, 0), (9, 9, 9) if "Base" in stem else 9)  # break uniformity
             layers[stem] = (os.path.join(self.tmp, f"{stem}.png"), im)
@@ -567,9 +589,7 @@ class TestOutputTemplateScoping(unittest.TestCase, _LoggerCaptureMixin):
         self.assertTrue(os.path.isfile(os.path.join(self.out, "mat_MSAO.png")))
 
         # The foreign set gained nothing …
-        produced = {
-            n for n in os.listdir(self.out) if n.startswith("UNRELATED_")
-        }
+        produced = {n for n in os.listdir(self.out) if n.startswith("UNRELATED_")}
         self.assertEqual(
             produced,
             {os.path.basename(p) for p in planted},
@@ -843,7 +863,9 @@ class TestSeedMasks(unittest.TestCase, _LoggerCaptureMixin):
         a = Image.new("RGB", (10, 10), (0, 0, 0))
         for xy in [(0, 0), (9, 0), (0, 9)]:
             a.putpixel(xy, (7, 7, 7))
-        self.assertIsNone(MapCompositor._solid_background([np.asarray(a.convert("RGBA"))]))
+        self.assertIsNone(
+            MapCompositor._solid_background([np.asarray(a.convert("RGBA"))])
+        )
 
     def test_overlap_warning(self):
         # Two layers whose masks coincide → warn (shared UV space).
@@ -1089,9 +1111,12 @@ class TestEdgeHaloPreservation(unittest.TestCase, _LoggerCaptureMixin):
         self.assertEqual(out_arr.shape, src_arr.shape)
         # Every pixel must round-trip byte-identical; the fill_transparent_rgb
         # path must not touch fully-opaque content.
-        diff = (out_arr.astype(int) - src_arr.astype(int))
-        self.assertEqual(int(np.abs(diff).max()), 0,
-                         "clean L-mode roughness must round-trip byte-identical")
+        diff = out_arr.astype(int) - src_arr.astype(int)
+        self.assertEqual(
+            int(np.abs(diff).max()),
+            0,
+            "clean L-mode roughness must round-trip byte-identical",
+        )
 
     def test_multi_layer_subsequent_partial_alpha_does_not_darken_base(self):
         # Two roughness layers: first is solid opaque content; second has
@@ -1781,6 +1806,120 @@ class TestModelessPackedTypeComposite(unittest.TestCase, _LoggerCaptureMixin):
     def test_mrao_composites_without_keyerror(self):
         out = self._run("MRAO")
         self.assertTrue(os.path.exists(out))
+
+
+class TestWriterRouting(unittest.TestCase, _LoggerCaptureMixin):
+    """The engine's two writes were raw ``PIL.Image.save``.
+
+    Every other texture write goes through ``ImgUtils.save_image``, which
+    routes by extension: PIL for the ordinary containers, OpenCV for the float
+    formats (EXR/HDR), the external encoder for KTX2, plus bit-depth and lossy
+    handling. Raw PIL cannot write ``.exr`` or ``.hdr`` at all -- and the
+    engine *discovers its inputs* with ``ImgUtils.texture_file_types``, which
+    lists both, then takes the output extension from the first input. So an
+    EXR set raised ``ValueError: unknown file extension: .exr`` out of
+    ``process_batch`` with nothing written.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mc_writer_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _island(cols, size=16, mode="RGB", fg=(255, 0, 0), bg=(0, 0, 0)):
+        im = Image.new(mode, (size, size), bg)
+        for y in range(size):
+            for x in cols:
+                im.putpixel((x, y), fg)
+        return im
+
+    @unittest.skipUnless(HAS_CV2, "cv2 required for EXR")
+    def test_an_exr_set_is_written_instead_of_raising(self):
+        MapCompositor().process_batch(
+            {
+                "Base_Color": [
+                    ("a.exr", self._island(range(0, 6))),
+                    ("b.exr", self._island(range(10, 16))),
+                ]
+            },
+            self.tmp,
+            name="AB",
+        )
+        out = os.path.join(self.tmp, "AB_Base_Color.exr")
+        self.assertTrue(os.path.isfile(out), f"not written: {os.listdir(self.tmp)}")
+        self.assertGreater(os.path.getsize(out), 0)
+
+    @unittest.skipUnless(HAS_CV2, "cv2 required for EXR")
+    def test_the_normal_map_counterpart_is_written_through_the_same_writer(self):
+        """The second raw save: the inverted-green counterpart map."""
+        engine = MapCompositor()
+        engine.process_batch(
+            {
+                "Normal_OpenGL": [
+                    ("a.exr", self._island(range(0, 6), fg=(128, 128, 255))),
+                    ("b.exr", self._island(range(10, 16), fg=(128, 128, 255))),
+                ]
+            },
+            self.tmp,
+            name="AB",
+        )
+        written = sorted(os.listdir(self.tmp))
+        self.assertTrue(
+            any(f.endswith(".exr") for f in written), f"nothing written: {written}"
+        )
+
+    def test_png_output_is_unchanged(self):
+        """The routing change must not alter the ordinary path."""
+        MapCompositor().process_batch(
+            {
+                "Base_Color": [
+                    ("a.png", self._island(range(0, 6))),
+                    ("b.png", self._island(range(10, 16))),
+                ]
+            },
+            self.tmp,
+            name="AB",
+        )
+        out = os.path.join(self.tmp, "AB_Base_Color.png")
+        self.assertTrue(os.path.isfile(out))
+        self.assertEqual(Image.open(out).size, (16, 16))
+
+    def test_the_module_imports_without_pillow(self):
+        """Its six siblings in the engine tolerate a missing Pillow; this one
+        imported it bare, so an install without Pillow failed at import.
+
+        Grepping for ``except ImportError`` is not enough: this module has a
+        module-level ``Layers = List[Tuple[str, Image.Image]]`` alias and seven
+        ``Image.Image`` annotations, all evaluated at import, so a try/except
+        alone still dies on ``NoneType has no attribute 'Image'``. Import it
+        for real with PIL denied.
+        """
+        import builtins
+        import importlib
+
+        name = mc_module.__name__
+        real_import = builtins.__import__
+
+        def deny_pil(module, *args, **kwargs):
+            if module == "PIL" or module.startswith("PIL."):
+                raise ImportError("simulated: no Pillow")
+            return real_import(module, *args, **kwargs)
+
+        saved = {k: v for k, v in sys.modules.items() if k.startswith("PIL")}
+        saved[name] = sys.modules.get(name)
+        for key in list(saved):
+            sys.modules.pop(key, None)
+        builtins.__import__ = deny_pil
+        try:
+            reloaded = importlib.import_module(name)
+            self.assertIsNone(reloaded.Image, "PIL should be absent here")
+        finally:
+            builtins.__import__ = real_import
+            sys.modules.pop(name, None)
+            sys.modules.update({k: v for k, v in saved.items() if v is not None})
+            importlib.import_module(name)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_logging_mixin.py -v
     python test_logging_mixin.py
 """
+
 import io
 import logging
 import tempfile
@@ -427,6 +428,21 @@ class LogBoxTest(BaseTestCase):
         # top, title, sep, item1, item2, bottom
         self.assertEqual(len(lines), 6)
 
+    def test_log_box_takes_a_bare_string_as_one_item(self):
+        """``items`` is iterated, so a bare string used to render one box row
+        per CHARACTER.
+
+        It raised ``TypeError`` before the split-lines rewrite, which at least
+        told the caller. A string is unambiguous here, and the package's own
+        ``CoreUtils.listify`` idiom is to accept scalar-or-list, so take it as
+        one row.
+        """
+        self.logger.log_box("TITLE", "one message")
+        lines = self.stream.getvalue().strip().split("\n")
+        # top, title, separator, the single item, bottom
+        self.assertEqual(len(lines), 5, "\n".join(lines))
+        self.assertIn("one message", lines[3])
+
     def test_log_box_no_items(self):
         """Box with title only has 3 lines: top, title, bottom."""
         self.logger.log_box("TITLE")
@@ -550,9 +566,7 @@ class LogBoxTest(BaseTestCase):
         self.logger.handlers = []
         handler = logging.StreamHandler(self.stream)
         handler.setLevel(logging.DEBUG)
-        handler.setFormatter(
-            LevelAwareFormatter(logger=self.logger, strip_html=True)
-        )
+        handler.setFormatter(LevelAwareFormatter(logger=self.logger, strip_html=True))
         self.logger.addHandler(handler)
 
         self.logger.log_box("TITLE", ["item"], bg="ERROR", level="ERROR")
@@ -1260,6 +1274,251 @@ class LoggingMixinQualityPassRegressionTest(BaseTestCase):
             1,
             f"misaligned lines (display widths {sorted(widths)}):\n{out}",
         )
+
+
+class LoggingMixinReviewRegressionTest(BaseTestCase):
+    """Bottom-up review of ``logging_mixin`` (2026-09-02): defects pinned
+    red-first before the fix landed."""
+
+    def setUp(self):
+        super().setUp()
+        self.logger = logging.Logger("test_review", logging.DEBUG)
+        self.logger.handlers = []
+        LoggerExt.patch(self.logger)
+        self.logger.handlers = []
+        self.stream = io.StringIO()
+        self.handler = logging.StreamHandler(self.stream)
+        self.handler.setLevel(logging.DEBUG)
+        self.logger.addHandler(self.handler)
+
+    def tearDown(self):
+        for handler in self.logger.handlers[:]:
+            handler.close()
+            self.logger.removeHandler(handler)
+        super().tearDown()
+
+    def test_patched_methods_report_the_callers_location(self):
+        """Bug: every patched level method (``info``/``success``/
+        ``error_once``/``exception``…) went through two or three wrapper
+        frames inside this module before reaching ``Logger.log``, so
+        ``record.funcName``/``lineno``/``pathname`` pointed at
+        ``_log_custom`` in ``logging_mixin.py`` for EVERY record — any
+        ``%(filename)s:%(lineno)d`` format, and every ring-buffer record,
+        carried useless provenance."""
+        self.handler.setFormatter(logging.Formatter("%(funcName)s %(message)s"))
+
+        def caller_frame():
+            self.logger.info("info")
+            self.logger.success("success")
+            self.logger.error_once("once", cache_key="review-once")
+            try:
+                raise ValueError("boom")
+            except ValueError:
+                self.logger.exception("exc")
+
+        caller_frame()
+        lines = self.stream.getvalue().splitlines()
+        for tag in ("info", "success", "once", "exc"):
+            line = next(ln for ln in lines if ln.endswith(" " + tag))
+            self.assertTrue(
+                line.startswith("caller_frame "),
+                f"{tag!r} record attributed to {line.split()[0]!r}, not the caller",
+            )
+
+    def test_percent_in_prefix_or_suffix_survives_formatting(self):
+        """Bug: ``set_log_prefix("50% ")`` was spliced verbatim into the
+        %-style format string, so the stdlib raised ``TypeError: not enough
+        arguments for format string`` on every record — the message was
+        swallowed into ``handleError`` and never reached the sink."""
+        self.logger.set_log_prefix("50% ")
+        self.logger.set_log_suffix(" (100%)")
+        self.logger.info("hello")
+        output = self.stream.getvalue()
+        self.assertIn("50% hello (100%)", output)
+
+    def test_fallback_char_width_treats_zero_width_marks_as_zero(self):
+        """Bug: without ``wcwidth`` the heuristic counted variation
+        selectors (U+FE0F) and the ZWJ (U+200D) as TWO columns and combining
+        marks as one — ``⚠️`` measured 4, ``é`` (decomposed) measured 2, so
+        every box/table containing one was over-padded in DCC pythons
+        (which ship no ``wcwidth``)."""
+        saved = LoggerExt._wcwidth_fn
+        LoggerExt._wcwidth_fn = False
+        try:
+            self.assertEqual(LoggerExt._char_width("\ufe0f"), 0)  # VS16
+            self.assertEqual(LoggerExt._char_width("\u200d"), 0)  # ZWJ
+            self.assertEqual(LoggerExt._char_width("\u0301"), 0)  # combining acute
+            self.assertEqual(LoggerExt._display_width("\u26a0\ufe0f"), 2)  # ⚠️
+            self.assertEqual(LoggerExt._display_width("e\u0301"), 1)  # decomposed é
+        finally:
+            LoggerExt._wcwidth_fn = saved
+
+    def test_log_box_splits_embedded_newlines_and_coerces_non_strings(self):
+        """Bug: an item holding a newline was measured as one long line
+        and emitted as one padded row, so the box border broke in the
+        middle of the row; a non-string item raised on width measurement."""
+        self.logger.log_box("T\nsub", ["a\nb", 42], max_width=40)
+        lines = self.stream.getvalue().strip().split("\n")
+        widths = {LoggerExt._display_width(ln) for ln in lines}
+        self.assertEqual(len(widths), 1, f"ragged box:\n{lines}")
+        for ln in lines:
+            self.assertTrue(ln[0] in "╔║╟╚" and ln[-1] in "╗║╢╝", repr(ln))
+        self.assertTrue(any("sub" in ln for ln in lines))
+        self.assertTrue(any("42" in ln for ln in lines))
+
+    def test_log_divider_fits_the_handler_width(self):
+        """``log_divider()`` was hard-coded to 60 columns while ``log_box``
+        already fits itself to ``box_width`` → the narrowest attached
+        handler → ``DEFAULT_BOX_WIDTH``; a rule that ignores a 40-column
+        panel wraps onto two lines. Both now share one width resolver."""
+
+        class NarrowHandler(logging.StreamHandler):
+            def available_columns(self):
+                return 40
+
+        self.logger.handlers = []
+        narrow = NarrowHandler(self.stream)
+        narrow.setLevel(logging.DEBUG)
+        self.logger.addHandler(narrow)
+
+        self.logger.log_divider()
+        self.assertEqual(self.stream.getvalue().strip(), "─" * 40)
+
+
+class CharWidthTest(BaseTestCase):
+    """``_char_width`` resolves the optional ``wcwidth`` import ONCE.
+
+    It is called per character of every box/divider line; a failed import
+    inside it re-walked ``sys.path`` on every call (measured 2 ms a
+    character -- 1.2 s for one scene-export summary box). Added: 2026-09-02
+    """
+
+    def test_import_is_resolved_once_and_widths_still_measure(self):
+        LoggerExt._wcwidth_fn = None
+        self.assertEqual(LoggerExt._char_width("a"), 1)
+        self.assertIsNotNone(LoggerExt._wcwidth_fn)  # a callable, or False
+        resolved = LoggerExt._wcwidth_fn
+        LoggerExt._char_width("b")
+        self.assertIs(LoggerExt._wcwidth_fn, resolved)
+        # The fallback heuristic answers the same wide glyphs either way.
+        LoggerExt._wcwidth_fn = False
+        try:
+            self.assertEqual(LoggerExt._char_width("\u2713"), 2)
+            self.assertEqual(LoggerExt._display_width("<b>ab</b>\u2713"), 4)
+        finally:
+            LoggerExt._wcwidth_fn = None
+
+
+class TextHandlerScopeTest(unittest.TestCase):
+    """``set_text_handler`` looked per-logger and was process-global.
+
+    It is attached to every logger by ``_patch_logger_methods``, so
+    ``self.logger.set_text_handler(X)`` reads as configuring THIS logger. It
+    assigned ``LoggerExt._text_handler`` -- a class attribute -- because it
+    sat in the ``direct_methods`` map, the one for "methods that don't need
+    self". Setting it on one class therefore changed it for every unrelated
+    class in the process.
+
+    It had already cost a consumer: extapps' compositor slots attach their
+    handler by hand with the comment "``_set_text_handler`` would force this
+    handler process-wide", bypassing the seam that exists for exactly that job.
+
+    Per-logger now, with the class attribute kept as the process-wide DEFAULT
+    so a deliberate global still works.
+    """
+
+    def setUp(self):
+        from pythontk.core_utils.logging_mixin import LoggerExt
+
+        self._prior = LoggerExt._text_handler
+        self.addCleanup(setattr, LoggerExt, "_text_handler", self._prior)
+
+    @staticmethod
+    def _pair():
+        from pythontk import LoggingMixin
+
+        class Alpha(LoggingMixin):
+            pass
+
+        class Beta(LoggingMixin):
+            pass
+
+        return Alpha(), Beta()
+
+    def test_setting_on_one_logger_leaves_another_alone(self):
+        class Custom:
+            pass
+
+        a, b = self._pair()
+        before = b.logger.get_text_handler()
+        a.logger.set_text_handler(Custom)
+        self.assertIs(a.logger.get_text_handler(), Custom)
+        self.assertIs(
+            b.logger.get_text_handler(),
+            before,
+            "an unrelated class's text handler was changed process-wide",
+        )
+
+    def test_the_class_attribute_is_still_the_process_default(self):
+        """A deliberate global default must keep working -- the defect was the
+        per-logger call leaking into it, not the default existing."""
+        from pythontk.core_utils.logging_mixin import LoggerExt
+
+        class GlobalDefault:
+            pass
+
+        LoggerExt._text_handler = GlobalDefault
+        a, b = self._pair()
+        self.assertIs(a.logger.get_text_handler(), GlobalDefault)
+        self.assertIs(b.logger.get_text_handler(), GlobalDefault)
+
+    def test_a_per_logger_handler_wins_over_the_default(self):
+        from pythontk.core_utils.logging_mixin import LoggerExt
+
+        class GlobalDefault:
+            pass
+
+        class Mine:
+            pass
+
+        LoggerExt._text_handler = GlobalDefault
+        a, b = self._pair()
+        a.logger.set_text_handler(Mine)
+        self.assertIs(a.logger.get_text_handler(), Mine)
+        self.assertIs(b.logger.get_text_handler(), GlobalDefault)
+
+    def test_an_instance_still_resolves_to_its_class(self):
+        """Documented behaviour of the getter: it returns a CLASS whether a
+        class or an instance was set, because _add_handler constructs it."""
+
+        class Custom:
+            pass
+
+        a, _ = self._pair()
+        a.logger.set_text_handler(Custom())
+        self.assertIs(a.logger.get_text_handler(), Custom)
+
+    def test_set_default_text_handler_is_the_deliberate_global(self):
+        """The seam that replaces the accident: a host wanting one handler
+        process-wide asks for it, instead of getting it from whichever panel
+        happened to open first."""
+        from pythontk.core_utils.logging_mixin import DefaultTextLogHandler, LoggerExt
+
+        class Shared:
+            pass
+
+        a, b = self._pair()
+        LoggerExt.set_default_text_handler(Shared)
+        self.assertIs(a.logger.get_text_handler(), Shared)
+        self.assertIs(b.logger.get_text_handler(), Shared)
+        LoggerExt.set_default_text_handler(None)
+        self.assertIs(a.logger.get_text_handler(), DefaultTextLogHandler)
+
+    def test_the_default_is_unchanged_when_nothing_is_set(self):
+        from pythontk.core_utils.logging_mixin import DefaultTextLogHandler
+
+        a, _ = self._pair()
+        self.assertIs(a.logger.get_text_handler(), DefaultTextLogHandler)
 
 
 if __name__ == "__main__":

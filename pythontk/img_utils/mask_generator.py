@@ -49,7 +49,13 @@ class MaskGenerator:
         self.session = new_session(model_name) if REMBG_AVAILABLE else None
 
     def is_available(self) -> bool:
-        return REMBG_AVAILABLE and PIL_AVAILABLE and self.session is not None
+        # Gate on the BINDING, not on PIL_AVAILABLE: Blender provisions Pillow
+        # after pythontk is imported, and blendertk's _rebind_pil_globals
+        # repairs the name this module set to None but cannot repair a bool.
+        # Reading the bool reported a usable Pillow as missing forever.
+        # REMBG_AVAILABLE is left as-is deliberately -- rembg is not in that
+        # helper's sweep, so its bool cannot go stale against a live binding.
+        return REMBG_AVAILABLE and Image is not None and self.session is not None
 
     def generate_masks(
         self,
@@ -69,7 +75,7 @@ class MaskGenerator:
         if not self.is_available():
             logger.error(
                 "Mask generation unavailable. "
-                f"rembg={REMBG_AVAILABLE}, PIL={PIL_AVAILABLE}."
+                f"rembg={REMBG_AVAILABLE}, PIL={Image is not None}."
             )
             return []
         if not os.path.isdir(input_dir):

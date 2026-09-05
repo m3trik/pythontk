@@ -12,6 +12,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
@@ -24,7 +25,9 @@ from pythontk.core_utils.engines.shots.manifest.manifest_model import (
     BuilderObject,
     StepStatus,
     ObjectStatus,
+    _ManifestModelInternal,
 )
+from pythontk.net_utils.remote_file import RemoteFile
 from pythontk.core_utils.engines.shots.manifest import mapping as mapping_mod
 from pythontk.core_utils.engines.shots.manifest import behaviors as beh
 from pythontk.core_utils.engines.shots.manifest import range_resolver as rr
@@ -46,6 +49,44 @@ A01.),Aileron fades in then fades out,aileron_geo,Narrator intro,high
 A02.),Static fuselage step,fuselage,,low
 SETUP,should be excluded,setup_obj,,
 """
+
+
+class TestManifestRemoteSource(unittest.TestCase):
+    """A URL is a CSV source: bytes come from RemoteFile, decoding is shared."""
+
+    _URL = "https://docs.google.com/spreadsheets/d/1AbC/edit#gid=0"
+
+    def test_url_parses_through_remote_file(self):
+        raw = _SAMPLE_CSV.encode("utf-8")
+        with patch.object(RemoteFile, "read_bytes", return_value=raw) as fetch:
+            steps = ManifestModel.parse_csv(self._URL)
+        fetch.assert_called_once_with(self._URL)
+        self.assertEqual([s.step_id for s in steps], ["A01", "A02"])
+
+    def test_local_path_never_touches_the_network(self):
+        path = _write_csv(_SAMPLE_CSV)
+        try:
+            with patch.object(
+                RemoteFile, "read_bytes", side_effect=AssertionError("fetched")
+            ):
+                steps = ManifestModel.parse_csv(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(len(steps), 2)
+
+    def test_fetch_failure_propagates_as_remote_error(self):
+        err = RemoteFile.Error("Can't fetch x")
+        with patch.object(RemoteFile, "read_bytes", side_effect=err):
+            with self.assertRaises(RemoteFile.Error):
+                ManifestModel.parse_csv(self._URL)
+
+    def test_decode_strips_bom_and_falls_back_to_cp1252(self):
+        """The bytes-level decode is shared by both sources: BOM stripped
+        first, so the cp1252 fallback still resolves the header."""
+        body = "Step,Step Contents\nA01.),caf\u00e9\n".encode("cp1252")
+        rows = _ManifestModelInternal._decode_csv_bytes(b"\xef\xbb\xbf" + body)
+        self.assertEqual(rows[0], ["Step", "Step Contents"])
+        self.assertEqual(rows[1][1], "caf\u00e9")
 
 
 class TestManifestParse(unittest.TestCase):

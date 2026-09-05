@@ -205,7 +205,13 @@ class _ShotPlannerInternal(object):
 
 
 class ShotPlanner(_ShotPlannerInternal):
-    """ShotPlanner — module namespace."""
+    """Compute WHAT moves WHERE for a multi-shot timeline edit.
+
+    The pure planning layer: pivots, respaces, gap retimes, ripples and
+    reorders are each turned into a plan of intended moves, with boundary
+    splits and key collisions resolved up front. Nothing here touches a
+    DCC — :class:`ShotApply` commits the plan.
+    """
 
     @staticmethod
     def envelope_for(sorted_shots: List, index: int) -> tuple:

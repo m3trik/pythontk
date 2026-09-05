@@ -273,7 +273,12 @@ class _MappingInternal(object):
 
 
 class Mapping(_MappingInternal):
-    """Mapping — module namespace."""
+    """Resolve a CSV's columns through a declarative JSON mapping file.
+
+    A mapping file states which CSV column feeds which ``BuilderStep``
+    field and how derived values are computed, so a new studio's column
+    layout is a data file rather than a code change.
+    """
 
     @staticmethod
     @functools.lru_cache(maxsize=None)
@@ -372,7 +377,7 @@ class Mapping(_MappingInternal):
         disk).  If neither is given, uses default ``ColumnMap``.
 
         Parameters:
-            csv_path: Path to the CSV file.
+            csv_path: Path to the CSV file, or an ``http(s)`` URL.
             mapping: Pre-loaded mapping dict.
             name: Mapping file stem to load via :func:`load_mapping`.
             directory: Search directory for :func:`load_mapping`.

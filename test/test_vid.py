@@ -15,6 +15,7 @@ Run with:
     python -m pytest test_vid.py -v
     python test_vid.py
 """
+
 import os
 import unittest
 import shutil
@@ -59,33 +60,23 @@ class VidTest(BaseTestCase):
             # It's expected to raise FileNotFoundError if ffmpeg is not found
             pass
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_resolve_ffmpeg_valid_path_exists(self):
         """Test resolve_ffmpeg returns existing path when found."""
         result = VidUtils.resolve_ffmpeg()
         self.assertTrue(os.path.exists(result))
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_resolve_ffmpeg_is_executable(self):
         """Test resolve_ffmpeg returns an executable."""
         result = VidUtils.resolve_ffmpeg()
         # On Windows, files ending in .exe are executable
         # On Unix, check if file is executable
         self.assertTrue(
-            os.path.isfile(result),
-            f"FFmpeg path should be a file: {result}"
+            os.path.isfile(result), f"FFmpeg path should be a file: {result}"
         )
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_resolve_ffmpeg_consistent_results(self):
         """Test resolve_ffmpeg returns consistent results on multiple calls."""
         result1 = VidUtils.resolve_ffmpeg()
@@ -96,28 +87,19 @@ class VidTest(BaseTestCase):
     # get_video_frame_rate Tests
     # -------------------------------------------------------------------------
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_get_video_frame_rate_nonexistent_file(self):
         """Test get_video_frame_rate with nonexistent file."""
         with self.assertRaises(RuntimeError):
             VidUtils.get_video_frame_rate("/nonexistent/video.mp4")
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_get_video_frame_rate_empty_path(self):
         """Test get_video_frame_rate with empty path."""
         with self.assertRaises(RuntimeError):
             VidUtils.get_video_frame_rate("")
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_get_video_frame_rate_non_video_file(self):
         """Test get_video_frame_rate with non-video file."""
         # Create a temp text file
@@ -132,10 +114,7 @@ class VidTest(BaseTestCase):
     # compress_video Tests
     # -------------------------------------------------------------------------
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_compress_video_nonexistent_input(self):
         """Test compress_video with nonexistent input file."""
         output = os.path.join(self.temp_dir, "output.mp4")
@@ -143,15 +122,14 @@ class VidTest(BaseTestCase):
         try:
             result = VidUtils.compress_video("/nonexistent/video.mp4", output)
             # Either returns None/False or raises exception
-            self.assertTrue(result is None or result is False or isinstance(result, str))
+            self.assertTrue(
+                result is None or result is False or isinstance(result, str)
+            )
         except (FileNotFoundError, OSError, ValueError):
             # Expected for invalid input
             pass
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_compress_video_empty_input(self):
         """Test compress_video with empty input path."""
         output = os.path.join(self.temp_dir, "output.mp4")
@@ -162,24 +140,22 @@ class VidTest(BaseTestCase):
             # Expected for invalid input
             pass
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_compress_video_invalid_output_path(self):
         """Test compress_video with invalid output path."""
         # Create a minimal input (this test just checks path validation)
         temp_input = os.path.join(self.temp_dir, "input.txt")
         with open(temp_input, "w") as f:
             f.write("not a video")
-        
+
         try:
             result = VidUtils.compress_video(
-                temp_input, 
-                "/invalid/path/that/does/not/exist/output.mp4"
+                temp_input, "/invalid/path/that/does/not/exist/output.mp4"
             )
             # Should handle gracefully
-            self.assertTrue(result is None or result is False or isinstance(result, str))
+            self.assertTrue(
+                result is None or result is False or isinstance(result, str)
+            )
         except (FileNotFoundError, OSError, PermissionError, ValueError):
             # Expected for invalid output path
             pass
@@ -232,10 +208,11 @@ class VidTest(BaseTestCase):
         import types
 
         fake = types.SimpleNamespace(stderr="\n\n   \n")
-        with mock.patch.object(
-            VidUtils, "resolve_ffmpeg", return_value="ffmpeg"
-        ), mock.patch(
-            "pythontk.vid_utils._vid_utils.subprocess.run", return_value=fake
+        with (
+            mock.patch.object(VidUtils, "resolve_ffmpeg", return_value="ffmpeg"),
+            mock.patch(
+                "pythontk.vid_utils._vid_utils.subprocess.run", return_value=fake
+            ),
         ):
             with self.assertRaises(RuntimeError):
                 VidUtils.get_video_frame_rate("dummy.mp4")
@@ -243,6 +220,7 @@ class VidTest(BaseTestCase):
     def test_vidutils_import(self):
         """Test VidUtils can be imported."""
         from pythontk import VidUtils
+
         self.assertTrue(hasattr(VidUtils, "resolve_ffmpeg"))
         self.assertTrue(hasattr(VidUtils, "get_video_frame_rate"))
         self.assertTrue(hasattr(VidUtils, "compress_video"))
@@ -252,14 +230,10 @@ class VidTest(BaseTestCase):
         methods = ["resolve_ffmpeg", "get_video_frame_rate", "compress_video"]
         for method in methods:
             self.assertTrue(
-                hasattr(VidUtils, method),
-                f"VidUtils should have method: {method}"
+                hasattr(VidUtils, method), f"VidUtils should have method: {method}"
             )
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") is not None,
-        "FFmpeg not installed"
-    )
+    @unittest.skipUnless(shutil.which("ffmpeg") is not None, "FFmpeg not installed")
     def test_ffmpeg_path_contains_ffmpeg(self):
         """Test resolved ffmpeg path contains 'ffmpeg' in name."""
         result = VidUtils.resolve_ffmpeg()
@@ -418,6 +392,7 @@ class FrameExtractorSmartTest(BaseTestCase):
 
     def test_sharpness_score_is_zero_when_cv2_missing(self) -> None:
         import pythontk.vid_utils.frame_extractor as fe
+
         if fe.CV2_AVAILABLE:
             self.skipTest("cv2 present; can't simulate the missing-cv2 path")
         self.assertEqual(fe.FrameExtractor.score_sharpness(None), 0.0)
@@ -490,6 +465,7 @@ class ImageCuratorTest(BaseTestCase):
 
     def test_curator_unavailable_when_cv2_missing(self) -> None:
         import pythontk.img_utils.image_curator as ic
+
         if ic.CV2_AVAILABLE:
             self.skipTest("cv2 present")
         self.assertFalse(ic.ImageCurator().is_available())
@@ -500,6 +476,7 @@ class ImageCuratorTest(BaseTestCase):
     )
     def test_hamming_distance_is_correct(self) -> None:
         from pythontk import ImageCurator
+
         self.assertEqual(ImageCurator.hamming(0b0, 0b0), 0)
         self.assertEqual(ImageCurator.hamming(0b1010, 0b0101), 4)
 
@@ -523,19 +500,61 @@ class ImageCuratorTest(BaseTestCase):
         out_root = os.path.join(self.temp_dir, "rerun_out")
         # Pass 1 — strict: every frame is its own cluster (4 anchors).
         ImageCurator().curate([src], out_root, hash_threshold=0)
-        pass1 = sorted(os.listdir(out_root + os.sep
-                                   + os.path.basename(src) + "_curated"))
+        pass1 = sorted(
+            os.listdir(out_root + os.sep + os.path.basename(src) + "_curated")
+        )
         # Pass 2 — looser: many frames cluster, fewer survive.
         ImageCurator().curate([src], out_root, hash_threshold=64)
-        pass2 = sorted(os.listdir(out_root + os.sep
-                                   + os.path.basename(src) + "_curated"))
+        pass2 = sorted(
+            os.listdir(out_root + os.sep + os.path.basename(src) + "_curated")
+        )
         self.assertLessEqual(
-            len(pass2), len(pass1),
-            "Looser pass should not yield more files than strict pass"
+            len(pass2),
+            len(pass1),
+            "Looser pass should not yield more files than strict pass",
         )
         self.assertFalse(
             set(pass2) - set(pass1),
-            "Pass 2 dir contains files from neither source (stale)"
+            "Pass 2 dir contains files from neither source (stale)",
+        )
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("cv2"),
+        "cv2 not available",
+    )
+    def test_curate_never_purges_the_source_dir(self) -> None:
+        """output_root=parent + suffix="" resolves the output dir onto the
+        source dir itself; the stale-output purge must skip it instead of
+        rmtree'ing the capture it is about to copy from.
+
+        The scan runs BEFORE the purge, so the kept records survive the
+        delete and every copy2 then fails against a source that is gone --
+        the capture is destroyed and curate still returns its out_dir.
+        Mirrors ExposureEqualizerTest.test_equalize_never_purges_the_source_dir.
+        """
+        import numpy as np
+        import cv2 as _cv2
+        from pythontk import ImageCurator
+
+        src = os.path.join(self.temp_dir, "inplace_src")
+        os.makedirs(src, exist_ok=True)
+        names = []
+        for i, base in enumerate((30, 90, 150)):
+            arr = np.full((64, 64, 3), base, dtype=np.uint8)
+            arr[:: (i + 2), :] = 255
+            name = f"img_{i}.jpg"
+            _cv2.imwrite(os.path.join(src, name), arr)
+            names.append(name)
+
+        out = ImageCurator().curate([src], self.temp_dir, suffix="")[0]
+        self.assertEqual(
+            os.path.normcase(os.path.normpath(out)),
+            os.path.normcase(os.path.normpath(src)),
+        )
+        self.assertEqual(
+            sorted(os.listdir(src)),
+            sorted(names),
+            "source capture was destroyed by the overwrite purge",
         )
 
     @unittest.skipUnless(
@@ -561,10 +580,7 @@ class ImageCuratorTest(BaseTestCase):
         result = ImageCurator().curate([src], out_root, hash_threshold=10)
         # One output dir, with fewer than 6 files (some clusters dedup'd).
         self.assertEqual(len(result), 1)
-        kept = [
-            f for f in os.listdir(result[0])
-            if f.lower().endswith(".jpg")
-        ]
+        kept = [f for f in os.listdir(result[0]) if f.lower().endswith(".jpg")]
         self.assertLessEqual(len(kept), 6)
         self.assertGreater(len(kept), 0)
 
@@ -589,13 +605,15 @@ class ImageCuratorTest(BaseTestCase):
         for i in range(10):
             arr = np.full((64, 64, 3), 80, dtype=np.uint8)
             col = 3 + i * 6  # distinct horizontal position per frame
-            arr[:, col:col + 4] = 255
+            arr[:, col : col + 4] = 255
             if i >= 2:  # high-frequency detail → high Laplacian variance
                 arr[1::2, :] = 255
             _cv2.imwrite(os.path.join(src, f"img_{i:02d}.jpg"), arr)
         out_root = os.path.join(self.temp_dir, "pct_out")
         result = ImageCurator().curate(
-            [src], out_root, hash_threshold=0,
+            [src],
+            out_root,
+            hash_threshold=0,
             sharpness_floor_percentile=25.0,
         )
         kept = [f for f in os.listdir(result[0]) if f.lower().endswith(".jpg")]
@@ -633,16 +651,18 @@ class ImageCuratorTest(BaseTestCase):
             # the 9x8 downscale). Optional high-freq horizontal lines set
             # sharpness independently (averaged out by dHash).
             arr = np.full((64, 64, 3), 80, dtype=np.uint8)
-            arr[:, band_col:band_col + 3] = band_val
+            arr[:, band_col : band_col + 3] = band_val
             if line_step:
                 arr[1::line_step, :] = 255
             return arr
 
         for i in range(6):  # sharp: dense lines -> highest sharpness
-            _cv2.imwrite(os.path.join(src, f"sharp_{i}.jpg"),
-                         frame(4 + i * 9, line_step=2))
-        _cv2.imwrite(os.path.join(src, "needle.jpg"),
-                     frame(58, line_step=8))  # blurry unique (medium)
+            _cv2.imwrite(
+                os.path.join(src, f"sharp_{i}.jpg"), frame(4 + i * 9, line_step=2)
+            )
+        _cv2.imwrite(
+            os.path.join(src, "needle.jpg"), frame(58, line_step=8)
+        )  # blurry unique (medium)
         for j in range(40):  # blurriest: band only, all identical -> 1 cluster
             _cv2.imwrite(os.path.join(src, f"dup_{j:02d}.jpg"), frame(1))
 
@@ -652,14 +672,20 @@ class ImageCuratorTest(BaseTestCase):
         # documented "no dedup" contract), which would defeat this test's
         # representatives-vs-all-frames distinction.
         result = ImageCurator().curate(
-            [src], out_root, hash_threshold=1, keep_per_cluster=1,
+            [src],
+            out_root,
+            hash_threshold=1,
+            keep_per_cluster=1,
             sharpness_floor_percentile=30.0,
         )
         kept = [f for f in os.listdir(result[0]) if f.lower().endswith(".jpg")]
-        self.assertNotIn("needle.jpg", kept,
-                         "blurry needle survived — floor diluted by near-dups")
-        self.assertFalse([f for f in kept if f.startswith("dup_")],
-                         "blurry near-duplicate survived the floor")
+        self.assertNotIn(
+            "needle.jpg", kept, "blurry needle survived — floor diluted by near-dups"
+        )
+        self.assertFalse(
+            [f for f in kept if f.startswith("dup_")],
+            "blurry near-duplicate survived the floor",
+        )
         self.assertGreaterEqual(len([f for f in kept if f.startswith("sharp_")]), 4)
 
     @unittest.skipUnless(
@@ -679,9 +705,9 @@ class ImageCuratorTest(BaseTestCase):
 
         def frame(band_col, lines):
             arr = np.full((64, 64, 3), 80, dtype=np.uint8)
-            arr[:, band_col:band_col + 3] = 255          # distinct dHash band
+            arr[:, band_col : band_col + 3] = 255  # distinct dHash band
             if lines:
-                arr[1::2, :] = 255                        # dense high-freq → sharp
+                arr[1::2, :] = 255  # dense high-freq → sharp
             return arr
 
         for i in range(8):  # sharp, each its own cluster
@@ -693,14 +719,20 @@ class ImageCuratorTest(BaseTestCase):
 
         # Guard OFF (and no percentile) → the blurry needle survives.
         off = ImageCurator().curate(
-            [src], os.path.join(self.temp_dir, "frac_off"), hash_threshold=0,
-            sharpness_floor_percentile=None, min_sharpness_fraction_of_median=0.0,
+            [src],
+            os.path.join(self.temp_dir, "frac_off"),
+            hash_threshold=0,
+            sharpness_floor_percentile=None,
+            min_sharpness_fraction_of_median=0.0,
         )
         self.assertIn("needle.jpg", kept(off))
         # Guard ON → needle dropped, all 8 sharp frames retained.
         on = ImageCurator().curate(
-            [src], os.path.join(self.temp_dir, "frac_on"), hash_threshold=0,
-            sharpness_floor_percentile=None, min_sharpness_fraction_of_median=0.15,
+            [src],
+            os.path.join(self.temp_dir, "frac_on"),
+            hash_threshold=0,
+            sharpness_floor_percentile=None,
+            min_sharpness_fraction_of_median=0.15,
         )
         k = kept(on)
         self.assertNotIn("needle.jpg", k)
@@ -723,7 +755,7 @@ class ImageCuratorTest(BaseTestCase):
 
         def frame(band_col, line_step=None):
             arr = np.full((64, 64, 3), 80, dtype=np.uint8)
-            arr[:, band_col:band_col + 3] = 255
+            arr[:, band_col : band_col + 3] = 255
             if line_step:
                 arr[1::line_step, :] = 255
             return arr
@@ -772,6 +804,7 @@ class ExposureEqualizerTest(BaseTestCase):
     def _make_dir(self, name, brightness):
         import numpy as np
         import cv2 as _cv2
+
         d = os.path.join(self.temp_dir, name)
         os.makedirs(d, exist_ok=True)
         for i in range(4):
@@ -799,9 +832,7 @@ class ExposureEqualizerTest(BaseTestCase):
         # The dark dir's output mean must stay close to its input mean
         # (~40), NOT pulled toward the bright reference (~200).
         orig = _cv2.imread(os.path.join(dark, "f_0.jpg")).mean()
-        done = _cv2.imread(
-            os.path.join(dirs[0], "f_0.jpg")
-        ).mean()
+        done = _cv2.imread(os.path.join(dirs[0], "f_0.jpg")).mean()
         self.assertLess(abs(orig - done), 12.0)
 
     @unittest.skipUnless(
@@ -884,6 +915,7 @@ class ExposureEqualizerTest(BaseTestCase):
     def test_median_reference_avoids_extreme(self) -> None:
         """median strategy must pick the mid-brightness dir, not an extreme."""
         from pythontk.img_utils.exposure_equalizer import ExposureEqualizer
+
         eq = ExposureEqualizer()
         dark = self._make_dir("m_dark", 30)
         mid = self._make_dir("m_mid", 120)
@@ -903,6 +935,7 @@ class ExposureEqualizerTest(BaseTestCase):
     def test_global_reference_is_average_of_dirs(self) -> None:
         """'global' strategy targets the mean of every dir's stats."""
         from pythontk.img_utils.exposure_equalizer import ExposureEqualizer
+
         eq = ExposureEqualizer()
         dark = self._make_dir("g_dark", 40)
         bright = self._make_dir("g_bright", 200)
@@ -915,6 +948,7 @@ class ExposureEqualizerTest(BaseTestCase):
         """A shared library should fail fast on a bad enum, not silently
         fall back. Validation precedes any cv2 use, so this needs no cv2."""
         from pythontk import ExposureEqualizer
+
         with self.assertRaises(ValueError):
             ExposureEqualizer()._reference_stats(["/nope"], "bogus", 4)
 
@@ -930,8 +964,7 @@ class PrepRegressionTest(BaseTestCase):
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def _write_frames(self, dirpath, count=3, base=100, size=64,
-                      vertical=False):
+    def _write_frames(self, dirpath, count=3, base=100, size=64, vertical=False):
         """Write ``count`` distinct-ish JPEG frames; returns their names.
 
         ``vertical`` flips the stripe orientation — dHash is exposure-
@@ -941,6 +974,7 @@ class PrepRegressionTest(BaseTestCase):
         """
         import numpy as np
         import cv2 as _cv2
+
         os.makedirs(dirpath, exist_ok=True)
         names = []
         for i in range(count):
@@ -962,13 +996,13 @@ class PrepRegressionTest(BaseTestCase):
         """capA/images + capB/images share a basename; the second source's
         output purge must not delete the first's just-copied files."""
         from pythontk import ImageCurator
+
         cap_a = os.path.join(self.temp_dir, "capA", "images")
         cap_b = os.path.join(self.temp_dir, "capB", "images")
         self._write_frames(cap_a, base=60)
         self._write_frames(cap_b, base=160, vertical=True)
         out_root = os.path.join(self.temp_dir, "curated")
-        out_dirs = ImageCurator().curate([cap_a, cap_b], out_root,
-                                         hash_threshold=0)
+        out_dirs = ImageCurator().curate([cap_a, cap_b], out_root, hash_threshold=0)
         self.assertEqual(len(out_dirs), 2)
         self.assertNotEqual(out_dirs[0], out_dirs[1])
         for d in out_dirs:
@@ -980,13 +1014,16 @@ class PrepRegressionTest(BaseTestCase):
     )
     def test_equalize_same_basename_sources_do_not_collide(self) -> None:
         from pythontk import ExposureEqualizer
+
         cap_a = os.path.join(self.temp_dir, "capA", "images")
         cap_b = os.path.join(self.temp_dir, "capB", "images")
         self._write_frames(cap_a, base=60)
         self._write_frames(cap_b, base=160)
         out_root = os.path.join(self.temp_dir, "eq")
         out_dirs = ExposureEqualizer().equalize_directories(
-            [cap_a, cap_b], out_root, strength=0.5,
+            [cap_a, cap_b],
+            out_root,
+            strength=0.5,
             reference_strategy="median",
         )
         self.assertEqual(len(set(out_dirs)), 2)
@@ -1002,6 +1039,7 @@ class PrepRegressionTest(BaseTestCase):
         not leave the previous run's since-culled frames in the output dir —
         downstream add_images ingests the union, degrading every re-run."""
         from pythontk import ExposureEqualizer
+
         src = os.path.join(self.temp_dir, "cap")
         names = self._write_frames(src, count=4)
         out_root = os.path.join(self.temp_dir, "eq")
@@ -1011,7 +1049,8 @@ class PrepRegressionTest(BaseTestCase):
         os.remove(os.path.join(src, names[0]))  # "curation" culled a frame
         second = eq.equalize_directories([src], out_root, strength=0.5)[0]
         self.assertEqual(
-            sorted(os.listdir(second)), sorted(names[1:]),
+            sorted(os.listdir(second)),
+            sorted(names[1:]),
             "stale previously-equalized frame survived the re-run",
         )
 
@@ -1024,6 +1063,7 @@ class PrepRegressionTest(BaseTestCase):
         source dir itself; the stale-output purge must skip it (in-place
         overwrite) instead of rmtree'ing the capture before reading it."""
         from pythontk import ExposureEqualizer
+
         src = os.path.join(self.temp_dir, "cap")
         names = self._write_frames(src)
         out = ExposureEqualizer().equalize_directories(
@@ -1034,7 +1074,8 @@ class PrepRegressionTest(BaseTestCase):
             os.path.normcase(os.path.normpath(src)),
         )
         self.assertEqual(
-            sorted(os.listdir(src)), sorted(names),
+            sorted(os.listdir(src)),
+            sorted(names),
             "source capture was destroyed by the overwrite purge",
         )
 
@@ -1060,19 +1101,21 @@ class PrepRegressionTest(BaseTestCase):
         self._write_frames(ref, base=120)
         out_root = os.path.join(self.temp_dir, "eq")
         out = ExposureEqualizer().equalize_directories(
-            [src], out_root, reference_dir=ref, strength=1.0,
+            [src],
+            out_root,
+            reference_dir=ref,
+            strength=1.0,
         )[0]
 
         def mean_luma(path):
             img = _cv2.imread(path)
-            return float(
-                _cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY).mean()
-            )
+            return float(_cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY).mean())
 
         dark = mean_luma(os.path.join(out, "dark.jpg"))
         bright = mean_luma(os.path.join(out, "bright.jpg"))
         self.assertLess(
-            dark + 10.0, bright,
+            dark + 10.0,
+            bright,
             "per-capture mode must preserve intra-capture exposure ordering",
         )
 
@@ -1096,8 +1139,128 @@ class PrepRegressionTest(BaseTestCase):
             _cv2.imwrite(os.path.join(src, f"f{i}.jpg"), arr)
         out_root = os.path.join(self.temp_dir, "identical_out")
         out = ImageCurator().curate([src], out_root, hash_threshold=0)[0]
-        self.assertEqual(len(os.listdir(out)), 3,
-                         "hash_threshold=0 must keep ALL frames")
+        self.assertEqual(
+            len(os.listdir(out)), 3, "hash_threshold=0 must keep ALL frames"
+        )
+
+
+class ResolveFfmpegTest(unittest.TestCase):
+    """One ffmpeg resolver, and an auto-install failure that says what failed.
+
+    ``VidUtils.resolve_ffmpeg`` and ``AudioUtils.resolve_ffmpeg`` were
+    statement-for-statement identical apart from a single error string, and
+    only one of them is reachable as ``ptk.resolve_ffmpeg`` -- ``vid_utils``
+    is a wildcard root, so the bare name resolves to the video copy and the
+    audio copy could drift unnoticed.
+
+    Both swallowed ``AppInstaller.ensure`` with ``except Exception: pass``.
+    ``ensure`` raises on a checksum mismatch and on a truncated download as
+    well as on a plain network failure, and every one of those was reported to
+    the user as "not found in the system path".
+    """
+
+    def _installer(self):
+        import pythontk.core_utils.app_installer as mod
+
+        return mod
+
+    def _no_ffmpeg_anywhere(self):
+        """Patch out PATH and managed lookups so the install branch is taken."""
+        from unittest.mock import patch
+
+        import pythontk.vid_utils._vid_utils as vid
+
+        p1 = patch.object(vid.shutil, "which", return_value=None)
+        p2 = patch.object(self._installer().AppInstaller, "get_path", return_value=None)
+        for p in (p1, p2):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_the_audio_resolver_delegates_rather_than_duplicating(self):
+        """One implementation, two published names. Asserted by ROUTING, not by
+        comparing text: a delegation is a different function object, and what
+        matters is that only one body can drift."""
+        from unittest.mock import patch
+
+        from pythontk import AudioUtils, VidUtils
+
+        with patch.object(
+            VidUtils, "resolve_ffmpeg", return_value="/routed/ffmpeg"
+        ) as routed:
+            result = AudioUtils.resolve_ffmpeg(required=False, auto_install=True)
+        self.assertEqual(result, "/routed/ffmpeg")
+        routed.assert_called_once_with(required=False, auto_install=True)
+
+    def test_the_audio_body_holds_no_second_implementation(self):
+        """Guard the shape: if someone re-inlines the logic, the delegation
+        stops being one and this catches it."""
+        import inspect
+
+        from pythontk import AudioUtils
+
+        source = inspect.getsource(AudioUtils.resolve_ffmpeg.__func__)
+        self.assertIn("VidUtils.resolve_ffmpeg", source)
+        self.assertNotIn("AppInstaller.ensure", source)
+
+    def test_the_bare_name_still_resolves(self):
+        import pythontk as ptk
+
+        self.assertTrue(callable(ptk.resolve_ffmpeg))
+
+    def test_a_failed_auto_install_names_the_cause(self):
+        from unittest.mock import patch
+
+        from pythontk import VidUtils
+
+        self._no_ffmpeg_anywhere()
+        boom = RuntimeError("checksum mismatch for ffmpeg-7.1.zip")
+        with patch.object(self._installer().AppInstaller, "ensure", side_effect=boom):
+            with self.assertRaises(FileNotFoundError) as caught:
+                VidUtils.resolve_ffmpeg(required=True, auto_install=True)
+        self.assertIn(
+            "checksum mismatch",
+            str(caught.exception),
+            "the install failure was swallowed; the user is told only that "
+            "ffmpeg is not on PATH",
+        )
+
+    def test_a_failed_auto_install_is_logged_even_when_not_required(self):
+        from unittest.mock import patch
+
+        from pythontk import VidUtils
+
+        self._no_ffmpeg_anywhere()
+        boom = RuntimeError("truncated download")
+        with patch.object(self._installer().AppInstaller, "ensure", side_effect=boom):
+            with self.assertLogs(
+                "pythontk.vid_utils._vid_utils", level="WARNING"
+            ) as log:
+                self.assertIsNone(
+                    VidUtils.resolve_ffmpeg(required=False, auto_install=True)
+                )
+        self.assertTrue(any("truncated download" in line for line in log.output))
+
+    def test_a_successful_auto_install_is_returned_unchanged(self):
+        from unittest.mock import patch
+
+        from pythontk import VidUtils
+
+        self._no_ffmpeg_anywhere()
+        with patch.object(
+            self._installer().AppInstaller, "ensure", return_value="C:/ff/ffmpeg.exe"
+        ):
+            self.assertEqual(
+                VidUtils.resolve_ffmpeg(required=True, auto_install=True),
+                "C:/ff/ffmpeg.exe",
+            )
+
+    def test_without_auto_install_the_message_is_unchanged_in_substance(self):
+        from pythontk import VidUtils
+
+        self._no_ffmpeg_anywhere()
+        with self.assertRaises(FileNotFoundError) as caught:
+            VidUtils.resolve_ffmpeg(required=True)
+        self.assertIn("FFmpeg", str(caught.exception))
 
 
 if __name__ == "__main__":

@@ -1006,7 +1006,7 @@ class ShotManifest(_ShotManifestInternal):
         """Convenience: parse a CSV and return a ready-to-build engine.
 
         Parameters:
-            filepath: Path to the CSV file.
+            filepath: Path to the CSV file, or an ``http(s)`` URL.
             store: Optional existing ``ShotStore`` to populate.
                 If ``None``, a fresh instance is created.
             columns: Column index mapping.

@@ -21,6 +21,10 @@ directly: ``from pythontk import Polyline, PointCloud``.
   parametric surface: frames a rail into a ``(u,v)`` grid and applies a
   caller-supplied displacement field. The reusable substrate under curve-driven
   surface generators.
+- :class:`~pythontk.geo_utils.shadow_projection.ShadowProjection` — planar
+  shadow projection: points onto the ground plane through a light (or along a
+  sun's direction), plus the bounding-cylinder model a live expression can
+  evaluate. The geometry under the mayatk / blendertk ``ShadowRig`` twins.
 
 The curtain *generator* that once lived here (``CurtainDrape``) was one tool's
 displacement math, not a general geometry primitive: its rail→grid machinery

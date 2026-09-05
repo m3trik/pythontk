@@ -7,10 +7,14 @@ RESULT/NOTICE), HTML color presets, raw block output (boxes, groups,
 dividers, tables), a managed file tee, and a capped in-memory ring buffer.
 ``LoggingMixin`` exposes one such patched logger per class.
 """
+
 from __future__ import annotations
 
+import hashlib
+import inspect
 import os
 import sys
+import time
 import logging as internal_logging
 import re
 import unicodedata
@@ -59,6 +63,11 @@ class LevelAwareFormatter(internal_logging.Formatter):
         base_fmt = LoggerExt._get_base_format(record.levelno, logger=logger)
         prefix = getattr(logger, "_log_prefix", "") if logger else ""
         suffix = getattr(logger, "_log_suffix", "") if logger else ""
+        # The prefix/suffix are spliced into a %-style format string: a
+        # literal "%" in either must be escaped or the stdlib raises
+        # "not enough arguments for format string" and drops the record.
+        prefix = prefix.replace("%", "%%")
+        suffix = suffix.replace("%", "%%")
         fmt = base_fmt.replace("%(message)s", f"{prefix}%(message)s{suffix}")
 
         ts = getattr(logger, "_log_timestamp", None) if logger else None
@@ -172,8 +181,6 @@ class LoggerExt:
         cls._patch_logger_methods(logger)
 
         # Initialize prefix/suffix/timestamp state
-        logger.set_log_prefix = cls._set_log_prefix.__get__(logger)
-        logger.set_log_suffix = cls._set_log_suffix.__get__(logger)
         logger._log_prefix = ""
         logger._log_suffix = ""
         logger._log_timestamp = None  # "%H:%M:%S" example of time only
@@ -218,9 +225,7 @@ class LoggerExt:
                 f"LoggerExt{base.__name__}",
                 (base,),
                 {
-                    "log_timestamp": property(
-                        _get_log_timestamp, _set_log_timestamp
-                    ),
+                    "log_timestamp": property(_get_log_timestamp, _set_log_timestamp),
                     "_logger_ext_class": True,
                 },
             )
@@ -248,9 +253,13 @@ class LoggerExt:
     def _patch_logger_methods(logger: internal_logging.Logger) -> None:
         """Patch logger with additional methods."""
         # Handle methods that don't need self (take no args or non-self first arg)
+        # ``log_link`` is a pure string builder and genuinely needs no logger.
+        # ``set_text_handler`` / ``get_text_handler`` used to live here too,
+        # and that was the bug: bound without the logger they could only write
+        # a class attribute, so ``self.logger.set_text_handler(X)`` -- which
+        # reads as configuring THIS logger -- changed it for every unrelated
+        # class in the process.
         direct_methods = {
-            "set_text_handler": LoggerExt._set_text_handler,
-            "get_text_handler": LoggerExt._get_text_handler,
             "log_link": LoggerExt._log_link,
         }
         for name, method in direct_methods.items():
@@ -264,7 +273,11 @@ class LoggerExt:
             return wrapper
 
         wrapped_methods = {
+            "set_text_handler": LoggerExt._set_text_handler,
+            "get_text_handler": LoggerExt._get_text_handler,
             "setLevel": LoggerExt._set_level,
+            "set_log_prefix": LoggerExt._set_log_prefix,
+            "set_log_suffix": LoggerExt._set_log_suffix,
             "add_file_handler": LoggerExt._add_file_handler,
             "add_stream_handler": LoggerExt._add_stream_handler,
             "add_text_widget_handler": LoggerExt._add_text_widget_handler,
@@ -307,6 +320,13 @@ class LoggerExt:
         no styling heuristic. (The old heuristic silently swallowed ``%s``
         substitution whenever an argument happened to match a preset or
         color name like ``"default"`` or ``"error"``.)
+
+        The record is attributed to the CALLER of the patched method
+        (``record.funcName``/``lineno``/``pathname``), not to this module:
+        every patched level method reaches ``Logger.log`` through three
+        frames of ours (``wrapper`` → ``_info``/``_success``/… → here), so
+        the stdlib ``stacklevel`` is advanced past them. A caller's own
+        ``stacklevel=`` composes on top, as with a plain logger.
         """
         if not logger.isEnabledFor(level_int):
             return  # skip styling work for records that will be dropped
@@ -319,6 +339,7 @@ class LoggerExt:
                 color_level = internal_logging.getLevelName(level_int)
             msg = LoggerExt.format_message_as_html(msg, color_level, preset)
 
+        kwargs["stacklevel"] = kwargs.get("stacklevel", 1) + 3
         internal_logging.Logger.log(logger, level_int, msg, *args, **kwargs)
 
     @staticmethod
@@ -399,10 +420,8 @@ class LoggerExt:
                 kwargs.get("filename", "logfile.log")
             )
         elif handler_type == "text_widget":
-            handler_cls = LoggerExt._get_text_handler()
+            handler_cls = LoggerExt._get_text_handler(logger)
             # Check if the handler accepts monospace argument
-            import inspect
-
             sig = inspect.signature(handler_cls)
             handler_kwargs = {"widget": kwargs.get("widget")}
             if "monospace" in sig.parameters:
@@ -464,15 +483,18 @@ class LoggerExt:
 
     @staticmethod
     def _update_handler_formatters(logger: internal_logging.Logger) -> None:
-        """Update all handler formatters with level-aware formatting."""
-        for handler in logger.handlers:
-            is_file_or_stream = isinstance(
-                handler,
-                (internal_logging.FileHandler, internal_logging.StreamHandler),
-            ) and not isinstance(handler, DefaultTextLogHandler)
+        """Update all handler formatters with level-aware formatting.
 
+        Plain-text sinks (stream/file — ``FileHandler`` is a
+        ``StreamHandler`` — and the ring buffer, whose dump is plain text)
+        get the HTML-stripping variant; widget handlers keep markup.
+        """
+        for handler in logger.handlers:
+            plain_text = isinstance(
+                handler, (internal_logging.StreamHandler, RingBufferHandler)
+            )
             handler.setFormatter(
-                LevelAwareFormatter(logger=logger, strip_html=is_file_or_stream)
+                LevelAwareFormatter(logger=logger, strip_html=plain_text)
             )
 
     @staticmethod
@@ -498,17 +520,62 @@ class LoggerExt:
             handler.setLevel(level)
 
     @staticmethod
-    def _set_text_handler(handler: Union[type, object]) -> None:
-        """Set a custom text handler class or instance."""
+    def set_default_text_handler(handler: Union[type, object, None]) -> None:
+        """Set the process-wide DEFAULT text handler class or instance.
+
+        The deliberate form of what used to happen by accident. Before this,
+        every ``logger.set_text_handler(...)`` wrote a class attribute, so one
+        panel configuring its own logger silently gave every other logger in
+        the process the same handler -- and panels that call
+        ``setup_logging_redirect`` WITHOUT setting a handler (blendertk's
+        ``telescope_rig`` / ``shader_templates`` / ``mat_updater``, extapps'
+        ``substance_workflow``) were relying on that: whether their log pane
+        got a Qt handler depended on which unrelated panel had opened first.
+
+        A host that genuinely wants one Qt handler for the whole process --
+        uitk registering ``TextEditLogHandler`` at startup, say -- calls this
+        once. ``None`` restores :class:`DefaultTextLogHandler`. A per-logger
+        :meth:`_set_text_handler` still wins over it.
+        """
         LoggerExt._text_handler = handler
 
+    #: Attribute the per-logger handler is stashed under. Namespaced because
+    #: it lives on a stdlib ``Logger`` shared with every other library.
+    _TEXT_HANDLER_ATTR = "_ptk_text_handler"
+
     @staticmethod
-    def _get_text_handler() -> type:
-        if LoggerExt._text_handler is None:
+    def _set_text_handler(logger, handler: Union[type, object]) -> None:
+        """Set a custom text handler class or instance for THIS logger.
+
+        Stored on the logger, not on :class:`LoggerExt`. Assigning the class
+        attribute made one class's call reconfigure every logger in the
+        process -- which is why extapps' compositor attaches its handler by
+        hand instead of using this seam.
+
+        :attr:`LoggerExt._text_handler` remains the process-wide DEFAULT for a
+        caller that deliberately wants one; a per-logger handler wins over it.
+        """
+        setattr(logger, LoggerExt._TEXT_HANDLER_ATTR, handler)
+
+    @staticmethod
+    def _get_text_handler(logger=None) -> type:
+        """The text handler CLASS for *logger*, else the process default.
+
+        Always a class, whether a class or an instance was set, because
+        :meth:`_add_handler` constructs it.
+        """
+        handler = (
+            getattr(logger, LoggerExt._TEXT_HANDLER_ATTR, None)
+            if logger is not None
+            else None
+        )
+        if handler is None:
+            handler = LoggerExt._text_handler
+        if handler is None:
             return DefaultTextLogHandler
-        if isinstance(LoggerExt._text_handler, type):
-            return LoggerExt._text_handler  # it's a class
-        return LoggerExt._text_handler.__class__  # it's an instance
+        if isinstance(handler, type):
+            return handler  # it's a class
+        return handler.__class__  # it's an instance
 
     @staticmethod
     def _log_raw(self, message: str) -> None:
@@ -516,7 +583,7 @@ class LoggerExt:
         # Write directly to all handler streams (console, files)
         for handler in self.handlers:
             stream = getattr(handler, "stream", None)
-            if stream:
+            if stream is not None:
                 try:
                     # Mirror the formatter pipeline's HTML-stripping decision.
                     # The default stream/file handlers attach
@@ -564,6 +631,13 @@ class LoggerExt:
                 except Exception as e:
                     print(f"Logging error (raw emit): {e}")
 
+    #: ``wcwidth.wcwidth`` when the optional package is installed, else
+    #: ``False``; ``None`` until the first width query resolves it. Resolved
+    #: ONCE: this is called per character, and a failed ``import`` inside it
+    #: re-walked every ``sys.path`` entry each time -- measured at 2 ms per
+    #: character, 1.2 s for one scene-export summary box.
+    _wcwidth_fn: Any = None
+
     @staticmethod
     def _char_width(ch: str) -> int:
         """Return the display/column width of a single character.
@@ -574,14 +648,26 @@ class LoggerExt:
         typically occupy two columns in modern monospace fonts even though
         Unicode classifies them as narrow or ambiguous.
         """
-        try:
-            import wcwidth as _wcwidth
+        fn = LoggerExt._wcwidth_fn
+        if fn is None:
+            try:
+                from wcwidth import wcwidth as fn
+            except Exception:
+                fn = False
+            LoggerExt._wcwidth_fn = fn
+        if fn:
+            try:
+                return max(fn(ch), 0)
+            except Exception:
+                pass
 
-            w = _wcwidth.wcwidth(ch)
-            return max(w, 0)
-        except Exception:
-            pass
-
+        # Zero-width first: combining marks (Mn/Me — accents, variation
+        # selectors), format controls (Cf — ZWJ, soft hyphen) and control
+        # chars (Cc) occupy no column, as ``wcwidth`` reports. Counting
+        # them over-pads every box/table holding a ``⚠️`` or a decomposed
+        # ``é`` wherever ``wcwidth`` is absent (DCC pythons).
+        if unicodedata.category(ch) in ("Mn", "Me", "Cf", "Cc"):
+            return 0
         cp = ord(ch)
         # East Asian Fullwidth / Wide → always 2
         eaw = unicodedata.east_asian_width(ch)
@@ -595,8 +681,6 @@ class LoggerExt:
             or 0x1F300
             <= cp
             <= 0x1FAFF  # Misc Symbols & Pictographs … Symbols Extended-A
-            or 0xFE00 <= cp <= 0xFE0F  # Variation Selectors
-            or 0x200D == cp  # ZWJ
         ):
             return 2
         return 1
@@ -745,6 +829,28 @@ class LoggerExt:
         return lines
 
     @staticmethod
+    def _resolve_width(self, width: Optional[int]) -> int:
+        """Column budget for raw block output (boxes, dividers).
+
+        *width* when given; else ``self.box_width`` if set; else the
+        narrowest column count reported by attached handlers (see
+        ``get_redirect_width``); else ``DEFAULT_BOX_WIDTH``.
+        """
+        if width is None:
+            width = getattr(self, "box_width", None)
+        if width is None:
+            width = LoggerExt._get_redirect_width(self)
+        if width is None:
+            width = LoggerExt.DEFAULT_BOX_WIDTH
+        return width
+
+    @staticmethod
+    def _split_lines(values: List[Any]) -> List[str]:
+        """Coerce *values* to strings and split embedded newlines, so each
+        box row measures and pads as one physical line."""
+        return [line for value in values for line in str(value).split("\n")]
+
+    @staticmethod
     def _log_box(
         self,
         title: str,
@@ -755,6 +861,9 @@ class LoggerExt:
         bg: Optional[str] = None,
     ) -> int:
         """Print an ASCII box with title and optional list of lines. Returns box width.
+
+        Non-string items are coerced with ``str``; a newline inside the
+        title or an item starts a new row (a row is one physical line).
 
         Parameters:
             max_width: Maximum box width in display columns.  Falls back to
@@ -773,16 +882,19 @@ class LoggerExt:
         # Use non-breaking space to prevent HTML space collapsing in handlers
         space = "\u00a0"
 
-        if max_width is None:
-            max_width = getattr(self, "box_width", None)
-        if max_width is None:
-            max_width = LoggerExt._get_redirect_width(self)
-        if max_width is None:
-            max_width = LoggerExt.DEFAULT_BOX_WIDTH
+        max_width = LoggerExt._resolve_width(self, max_width)
 
         dw = LoggerExt._display_width
         wrap = LoggerExt._wrap_text
-        content = [title] + (items or [])
+        title_lines = LoggerExt._split_lines([title])
+        # A bare string is iterable, so it used to render one box row per
+        # CHARACTER (it raised TypeError before the split-lines rewrite, which
+        # at least said so). Take it as one row, matching the scalar-or-list
+        # tolerance CoreUtils.listify gives the rest of the package.
+        if isinstance(items, str):
+            items = [items]
+        items = LoggerExt._split_lines(items or [])
+        content = title_lines + items
         longest = max(dw(line) for line in content)
 
         # Clamp to max_width (subtract 2 for borders, 2 for padding)
@@ -798,9 +910,11 @@ class LoggerExt:
         # actual longest wrapped line and shrink the box to fit.
         if needs_wrap:
             wrap_width = max_content
-            all_wrapped_title = wrap(title, wrap_width)
+            all_wrapped_title = [
+                wl for tl in title_lines for wl in wrap(tl, wrap_width)
+            ]
             all_wrapped_items = []
-            for item in (items or []):
+            for item in items:
                 all_wrapped_items.append(wrap(item, wrap_width))
 
             # Recalculate longest from the wrapped output
@@ -820,8 +934,9 @@ class LoggerExt:
 
         top = "╔" + "═" * inner_width + "╗"
 
-        # Wrap title lines to fit
-        title_lines = all_wrapped_title if needs_wrap else wrap(title, longest)
+        # Unwrapped title rows already fit ``longest``
+        if needs_wrap:
+            title_lines = all_wrapped_title
         title_rows = []
         for tl in title_lines:
             tl_padded = LoggerExt._pad(tl, longest, fill=space, align=align)
@@ -834,7 +949,11 @@ class LoggerExt:
         if items:
             lines.append(sep)
             for idx, item in enumerate(items):
-                wrapped = all_wrapped_items[idx] if needs_wrap else wrap(item, inner_width - 1)
+                wrapped = (
+                    all_wrapped_items[idx]
+                    if needs_wrap
+                    else wrap(item, inner_width - 1)
+                )
                 for wl in wrapped:
                     item_padded = LoggerExt._pad(wl, inner_width - 1, fill=space)
                     item_line = space + item_padded
@@ -906,7 +1025,7 @@ class LoggerExt:
         href = f"action://{action}?{query}" if query else f"action://{action}"
         # No spaces in the tag — _wrap_text splits on spaces and would
         # break the tag if any are present inside attributes.
-        return f'<a href="{href}" style="text-decoration:underline">' f"{safe_text}</a>"
+        return f'<a href="{href}" style="text-decoration:underline">{safe_text}</a>'
 
     @staticmethod
     def _log_group(
@@ -969,10 +1088,14 @@ class LoggerExt:
 
     @staticmethod
     def _log_divider(self, width: Optional[int] = None, char: str = "─") -> None:
-        """Print a clean divider line. If width is given, use that."""
-        if width is None:
-            width = 60  # fallback default
-        LoggerExt._log_raw(self, char * width)
+        """Print a divider rule *width* columns wide.
+
+        *width* resolves exactly as a box's ``max_width`` does
+        (``self.box_width`` → narrowest attached handler →
+        ``DEFAULT_BOX_WIDTH``), so a rule never wraps in the panel it is
+        drawn in and lines up with the boxes beside it.
+        """
+        LoggerExt._log_raw(self, char * LoggerExt._resolve_width(self, width))
 
     # Public API for the custom log levels — routed through _log_custom so
     # they accept the same ``preset=`` / ``color=`` styling kwargs as
@@ -1088,12 +1211,8 @@ class LoggerExt:
         if not getattr(logger, "_spam_prevention_enabled", True):
             return True, ""
 
-        import time
-
         # Generate cache key if not provided
         if cache_key is None:
-            import hashlib
-
             cache_key = hashlib.md5(message.encode()).hexdigest()[:12]
 
         current_time = time.time()
@@ -1138,6 +1257,9 @@ class LoggerExt:
     ) -> None:
         """Log an error with automatic spam prevention."""
         should_log, suffix = LoggerExt._should_log_error(logger, message, cache_key)
+        # Two more frames of ours (this + the ``error`` wrapper) sit between
+        # the caller and ``_log_custom``; keep the record attributed to them.
+        kwargs["stacklevel"] = kwargs.get("stacklevel", 1) + 2
 
         if should_log:
             # Log the full error with suffix
@@ -1145,7 +1267,10 @@ class LoggerExt:
             logger.error(full_message, *args, **kwargs)
         else:
             # Log a brief debug message for suppressed errors
-            logger.debug(f"Suppressed duplicate error: {message[:50]}...")
+            logger.debug(
+                f"Suppressed duplicate error: {message[:50]}...",
+                stacklevel=kwargs["stacklevel"],
+            )
 
     @staticmethod
     def _warning_once(
@@ -1157,12 +1282,16 @@ class LoggerExt:
     ) -> None:
         """Log a warning with automatic spam prevention."""
         should_log, suffix = LoggerExt._should_log_error(logger, message, cache_key)
+        kwargs["stacklevel"] = kwargs.get("stacklevel", 1) + 2
 
         if should_log:
             full_message = f"{message}{suffix}"
             logger.warning(full_message, *args, **kwargs)
         else:
-            logger.debug(f"Suppressed duplicate warning: {message[:50]}...")
+            logger.debug(
+                f"Suppressed duplicate warning: {message[:50]}...",
+                stacklevel=kwargs["stacklevel"],
+            )
 
     @staticmethod
     def _set_spam_prevention(
@@ -1652,6 +1781,16 @@ class LoggingMixin(TableMixin):
         log_buffer: Union[bool, int, None] = None,
         **kwargs,
     ):
+        """Forward *args/**kwargs to the next base; the ``log_*`` kwargs
+        configure the CLASS-shared logger (``set_log_level`` /
+        ``set_log_file`` / ``enable_log_buffer``), not this instance alone.
+
+        Parameters:
+            log_level: Level name or int applied via ``set_log_level``.
+            log_file: Path to tee this class's records to.
+            log_buffer: ``True`` (default capacity) or an int capacity to
+                start capturing records into the ring buffer.
+        """
         super().__init__(*args, **kwargs)
         if log_level is not None:
             self.set_log_level(log_level)
@@ -1667,16 +1806,19 @@ class LoggingMixin(TableMixin):
 
     @ClassProperty
     def logger(cls) -> internal_logging.Logger:
+        """The patched logger for this class (one per class, created lazily).
+
+        Built with the ``Logger()`` constructor, detached from the root
+        (``propagate=False``, no parent) and NOT registered with the
+        logging manager, so host logging config never reaches it.
+        ``patch`` attaches the default stderr stream handler.
+        """
         if cls.__dict__.get("_logger") is None:
             name = f"{cls.__module__}.{cls.__qualname__}"
             logger = internal_logging.Logger(name, internal_logging.NOTSET)
             logger.propagate = False
             logger.parent = None
             LoggerExt.patch(logger)
-
-            if not logger.handlers:
-                logger.add_stream_handler()
-
             cls._logger = logger
 
         return cls._logger
@@ -1712,8 +1854,13 @@ class LoggingMixin(TableMixin):
 
     @ClassProperty
     def class_logger(cls) -> internal_logging.Logger:
+        """A manager-registered sibling of ``logger`` (``<name>.class``).
+
+        Unlike ``logger`` it goes through ``getLogger``, so it is visible
+        to ``logging.getLogger(name)`` lookups and host logging config.
+        """
         if cls.__dict__.get("_class_logger") is None:
-            name = f"{cls.__module__}.{cls.__name__}.class"
+            name = f"{cls.__module__}.{cls.__qualname__}.class"
             logger = internal_logging.getLogger(name)
             logger.setLevel(internal_logging.NOTSET)
             logger.propagate = False

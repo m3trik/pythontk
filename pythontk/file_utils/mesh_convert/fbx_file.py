@@ -50,7 +50,7 @@ class _FbxFileInternal:
     }
 
     @classmethod
-    def _read_property(cls, f, decode_arrays: bool) -> Any:
+    def _read_property(cls, f, decode_arrays: bool, raw_payloads: bool = True) -> Any:
         kind = f.read(1)
         scalar = cls._SCALAR_PROPS.get(kind)
         if scalar:
@@ -68,12 +68,15 @@ class _FbxFileInternal:
             return list(struct.unpack(f"<{count}{fmt[-1]}", payload))
         if kind in (b"S", b"R"):
             length = struct.unpack("<I", f.read(4))[0]
+            if kind == b"R" and not raw_payloads:
+                f.seek(length, 1)
+                return ("RAW", length)
             return f.read(length)
         raise ValueError(f"Unknown FBX property type {kind!r}")
 
     @classmethod
     def _read_record(
-        cls, f, wide: bool, decode_arrays: bool
+        cls, f, wide: bool, decode_arrays: bool, raw_payloads: bool = True
     ) -> Optional[Dict[str, Any]]:
         """One node record, or ``None`` at a NULL sentinel."""
         if wide:
@@ -90,11 +93,14 @@ class _FbxFileInternal:
         name = f.read(name_len).decode("utf-8", "replace")
         if end == 0:
             return None
-        props = [cls._read_property(f, decode_arrays) for _ in range(prop_count)]
+        props = [
+            cls._read_property(f, decode_arrays, raw_payloads)
+            for _ in range(prop_count)
+        ]
         sentinel = 25 if wide else 13
         children: List[Dict[str, Any]] = []
         while f.tell() < end - sentinel:
-            child = cls._read_record(f, wide, decode_arrays)
+            child = cls._read_record(f, wide, decode_arrays, raw_payloads)
             if child is None:
                 break
             children.append(child)
@@ -129,7 +135,9 @@ class FbxFile(_FbxFileInternal):
         self._by_name = {r["name"]: r for r in roots}
 
     @classmethod
-    def load(cls, path: str, decode_arrays: bool = False) -> "FbxFile":
+    def load(
+        cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True
+    ) -> "FbxFile":
         """Parse *path*.
 
         Parameters:
@@ -138,6 +146,11 @@ class FbxFile(_FbxFileInternal):
                 ``("ARRAY", type_char, count)`` placeholders and their
                 payloads skipped — the fast census mode. True inflates them
                 (zlib where encoded) into python lists.
+            raw_payloads: When False, ``R`` (raw binary) properties — the
+                embedded media, hundreds of MB on a textured export — are
+                skipped as ``("RAW", length)`` placeholders instead of being
+                copied into memory. A census that never looks at the bytes
+                (node and take counts) has no reason to hold them.
 
         Raises:
             ValueError: Not a binary FBX, or truncated before the header ends.
@@ -150,7 +163,7 @@ class FbxFile(_FbxFileInternal):
             wide = version >= 7500
             roots: List[Dict[str, Any]] = []
             while True:
-                record = cls._read_record(f, wide, decode_arrays)
+                record = cls._read_record(f, wide, decode_arrays, raw_payloads)
                 if record is None:
                     break
                 roots.append(record)

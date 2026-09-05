@@ -5,8 +5,7 @@ workflows. Engine-agnostic primitives originally extracted from
 :mod:`extapps.photogrammetry.metashape_workflow` so a second engine
 (RealityCapture, etc.) can reuse them.
 """
-import json
-import os
+
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List
@@ -57,9 +56,12 @@ class QcLog:
         self.data["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         self.data["total_duration_sec"] = round(time.monotonic() - self._t0, 3)
         self.data["success"] = bool(success)
-        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2)
+        from pythontk.file_utils._file_utils import FileUtils
+
+        # write_json creates the parent and writes atomically -- a QC log
+        # truncated by an interrupted run is worse than no log, since it
+        # reads as a completed one with fields missing.
+        FileUtils.write_json(self.path, self.data, indent=2)
 
 
 class QcGate:
@@ -108,9 +110,7 @@ class QcGate:
                 warnings.append(f"{metric_key} {value:.2f} < {threshold:.2f}")
             elif rule_key.startswith("max_") and value > threshold:
                 warnings.append(f"{metric_key} {value:.2f} > {threshold:.2f}")
-        passed = not any(
-            w for w in warnings if "metric not measured" not in w
-        )
+        passed = not any(w for w in warnings if "metric not measured" not in w)
         self.qc.data["gates"][gate_name] = {"passed": passed, "warnings": warnings}
         if warnings:
             for w in warnings:

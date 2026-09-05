@@ -89,7 +89,12 @@ class _ScriptTemplateInternal(object):
 
 
 class ScriptTemplate(_ScriptTemplateInternal):
-    """ScriptTemplate — module namespace."""
+    """Discover on-disk script templates and render their ``__KEY__`` slots.
+
+    A folder of ``*.ext`` templates, each declaring the modes it supports
+    via a top-level tuple, with ``__KEY__`` placeholders substituted at
+    render time. Reusable across every app the toolkit scripts.
+    """
 
     @staticmethod
     def list_templates(template_dir, extension: str = ".py") -> List[Path]:

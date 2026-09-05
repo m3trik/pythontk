@@ -87,6 +87,20 @@ class MeshConvert(HelpMixin):
     #: budget merely delays the report of a genuinely hung process, a tight
     #: one discards a deliverable.
     TIMEOUT_SECONDS_PER_MB = 10.0
+    #: Seconds of budget per node-frame FBX2glTF bakes. Size is a WEAK proxy
+    #: for its cost: the converter evaluates every node at every frame of
+    #: every take (``--anim-framerate bake24``) whether or not the node is
+    #: animated, so a scene's bake cost is nodes x frames. Measured on a
+    #: production assembly: 2485 nodes x 1591 frames (3.95M node-frames)
+    #: took ~250 s of a ~400 s conversion -- and a 12 MB TEXTURELESS export
+    #: of the same scene, budgeted 300 s by size alone, timed out and lost
+    #: the push. ~63 us per node-frame measured; this is that with the same
+    #: ~5x margin the per-MB term carries.
+    TIMEOUT_SECONDS_PER_NODE_FRAME = 3e-4
+    #: The converter's default bake rate (``bake24``).
+    CONVERSION_BAKE_FPS = 24.0
+    #: Binary-FBX time unit: ticks per second (``FbxTime``).
+    _FBX_TICKS_PER_SECOND = 46186158000
     #: ``timeout=AUTO_TIMEOUT`` (the default) derives the budget from the input.
     #: Negative because no real timeout can be, so it cannot collide with a
     #: caller's value -- and unlike ``None`` it is not already meaningful to
@@ -105,14 +119,59 @@ class MeshConvert(HelpMixin):
         so it passes on a quiet machine and fails mid-workday -- which is how it
         reached production unnoticed.
 
-        An unreadable size falls back to the floor: a budget must never be the
-        reason a conversion is not attempted.
+        Two terms, and the larger wins: the input's size (per MB) and the
+        bake it implies (per node-frame -- see
+        :attr:`TIMEOUT_SECONDS_PER_NODE_FRAME`; the census comes from
+        :class:`FbxFile`, sub-second even on a production assembly). The
+        second exists because the first is wrong on its own: a textureless
+        export of an animated assembly is small and slow, and a budget that
+        reads only its size discards its finished deliverable.
+
+        An unreadable size, or a file the census cannot parse, falls back to
+        what CAN be read -- and to the floor when nothing can: a budget must
+        never be the reason a conversion is not attempted.
         """
         try:
             megabytes = os.path.getsize(src) / (1024 * 1024)
         except OSError:
-            return float(cls.DEFAULT_TIMEOUT)
-        return float(max(cls.DEFAULT_TIMEOUT, megabytes * cls.TIMEOUT_SECONDS_PER_MB))
+            megabytes = 0.0
+        return float(
+            max(
+                cls.DEFAULT_TIMEOUT,
+                megabytes * cls.TIMEOUT_SECONDS_PER_MB,
+                cls.bake_node_frames(src) * cls.TIMEOUT_SECONDS_PER_NODE_FRAME,
+            )
+        )
+
+    @classmethod
+    def bake_node_frames(cls, src: str) -> int:
+        """Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
+
+        ``Model`` records are the nodes; each take in the ``Takes`` section
+        contributes its ``LocalTime`` span at :attr:`CONVERSION_BAKE_FPS`.
+        ``0`` for a file with no takes -- and for one that is not a readable
+        binary FBX, so a budget derived from this degrades rather than raises.
+        """
+        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+
+        try:
+            fbx = FbxFile.load(src, raw_payloads=False)
+        except (OSError, ValueError, struct.error):
+            return 0
+        nodes = fbx.objects_census().get("Model", 0)
+        frames = 0.0
+        for take in (fbx.section("Takes") or {}).get("children", []):
+            if take.get("name") != "Take":
+                continue
+            for child in take.get("children", []):
+                if (
+                    child.get("name") == "LocalTime"
+                    and len(child.get("props", [])) >= 2
+                ):
+                    start, end = child["props"][:2]
+                    if isinstance(start, int) and isinstance(end, int) and end > start:
+                        frames += (end - start) / cls._FBX_TICKS_PER_SECOND
+        return int(nodes * frames * cls.CONVERSION_BAKE_FPS)
 
     #: Schema version of the scene-sidecar envelope
     #: (:meth:`build_scene_sidecar`). Bump on any change to the envelope's
@@ -214,7 +273,10 @@ class MeshConvert(HelpMixin):
         "shot_metadata": "shot definitions (name, frame range, notes)",
         "fbx_takes": "the take list realized on this FBX, one per shot",
         "audio_manifest": "audio events with the frames they fire on",
-        "shadow_metadata": "shadow-proxy geometry pairing",
+        "shadow_metadata": (
+            "projected-shadow planes: per plane, the plane node name, its "
+            "silhouette texture file name, and the authored intensity"
+        ),
         "emissive_groups": "named emissive material groups and their weights",
         "visibility_tracks": (
             "keyed visibility per node, as stepped on/off frames, with the "
@@ -274,7 +336,7 @@ class MeshConvert(HelpMixin):
         "the schema you expect."
     )
 
-    #: The reference viewer's lighting setup (``net_utils/preview_viewer.html``),
+    #: The reference viewer's lighting setup (``net_utils/preview/viewer.html``),
     #: published as data so a recipient can reproduce the look the asset was
     #: signed off in instead of inferring it. A baked asset needs this more than
     #: an unbaked one, not less: its lighting is already in its textures, so the
@@ -375,8 +437,18 @@ class MeshConvert(HelpMixin):
 
     #: WebP save kwargs for everything else. Lossless WebP still comes in well
     #: under the source PNG, so this is a container win rather than a size cost
-    #: against the authored map.
-    LOSSLESS_WEBP: Dict[str, Any] = {"lossless": True, "quality": 100}
+    #: against the authored map. In lossless mode ``quality`` is encoder
+    #: EFFORT, not fidelity: measured over a production room's 29 images,
+    #: 75 wrote the same 27.7 MB as 100 in 14% less time, and the encodes
+    #: are this pass's critical path (one 2K normal map is ~10 s of it).
+    LOSSLESS_WEBP: Dict[str, Any] = {"lossless": True, "quality": 75}
+
+    #: zlib level for PNGs this module writes as an INTERMEDIATE -- the packed
+    #: ORM the sidecar embeds -- which the texture pass then decodes and
+    #: re-encodes for delivery. Deflate effort spent there is paid twice and
+    #: kept nowhere: measured on a 4K map, level 6 took 35% longer than 1 to
+    #: write and every production path re-encodes the result anyway.
+    INTERMEDIATE_PNG_LEVEL = 1
 
     #: Extensions that reference ``images`` from outside the material tree
     #: (root-level ``specularImages`` here). :meth:`prune_glb_unreferenced_textures`
@@ -903,6 +975,7 @@ class MeshConvert(HelpMixin):
         sidecar: Optional[Dict[str, Any]] = None,
         lightmaps: bool = True,
         lightmap_dirs: Sequence[str] = (),
+        shadow_dirs: Sequence[str] = (),
     ) -> str:
         """Convert an FBX file to a binary glTF 2.0 (GLB) file.
 
@@ -944,6 +1017,14 @@ class MeshConvert(HelpMixin):
                            A host that knows where its textures live now (a
                            DCC's workspace, the scene's own folder) passes them
                            here rather than relying on a historical hint.
+            shadow_dirs:   Directories to resolve the shadow rigs' loose maps
+                           against (:meth:`apply_glb_shadows`): the horizon
+                           data maps, and a silhouette the FBX did not embed.
+                           Always searched after these: the FBX's own
+                           directory, a ``sourceimages`` folder inside or
+                           beside it (the Maya project layout), and every
+                           *lightmap_dirs* entry -- the host's live texture
+                           folders, which is where a rig's maps are written.
 
         Returns:
             Absolute path to the written GLB file.
@@ -1092,6 +1173,38 @@ class MeshConvert(HelpMixin):
                                 "Lightmaps wired into %d material binding(s).",
                                 len(bound),
                             )
+                # After the lightmaps, whose image plumbing it shares, and
+                # before the animation passes: a plane's fade is a pointer
+                # channel the viewer reads BESIDE this manifest, so neither
+                # depends on the other's order -- but the manifest must not
+                # follow a pass that could renumber images, and none below
+                # does. Unconditional and self-feeding like the lightmap
+                # pass: no channel, no-op.
+                try:
+                    fbx_dir = os.path.dirname(src_abs)
+                    shadow_search = list(shadow_dirs) + [
+                        fbx_dir,
+                        os.path.join(fbx_dir, "sourceimages"),
+                        os.path.join(os.path.dirname(fbx_dir), "sourceimages"),
+                        *lightmap_dirs,
+                    ]
+                    shadows = cls.apply_glb_shadows(edit, search_dirs=shadow_search)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB shadow rigs skipped: %s", exc)
+                else:
+                    if shadows:
+                        logger.info(
+                            "Shadow rigs: %d plane(s) published in extras.%s.",
+                            len(shadows["planes"]),
+                            cls.SHADOW_WEB_KEY,
+                        )
+                # Before every animation pass: a curve proxy is an FBX-only
+                # transport node whose scale channel would otherwise count as
+                # clip content and ship as a stray animated child.
+                try:
+                    cls.strip_glb_curve_proxies(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB curve-proxy strip skipped: %s", exc)
                 # FIRST of the three animation passes: it REPLACES the declared
                 # clips, so a gate or a manifest entry written before it would
                 # describe clips that no longer exist.
@@ -1123,6 +1236,13 @@ class MeshConvert(HelpMixin):
                             faded["materials"],
                             faded["channels"],
                         )
+                # LAST of the writers and BEFORE the manifest: every pass above
+                # can only ADD channels (clips, visibility, fades), so what is
+                # still hollow here is hollow for good -- and glTF forbids it.
+                try:
+                    cls.prune_glb_animations(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB animation prune skipped: %s", exc)
                 # Unconditional and self-feeding, like the lightmap pass: it
                 # reads the take list out of the file and no-ops on a GLB with
                 # no animation, so there is no flag for a caller to forget.
@@ -1234,6 +1354,18 @@ class MeshConvert(HelpMixin):
                         "the extension can play them by binding each channel "
                         "to that material's alpha, which is what the preview "
                         "page does"
+                    ),
+                    f"extras.{cls.SHADOW_WEB_KEY}": (
+                        "the scene's shadow-rig planes: per plane the glTF node "
+                        "indices of the plane, its source and its contact, the "
+                        "projection model's constants (DCC units; unit_scale is "
+                        "metres per unit), the texture index of its colour map "
+                        "and, when packed or baked, of its atlas and horizon "
+                        "map, with rects in glTF top-left space. A runtime "
+                        "evaluates ShadowProjection.model per frame from the "
+                        "source and contact nodes and places each plane; a "
+                        "reader without one leaves the imported keys and the "
+                        "silhouette in the base colour, which is the fallback"
                     ),
                 },
                 "sections": sorted(cls.SIDECAR_APPLIERS),
@@ -1980,8 +2112,9 @@ class MeshConvert(HelpMixin):
                 fail(
                     f"the handoff declares {len(declared_takes)} take(s) "
                     f"(data_export.{cls.FBX_TAKES_KEY}) but the file carries no "
-                    "animations -- the FBX was written with animation off "
-                    "(bake/takes disarmed at export)"
+                    "animations -- either the FBX was written with animation "
+                    "off (bake/takes disarmed at export) or nothing in the "
+                    "exported set is keyed, so every take was empty and pruned"
                 )
             if not isinstance(envelope, dict):
                 report["envelope"] = None
@@ -2151,7 +2284,7 @@ class MeshConvert(HelpMixin):
     LIGHTMAP_METADATA_KEY = "lightmap_metadata"
     #: Highest ``lightmap_metadata`` schema this applier knows how to read.
     LIGHTMAP_METADATA_VERSION = 1
-    #: Root-extras key the web viewer reads (``preview_viewer.html``).
+    #: Root-extras key the web viewer reads (``preview/viewer.html``).
     LIGHTMAP_WEB_KEY = "lightmap_web"
     #: Per-object bake marker, riding the same FBX user-property channel as the
     #: manifest (mayatk/blendertk ``LightmapBaker.LIGHTMAP_INFO_ATTR``). Carries
@@ -2232,6 +2365,11 @@ class MeshConvert(HelpMixin):
                     continue
                 # FBX2glTF wraps each property as {"type": ..., "value": ...}.
                 raw = entry.get("value") if isinstance(entry, dict) else entry
+                if isinstance(raw, str) and not raw.strip():
+                    # A producer with nothing to publish CLEARS its channel to
+                    # "" rather than deleting the attribute, so an empty string
+                    # is "absent", not "unparsable".
+                    return None
                 try:
                     return json.loads(raw) if isinstance(raw, str) else raw
                 except (TypeError, ValueError) as error:
@@ -3042,6 +3180,522 @@ class MeshConvert(HelpMixin):
         return records
 
     # ------------------------------------------------------------------ #
+    # Shadow rigs: bind the planes' maps and publish the viewer manifest
+    # ------------------------------------------------------------------ #
+
+    #: ``data_export`` channel the DCC shadow rigs publish (mayatk / blendertk
+    #: ``ShadowRig.SHADOW_METADATA``). Read here only -- unlike the lightmap
+    #: markers it is never promoted to a top-level extras key.
+    SHADOW_METADATA_KEY = "shadow_metadata"
+    #: Highest ``shadow_metadata`` schema this applier knows how to read.
+    SHADOW_METADATA_VERSION = 2
+    #: Root-extras key the viewer's packaged ``shadow_rig`` script reads.
+    SHADOW_WEB_KEY = "shadow_web"
+    #: Sampler a horizon DATA map is bound with: bilinear (9729 = LINEAR) with
+    #: no mipmaps -- a mip would average elevation intervals and occupancy
+    #: masks across texels -- and clamped (33071 = CLAMP_TO_EDGE): the bearing
+    #: axis wraps inside the shader, which keeps every fetch inside its tile.
+    SHADOW_DATA_SAMPLER = {
+        "magFilter": 9729,
+        "minFilter": 9729,
+        "wrapS": 33071,
+        "wrapT": 33071,
+    }
+    #: What a record leaves unsaid is read as. A v1 channel carries only
+    #: ``name`` / ``texture`` / ``intensity``: a projected plane with no
+    #: source to follow, no contact, no atlas and no horizon map.
+    #: ``max_stretch`` is ``ShadowProjection.DEFAULT_MAX_STRETCH``.
+    SHADOW_PLANE_DEFAULTS: Dict[str, Any] = {
+        "type": "projected",
+        "intensity": 1.0,
+        "source": None,
+        "source_type": "point",
+        "source_size": 0.0,
+        "source_angle": 0.0,
+        "follow_source": False,
+        "contact": None,
+        "ground": 0.0,
+        "radius": 0.5,
+        "height": 1.0,
+        "max_stretch": 6.0,
+        "canvas": [-1.0, 1.0, -0.5, 0.5],
+    }
+
+    @staticmethod
+    def _shadow_nodes_named(
+        gltf: dict, name: Any, mesh_only: bool = False
+    ) -> List[int]:
+        """Indices of the nodes *name* denotes: exact matches, else every node
+        whose namespace-stripped leaf matches (``NS:name`` binds ``name``).
+
+        Every leaf match is returned rather than the first: the same rig can
+        sit under two namespaces in one file, and both planes are real.
+        """
+        if not isinstance(name, str) or not name:
+            return []
+        nodes = gltf.get("nodes") or []
+
+        def _eligible(node: dict) -> bool:
+            return not mesh_only or "mesh" in node
+
+        exact = [
+            i for i, n in enumerate(nodes) if n.get("name") == name and _eligible(n)
+        ]
+        if exact:
+            return exact
+        leaf = name.rsplit(":", 1)[-1]
+        return [
+            i
+            for i, n in enumerate(nodes)
+            if str(n.get("name") or "").rsplit(":", 1)[-1] == leaf and _eligible(n)
+        ]
+
+    @classmethod
+    def _shadow_single_node(
+        cls, gltf: dict, name: Any, plane: str, role: str
+    ) -> Optional[int]:
+        """The one node *name* denotes, or ``None`` -- absent (logged at debug:
+        a selection export routinely leaves the source behind) or ambiguous
+        (warned: a plane must never follow a guess)."""
+        if not isinstance(name, str) or not name:
+            return None
+        found = cls._shadow_nodes_named(gltf, name)
+        if len(found) == 1:
+            return found[0]
+        if found:
+            logger.warning(
+                "Shadow plane %r: its %s %r matches several GLB nodes (%s) -- "
+                "ambiguous, the plane keeps its imported keys.",
+                plane,
+                role,
+                name,
+                ", ".join(str(i) for i in found),
+            )
+        else:
+            logger.debug(
+                "Shadow plane %r: no GLB node named %r for its %s.", plane, name, role
+            )
+        return None
+
+    @staticmethod
+    def _shadow_plane_material(
+        gltf: dict, node: dict
+    ) -> Tuple[Optional[int], Optional[int]]:
+        """``(material index, base-colour texture index)`` of a plane node's
+        first primitive -- either ``None`` when the file has no such thing."""
+        meshes = gltf.get("meshes") or []
+        materials = gltf.get("materials") or []
+        textures = gltf.get("textures") or []
+        mesh_index = node.get("mesh")
+        if not isinstance(mesh_index, int) or not 0 <= mesh_index < len(meshes):
+            return None, None
+        primitives = meshes[mesh_index].get("primitives") or []
+        material = primitives[0].get("material") if primitives else None
+        if not isinstance(material, int) or not 0 <= material < len(materials):
+            return None, None
+        pbr = materials[material].get("pbrMetallicRoughness") or {}
+        index = (pbr.get("baseColorTexture") or {}).get("index")
+        if not isinstance(index, int) or not 0 <= index < len(textures):
+            index = None
+        return material, index
+
+    @classmethod
+    def _bind_shadow_texture(
+        cls, edit: "MeshConvert.GlbEdit", src: str, raw: bytes, data: bool
+    ) -> int:
+        """Embed the already-encoded bytes of *src*; return a texture index.
+
+        The bytes go in as they are -- never decoded, never re-encoded: a
+        horizon map is DATA (elevation intervals and occupancy masks in its
+        channels) and a silhouette was sized by the rasterizer. *data* binds
+        through :attr:`SHADOW_DATA_SAMPLER`; a colour map takes the clamp
+        sampler the atlas precedent uses. A texture this call appended is
+        simply retargeted (nothing else samples through it yet); a texture
+        the embed deduped onto -- the file already held these bytes -- is
+        left as it is and a data texture over the same image is found or
+        added beside it, so a material sharing that image keeps its sampler.
+        """
+        mime = "image/jpeg" if src.lower().endswith((".jpg", ".jpeg")) else "image/png"
+        name = os.path.basename(src)
+        textures = edit.gltf.setdefault("textures", [])
+        before = len(textures)
+        index = cls._embed_image_bytes(edit, src, raw, mime=mime, name=name, clamp=True)
+        if not data:
+            return index
+        samplers = edit.gltf.setdefault("samplers", [])
+        wanted = dict(cls.SHADOW_DATA_SAMPLER)
+        sampler = next((i for i, s in enumerate(samplers) if s == wanted), None)
+        if sampler is None:
+            samplers.append(wanted)
+            sampler = len(samplers) - 1
+        if index >= before:
+            textures[index]["sampler"] = sampler
+            return index
+        image = textures[index].get("source")
+        for i, texture in enumerate(textures):
+            if texture.get("source") == image and texture.get("sampler") == sampler:
+                return i
+        textures.append(
+            {"source": image, "sampler": sampler, "name": os.path.splitext(name)[0]}
+        )
+        return len(textures) - 1
+
+    @staticmethod
+    def _texture_for_named_image(
+        edit: "MeshConvert.GlbEdit", basename: Any
+    ) -> Optional[int]:
+        """Index of a texture sampling the image *basename* names, or ``None``.
+
+        The atlas a record names is normally ALREADY in the GLB -- the FBX
+        embedded it, because the DCC's plane material points its file node at
+        it -- so it is found here before any directory is searched. Matched on
+        the image's glTF name, then on its ``uri``'s basename, case-folded
+        (the converter names an embedded image by its source file). An image
+        no texture samples gets one appended, inheriting the file's own
+        sampler for it where there is one.
+        """
+        if not isinstance(basename, str) or not basename:
+            return None
+        wanted = os.path.basename(basename).casefold()
+        stem = os.path.splitext(wanted)[0]
+        for index, image in enumerate(edit.images):
+            name = str(image.get("name") or "")
+            uri = os.path.basename(str(image.get("uri") or "").split("?", 1)[0])
+            candidates = {name.casefold(), os.path.splitext(name)[0].casefold()}
+            if uri:
+                candidates.add(uri.casefold())
+            if wanted in candidates or stem in candidates:
+                return edit.texture_for_image(index)
+        return None
+
+    @classmethod
+    def _shadow_web_texture_slots(cls, manifest: Any) -> List[Dict[str, Any]]:
+        """Every dict in an ``extras.shadow_web`` manifest holding a
+        ``texture_index``: the plane's own colour map, its atlas and its
+        horizon map.
+
+        Yields the CONTAINERS rather than the values, so one walk serves both
+        readers of this manifest: the optimiser asks which textures are bound
+        and must be kept byte for byte, and the prune has to REWRITE those
+        numbers when it renumbers the survivors. Accepts the dict or its JSON
+        string; anything malformed yields nothing.
+        """
+        if isinstance(manifest, str):
+            try:
+                manifest = json.loads(manifest)
+            except ValueError:
+                return []
+        slots: List[Dict[str, Any]] = []
+        for plane in (
+            (manifest or {}).get("planes") or [] if isinstance(manifest, dict) else []
+        ):
+            if not isinstance(plane, dict):
+                continue
+            atlas = plane.get("atlas") if isinstance(plane.get("atlas"), dict) else {}
+            horizon = (
+                plane.get("horizon") if isinstance(plane.get("horizon"), dict) else {}
+            )
+            for holder in (plane, atlas, horizon):
+                value = holder.get("texture_index")
+                if isinstance(value, int) and not isinstance(value, bool):
+                    slots.append(holder)
+        return slots
+
+    @classmethod
+    def _shadow_web_texture_indices(cls, manifest: Any) -> Set[int]:
+        """Every texture index an ``extras.shadow_web`` manifest binds.
+
+        The plane's own colour map, its atlas and its horizon map -- the set
+        the texture optimiser keeps byte for byte. Accepts the dict or its
+        JSON string; anything malformed yields nothing.
+        """
+        return {h["texture_index"] for h in cls._shadow_web_texture_slots(manifest)}
+
+    @classmethod
+    def apply_glb_shadows(
+        cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()
+    ) -> Optional[Dict[str, Any]]:
+        """Bind a scene's shadow-rig maps into a GLB; publish ``extras.shadow_web``.
+
+        The GLB half of the shadow-rig contract (``mayatk/docs/
+        shadow_rig_morphing.md``, *Contracts*). The DCC rigs publish
+        ``shadow_metadata`` on the ``data_export`` carrier -- per plane its
+        node, source and contact names, the projection model's constants, the
+        silhouette texture and, when in use, the atlas rect and the horizon
+        map. This reads that channel back out of the file (like the lightmap
+        pass), resolves every name to a glTF node index, binds the loose maps
+        the FBX does not carry (the horizon PNG, embedded byte for byte under
+        a bilinear / no-mip / clamp sampler; a silhouette the material lost)
+        and writes the viewer's manifest: the v2 record plus, per plane,
+        ``node`` / ``source_node`` / ``contact_node`` (glTF node indices, or
+        ``None``), ``material`` (the first primitive's), ``texture_index``
+        (the plane's colour map -- the material's base colour, which IS the
+        atlas once packed) and ``atlas.texture_index`` /
+        ``horizon.texture_index``. Rects in the manifest are glTF top-left
+        (:meth:`ImgUtils.flip_rect_v` of the record's bottom-left ones);
+        lengths stay DCC units with ``unit_scale`` beside them, as the record
+        has them; ``metadata_version`` says which schema the record arrived in
+        (a v1 record -- name, texture, intensity -- is filled from
+        :attr:`SHADOW_PLANE_DEFAULTS`). The packaged
+        ``preview/scripts/shadow_rig.js`` reads the manifest on load,
+        evaluates ``ShadowProjection.model`` per frame and drives the planes.
+
+        Names resolve exactly first, then by namespace-stripped leaf against
+        EVERY node carrying it: a plane name matching several nodes gets one
+        manifest entry per node (a rig can sit under two namespaces in one
+        file), while an ambiguous source or contact leaves the plane
+        unfollowed rather than following a guess. A plane with no node in the
+        file is out of scope (a selection export) and counted once; one whose
+        horizon map cannot be found in *search_dirs* -- or a projected plane
+        with no colour map at all -- is skipped with a warning and keeps its
+        DCC material, which is the silhouette fallback.
+
+        Idempotent: the manifest is replaced wholesale on every run, an
+        embedded map is found again by content and reused, and the channel
+        itself is left in place. A run that binds nothing removes any stale
+        manifest.
+
+        Parameters:
+            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
+            search_dirs: Directories to resolve the records' texture basenames
+                against, in order; the GLB's own directory is tried last.
+
+        Returns:
+            The published manifest, or ``None`` when the file carries no
+            channel or nothing in it could be bound.
+        """
+        import copy
+
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        identity = [1.0, 1.0, 0.0, 0.0]
+
+        def _rect(value: Any) -> List[float]:
+            try:
+                rect = [float(v) for v in value]
+            except (TypeError, ValueError):
+                rect = []
+            return ImgUtils.flip_rect_v(rect if len(rect) == 4 else identity)
+
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            payload = cls.data_export_channel(gltf, cls.SHADOW_METADATA_KEY)
+            if not isinstance(payload, dict):
+                return None
+            try:
+                version = int(payload.get("version", 1))
+            except (TypeError, ValueError):
+                version = -1
+            if not 0 < version <= cls.SHADOW_METADATA_VERSION:
+                # Refuse rather than guess, as the lightmap reader does: a
+                # newer schema is free to change what a field MEANS.
+                logger.warning(
+                    "shadow_metadata v%r is newer than this reader (v%s); "
+                    "shadow rigs not wired.",
+                    payload.get("version"),
+                    cls.SHADOW_METADATA_VERSION,
+                )
+                return None
+            try:
+                unit_scale = float(payload.get("unit_scale", 1.0))
+            except (TypeError, ValueError):
+                unit_scale = 0.0
+            if not unit_scale > 0.0:
+                logger.warning(
+                    "shadow_metadata: unit_scale %r is not a positive number; "
+                    "read as 1.0.",
+                    payload.get("unit_scale"),
+                )
+                unit_scale = 1.0
+            records = [r for r in (payload.get("planes") or []) if isinstance(r, dict)]
+
+            dirs = [d for d in search_dirs if d]
+            dirs.append(os.path.dirname(os.path.abspath(edit.path)))
+            #: (basename, data) -> texture index, or None once warned missing.
+            bound: Dict[Tuple[str, bool], Optional[int]] = {}
+
+            def _bind(basename: Any, data: bool) -> Optional[int]:
+                """Texture index for the loose file *basename*, embedded on
+                first use; a file that is nowhere is warned once."""
+                if not isinstance(basename, str) or not basename:
+                    return None
+                key = (basename, data)
+                if key in bound:
+                    return bound[key]
+                src = next(
+                    (
+                        p
+                        for d in dirs
+                        for p in [os.path.join(d, basename)]
+                        if os.path.isfile(p)
+                    ),
+                    None,
+                )
+                if src is None:
+                    logger.warning(
+                        "Shadow map %r not found in %s -- the plane(s) using it "
+                        "keep their DCC material.",
+                        basename,
+                        dirs,
+                    )
+                    bound[key] = None
+                    return None
+                with open(src, "rb") as fh:
+                    raw = fh.read()
+                bound[key] = cls._bind_shadow_texture(
+                    edit, os.path.abspath(src), raw, data=data
+                )
+                return bound[key]
+
+            nodes = gltf.get("nodes") or []
+            planes: List[Dict[str, Any]] = []
+            out_of_scope: List[str] = []
+            skipped = 0
+            for record in records:
+                plane = copy.deepcopy(record)
+                for key, value in cls.SHADOW_PLANE_DEFAULTS.items():
+                    plane.setdefault(key, copy.deepcopy(value))
+                name, kind = plane.get("name"), plane.get("type")
+                if not isinstance(name, str) or not name:
+                    logger.warning(
+                        "shadow_metadata: a plane record has no name; skipped."
+                    )
+                    skipped += 1
+                    continue
+                if kind not in ("projected", "horizon"):
+                    logger.warning(
+                        "Shadow plane %r: unknown type %r; skipped.", name, kind
+                    )
+                    skipped += 1
+                    continue
+                node_indices = cls._shadow_nodes_named(gltf, name, mesh_only=True)
+                if not node_indices:
+                    out_of_scope.append(name)
+                    logger.debug(
+                        "Shadow plane %r: no mesh node by that name in the GLB.", name
+                    )
+                    continue
+                source_node = cls._shadow_single_node(
+                    gltf, plane.get("source"), name, "source"
+                )
+                contact_node = cls._shadow_single_node(
+                    gltf, plane.get("contact"), name, "contact"
+                )
+                atlas = (
+                    plane.get("atlas") if isinstance(plane.get("atlas"), dict) else None
+                )
+                horizon = (
+                    plane.get("horizon")
+                    if isinstance(plane.get("horizon"), dict)
+                    else None
+                )
+                horizon_texture = (
+                    _bind(horizon.get("texture"), data=True) if horizon else None
+                )
+                # The ATLAS is the plane's colour map once the rig is packed:
+                # its rect names a tile OF THAT IMAGE, so a manifest pointing
+                # at the plane's own full-frame PNG instead makes the rect
+                # meaningless (and, in the viewer, unbatchable -- planes batch
+                # by the texture they sample). Resolved from the file first,
+                # then from the search dirs; a record with no atlas, or one
+                # whose atlas is nowhere, keeps the old chain below.
+                atlas_texture = None
+                if atlas:
+                    atlas_texture = cls._texture_for_named_image(
+                        edit, atlas.get("texture")
+                    )
+                    if atlas_texture is None:
+                        atlas_texture = _bind(atlas.get("texture"), data=False)
+                if kind == "horizon" and horizon_texture is None:
+                    logger.warning(
+                        "Shadow plane %r: its horizon map is not bound; skipped "
+                        "(the silhouette fallback stays).",
+                        name,
+                    )
+                    skipped += 1
+                    continue
+                for node_index in node_indices:
+                    material_index, base_texture = cls._shadow_plane_material(
+                        gltf, nodes[node_index]
+                    )
+                    texture_index = atlas_texture
+                    if texture_index is None:
+                        texture_index = (
+                            base_texture
+                            if base_texture is not None
+                            else _bind(plane.get("texture"), data=False)
+                        )
+                    if kind == "projected" and texture_index is None:
+                        logger.warning(
+                            "Shadow plane %r (node %d): no colour map -- neither the "
+                            "material's base colour nor %r in %s; skipped.",
+                            name,
+                            node_index,
+                            plane.get("texture"),
+                            dirs,
+                        )
+                        skipped += 1
+                        continue
+                    entry = copy.deepcopy(plane)
+                    entry.update(
+                        {
+                            "node": node_index,
+                            "source_node": source_node,
+                            "contact_node": contact_node,
+                            "material": material_index,
+                            "texture_index": texture_index,
+                        }
+                    )
+                    if atlas:
+                        packed = dict(atlas)
+                        # Whatever the plane ends up sampling: with the atlas
+                        # unresolvable, the material's own map IS the atlas
+                        # (the DCC points its file node at it), and the rect
+                        # still describes the tile inside it -- the viewer
+                        # applies the rect only when these two agree.
+                        packed["texture_index"] = (
+                            atlas_texture
+                            if atlas_texture is not None
+                            else texture_index
+                        )
+                        packed["rect"] = _rect(atlas.get("rect"))
+                        entry["atlas"] = packed
+                    if horizon:
+                        block = dict(horizon)
+                        block["texture_index"] = horizon_texture
+                        block["rect"] = _rect(horizon.get("rect"))
+                        entry["horizon"] = block
+                    planes.append(entry)
+
+            extras = gltf.get("extras")
+            if not isinstance(extras, dict):
+                extras = gltf["extras"] = {}
+            if out_of_scope:
+                logger.info(
+                    "Shadow metadata covers %d plane(s) not in this export "
+                    "(scene-wide channel, exported subset); ignored.",
+                    len(out_of_scope),
+                )
+            if planes:
+                manifest = {
+                    "version": 2,
+                    "metadata_version": version,
+                    "unit_scale": unit_scale,
+                    "planes": planes,
+                }
+                extras[cls.SHADOW_WEB_KEY] = manifest
+                edit.dirty = True
+                return manifest
+            if extras.pop(cls.SHADOW_WEB_KEY, None) is not None:
+                edit.dirty = True
+            if skipped:
+                logger.warning(
+                    "Shadow rigs NOT wired: %d plane(s) in this GLB, none bound.",
+                    skipped,
+                )
+            return None
+
+    # ------------------------------------------------------------------ #
     # Animation: say which clip is which in a shot-split deliverable
     # ------------------------------------------------------------------ #
 
@@ -3051,7 +3705,7 @@ class MeshConvert(HelpMixin):
     FBX_TAKES_KEY = "fbx_takes"
     SHOT_METADATA_KEY = "shot_metadata"
     #: Root-extras key the web viewer reads to choose and place clips
-    #: (``preview_viewer.html``) -- the animation twin of
+    #: (``preview/viewer.html``) -- the animation twin of
     #: :attr:`LIGHTMAP_WEB_KEY`, and written by the same kind of applier:
     #: derived from the in-band channels at conversion time, so the decoded,
     #: index-bound view exists in one place instead of in every consumer.
@@ -3286,13 +3940,8 @@ class MeshConvert(HelpMixin):
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
             channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
             fps = cls._resolve_clip_fps(
-                metadata if isinstance(metadata, dict) else {}, []
+                metadata if isinstance(metadata, dict) else {}, [], channel
             )
-            if not fps and isinstance(channel, dict):
-                try:
-                    fps = float(channel.get("fps") or 0.0)
-                except (TypeError, ValueError):
-                    fps = 0.0
             if not fps:
                 logger.warning(
                     "Clips: the declared takes are quoted in frames and the "
@@ -3421,13 +4070,16 @@ class MeshConvert(HelpMixin):
                 return None
 
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
-            fps = channel.get("fps")
-            if not fps and isinstance(metadata, dict):
-                fps = metadata.get("fps")
-            try:
-                fps = float(fps)
-            except (TypeError, ValueError):
-                fps = 0.0
+            # Through the shared resolver, in the session's one order. This
+            # read the channel FIRST and fell back to shot_metadata, so when
+            # the two producers disagreed the visibility keys landed at times
+            # no other pass in the same conversion agreed with.
+            fps = (
+                cls._resolve_clip_fps(
+                    metadata if isinstance(metadata, dict) else {}, [], channel
+                )
+                or 0.0
+            )
             if fps <= 0:
                 # Every key here is a FRAME number, and without the rate it was
                 # authored at there is no time to place it at. Refusing beats
@@ -3924,31 +4576,163 @@ class MeshConvert(HelpMixin):
     def _authored_fades(cls, gltf: Dict[str, Any]) -> Dict[str, List[List[float]]]:
         """Per-node alpha ramps from the visibility channel, or ``{}``.
 
-        Only ramps that actually ramp: a track whose ``opacity`` merely mirrors
-        its on/off keys says nothing the stepped scale channel does not already
-        say, and writing it as an alpha channel would animate a "fade" that
-        was never authored as one.
+        The ``opacity`` slice of :meth:`_authored_ramps`, kept because the
+        presence gate reasons about the fade alone.
         """
+        return cls._authored_ramps(gltf)[0].get("opacity", {})
+
+    @classmethod
+    def _authored_ramps(
+        cls, gltf: Dict[str, Any]
+    ) -> Tuple[
+        Dict[str, Dict[str, List[List[float]]]], Dict[str, Dict[str, List[float]]]
+    ]:
+        """Every published per-node ramp, by channel, plus each channel's colours.
+
+        Reads the ``visibility_tracks`` carrier once for every row of the
+        pointer-channel table: a track is a per-node dict whose sibling keys
+        are named ramps (``opacity``, ``highlight``, ...), so a new channel is
+        a new key on the same record rather than a new carrier.
+
+        Only ``opacity`` is filtered to ramps that actually ramp: a track whose
+        ``opacity`` merely mirrors its on/off keys says nothing the stepped
+        scale channel does not already say, and writing it as an alpha channel
+        would animate a "fade" that was never authored as one. One predicate,
+        in one place: the gate that makes a node PRESENT for its fade
+        (:meth:`_presence_keys`) reads the same answer. A stepped highlight,
+        by contrast, is a real on/off highlight and ships.
+
+        Returns:
+            ``({channel: {node: [[frame, value], ...]}}, {channel: {node: [r, g, b]}})``.
+        """
+        from pythontk.file_utils.mesh_convert.glb_fades import CHANNELS
+
         channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+        ramps: Dict[str, Dict[str, List[List[float]]]] = {}
+        colors: Dict[str, Dict[str, List[float]]] = {}
         if not isinstance(channel, dict):
-            return {}
-        fades: Dict[str, List[List[float]]] = {}
+            return ramps, colors
         for track in channel.get("tracks") or []:
             if not isinstance(track, dict) or not track.get("node"):
                 continue
-            keys = [
-                [float(k[0]), float(k[1])]
-                for k in cls._numeric_pairs(track.get("opacity") or [])
-            ]
-            if len(keys) < 2:
-                continue
-            # One predicate, in one place: the gate that makes a node PRESENT
-            # for its fade reads the same answer, and a node gated as fading
-            # whose ramp was not published (or the reverse) would be a node
-            # visible with no alpha to apply.
-            if cls._is_fade(keys):
-                fades[str(track["node"])] = keys
-        return fades
+            node = str(track["node"])
+            for name, spec in CHANNELS.items():
+                keys = [
+                    [float(k[0]), float(k[1])]
+                    for k in cls._numeric_pairs(track.get(name) or [])
+                ]
+                if len(keys) < 2:
+                    continue
+                if name == "opacity" and not cls._is_fade(keys):
+                    continue
+                ramps.setdefault(name, {})[node] = keys
+                rgb = track.get(spec.color_key) if spec.color_key else None
+                if isinstance(rgb, (list, tuple)) and len(rgb) >= 3:
+                    try:
+                        colors.setdefault(name, {})[node] = [float(c) for c in rgb[:3]]
+                    except (TypeError, ValueError):
+                        pass
+        return ramps, colors
+
+    #: FBX user property that marks a transient curve-proxy node: the per-object
+    #: float transport for engines that flatten custom-property curves (a child
+    #: transform named ``<node>__<attr>`` whose ``scale.x`` carries the curve).
+    #: Both DCC producers stamp it; :meth:`strip_glb_curve_proxies` removes the
+    #: node from the GLB, where the ramp already rides ``visibility_tracks``.
+    CURVE_PROXY_MARKER = "curveProxy"
+
+    @classmethod
+    def strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]:
+        """Remove every curve-proxy node (and its channels) from a GLB.
+
+        The proxy is an FBX-side transport artifact: Unity flattens animated
+        custom properties onto the root Animator with empty paths, so the DCC
+        stages a child transform per keyed channel whose ``scale.x`` carries
+        the curve, and the Unity importer rebinds and deletes it. FBX2glTF
+        carries that child through as a node with a ``scale`` channel --
+        measured: ``hlCube__highlight`` arrived with its 0->1 scale intact --
+        which in the GLB is a stray animated node under the object. The GLB
+        route gets the ramp from ``visibility_tracks`` instead, so the node is
+        removed here, BEFORE the clip rebuild counts its channel as content.
+
+        Nodes are identified by the :attr:`CURVE_PROXY_MARKER` user property,
+        never by name, so an artist's own ``foo__bar`` transform is safe.
+
+        Returns:
+            The removed node names, in file order.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            nodes = gltf.get("nodes") or []
+            doomed = {
+                index
+                for index, node in enumerate(nodes)
+                if cls._node_user_property(node, cls.CURVE_PROXY_MARKER)
+            }
+            if not doomed:
+                return []
+            remap: Dict[int, int] = {}
+            kept: List[Dict[str, Any]] = []
+            for index, node in enumerate(nodes):
+                if index in doomed:
+                    continue
+                remap[index] = len(kept)
+                kept.append(node)
+
+            def renumber(indices: Any) -> List[int]:
+                return [remap[i] for i in indices if isinstance(i, int) and i in remap]
+
+            for node in kept:
+                if "children" in node:
+                    node["children"] = renumber(node["children"])
+                    if not node["children"]:
+                        del node["children"]
+            for scene in gltf.get("scenes") or []:
+                if "nodes" in scene:
+                    scene["nodes"] = renumber(scene["nodes"])
+            for skin in gltf.get("skins") or []:
+                if "joints" in skin:
+                    skin["joints"] = renumber(skin["joints"])
+                if isinstance(skin.get("skeleton"), int):
+                    skin["skeleton"] = remap.get(skin["skeleton"])
+                    if skin["skeleton"] is None:
+                        del skin["skeleton"]
+            for animation in gltf.get("animations") or []:
+                survivors = []
+                for channel in animation.get("channels") or []:
+                    target = channel.get("target") or {}
+                    node = target.get("node")
+                    if isinstance(node, int):
+                        if node in doomed:
+                            continue
+                        target["node"] = remap[node]
+                    survivors.append(channel)
+                animation["channels"] = survivors
+            gltf["nodes"] = kept
+            edit.dirty = True
+            removed = [str(nodes[i].get("name") or i) for i in sorted(doomed)]
+            logger.info(
+                "Curve proxies: %d transport node(s) stripped from the GLB (%s).",
+                len(removed),
+                ", ".join(removed),
+            )
+            return removed
+
+    @staticmethod
+    def _node_user_property(node: Dict[str, Any], key: str) -> Any:
+        """One user property off a node's extras, in either on-disk shape.
+
+        FBX2glTF nests user properties under ``extras.fromFBX.userProperties``
+        as ``{"type", "value"}`` records; a native glTF writer puts a plain
+        value at ``extras[key]``.
+        """
+        extras = (node or {}).get("extras") or {}
+        nested = ((extras.get("fromFBX") or {}).get("userProperties") or {}).get(key)
+        if isinstance(nested, dict):
+            return nested.get("value")
+        if nested is not None:
+            return nested
+        return extras.get(key)
 
     @classmethod
     def apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
@@ -3978,24 +4762,19 @@ class MeshConvert(HelpMixin):
 
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
-            fades = cls._authored_fades(gltf)
-            if not fades:
+            ramps, colors = cls._authored_ramps(gltf)
+            if not ramps:
                 return None
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
             channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
             fps = cls._resolve_clip_fps(
-                metadata if isinstance(metadata, dict) else {}, []
+                metadata if isinstance(metadata, dict) else {}, [], channel
             )
-            if not fps and isinstance(channel, dict):
-                try:
-                    fps = float(channel.get("fps") or 0.0)
-                except (TypeError, ValueError):
-                    fps = 0.0
             if not fps:
                 logger.warning(
                     "Fades: %d authored ramp(s) carry no frame rate, so their "
                     "frame numbers cannot be placed in time -- not applied.",
-                    len(fades),
+                    sum(len(per_node) for per_node in ramps.values()),
                 )
                 return None
 
@@ -4003,14 +4782,22 @@ class MeshConvert(HelpMixin):
             spans = (channel or {}).get("clip_span")
             if not isinstance(spans, dict):
                 spans = {}
-            union = (
-                (
+            if windows:
+                union = (
                     min(s for s, _ in windows.values()),
                     max(e for _, e in windows.values()),
                 )
-                if windows
-                else None
-            )
+            else:
+                # No declared takes (an animated prop never cut into shots):
+                # the ramps' own extent is the only window there is, and it is
+                # the right one -- the same fallback the visibility gate makes.
+                frames = [
+                    float(key[0])
+                    for per_node in ramps.values()
+                    for keys in per_node.values()
+                    for key in keys
+                ]
+                union = (min(frames), max(frames)) if frames else None
             # Each clip's own window and origin, resolved exactly the way the
             # gate resolves them -- a ramp placed against a different zero than
             # the gate it accompanies would fade at a different instant than
@@ -4033,7 +4820,83 @@ class MeshConvert(HelpMixin):
                 )
             if not clip_windows:
                 return None
-            return GlbFades.apply(edit, fades, clip_windows, zeros, float(fps))
+            return GlbFades.apply_channels(
+                edit, ramps, colors, clip_windows, zeros, float(fps)
+            )
+
+    @classmethod
+    def prune_glb_animations(cls, glb: GlbTarget) -> List[str]:
+        """Drop every animation that carries no channels or no samplers.
+
+        glTF requires both arrays on an animation to hold at least one entry,
+        so a hollow animation is not a quiet clip -- it is a file a strict
+        reader rejects outright. Two writers produce one (both measured on
+        Maya 2025 -> FBX2glTF 0.13.1):
+
+        * Maya writes its whole-timeline ``Take 001`` AnimStack whenever
+          animation export is armed, keyed scene or not. On a static scene
+          that is a stack and a layer with no curves, and the converter
+          transcribes it as an animation with neither channels nor samplers
+          (two production modules, 2026-09-02).
+        * A take split emits an AnimStack per declared range and bakes no
+          curve for a range in which nothing exported moves.
+
+        Runs after every pass that can ADD channels (clips, visibility, fades)
+        and before the manifest, which reports what the file carries. A
+        DECLARED take that is still hollow here is dropped like any other --
+        there is no valid way to ship an empty clip -- and the manifest then
+        reports it as a take the file lacks.
+
+        Parameters:
+            glb: Path to a GLB, or an open :class:`GlbEdit`.
+
+        Returns:
+            The names of the animations dropped, in file order; empty when
+            the file was left alone.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            animations = gltf.get("animations")
+            if not animations:
+                return []
+            kept: List[Dict[str, Any]] = []
+            dropped: List[str] = []
+            for index, animation in enumerate(animations):
+                if animation.get("channels") and animation.get("samplers"):
+                    kept.append(animation)
+                else:
+                    dropped.append(str(animation.get("name") or f"animations[{index}]"))
+            if not dropped:
+                return []
+            if kept:
+                gltf["animations"] = kept
+            else:
+                # ``animations`` has ``minItems: 1``: an empty array is as
+                # invalid as the hollow entry was.
+                del gltf["animations"]
+            edit.dirty = True
+
+            declared = cls._take_windows(gltf)
+            shots = [name for name in dropped if name in declared]
+            if shots:
+                # Warned: the scene declared these and the file will not list
+                # them, which the manifest pass reports next as takes it lacks.
+                logger.warning(
+                    "Animation: dropped %d declared take(s) with no keyframes "
+                    "(%s) -- glTF cannot carry an empty clip.",
+                    len(shots),
+                    ", ".join(shots),
+                )
+            rest = [name for name in dropped if name not in declared]
+            if rest:
+                logger.info(
+                    "Animation: dropped %d empty animation(s) (%s) -- nothing "
+                    "in the exported set is keyed there (Maya writes its "
+                    "whole-timeline stack whether or not anything is).",
+                    len(rest),
+                    ", ".join(rest),
+                )
+            return dropped
 
     @classmethod
     def apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
@@ -4117,7 +4980,10 @@ class MeshConvert(HelpMixin):
                     # belongs to objects outside the export), so this is a normal
                     # authoring outcome rather than a conversion failure -- and
                     # it is invisible from the clip list, which is what made it
-                    # read as broken animation instead of an empty shot.
+                    # read as broken animation instead of an empty shot. In the
+                    # conversion chain :meth:`prune_glb_animations` has already
+                    # removed these (glTF forbids them); this is the path for a
+                    # file handed in directly, or a prune that was skipped.
                     clip["empty"] = True
                 span = cls._animation_span(gltf, animation)
                 if span:
@@ -4138,7 +5004,12 @@ class MeshConvert(HelpMixin):
                             clip[key] = shot[key]
                 clips.append(clip)
 
-            fps = cls._resolve_clip_fps(metadata, clips)
+            # The fourth resolution in the same session: this one derived from
+            # clip spans but never read the visibility channel, so a file whose
+            # only stated rate lives there fell through to derivation while the
+            # other passes used the stated number.
+            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+            fps = cls._resolve_clip_fps(metadata, clips, channel)
             if fps:
                 windows = cls._take_windows(gltf)
                 union = (
@@ -4250,7 +5121,8 @@ class MeshConvert(HelpMixin):
                 # only clue that they were not looking at the same thing.
                 logger.warning(
                     "Animation: %d declared take(s) have no clip in the GLB "
-                    "(%s) -- the take split did not reach this file, so it "
+                    "(%s) -- the take split did not reach this file, or the "
+                    "take held no keyframes and was pruned, so it "
                     "carries %d clip(s) where the scene declares %d shot(s). "
                     "A consumer that plays a named shot will not find one.",
                     len(missing),
@@ -4265,21 +5137,47 @@ class MeshConvert(HelpMixin):
 
     @staticmethod
     def _resolve_clip_fps(
-        metadata: Dict[str, Any], clips: List[Dict[str, Any]]
+        metadata: Dict[str, Any],
+        clips: List[Dict[str, Any]],
+        channel: Optional[Dict[str, Any]] = None,
     ) -> Optional[float]:
         """The rate the frame numbers were authored at, or ``None``.
 
-        Published by the shot system (``shot_metadata.fps``) and taken from
-        there when present. Older producers did not publish it, so it is
-        derived from the first declared clip that carries both a frame range
-        and a measured span -- the two describe the same interval, one in
-        frames and one in seconds, so their ratio IS the rate. Derivation needs
-        at least two frames: a single-frame take spans zero seconds and would
-        divide by nothing.
+        One rule for the whole conversion, in this order:
+
+        1. ``shot_metadata.fps`` -- published by the shot system, which owns
+           the frame numbers every other channel quotes.
+        2. ``visibility_tracks.fps`` -- the producer's own rate, stated only
+           by files whose shot system did not publish one.
+        3. Derived from the first declared clip carrying both a frame range
+           and a measured span: the two describe the same interval, one in
+           frames and one in seconds, so their ratio IS the rate. Derivation
+           needs at least two frames; a single-frame take spans zero seconds
+           and would divide by nothing.
+
+        The order is the point. One ``fbx_to_glb`` session ran four passes
+        that resolved this number three different ways -- two carried
+        byte-identical inline copies of (1) then (2), a third did (1) then (3)
+        and never looked at the channel, and the visibility pass did (2) then
+        (1), inverted. The channels are written by different producers and can
+        disagree, so the passes placed their keys at times that did not match
+        each other, in a converter whose output ships.
+
+        Parameters:
+            metadata: The ``shot_metadata`` channel, or ``{}``.
+            clips: Declared clips, for derivation; ``[]`` to skip it.
+            channel: The ``visibility_tracks`` channel, when the caller has it.
         """
         published = metadata.get("fps")
         if isinstance(published, (int, float)) and published > 0:
             return round(float(published), 6)
+        if isinstance(channel, dict):
+            try:
+                stated = float(channel.get("fps") or 0.0)
+            except (TypeError, ValueError):
+                stated = 0.0
+            if stated > 0:
+                return round(stated, 6)
         for clip in clips:
             start, end = clip.get("start_frame"), clip.get("end_frame")
             duration = clip.get("duration")
@@ -5090,6 +5988,19 @@ class MeshConvert(HelpMixin):
                     src = edit.image_for_texture(ref.get("index"))
                     if src is not None:
                         exempt_indices.add(src)
+            # Shadow-rig maps are KEPT AS FOUND -- neither resized nor
+            # re-encoded, in any mode. The horizon map is data (elevation
+            # intervals and occupancy masks in its channels): a lossy encode
+            # corrupts it outright, and even a lossless one is free to rewrite
+            # the RGB of alpha-0 texels, which is precisely an empty bin's
+            # signature. The silhouettes and their atlas were sized by the
+            # rasterizer, and the viewer's shim samples them by rect.
+            kept: Set[int] = set()
+            shadow_manifest = (gltf.get("extras") or {}).get(cls.SHADOW_WEB_KEY)
+            for t_index in cls._shadow_web_texture_indices(shadow_manifest):
+                src = edit.image_for_texture(t_index)
+                if src is not None:
+                    kept.add(src)
 
             # Both non-core containers encode per SLOT semantic -- KTX2 picks
             # the codec and transfer, WebP picks lossy or lossless -- so the
@@ -5141,6 +6052,9 @@ class MeshConvert(HelpMixin):
                 if not payload:
                     continue
                 before += len(payload)
+                if index in kept:
+                    after += len(payload)
+                    continue
                 is_exempt = (
                     index in exempt_indices or (image.get("name") or "") in exempt
                 )
@@ -5644,7 +6558,11 @@ class MeshConvert(HelpMixin):
                     try:
                         image = MapFactory.pack_orm_texture(*sources, save=False)
                         buffer = io.BytesIO()
-                        image.save(buffer, format="PNG")
+                        image.save(
+                            buffer,
+                            format="PNG",
+                            compress_level=cls.INTERMEDIATE_PNG_LEVEL,
+                        )
                         tex_index = cls._embed_image_bytes(
                             edit,
                             "|".join(str(s) for s in sources),
@@ -6184,6 +7102,35 @@ class MeshConvert(HelpMixin):
             live_textures = {
                 r["index"] for r in refs if 0 <= r["index"] < len(textures)
             }
+
+            # --- and what extras.shadow_web binds by index --------------------
+            # The shadow manifest names its maps by INDEX, and the horizon map
+            # is sampled by no material -- so the walk above can see neither
+            # fact, and without this the prune DELETES the horizon map and
+            # renumbers the survivors out from under the manifest. In the
+            # preview path the prune always fires (FBX2glTF's diffuse_cube /
+            # ibl_brdf_lut sit at low indices), so every projected plane
+            # shipped a stale index. extras.lightmap_web is immune only
+            # because it stores names.
+            gltf_extras = gltf.get("extras")
+            shadow_raw = (
+                gltf_extras.get(cls.SHADOW_WEB_KEY)
+                if isinstance(gltf_extras, dict)
+                else None
+            )
+            shadow_doc = shadow_raw
+            if isinstance(shadow_raw, str):
+                try:
+                    shadow_doc = json.loads(shadow_raw)
+                except ValueError:
+                    shadow_doc = None
+            shadow_slots = cls._shadow_web_texture_slots(shadow_doc)
+            live_textures |= {
+                h["texture_index"]
+                for h in shadow_slots
+                if 0 <= h["texture_index"] < len(textures)
+            }
+
             texture_map = {}
             for old in range(len(textures)):
                 if old in live_textures:
@@ -6308,6 +7255,13 @@ class MeshConvert(HelpMixin):
             for ref in refs:
                 if ref["index"] in texture_map:
                     ref["index"] = texture_map[ref["index"]]
+            for holder in shadow_slots:
+                if holder["texture_index"] in texture_map:
+                    holder["texture_index"] = texture_map[holder["texture_index"]]
+            if shadow_slots and isinstance(shadow_raw, str):
+                # Carried as JSON text: the in-place rewrite above landed on the
+                # decoded copy, so it has to be re-serialised to reach the file.
+                gltf_extras[cls.SHADOW_WEB_KEY] = json.dumps(shadow_doc)
             edit.embedded = {
                 key: texture_map[index]
                 for key, index in edit.embedded.items()

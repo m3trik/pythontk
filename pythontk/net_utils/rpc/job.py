@@ -30,7 +30,12 @@ __all__ = ["RpcJob", "Call", "Result"]
 
 
 class RpcJob:
-    """RpcJob — module namespace."""
+    """Run a batch of :class:`Call`\\ s over one :class:`RpcClient` session.
+
+    The common case for scripted work against a DCC: build the call list,
+    hand it to :meth:`run_batch`, get a :class:`Result` per call back in
+    order.
+    """
 
     @staticmethod
     def run_batch(

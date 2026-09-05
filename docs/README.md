@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-3907%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-4275%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -15,9 +15,10 @@ Pure Python: no Qt, no DCC imports, two hard dependencies (`numpy`, `Pillow`). E
 
 pythontk is the bottom of the chain `pythontk → uitk → mayatk / blendertk → tentacle`: everything above imports it; it imports nothing above it. The environment-independent 80% of every tool lives at this layer — in effect, the ecosystem's standard library.
 
-Two rules shape it:
+Three rules shape it:
 
-- **Placed by data type, not domain.** Sharpest-frame extraction lives in `vid_utils`, perceptual-hash curation in `img_utils` — not in a "photogrammetry" package — so each primitive stays independently reusable. Domain pipelines (PBR conversion, photogrammetry ingest, timeline audio events) are compositions of these, assembled downstream.
+- **Primitives are placed by data type, not domain.** Sharpest-frame extraction lives in `vid_utils`, perceptual-hash curation in `img_utils` — not in a "photogrammetry" package — so each stays independently reusable.
+- **A domain pipeline lives here once more than one host needs it**, under `core_utils/engines/`: PBR/texture conversion (`engines/textures`, ~11.9k lines), the shot timeline (`engines/shots`, ~6.4k), instancing and the key stash. These are compositions of the primitives above, and they are here rather than downstream because Maya and Blender both drive them — "shared code moves down" outranks "placed by data type", and the alternative is two drifting copies. A pipeline only one host will ever use belongs in that host's toolkit.
 - **Shared code moves down.** When two downstream tools need the same helper, it moves here and becomes the single source of truth — Maya and Blender panels share one calculator engine, one material-report formatter, one point-clustering routine, instead of drifting copies.
 
 ## Install
@@ -62,7 +63,7 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | `img_utils` | Pillow-backed image ops, channel packing, atlas layout/assembly, KTX2 encoding (`Ktx2Encoder`), exposure equalization, image curation, mask generation |
 | `iter_utils` | Flatten, dedupe, wildcard filtering of lists/dicts, integer-sequence collapse |
 | `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, morph-weight math (`Weights`), safe expression evaluation |
-| [`net_utils`](../pythontk/net_utils/README.md) | SSH client, both ends of the plugin-hosted JSON-RPC protocol + DCC plugin installer, credentials, port/RDP helpers, [live WebXR preview server](webxr_preview.md) |
+| [`net_utils`](../pythontk/net_utils/README.md) | SSH client, both ends of the plugin-hosted JSON-RPC protocol + DCC plugin installer, credentials, port/RDP helpers, URL file reads (`RemoteFile`, Google Sheets share links), [live WebXR preview server](webxr_preview.md) |
 | `str_utils` | Sanitizing, batch rename, affix handling, `FuzzyMatcher`, hotkey-token parsing |
 | `vid_utils` | Frame rate probing, compression, sharpest-frame extraction |
 

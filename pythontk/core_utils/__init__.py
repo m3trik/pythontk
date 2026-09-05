@@ -19,7 +19,8 @@ not re-nested for cosmetics. The clusters, for navigation:
   :mod:`.schema_spec`, :mod:`.template_set`.
 - **Package/dev infrastructure** — :mod:`.module_resolver`,
   :mod:`.module_reloader`, :mod:`.package_manager`, :mod:`.git`, :mod:`.cli`,
-  :mod:`.symbol_record`, :mod:`.status_badge`, :mod:`.doc_audit`.
+  :mod:`.symbol_record`, :mod:`.status_badge`, :mod:`.test_sandbox`,
+  :mod:`.doc_audit`.
 - **Pipeline primitives** — :mod:`.task_factory`, :mod:`.qc_log`,
   :mod:`.step_toggle`.
 - **Data-structure utilities** — :mod:`.hierarchy_utils`.

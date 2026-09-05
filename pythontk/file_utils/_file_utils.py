@@ -4,6 +4,7 @@ import sys
 import os
 import re
 import json
+import warnings
 import functools
 import traceback
 from typing import Union, List, Tuple, Optional
@@ -310,6 +311,173 @@ class FileUtils(HelpMixin):
             return shutil.disk_usage(probe).free
         except OSError:
             return None
+
+    @staticmethod
+    def is_locked(filepath: str) -> bool:
+        """Is *filepath* held open by another process, so it cannot be replaced?
+
+        Windows refuses to delete a file, rename onto it, or truncate it while
+        another process holds it without ``FILE_SHARE_DELETE``/
+        ``FILE_SHARE_WRITE`` -- the ``[WinError 32] used by another process``
+        that a viewer, an editor or a preview causes simply by having the file
+        open. POSIX permits all three, so this is nearly always False there,
+        which is precisely why the case goes unhandled until it costs a long
+        job its output.
+
+        Belongs to the same family as :meth:`free_space`: turn an opaque write
+        failure into a checkable cause, and check it BEFORE the work rather
+        than at the write that discards it.
+
+        Probes by opening for APPEND -- the cheapest request needing the same
+        write access as a replace, and the only one that touches no bytes (no
+        truncation, no mtime change). A missing file is not locked (nothing
+        holds it) and neither is a directory; both answer False so the caller
+        needs no guard.
+
+        Parameters:
+            filepath (str): Path to probe (environment variables expanded).
+
+        Returns:
+            bool: True when the file exists but cannot be opened for writing.
+        """
+        fp = os.path.expandvars(filepath)
+        if not os.path.isfile(fp):
+            return False
+        try:
+            with open(fp, "ab"):
+                return False
+        except OSError:
+            return True
+
+    @staticmethod
+    def locking_processes(filepath: str) -> List[str]:
+        """Names of the processes currently holding *filepath* open.
+
+        Diagnostic only. It answers the one question a lock message never
+        does -- WHICH process -- turning a hunt into a five-second fix. The
+        verdict must always come from :meth:`is_locked`: a lock this cannot
+        attribute is still a lock, and this returns an empty list on every
+        platform but Windows, when the API is unavailable, and whenever it
+        declines to answer.
+
+        Uses the Restart Manager (``rstrtmgr``), the service installers use to
+        ask what to close; it needs no elevation and reports the current
+        process too, which is worth keeping -- a caller holding its own handle
+        is the likeliest lock a caller can actually fix.
+
+        Parameters:
+            filepath (str): Path to query (environment variables expanded).
+
+        Returns:
+            list[str]: ``"<app name> (PID <n>)"`` per holder, deduplicated and
+                sorted. Empty when nothing holds it or nothing can be learned.
+        """
+        fp = os.path.expandvars(filepath)
+        if os.name != "nt" or not os.path.exists(fp):
+            return []
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            rm = ctypes.WinDLL("rstrtmgr")
+        except (ImportError, OSError, AttributeError):
+            return []
+
+        class _RmUniqueProcess(ctypes.Structure):
+            _fields_ = [
+                ("dwProcessId", wintypes.DWORD),
+                ("ProcessStartTime", wintypes.FILETIME),
+            ]
+
+        class _RmProcessInfo(ctypes.Structure):
+            # CCH_RM_MAX_APP_NAME 255 and CCH_RM_MAX_SVC_NAME 63, each +1 for
+            # the terminator. The struct is passed by size, so these widths are
+            # not cosmetic -- shrinking either misaligns every later field.
+            _fields_ = [
+                ("Process", _RmUniqueProcess),
+                ("strAppName", ctypes.c_wchar * 256),
+                ("strServiceShortName", ctypes.c_wchar * 64),
+                ("ApplicationType", ctypes.c_int),
+                ("AppStatus", ctypes.c_ulong),
+                ("TSSessionId", wintypes.DWORD),
+                ("bRestartable", wintypes.BOOL),
+            ]
+
+        ERROR_MORE_DATA = 234
+        session = wintypes.DWORD()
+        # CCH_RM_SESSION_KEY is a GUID rendered as 32 hex chars, +1 terminator.
+        key = ctypes.create_unicode_buffer(33)
+        try:
+            if rm.RmStartSession(ctypes.byref(session), 0, key) != 0:
+                return []
+        except OSError:
+            return []
+        try:
+            names = (ctypes.c_wchar_p * 1)(fp)
+            if rm.RmRegisterResources(session, 1, names, 0, None, 0, None) != 0:
+                return []
+            needed, count = ctypes.c_uint(0), ctypes.c_uint(0)
+            reasons = wintypes.DWORD()
+            rc = rm.RmGetList(
+                session,
+                ctypes.byref(needed),
+                ctypes.byref(count),
+                None,
+                ctypes.byref(reasons),
+            )
+            # A first call sized at zero reports what it needs; anything else
+            # (including a clean 0 for "nothing holds it") has nothing to read.
+            if rc != ERROR_MORE_DATA or not needed.value:
+                return []
+            infos = (_RmProcessInfo * needed.value)()
+            count.value = needed.value
+            if (
+                rm.RmGetList(
+                    session,
+                    ctypes.byref(needed),
+                    ctypes.byref(count),
+                    infos,
+                    ctypes.byref(reasons),
+                )
+                != 0
+            ):
+                return []
+            return sorted(
+                {
+                    f"{infos[i].strAppName or '?'} (PID {infos[i].Process.dwProcessId})"
+                    for i in range(count.value)
+                }
+            )
+        except OSError:
+            return []
+        finally:
+            rm.RmEndSession(session)
+
+    @classmethod
+    def describe_lock(cls, filepath: str) -> str:
+        """One sentence naming *filepath*'s holder, or "" when it is free.
+
+        The message every caller of :meth:`is_locked` would otherwise assemble
+        by hand, so the wording of this failure stays the same wherever it is
+        reported. Falsy when the file can be replaced, so it doubles as the
+        test.
+
+        Parameters:
+            filepath (str): Path to probe (environment variables expanded).
+
+        Returns:
+            str: e.g. ``"in use by Google Chrome (PID 8421)"``, or
+                ``"in use by another process"`` when the holder cannot be
+                named. Empty string when the file is not locked.
+        """
+        if not cls.is_locked(filepath):
+            return ""
+        holders = cls.locking_processes(filepath)
+        return (
+            f"in use by {', '.join(holders)}"
+            if holders
+            else "in use by another process"
+        )
 
     @staticmethod
     def format_bytes(size_bytes, unknown: str = "(unknown)") -> str:
@@ -736,6 +904,69 @@ class FileUtils(HelpMixin):
             traceback.print_exc()
 
     @staticmethod
+    def read_json(filepath, default=None, encoding: str = "utf-8"):
+        """Parse the JSON document at *filepath*, or return *default*.
+
+        Tolerant of BOTH halves of "cannot be read": the file being absent or
+        unreadable (``OSError``) and its contents not being JSON
+        (``ValueError``, which ``json.JSONDecodeError`` subclasses). The
+        package previously re-derived this with at least six different catch
+        sets -- ``JSONDecodeError`` alone, ``ValueError``,
+        ``(OSError, ValueError)``, ``FileNotFoundError`` ... -- which are not
+        equivalent: ``JSONDecodeError`` does not catch a missing file, so half
+        the call sites raised where the other half fell back.
+
+        Parameters:
+            filepath (str): Path to the JSON document.
+            default: Returned when the file cannot be read or parsed.
+            encoding (str): Text encoding (default "utf-8").
+
+        Returns:
+            The decoded document, or *default*.
+        """
+        try:
+            with open(filepath, "r", encoding=encoding) as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return default
+
+    @classmethod
+    def write_json(
+        cls,
+        filepath,
+        data,
+        *,
+        indent=2,
+        encoding: str = "utf-8",
+        sort_keys: bool = False,
+    ) -> None:
+        """Serialise *data* to *filepath* atomically, creating parent dirs.
+
+        Serialises BEFORE touching the file, which is the whole difference
+        from the retired :meth:`set_json`: that one truncated the target and
+        then serialised, so a value ``json`` could not encode destroyed the
+        previous contents. Here an unencodable value raises with the existing
+        file untouched, and the write itself goes through
+        :meth:`atomic_write_text`, so a reader sees either the old document or
+        the complete new one.
+
+        Parameters:
+            filepath (str): Destination path; missing parents are created.
+            data: Any JSON-serialisable value.
+            indent: ``json.dumps`` indent; ``None`` for the compact form.
+            encoding (str): Text encoding (default "utf-8").
+            sort_keys (bool): Sort object keys, for a stable diff.
+
+        Raises:
+            TypeError: *data* is not JSON-serialisable (before any write).
+        """
+        content = json.dumps(data, indent=indent, sort_keys=sort_keys)
+        parent = os.path.dirname(os.path.abspath(os.fspath(filepath)))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        cls.atomic_write_text(filepath, content, encoding=encoding)
+
+    @staticmethod
     def atomic_write_text(filepath: str, content: str, encoding: str = "utf-8") -> None:
         """Write text to a file atomically.
 
@@ -1009,7 +1240,7 @@ class FileUtils(HelpMixin):
         return results
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @CoreUtils.listify
     def format_path(
         p: Union[str, List[str]],
         section: Union[str, None] = None,
@@ -1079,13 +1310,13 @@ class FileUtils(HelpMixin):
         return result
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
+    @CoreUtils.listify
     def convert_to_relative_path(
         file_path: str,
         base_dir: str,
         prepend_base: bool = True,
         check_existence: bool = False,
-    ) -> str:
+    ) -> Union[str, List[str]]:
         """Convert an absolute file path to a relative path based on the given base directory.
 
         If the file path and the base directory are on different drives, no
@@ -1479,13 +1710,43 @@ class FileUtils(HelpMixin):
             )
         return results
 
+    #: One message for the whole JSON key-value cluster. Retired together
+    #: because they share the process-global `_jsonFile` that makes them a
+    #: cluster in the first place.
+    _JSON_KV_DEPRECATION = (
+        "FileUtils.{name} is deprecated and will be removed in the next "
+        "release. It keeps a process-global file path set by set_json_file, "
+        "validates with bare asserts that vanish under `python -O`, and "
+        "truncates the file before serialising, so a failed dumps loses it. "
+        "Use FileUtils.write_json / FileUtils.read_json instead: they are "
+        "atomic, take an explicit path, and serialise before touching the "
+        "target."
+    )
+
+    @classmethod
+    def _warn_json_kv(cls, name: str) -> None:
+        """Emit the retirement warning for one JSON key-value entry point.
+
+        In the bodies rather than a module-level ``__getattr__``: these are
+        classmethods on a wildcard-exported class, so ``__getattr__`` never
+        sees the lookup. ``stacklevel=3`` points at the caller rather than at
+        this helper or its caller.
+        """
+        warnings.warn(
+            cls._JSON_KV_DEPRECATION.format(name=name),
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
     @classmethod
     def set_json_file(cls, file):
-        """Set the current json filepath.
+        """Set the current json filepath. **Deprecated** -- see
+        :attr:`_JSON_KV_DEPRECATION`; removed next release.
 
         Parameters:
             file (str): The filepath to a json file. If a file doesn't exist, it will be created.
         """
+        cls._warn_json_kv("set_json_file")
         cls._jsonFile = file
         if not os.path.exists(file):
             with open(file, "a", encoding="utf-8"):
@@ -1493,11 +1754,13 @@ class FileUtils(HelpMixin):
 
     @classmethod
     def get_json_file(cls):
-        """Get the current json filepath.
+        """Get the current json filepath. **Deprecated** -- see
+        :attr:`_JSON_KV_DEPRECATION`; removed next release.
 
         Returns:
             (str)
         """
+        cls._warn_json_kv("get_json_file")
         try:
             return cls._jsonFile
         except AttributeError:
@@ -1505,7 +1768,7 @@ class FileUtils(HelpMixin):
 
     @classmethod
     def set_json(cls, key, value, file=None):
-        """
+        """**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`; removed next release.
         Parameters:
             key () = Set the json key.
             value () = Set the json value for the given key.
@@ -1515,6 +1778,7 @@ class FileUtils(HelpMixin):
         Example:
             set_json('hdr_map_visibility', state)
         """
+        cls._warn_json_kv("set_json")
         if not file:
             file = cls.get_json_file()
 
@@ -1542,7 +1806,7 @@ class FileUtils(HelpMixin):
 
     @classmethod
     def get_json(cls, key, file=None):
-        """
+        """**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`; removed next release.
         Parameters:
             key () = Set the json key.
             value () = Set the json value for the given key.
@@ -1555,6 +1819,7 @@ class FileUtils(HelpMixin):
         Example:
             get_json('hdr_map_visibility') #returns: state
         """
+        cls._warn_json_kv("get_json")
         if not file:
             file = cls.get_json_file()
 

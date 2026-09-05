@@ -1105,6 +1105,70 @@ def validate_package(
     return validator.run_all_tests(verbose=verbose)
 
 
+class ParseMemoizationTests(BaseTestCase):
+    """``build()`` read and parsed every wildcard module twice.
+
+    ``_is_safe_to_lazy_load`` and ``_scan_module_attributes`` each need the
+    tree of any module on the lazy path, so an un-memoized parse did the work
+    once per check: measured at 13 read-and-parse calls across 7 distinct
+    modules for pythontk's own bootstrap, which every package in the ecosystem
+    boots through.
+    """
+
+    @staticmethod
+    def _resolver():
+        from pythontk.core_utils import module_resolver as mr
+        import pythontk as ptk
+
+        return mr, mr.ModuleAttributeResolver(
+            ptk, include=getattr(ptk, "DEFAULT_INCLUDE", None)
+        )
+
+    @staticmethod
+    def _count_reads(mr, resolver):
+        """Run one build, counting files actually read and parsed -- not calls
+        to the memoized accessor, which is deliberately unchanged."""
+        calls = []
+        original = mr.ModuleAttributeResolver._read_module_ast
+
+        def counting(module_name):
+            calls.append(module_name)
+            return original(module_name)
+
+        mr.ModuleAttributeResolver._read_module_ast = staticmethod(counting)
+        try:
+            resolver.build()
+        finally:
+            mr.ModuleAttributeResolver._read_module_ast = staticmethod(original)
+        return calls
+
+    def test_a_build_parses_each_module_at_most_once(self):
+        mr, resolver = self._resolver()
+        calls = self._count_reads(mr, resolver)
+        self.assertGreater(len(calls), 0, "nothing was parsed; the probe is broken")
+        repeated = {n: calls.count(n) for n in set(calls) if calls.count(n) > 1}
+        self.assertEqual(repeated, {}, f"modules parsed more than once: {repeated}")
+
+    def test_a_rebuild_re_reads_from_disk(self):
+        """The cache is per-build, not per-instance: an edited module must be
+        seen by the next ``build()``, which is what ``ModuleReloader`` relies
+        on."""
+        mr, resolver = self._resolver()
+        first = self._count_reads(mr, resolver)
+        second = self._count_reads(mr, resolver)
+        self.assertEqual(
+            sorted(second), sorted(set(first)), "rebuild did not re-read the modules"
+        )
+
+    def test_the_cache_does_not_outlive_the_build(self):
+        _, resolver = self._resolver()
+        resolver.build()
+        self.assertFalse(
+            getattr(resolver, "_ast_cache", None),
+            "the parsed trees were retained after build()",
+        )
+
+
 if __name__ == "__main__":
     import argparse
 

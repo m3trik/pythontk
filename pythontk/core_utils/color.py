@@ -119,8 +119,7 @@ class Color:
                 a = round(a * 255)
             else:
                 raise ValueError(
-                    f"Float alpha must be 0.0–1.0, got {a}. "
-                    f"Use int for 0–255 range."
+                    f"Float alpha must be 0.0–1.0, got {a}. Use int for 0–255 range."
                 )
         return Color(self._r, self._g, self._b, int(a))
 
@@ -276,6 +275,51 @@ class Palette(dict):
 
     def __setitem__(self, key: str, value: object) -> None:
         super().__setitem__(key, self._wrap(value))
+
+    # Every dict write path has to wrap, not just __setitem__: a Palette that
+    # holds a raw str is indistinguishable from a correct one until something
+    # indexes it as a Color, and the failure surfaces far from the write. The
+    # class-returning paths (copy, |, reflected |) matter for the same reason
+    # -- a plain dict silently stops wrapping everything written to it after.
+    # fromkeys needs no override: dict.fromkeys on a subclass routes through
+    # __setitem__ already.
+
+    def update(self, mapping=None, **kwargs: object) -> None:  # type: ignore[override]
+        """Wrap on update, as ``__setitem__`` does. Accepts a mapping, an
+        iterable of pairs, or keywords -- the full ``dict.update`` contract."""
+        if mapping is not None:
+            items = mapping.items() if hasattr(mapping, "keys") else mapping
+            for k, v in items:
+                self[k] = v
+        for k, v in kwargs.items():
+            self[k] = v
+
+    def setdefault(self, key: str, default: object = None) -> object:  # type: ignore[override]
+        """Wrap the inserted default, and return the WRAPPED value -- callers
+        use the return value, so handing back the raw argument would leak it
+        past the wrap just as surely as storing it would."""
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+    def copy(self) -> "Palette":  # type: ignore[override]
+        """A Palette, not a plain dict: ``dict.copy`` drops the subclass, and
+        the copy then stops wrapping everything written to it."""
+        return Palette(self)
+
+    def __or__(self, other) -> "Palette":
+        out = Palette(self)
+        out.update(other)
+        return out
+
+    def __ror__(self, other) -> "Palette":
+        out = Palette(other)
+        out.update(self)
+        return out
+
+    def __ior__(self, other) -> "Palette":
+        self.update(other)
+        return self
 
     @staticmethod
     def _wrap(v: object) -> object:

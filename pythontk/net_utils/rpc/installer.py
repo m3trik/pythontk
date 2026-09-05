@@ -79,7 +79,13 @@ class _PluginInstallerInternal(object):
 
 
 class PluginInstaller(_PluginInstallerInternal):
-    """PluginInstaller — module namespace."""
+    """Install a DCC plugin into its host's folder, symlink-first.
+
+    Plugin folders sit in OS-specific places (Toolbag under
+    ``%LOCALAPPDATA%``, Painter under Documents, ...). A symlink keeps a
+    development checkout live; a copytree fallback covers hosts and
+    filesystems that refuse one.
+    """
 
     @staticmethod
     def is_plugin_current(

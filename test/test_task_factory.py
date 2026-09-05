@@ -10,7 +10,7 @@ concrete ``task_*`` / ``check_*`` methods each supplies.
 import unittest
 from unittest.mock import MagicMock
 
-from pythontk import TaskFactory
+from pythontk import TaskFactory, OperationCancelled
 
 
 class _Recorder(TaskFactory):
@@ -108,6 +108,40 @@ class TaskFactoryTest(unittest.TestCase):
 
     def test_failing_check_returns_false(self):
         self.assertFalse(_Recorder().run_tasks({"check_bad": True}))
+
+    def test_tasks_the_abort_dropped_are_recorded_for_the_caller(self):
+        """A failed check stops the runner dispatching the tasks below it. A
+        caller that then decides to proceed anyway needs to run exactly those
+        -- the ones above already ran, and repeating them repeats their
+        mutation -- so the names are recorded alongside the verdict.
+        Added: 2026-09-03
+        """
+
+        class _Gated(_Recorder):
+            TASK_ORDER = ["task_plain", "task_noargs"]
+            CHECK_DEPENDENCIES = {"check_bad": ("task_plain",)}
+
+        r = _Gated()
+        self.assertFalse(
+            r.run_tasks({"task_plain": "x", "task_noargs": True, "check_bad": True})
+        )
+        # check_bad is hoisted to run right after its only dependency, so the
+        # task below it never dispatches.
+        self.assertNotIn("task_noargs", [c[0] for c in r.calls])
+        self.assertEqual(r._last_skipped_tasks, ["task_noargs"])
+
+    def test_failed_check_names_are_recorded_for_the_caller(self):
+        """The bool verdict names nothing a caller can act on, so a consumer
+        that wants to report (or ask about) the failure had to re-derive it
+        from the log. ``_last_failed_checks`` carries the names, and a passing
+        run clears the previous run's list.
+        Added: 2026-09-03
+        """
+        r = _Recorder()
+        self.assertFalse(r.run_tasks({"check_bad": True, "check_ok": True}))
+        self.assertEqual(r._last_failed_checks, ["check_bad"])
+        self.assertTrue(r.run_tasks({"check_ok": True}))
+        self.assertEqual(r._last_failed_checks, [])
 
     def test_set_task_is_reverted_with_its_return_value(self):
         r = _Recorder()
@@ -497,6 +531,83 @@ class CheckSchedulingTest(unittest.TestCase):
         r = _Scheduled()
         self.assertFalse(r.run_tasks({"check_ok": True, "check_bad": True}))
         self.assertEqual([c[0] for c in r.calls], ["check_bad", "check_ok"])
+
+
+class ProgressReportingTest(unittest.TestCase):
+    """``progress_callback(current, total, message)`` -- the per-entry stream a
+    consumer's progress bar is driven by, and its cancel contract. Added:
+    2026-09-04.
+    """
+
+    def _streamed(self):
+        r = _Recorder()
+        events = []
+        r.progress_callback = lambda current, total, message: events.append(
+            (current, total, message)
+        )
+        return r, events
+
+    def test_every_entry_is_reported_before_it_runs_and_the_list_is_closed(self):
+        r, events = self._streamed()
+        r.run_tasks({"task_plain": 1, "check_ok": 2})
+        self.assertEqual(
+            events,
+            [
+                (0, 2, "Task 1/1: task_plain"),
+                (1, 2, "Check 1/1: check_ok"),
+                (2, 2, None),
+            ],
+        )
+
+    def test_a_disabled_entry_counts_as_done_but_is_not_reported(self):
+        r, events = self._streamed()
+        r.run_tasks({"task_noargs": False, "task_plain": 1})
+        self.assertEqual(events, [(1, 2, "Task 2/2: task_plain"), (2, 2, None)])
+
+    def test_the_entries_a_failed_check_drops_are_closed_as_done(self):
+        r, events = self._streamed()
+        # check_bad is undeclared, so it runs after every task -- nothing is
+        # dropped here; the close still reports the whole list as done.
+        self.assertFalse(r.run_tasks({"task_plain": 1, "check_bad": 2}))
+        self.assertEqual(events[-1], (2, 2, None))
+
+    def test_false_from_the_callback_cancels_before_the_next_entry(self):
+        r = _Recorder()
+        r.progress_callback = lambda current, total, message: (
+            not (message or "").endswith("task_boom")
+        )
+        with self.assertRaises(OperationCancelled):
+            r.run_tasks({"set_flag": 1, "task_boom": 2})
+        names = [c[0] for c in r.calls]
+        self.assertIn("set_flag", names)
+        self.assertNotIn("task_boom", names, "the refused entry must not run")
+        self.assertIn("revert_flag", names, "cleanup still runs on a cancel")
+
+    def test_none_from_the_callback_is_not_a_cancel(self):
+        r = _Recorder()
+        r.progress_callback = lambda *args: None
+        self.assertTrue(r.run_tasks({"task_plain": 1}))
+        self.assertIn(("task_plain", 1), r.calls)
+
+    def test_a_raising_callback_never_fails_the_run(self):
+        r = _Recorder()
+
+        def broken(*args):
+            raise ValueError("feedback bug")
+
+        r.progress_callback = broken
+        self.assertTrue(r.run_tasks({"task_plain": 1}))
+        self.assertIn(("task_plain", 1), r.calls)
+
+    def test_a_text_only_tick_forwards_none_counts(self):
+        r, events = self._streamed()
+        r._report_progress(None, None, "converting...")
+        self.assertEqual(events, [(None, None, "converting...")])
+
+    def test_no_callback_is_a_no_op(self):
+        r = _Recorder()
+        r._report_progress(0, 1, "anything")  # must not raise
+        self.assertTrue(r.run_tasks({"task_plain": 1}))
 
 
 if __name__ == "__main__":

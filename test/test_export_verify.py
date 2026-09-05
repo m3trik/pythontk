@@ -27,6 +27,7 @@ from pythontk.file_utils.mesh_convert.export_verify import (
     FAIL,
     PASS,
     SKIP,
+    WARN,
     _main,
 )
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
@@ -51,6 +52,8 @@ def build_glb(
     clip_end: float = 0.5,
     clip_name: str = "Shot_1",
     zero_frame: float = None,
+    hold_frames: float = 0.0,
+    hold_moves: bool = False,
 ) -> str:
     """Write a tiny, valid GLB: two nodes, one clip, one skin, two images."""
     bin_parts = []
@@ -77,11 +80,20 @@ def build_glb(
         )
         return len(accessors) - 1
 
-    times = accessor([0.0, clip_end], "SCALAR")
-    translations = accessor([(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)], "VEC3")
+    key_times = [0.0, clip_end]
+    translate_values = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)]
     scale_values = [(1.0, 1.0, 1.0), (3.0, 3.0, 3.0)]
     if nan_output:
-        scale_values = [(1.0, 1.0, 1.0), (float("nan"), 3.0, 3.0)]
+        scale_values[1] = (float("nan"), 3.0, 3.0)
+    if hold_frames:
+        # A bake's trailing pad: one more key further down the timeline that
+        # REPEATS the last pose, so the clip occupies frames it does not
+        # animate. With hold_moves it genuinely animates instead.
+        key_times.append(clip_end + hold_frames / 30.0)
+        translate_values.append((7.0, 0.0, 0.0) if hold_moves else translate_values[-1])
+        scale_values.append(scale_values[-1])
+    times = accessor(key_times, "SCALAR")
+    translations = accessor(translate_values, "VEC3")
     scales = accessor(scale_values, "VEC3")
     ibm = accessor([tuple(float(r == c) for r in range(4) for c in range(4))], "MAT4")
     positions = accessor([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)], "VEC3")
@@ -265,6 +277,137 @@ class TestGlbReader(_FixtureCase):
         translations = self.reader.accessor(1)
         self.assertEqual(translations, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
 
+    def test_motion_span_drops_a_trailing_hold(self):
+        """A held pose occupies frames without animating them."""
+        reader = GlbReader.load(
+            build_glb(self.path("held.glb"), clip_end=0.5, hold_frames=48)
+        )
+        span = reader.motion_span("Shot_1")
+        self.assertIsNotNone(span)
+        self.assertAlmostEqual(span[0], 0.0, places=6)
+        self.assertAlmostEqual(span[1], 0.5, places=6)
+        # The KEY extent still runs out to the pad -- the two differ, which
+        # is the whole point of measuring motion separately.
+        self.assertAlmostEqual(reader.clip_spans()["Shot_1"][1], 2.1, places=5)
+
+    def test_motion_span_keeps_a_tail_that_actually_moves(self):
+        reader = GlbReader.load(
+            build_glb(
+                self.path("moving.glb"),
+                clip_end=0.5,
+                hold_frames=48,
+                hold_moves=True,
+            )
+        )
+        self.assertAlmostEqual(reader.motion_span("Shot_1")[1], 2.1, places=5)
+
+    def test_motion_span_sees_motion_that_accumulates_below_the_tolerance(self):
+        """A slow pan is motion, even when no single step clears the threshold.
+
+        ``motion_span`` compared each key only against the one before it, so a
+        channel drifting by less than *tolerance* per key read as perfectly
+        static however far it travelled. Measured: 400 keys stepping 0.0005
+        each -- half the 1e-3 default -- move 0.2 m in total (a 13-second
+        camera pan) and the method returned ``None``. The same 0.2 m delivered
+        as one jump between two keys was detected, so the gate's answer
+        depended on how the motion was distributed, not whether it happened.
+
+        This matters because ``check_clips_vs_takes`` FAILs on motion past the
+        last take and only WARNs on an inert margin -- so a slow drift out
+        there was reported as a held pose and shipped.
+        """
+        reader = self._stub_reader(
+            times=[(i / 30.0,) for i in range(400)],
+            values=[(i * 0.0005, 0.0, 0.0) for i in range(400)],
+        )
+        span = reader.motion_span(0)
+        self.assertIsNotNone(
+            span, "0.2 m of travel reported as static because each step was small"
+        )
+        # Motion runs essentially the whole clip: it starts near the top and
+        # continues to the end.
+        self.assertLess(span[0], 0.5)
+        self.assertGreater(span[1], 12.0)
+
+    def test_motion_span_still_locates_a_single_late_jump(self):
+        """The drift fix must not smear a discrete move across the clip: a
+        channel that holds and then jumps once still reports only the jump."""
+        reader = self._stub_reader(
+            times=[(i / 30.0,) for i in range(400)],
+            values=[(0.0, 0.0, 0.0)] * 399 + [(0.2, 0.0, 0.0)],
+        )
+        span = reader.motion_span(0)
+        self.assertIsNotNone(span)
+        self.assertAlmostEqual(span[0], 398 / 30.0, places=6)
+        self.assertAlmostEqual(span[1], 399 / 30.0, places=6)
+
+    def test_motion_span_drops_a_leading_hold_too(self):
+        """Symmetry: a clip that waits, moves, then holds reports only the
+        middle. The trailing half was covered; the leading half was not."""
+        values = [(0.0, 0.0, 0.0)] * 10 + [(1.0, 0.0, 0.0)] * 10
+        reader = self._stub_reader(
+            times=[(i / 30.0,) for i in range(20)], values=values
+        )
+        span = reader.motion_span(0)
+        self.assertAlmostEqual(span[0], 9 / 30.0, places=6)
+        self.assertAlmostEqual(span[1], 10 / 30.0, places=6)
+
+    @staticmethod
+    def _stub_reader(times, values, interpolation="LINEAR"):
+        """A GlbReader whose two decode seams are stubbed -- no file needed,
+        so a sampler shape can be stated directly."""
+        reader = GlbReader.__new__(GlbReader)
+        reader.animation = lambda key: {
+            "samplers": [{"input": 0, "output": 1, "interpolation": interpolation}]
+        }
+        reader.accessor = lambda i: times if i == 0 else values
+        return reader
+
+    def test_motion_span_is_none_when_nothing_moves(self):
+        """No motion at all is not a zero-length span -- it is no span."""
+        reader = GlbReader.load(self.path("asset.glb"))
+        # Every channel changes by less than the threshold it is judged on.
+        self.assertIsNone(reader.motion_span("Shot_1", tolerance=10.0))
+
+    def test_sampler_frames_folds_multi_element_keys(self):
+        """A key is not always one element -- and the ones that are not are
+        exactly the channels a naive length check drops.
+
+        ``weights`` stores one scalar per morph target per key, so a two-target
+        channel has twice as many outputs as inputs; CUBICSPLINE triples any
+        of them into (in-tangents, values, out-tangents). Comparing raw output
+        counts against key counts skipped both, which would have read a morph
+        animation as perfectly still.
+        """
+        fold = GlbReader._sampler_frames
+        times = [(0.0,), (1.0,)]
+
+        # Two morph targets, LINEAR: four scalars fold into two poses.
+        self.assertEqual(
+            fold(times, [(0.0,), (1.0,), (0.5,), (0.25,)], "LINEAR"),
+            [(0.0, 1.0), (0.5, 0.25)],
+        )
+        # CUBICSPLINE VEC3: the middle of each triple is the pose.
+        cubic = [
+            (9.0, 9.0, 9.0),
+            (1.0, 2.0, 3.0),
+            (8.0, 8.0, 8.0),
+            (7.0, 7.0, 7.0),
+            (4.0, 5.0, 6.0),
+            (6.0, 6.0, 6.0),
+        ]
+        self.assertEqual(
+            fold(times, cubic, "CUBICSPLINE"),
+            [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)],
+        )
+        # Ragged or impossible pairings are refused, never guessed at.
+        self.assertIsNone(fold(times, [(0.0,), (1.0,), (2.0,)], "LINEAR"))
+        self.assertIsNone(fold(times, [(0.0,), (1.0,)], "CUBICSPLINE"))
+        self.assertIsNone(fold([], [(0.0,)], "LINEAR"))
+
+    def test_motion_span_on_an_unknown_clip_is_none(self):
+        self.assertIsNone(self.reader.motion_span("nope"))
+
     def test_sample_linear_midpoint(self):
         value = self.reader.sample("Shot_1", "arm", "translation", 0.25)
         self.assertAlmostEqual(value[0], 1.0, places=6)
@@ -274,6 +417,21 @@ class TestGlbReader(_FixtureCase):
         self.assertEqual(value, (1.0, 1.0, 1.0))
         value = self.reader.sample("Shot_1", "arm", "scale", 0.5)
         self.assertEqual(value, (3.0, 3.0, 3.0))
+
+    def test_sample_lands_on_a_step_key_whose_time_is_not_representable(self):
+        """A frame that falls exactly ON a STEP key must read that key.
+
+        glTF stores key times as float32 while callers compute the sample time
+        in double (``(frame - zero) / fps``). For any frame whose time is not
+        exactly representable the two differ in the last bits -- measured at
+        6.4e-08 s for frame 356 of a 30 fps clip -- so an exact ``==`` compare
+        falls through to "hold the previous key" and reports the transition one
+        frame late. On a visibility channel, which ships as STEP zero-scale
+        keys, that reads as a one-frame pop that is not in the file.
+        """
+        end = 88 / 30.0  # frame 88 at 30 fps: not exactly representable
+        reader = GlbReader.load(build_glb(self.path("stepkey.glb"), clip_end=end))
+        self.assertEqual(reader.sample("Shot_1", "arm", "scale", end), (3.0, 3.0, 3.0))
 
     def test_world_position_composes_parent(self):
         # arm rides root's static +1 Y; at t=0.25 its own X is 1.0.
@@ -337,6 +495,25 @@ class TestFbxFile(_FixtureCase):
     def test_connections(self):
         rows = self.fbx.connections()
         self.assertEqual(rows, [("OO", 2001, 1001, None)])
+
+    def test_raw_payloads_can_be_skipped_without_changing_the_census(self):
+        """``raw_payloads=False`` leaves embedded media on disk -- a census
+        that counts nodes and takes has no reason to hold hundreds of MB."""
+        from test_fbx_media import build_fbx as build_media_fbx, png_bytes
+
+        path = build_media_fbx(self.path("media.fbx"), {"wall.png": png_bytes((8, 8))})
+        full, lean = FbxFile.load(path), FbxFile.load(path, raw_payloads=False)
+        self.assertEqual(full.objects_census(), lean.objects_census())
+        content = [
+            child["props"][0]
+            for fbx in (full, lean)
+            for record in fbx.iter_objects()
+            if record["name"] == "Video"
+            for child in record["children"]
+            if child["name"] == "Content"
+        ]
+        self.assertIsInstance(content[0], bytes)
+        self.assertEqual(content[1], ("RAW", len(content[0])))
 
     def test_not_an_fbx(self):
         junk = self.path("junk.fbx")
@@ -429,8 +606,10 @@ class TestExportVerifier(_FixtureCase):
         report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
         # Isolate the branch under test: this minimal fixture carries only the
         # whole-timeline clip, so the declared take is legitimately "absent".
+        # Assert on the STATUS, not on the wording -- a message-shaped assert
+        # passes for free the moment the message is reworded.
         self.assertEqual(
-            [r.detail for r in report.rows if "full-timeline clip ends" in r.detail],
+            [r.detail for r in report.rows if "FULL_SEQUENCE" in r.detail],
             [],
             report.summary(),
         )
@@ -448,10 +627,102 @@ class TestExportVerifier(_FixtureCase):
             [{"name": "Shot_1", "start": 33, "end": 1989}],
         )
         report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
+        self.assertFalse(report.ok, report.summary())
         self.assertTrue(
-            [r.detail for r in report.rows if "full-timeline clip ends" in r.detail],
+            [
+                r
+                for r in report.rows
+                if r.status == FAIL and "FULL_SEQUENCE" in r.detail
+            ],
             report.summary(),
         )
+
+    def test_a_trailing_held_pose_is_a_note_not_a_failure(self):
+        """The bake pads the whole-timeline clip; padding is not an overrun.
+
+        The bake range is handed to the exporter, and it writes keys across
+        all of it -- so the full-timeline clip routinely ends on a held pose
+        some frames past the last take. Judging it on key occupancy called
+        that a failure on a correct file (VDATS: 48 inert frames, 1109 of
+        1185 channels flat, the other 76 moving by 3e-4), and a gate that is
+        permanently red is a gate nobody reads. Only motion out there counts.
+        """
+        glb = build_glb(
+            self.path("asset.glb"),
+            clip_name="FULL_SEQUENCE",
+            clip_end=1989 / 30.0,
+            hold_frames=48,
+        )
+        build_sidecar(
+            self.path(".asset.scene_data.json"),
+            [{"name": "Shot_1", "start": 0, "end": 1989}],
+        )
+        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
+        # As in the sibling rebase test, the lone clip means the declared take
+        # is legitimately absent -- judge the padding row, not the whole run.
+        held = [r for r in report.rows if "FULL_SEQUENCE" in r.detail]
+        self.assertEqual(len(held), 1, report.summary())
+        self.assertEqual(held[0].status, WARN, report.summary())
+        self.assertIn("+48f", held[0].detail)
+        self.assertIn("2037f", held[0].detail)
+
+    def test_motion_past_the_last_take_still_fails(self):
+        """Forgiving the hold must not forgive a real overrun."""
+        glb = build_glb(
+            self.path("asset.glb"),
+            clip_name="FULL_SEQUENCE",
+            clip_end=1989 / 30.0,
+            hold_frames=48,
+            hold_moves=True,
+        )
+        build_sidecar(
+            self.path(".asset.scene_data.json"),
+            [{"name": "Shot_1", "start": 0, "end": 1989}],
+        )
+        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
+        self.assertFalse(report.ok, report.summary())
+        self.assertTrue(
+            [r for r in report.rows if "animates to" in r.detail], report.summary()
+        )
+
+    def test_a_clip_closing_on_a_held_pose_is_not_truncation(self):
+        """Motion ending before the take does is ordinary animation.
+
+        Shots routinely finish their action and hold for a beat. Judging the
+        clip on where motion STOPS would call every one of those truncated --
+        the real VDATS assembly stops moving 79 frames before its last take
+        ends. Only the KEYS falling short means content is missing.
+        """
+        glb = build_glb(
+            self.path("asset.glb"),
+            clip_name="FULL_SEQUENCE",
+            clip_end=1989 / 30.0,
+            hold_frames=48,
+        )
+        build_sidecar(
+            self.path(".asset.scene_data.json"),
+            [{"name": "Shot_1", "start": 0, "end": 2037}],
+        )
+        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
+        self.assertEqual(
+            [r.detail for r in report.rows if "FULL_SEQUENCE" in r.detail],
+            [],
+            report.summary(),
+        )
+
+    def test_a_clip_whose_keys_end_short_of_its_take_fails(self):
+        """Keys that stop early cannot play the declared range at all."""
+        glb = build_glb(
+            self.path("asset.glb"),
+            clip_name="FULL_SEQUENCE",
+            clip_end=1500 / 30.0,
+        )
+        build_sidecar(
+            self.path(".asset.scene_data.json"),
+            [{"name": "Shot_1", "start": 0, "end": 1989}],
+        )
+        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
+        self.assertFalse(report.ok, report.summary())
 
     def test_corrupt_sidecar_degrades_to_skip(self):
         """A broken sidecar must never crash the run — its gates SKIP with

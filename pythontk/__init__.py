@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.34"
+__version__ = "0.9.35"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -27,6 +27,7 @@ DEFAULT_INCLUDE = {
     # reader, and the gate runner the export pipelines point at files.
     "file_utils.mesh_convert.glb_reader": ["GlbReader"],
     "file_utils.mesh_convert.fbx_file": ["FbxFile"],
+    "file_utils.mesh_convert.fbx_media": ["FbxMedia"],
     "file_utils.mesh_convert.export_verify": ["ExportVerifier"],
     "file_utils.uv_unwrap._uv_unwrap": "UvUnwrap",
     # Zero-dep USD primitives: sniffing, spec-compliant USDZ packaging, and a
@@ -62,6 +63,9 @@ DEFAULT_INCLUDE = {
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",
     "geo_utils.plate_emitter": "PlateEmitter",
+    "geo_utils.shadow_projection": ["ShadowProjection", "ShadowModel", "ShadowRaster"],
+    "geo_utils.shadow_horizon": ["ShadowHorizon", "HorizonMap"],
+    "img_utils.shadow_atlas": "ShadowAtlas",
     "geo_utils.uv_pack": ["UvPack", "PackIslandsResult"],
     "geo_utils.uv_transfer": ["UvTransfer", "TransferTable"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
@@ -83,6 +87,14 @@ DEFAULT_INCLUDE = {
     # writes can be released when the boundary that caused them moves.
     "core_utils.engines.shots.shot_ledger": [
         "ShotEditLedger",
+    ],
+    # Key stash engine — clips of keys parked outside the working animation,
+    # inert until retrieved; the DCC adapters (mayatk / blendertk ``KeyStash``)
+    # subclass it and own where the keys physically live.
+    "core_utils.engines.key_stash.key_stash_model": [
+        "KeyStash",
+        "StashedClip",
+        "StashChanged",
     ],
     "core_utils.engines.shots.shot_plan": [
         "ShotMove",
@@ -147,7 +159,23 @@ DEFAULT_INCLUDE = {
     "core_utils.package_manager": "PackageManager",
     "core_utils.git": "Git",
     "core_utils.class_property": "ClassProperty",
-    "core_utils.logging_mixin": ["LoggingMixin", "TableMixin"],
+    # LoggerExt / LevelAwareFormatter are reached by raw module path today
+    # (uitk's example wiring, mayatk's scene_audit), which is a published
+    # dependency on a private path -- register them so the surface says so.
+    "core_utils.logging_mixin": [
+        "LoggingMixin",
+        "TableMixin",
+        "LoggerExt",
+        "LevelAwareFormatter",
+    ],
+    # Same case: mayatk's blender_bridge imports ScriptTemplate and the three
+    # mode constants straight from this module.
+    "core_utils.script_template": [
+        "ScriptTemplate",
+        "SEND_TO",
+        "SAVE_AS",
+        "ROUND_TRIP",
+    ],
     "core_utils.namespace_handler": "NamespaceHandler",
     "core_utils.namedtuple_container": "NamedTupleContainer",
     "core_utils.color": ["Color", "ColorPair", "Palette"],
@@ -159,6 +187,7 @@ DEFAULT_INCLUDE = {
     "core_utils.cancel_scope": ["CancelScope", "OperationCancelled"],
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
     "core_utils.status_badge": ["StatusBadge"],
+    "core_utils.test_sandbox": ["TestSandbox"],
     "core_utils.app_launcher": "AppLauncher",
     "core_utils.app_installer": "AppInstaller",
     "core_utils.app_handoff": [
@@ -225,16 +254,16 @@ DEFAULT_INCLUDE = {
     "net_utils.credentials": "Credentials",
     "net_utils._net_utils": "NetUtils",
     "net_utils.rpc.client": "RpcClient",
+    # Bytes behind an http(s) URL (share links normalized); the seam every
+    # path-or-URL loader (manifest CSV, installer download) fetches through.
+    "net_utils.remote_file": "RemoteFile",
     # Loopback static server + live manifest behind the WebXR/browser preview
     # loop. Localhost is a secure context, so this is all `navigator.xr` needs.
-    "net_utils.preview_server": [
-        "PreviewServer",
-        "PreviewDeliverer",
-        "PreviewBridge",
-        # What a post-conversion pass is handed; a consumer registering one
-        # against `PreviewDeliverer.EDIT_PASSES` / `FILE_PASSES` annotates it.
-        "PreviewPassContext",
-    ],
+    "net_utils.preview.server": "PreviewServer",
+    # What a post-conversion pass is handed; a consumer registering one
+    # against `PreviewDeliverer.EDIT_PASSES` / `FILE_PASSES` annotates it.
+    "net_utils.preview.deliverer": ["PreviewDeliverer", "PreviewPassContext"],
+    "net_utils.preview.bridge": "PreviewBridge",
     "net_utils.rpc.installer": [
         "PluginInstaller",
     ],

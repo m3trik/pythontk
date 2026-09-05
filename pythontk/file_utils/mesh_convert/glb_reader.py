@@ -45,6 +45,79 @@ class _GlbReaderInternal:
         "MAT4": 16,
     }
 
+    # ---- animation sampler decode -----------------------------------------
+
+    @staticmethod
+    def _sampler_frames(
+        times: Sequence[Sequence[float]],
+        values: Sequence[Sequence[float]],
+        interpolation: str,
+    ) -> Optional[List[Tuple[float, ...]]]:
+        """One flat pose tuple per key time, or ``None`` if the pair is unusable.
+
+        An output accessor holds more than one element per key whenever the
+        target does: ``weights`` carries one scalar per morph target, and
+        CUBICSPLINE triples everything into (in-tangents, values,
+        out-tangents) per the spec's ``a1..an v1..vn b1..bn`` layout. Both
+        are folded here so callers compare like with like -- a plain
+        ``len(values) == len(times)`` test silently skips every morph-target
+        channel in the file.
+        """
+        count = len(times)
+        if not count or len(values) % count:
+            return None
+        per_key = len(values) // count
+        if interpolation == "CUBICSPLINE":
+            if per_key % 3:
+                return None
+            width = per_key // 3
+            # The tangents are not the pose; take the middle third.
+            lo, hi = width, 2 * width
+        else:
+            lo, hi = 0, per_key
+        return [
+            tuple(
+                c
+                for element in values[i * per_key + lo : i * per_key + hi]
+                for c in element
+            )
+            for i in range(count)
+        ]
+
+    @staticmethod
+    def _moving_span(
+        poses: Sequence[Sequence[float]], tolerance: float
+    ) -> Optional[Tuple[int, int]]:
+        """Key indices bracketing the motion in *poses*, or ``None`` if static.
+
+        Trims the leading and trailing HOLDS -- the run of keys still at the
+        opening pose, and the run already at the closing pose -- rather than
+        looking for change between neighbours.
+
+        The neighbour test this replaces could not see motion that accumulates
+        below *tolerance*: measured, 400 keys stepping 0.0005 each (half the
+        1e-3 default) travel 0.2 m over 13 seconds and every individual step
+        is under the threshold, so the whole pan read as static. The same
+        0.2 m as one jump was detected -- the answer depended on how the
+        motion was distributed rather than on whether it happened. Comparing
+        against the resting pose at each end has no such blind spot, and
+        still brackets a single discrete move exactly as before.
+        """
+        count = len(poses)
+        if count < 2:
+            return None
+
+        def apart(a, b) -> bool:
+            return any(abs(x - y) > tolerance for x, y in zip(a, b))
+
+        first, opening = 0, poses[0]
+        while first + 1 < count and not apart(poses[first + 1], opening):
+            first += 1
+        last, closing = count - 1, poses[-1]
+        while last - 1 >= 0 and not apart(poses[last - 1], closing):
+            last -= 1
+        return (first, last) if first < last else None
+
     # ---- matrix math ------------------------------------------------------
     #
     # Convention: a matrix is four row-lists, world = local x parentWorld,
@@ -264,6 +337,61 @@ class GlbReader(_GlbReaderInternal):
             out[anim.get("name") or str(i)] = (low, high, round(high * fps))
         return out
 
+    def motion_span(
+        self, key: Union[int, str], tolerance: float = 1e-3
+    ) -> Optional[Tuple[float, float]]:
+        """The clip's MOTION extent in seconds: ``(low, high)``, or ``None``.
+
+        Key extent is not play extent. A bake writes keys across the whole
+        range it is handed, so a clip routinely carries a held pose at one
+        or both ends -- frames that occupy the timeline without animating
+        anything. This walks each sampler's decoded outputs and reports the
+        span between the first and last key where some channel actually
+        changes, dropping those holds. ``None`` when nothing moves at all.
+
+        *tolerance* is an absolute per-component threshold. The default
+        1e-3 is below visibility on every animated path in a glTF: 1 mm of
+        translation (the unit is metres), 0.1% of scale, and ~0.11 degrees
+        of quaternion rotation. Bake residue lands well under it; real
+        motion does not.
+
+        Decodes BIN data for the named clip only -- pay for it once a
+        cheaper extent test has already flagged something.
+
+        Parameters:
+            key (int/str): Animation index or clip name.
+            tolerance (float): Per-component change treated as movement.
+
+        Returns:
+            tuple/None: ``(min_seconds, max_seconds)``, or ``None`` when the
+            clip is static (or unreadable).
+        """
+        # Morph-target `weights` and CUBICSPLINE both pack several elements
+        # per key; `_sampler_frames` folds them so every path is comparable.
+        anim = self.animation(key)
+        if anim is None:
+            return None
+        lows: List[float] = []
+        highs: List[float] = []
+        for sampler in anim.get("samplers") or []:
+            times = self.accessor(sampler.get("input"))
+            values = self.accessor(sampler.get("output"))
+            if not times or not values:
+                continue
+            poses = self._sampler_frames(
+                times, values, sampler.get("interpolation") or "LINEAR"
+            )
+            if poses is None:
+                continue
+            span = self._moving_span(poses, tolerance)
+            if span is not None:
+                first, last = span
+                lows.append(times[first][0])
+                highs.append(times[last][0])
+        if not lows:
+            return None
+        return min(lows), max(highs)
+
     def channel_table(self, key: Union[int, str]) -> List[Dict[str, Any]]:
         """One row per channel: node index/name, path, interpolation, keys."""
         anim = self.animation(key)
@@ -335,8 +463,17 @@ class GlbReader(_GlbReaderInternal):
             hi = 0
             while flat[hi] < time:
                 hi += 1
-            if flat[hi] == time or interpolation == "STEP":
-                at = hi if flat[hi] == time else hi - 1
+            # Key times are stored as float32 while callers compute *time* in
+            # double (``(frame - zero) / fps``), so a sample landing exactly ON
+            # a key can fall a few ULPs short of it -- measured at 6.4e-08 s for
+            # frame 356 of a 30 fps clip. An exact compare then holds the
+            # PREVIOUS key, which on a STEP channel (how visibility ships, as
+            # zero-scale keys) reads as a one-frame pop that is not in the file.
+            # The tolerance is relative because float32 keeps ~7 significant
+            # digits, so the absolute error grows with the clip length.
+            on_key = abs(flat[hi] - time) <= 1e-6 + abs(time) * 1e-6
+            if on_key or interpolation == "STEP":
+                at = hi if on_key else hi - 1
                 return tuple(values[at])
             lo = hi - 1
             u = (time - flat[lo]) / (flat[hi] - flat[lo])

@@ -14,6 +14,7 @@ Run with:
     python run_all_tests.py -v --log    # Both
     python run_all_tests.py --no-badge  # Skip README badge update
 """
+
 import argparse
 import datetime
 import io
@@ -145,12 +146,12 @@ class TestRunner(_TestRunnerInternal):
         # Print header
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         header = f"""
-{'=' * 70}
+{"=" * 70}
 pythontk Test Suite
-{'=' * 70}
+{"=" * 70}
 Started: {timestamp}
 Test Directory: {self.test_dir}
-{'=' * 70}
+{"=" * 70}
 """
         stream.write(header)
 
@@ -187,9 +188,9 @@ Test Directory: {self.test_dir}
 
         # Print footer
         footer = f"""
-{'=' * 70}
+{"=" * 70}
 {test_result.summary}
-{'=' * 70}
+{"=" * 70}
 """
         stream.write(footer)
 
@@ -361,9 +362,27 @@ def main():
     if str(test_dir) not in sys.path:
         sys.path.insert(0, str(test_dir))
 
+    # Process-level isolation before discovery imports a single module: no
+    # real browser launch, one throwaway temp root. Here as well as in
+    # conftest.py because this runner discovers with ``unittest``, which never
+    # loads a conftest -- so the canonical run would have been the unguarded one.
+    from pythontk.core_utils.test_sandbox import TestSandbox
+
+    TestSandbox.activate()
+
     # Run tests
     runner = TestRunner(test_dir, verbosity=verbosity)
     result = runner.run(log_to_file=args.log)
+
+    # A refused launch that a broad ``except`` swallowed leaves its test green;
+    # this is what makes it fail anyway -- in production that call opened a
+    # tab. Before the badge, which must not stamp such a run as passing.
+    leaked = list(TestSandbox.launches)
+    if leaked:
+        print(
+            f"[ERROR] {len(leaked)} browser launch(es) blocked by the sandbox and "
+            "swallowed by the code under test: " + ", ".join(leaked)
+        )
 
     # A module that imported but produced only skips still counts as run (the
     # standard keeps environment-gated skips green), but say so out loud.
@@ -376,11 +395,11 @@ def main():
 
     # Update README badge unless --no-badge is specified -- and never on a run
     # the environment scoped down (see StatusBadge.gate).
-    if not args.no_badge:
+    if not args.no_badge and not leaked:
         TestRunner.stamp_badge(test_dir, root_dir / "docs" / "README.md", result)
 
     # Exit with appropriate code
-    sys.exit(0 if result.success else 1)
+    sys.exit(0 if result.success and not leaked else 1)
 
 
 if __name__ == "__main__":

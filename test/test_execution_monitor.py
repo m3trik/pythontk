@@ -12,9 +12,14 @@ from pythontk import CancelScope
 
 from conftest import BaseTestCase
 
+_SIDECAR = os.path.join(
+    os.path.dirname(os.path.abspath(sys.modules[ExecutionMonitor.__module__].__file__)),
+    "_sidecar.py",
+)
+_HAS_DISPLAY = sys.platform == "win32" or bool(os.environ.get("DISPLAY"))
+
 
 class TestExecutionMonitor(BaseTestCase):
-
     def test_on_long_execution_fast_function(self):
         """Test that callback is not triggered for fast functions."""
         callback = MagicMock()
@@ -116,7 +121,9 @@ class TestExecutionMonitor(BaseTestCase):
         "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
         return_value=True,
     )
-    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
+    )
     def test_on_long_execution_escape_cancel_legacy_interrupt(
         self, mock_is_escape, _mock_fg
     ):
@@ -153,7 +160,9 @@ class TestExecutionMonitor(BaseTestCase):
         "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
         return_value=True,
     )
-    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
+    )
     def test_escape_cancels_scope_without_interrupting_main(
         self, mock_is_escape, _mock_fg
     ):
@@ -182,7 +191,9 @@ class TestExecutionMonitor(BaseTestCase):
         self.assertTrue(scope.cancelled)
         self.assertEqual(scope.reason, "escape")
 
-    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
+    )
     def test_escape_ignored_when_not_foreground(self, mock_is_escape):
         """Esc pressed while another app has focus must not cancel."""
         mock_is_escape.return_value = True
@@ -210,7 +221,9 @@ class TestExecutionMonitor(BaseTestCase):
         "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
         return_value=True,
     )
-    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
+    )
     def test_escape_requires_sustained_hold(self, mock_is_escape, _mock_fg):
         """A momentary Esc tap (its dozen other DCC meanings) must not cancel."""
         # Pressed for one sample, then released for the rest.
@@ -331,13 +344,27 @@ class TestExecutionMonitor(BaseTestCase):
     _EM_MOD = "pythontk.core_utils.execution_monitor._execution_monitor"
 
     def _dialog_subprocess_mock(self, returncode):
-        """A stand-in for the em-module's ``subprocess`` whose ``run`` reports
-        *returncode* from the custom dialog viewer. A full MagicMock also
-        supplies STARTUPINFO/flags, so the primary path is exercised even on
-        non-Windows CI (where the real subprocess module lacks them)."""
+        """A stand-in for the em-module's ``subprocess`` whose ``Popen`` reports
+        *returncode* from the sidecar dialog. A full MagicMock also supplies
+        STARTUPINFO/flags, so the primary path is exercised even on non-Windows
+        CI (where the real subprocess module lacks them)."""
         sp = MagicMock()
-        sp.run.return_value.returncode = returncode
+        proc = sp.Popen.return_value
+        proc.poll.return_value = returncode
+        proc.returncode = returncode
+        # ``communicate`` is only reached by the native fallbacks; keep it inert.
+        proc.communicate.return_value = ("", "")
         return sp
+
+    def _no_sidecar(self):
+        """Pin the NATIVE fallback branch: make the sidecar script 'missing'.
+
+        The sidecar dialog is the primary path on every platform; the zenity /
+        kdialog / MessageBoxW tests below are about the fallbacks and must not
+        depend on whether this machine can run Tk."""
+        return patch(
+            f"{self._EM_MOD}.ExecutionMonitor._helper_script_path", return_value=None
+        )
 
     def test_show_long_execution_dialog_windows_custom_dialog(self):
         """The custom dialog viewer (primary win32 path) maps exit codes to
@@ -378,8 +405,8 @@ class TestExecutionMonitor(BaseTestCase):
 
     def _force_messagebox_fallback(self):
         """Make the custom-dialog script 'missing' so the win32 branch takes
-        the MessageBoxW fallback (the dialog viewer is the primary path)."""
-        return patch(f"{self._EM_MOD}.os.path.exists", return_value=False)
+        the MessageBoxW fallback (the sidecar dialog is the primary path)."""
+        return self._no_sidecar()
 
     def test_show_long_execution_dialog_windows(self):
         """Test the MessageBoxW fallback on Windows — no force button by default."""
@@ -468,7 +495,7 @@ class TestExecutionMonitor(BaseTestCase):
 
     def test_show_long_execution_dialog_linux_zenity(self):
         """Test show_long_execution_dialog on Linux using Zenity (mocked)."""
-        with patch("sys.platform", "linux"):
+        with patch("sys.platform", "linux"), self._no_sidecar():
             with patch("shutil.which") as mock_which:
                 with patch("subprocess.run") as mock_run:
                     # Case 1: Zenity available
@@ -514,7 +541,7 @@ class TestExecutionMonitor(BaseTestCase):
 
     def test_show_long_execution_dialog_linux_kdialog(self):
         """Test show_long_execution_dialog on Linux using KDialog (mocked)."""
-        with patch("sys.platform", "linux"):
+        with patch("sys.platform", "linux"), self._no_sidecar():
             with patch("shutil.which") as mock_which:
                 with patch("subprocess.run") as mock_run:
                     # Case 1: Zenity NOT available, KDialog available
@@ -557,7 +584,9 @@ class TestExecutionMonitor(BaseTestCase):
         # Callback shouldn't be called as execution was fast (immediate error)
         callback.assert_not_called()
 
-    @patch("pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed")
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
+    )
     def test_on_long_execution_escape_ignored(self, mock_is_escape):
         """Test that holding Escape is ignored if allow_escape_cancel is False."""
         # Mock escape being pressed
@@ -646,10 +675,18 @@ class TestExecutionMonitor(BaseTestCase):
         callback.assert_called()
 
     def test_default_heartbeat_path_sanitizes_tag(self):
-        with patch("tempfile.gettempdir", return_value="C:/temp"):
-            p = ExecutionMonitor._default_heartbeat_path("a/b:{c}\\d")
-            self.assertTrue(p.startswith("C:/temp"))
-            self.assertIn(f"hb_{os.getpid()}.txt", p)
+        """The heartbeat file is a TempArtifacts allocation: it lives in the
+        ``execution_monitor_`` prefix namespace so a crash leftover (the
+        watchdog killed us, so no ``finally`` ran) is reclaimed by the next
+        run's stale sweep instead of leaking forever."""
+        with tempfile.TemporaryDirectory() as td:
+            with patch("tempfile.gettempdir", return_value=td):
+                p = ExecutionMonitor._default_heartbeat_path("a/b:{c}\\d")
+                self.assertEqual(os.path.dirname(p), td)
+                self.assertTrue(os.path.basename(p).startswith("execution_monitor_"), p)
+                self.assertIn(f"hb_{os.getpid()}.txt", p)
+                self.assertNotIn("/", os.path.basename(p))
+                self.assertNotIn(":", os.path.basename(p))
 
     def test_start_heartbeat_writer_writes_and_cleans_up(self):
         with tempfile.TemporaryDirectory() as td:
@@ -690,21 +727,22 @@ class TestExecutionMonitor(BaseTestCase):
                 self.assertIs(proc, fake_proc)
                 self.assertIsNotNone(stop)
 
-                # Verify Popen called with python -c <code> and our args
+                # Verify Popen called with the sidecar watchdog and our args
                 popen.assert_called()
                 called_args, called_kwargs = popen.call_args
                 argv = called_args[0]
-                self.assertEqual(argv[0], sys.executable)
-                self.assertEqual(argv[1], "-c")
+                self.assertEqual(argv[0], ExecutionMonitor._get_python_executable())
+                self.assertTrue(argv[1].endswith("_sidecar.py"), argv)
+                self.assertEqual(argv[2], "watchdog")
                 self.assertEqual(argv[3], "1234")
                 self.assertEqual(argv[4], hb)
-                self.assertEqual(argv[5], "5.0")
-                self.assertEqual(argv[6], "0.5")
-                self.assertEqual(argv[7], "1")
-                self.assertTrue(argv[8].endswith(".stop"))
+                self.assertIn("--timeout=5.0", argv)
+                self.assertIn("--check-interval=0.5", argv)
+                self.assertIn("--kill-tree", argv)
+                stop_file = argv[argv.index("--stop-file") + 1]
+                self.assertTrue(stop_file.endswith(".stop"))
 
                 # stop() should write stop file, terminate process, and cleanup stop file
-                stop_file = argv[8]
                 self.assertFalse(os.path.exists(stop_file))
                 stop()
                 fake_proc.terminate.assert_called()
@@ -721,16 +759,22 @@ class TestExecutionMonitor(BaseTestCase):
 
             with patch("sys.platform", "win32"):
                 with patch("subprocess.CREATE_NO_WINDOW", 123, create=True):
-                    with patch("subprocess.Popen", return_value=fake_proc) as popen:
-                        ExecutionMonitor._spawn_watchdog_subprocess(
-                            pid=1234,
-                            heartbeat_path=hb,
-                            timeout=5.0,
-                            check_interval=0.5,
-                            kill_tree=False,
-                        )
-                        _, kwargs = popen.call_args
-                        self.assertEqual(kwargs.get("creationflags"), 123)
+                    with patch("subprocess.STARTUPINFO", MagicMock(), create=True):
+                        with patch("subprocess.STARTF_USESHOWWINDOW", 1, create=True):
+                            with patch("subprocess.SW_HIDE", 0, create=True):
+                                with patch(
+                                    "subprocess.Popen", return_value=fake_proc
+                                ) as popen:
+                                    ExecutionMonitor._spawn_watchdog_subprocess(
+                                        pid=1234,
+                                        heartbeat_path=hb,
+                                        timeout=5.0,
+                                        check_interval=0.5,
+                                        kill_tree=False,
+                                    )
+                                    _, kwargs = popen.call_args
+                                    self.assertEqual(kwargs.get("creationflags"), 123)
+                                    self.assertIn("startupinfo", kwargs)
 
     def test_external_watchdog_decorator_starts_and_stops(self):
         stop_hb = MagicMock()
@@ -932,29 +976,40 @@ class TestExecutionMonitor(BaseTestCase):
             self.assertEqual(alive, [], "Heartbeat writer thread still alive")
             self.assertFalse(os.path.exists(hb))
 
-    def test_start_spinner_process_gif_indicator(self):
-        """indicator=<gif path> launches the gif viewer with that gif."""
+    def test_start_indicator_process_gif_indicator(self):
+        """indicator=<gif path> launches the sidecar indicator with that gif."""
         gif = os.path.join(
-            os.path.dirname(
-                sys.modules[self._EM_MOD].__file__
-            ),
+            os.path.dirname(sys.modules[self._EM_MOD].__file__),
             "task_indicator.gif",
         )
         fake_proc = MagicMock()
         with patch(f"{self._EM_MOD}.subprocess.Popen", return_value=fake_proc) as popen:
-            proc = ExecutionMonitor._start_spinner_process(indicator=gif)
+            proc = ExecutionMonitor._start_indicator_process(indicator=gif)
             self.assertIs(proc, fake_proc)
             argv = popen.call_args[0][0]
-            self.assertTrue(argv[1].endswith("_gif_viewer.py"), argv)
-            self.assertIn(gif, argv)
+            self.assertTrue(argv[1].endswith("_sidecar.py"), argv)
+            self.assertEqual(argv[2], "indicator")
+            self.assertIn(f"--gif={gif}", argv)
+            self.assertIn(f"--parent-pid={os.getpid()}", argv)
 
-    def test_start_spinner_process_bad_gif_falls_back_to_spinner(self):
+    def test_start_indicator_process_bad_gif_falls_back_to_spinner(self):
         """A nonexistent gif path falls back to the canvas spinner."""
         fake_proc = MagicMock()
         with patch(f"{self._EM_MOD}.subprocess.Popen", return_value=fake_proc) as popen:
-            ExecutionMonitor._start_spinner_process(indicator="no_such_file.gif")
+            ExecutionMonitor._start_indicator_process(indicator="no_such_file.gif")
             argv = popen.call_args[0][0]
-            self.assertTrue(argv[1].endswith("_spinner.py"), argv)
+            self.assertTrue(argv[1].endswith("_sidecar.py"), argv)
+            self.assertFalse(any(a.startswith("--gif=") for a in argv), argv)
+
+    def test_start_indicator_process_skipped_without_interpreter(self):
+        """No resolvable python: no subprocess at all (never a host binary)."""
+        with patch(
+            f"{self._EM_MOD}.ExecutionMonitor._get_python_executable",
+            return_value=None,
+        ):
+            with patch(f"{self._EM_MOD}.subprocess.Popen") as popen:
+                self.assertIsNone(ExecutionMonitor._start_indicator_process(True))
+                popen.assert_not_called()
 
     def test_force_stop_retries_and_falls_back(self):
         """If PyThreadState_SetAsyncExc fails, fall back to _thread.interrupt_main."""
@@ -967,6 +1022,445 @@ class TestExecutionMonitor(BaseTestCase):
                 # Should have retried 3 times then fallen back
                 self.assertEqual(mock_api.PyThreadState_SetAsyncExc.call_count, 3)
                 mock_interrupt.assert_called_once()
+
+    def test_callback_result_ignored_once_function_finished(self):
+        """A callback answer that arrives AFTER the operation ended is moot.
+
+        The dialog blocks the monitor thread while it waits on the user. When
+        the operation finishes in the meantime, whatever the user then clicks
+        must not be acted on: on the legacy path a late ``False`` used to call
+        ``interrupt_main`` after the function had returned, so the
+        KeyboardInterrupt landed in whatever unrelated code ran next.
+        """
+        func_done = threading.Event()
+
+        def late_cancel(finished=None):
+            func_done.wait(5.0)  # the "user" only answers after the op ends
+            return False
+
+        @ExecutionMonitor.on_long_execution(threshold=0.1, callback=late_cancel)
+        def quick_after_threshold():
+            time.sleep(0.3)
+            return "done"
+
+        self.assertEqual(quick_after_threshold(), "done")
+        func_done.set()
+        try:
+            time.sleep(0.6)  # a pending interrupt would land here
+        except KeyboardInterrupt:
+            self.fail("late callback result interrupted the main thread")
+
+    def test_on_long_execution_passes_finished_event_to_callback(self):
+        """A callback that declares ``finished`` receives the completion event,
+        so a blocking prompt can dismiss itself when the operation ends."""
+        seen = {}
+
+        def cb(finished):
+            seen["finished"] = finished
+            return True
+
+        @ExecutionMonitor.on_long_execution(threshold=0.1, callback=cb)
+        def f():
+            time.sleep(0.3)
+
+        f()
+        self.assertIsInstance(seen.get("finished"), threading.Event)
+        self.assertTrue(seen["finished"].is_set())
+
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.show_long_execution_dialog"
+    )
+    def test_execution_monitor_hands_dialog_the_finished_event(self, mock_dialog):
+        """The long-execution dialog is told when the operation finishes."""
+        mock_dialog.return_value = True
+
+        @ExecutionMonitor.execution_monitor(threshold=0.1, message="Testing")
+        def f():
+            time.sleep(0.3)
+
+        f()
+        self.assertIsInstance(
+            mock_dialog.call_args.kwargs.get("finished"), threading.Event
+        )
+
+    def test_show_long_execution_dialog_dismisses_when_finished(self):
+        """The sidecar dialog is terminated once the operation finishes and
+        the answer reports STOP_MONITORING rather than a fabricated choice."""
+        finished = threading.Event()
+        sp = MagicMock()
+        proc = sp.Popen.return_value
+        proc.poll.return_value = None  # dialog still open
+        # The operation ends while the dialog is up (an event set BEFORE the
+        # call is the separate short-circuit: no dialog is launched at all).
+        threading.Timer(0.3, finished.set).start()
+        with patch(f"{self._EM_MOD}.subprocess", sp):
+            result = ExecutionMonitor.show_long_execution_dialog(
+                "Title", "Msg", finished=finished
+            )
+        self.assertEqual(result, "STOP_MONITORING")
+        proc.terminate.assert_called()
+
+    def test_show_long_execution_dialog_skips_when_already_finished(self):
+        """An operation that ended before the prompt gets no prompt at all."""
+        finished = threading.Event()
+        finished.set()
+        with patch(f"{self._EM_MOD}.subprocess") as sp:
+            result = ExecutionMonitor.show_long_execution_dialog(
+                "Title", "Msg", finished=finished
+            )
+        self.assertEqual(result, "STOP_MONITORING")
+        sp.Popen.assert_not_called()
+
+    def test_show_long_execution_dialog_sidecar_first_on_every_platform(self):
+        """The Tk sidecar is the primary dialog on Linux too (the zenity /
+        kdialog paths are fallbacks): a clean exit code is honoured before any
+        native tool is looked up."""
+        with patch("sys.platform", "linux"):
+            with patch("shutil.which", return_value=None) as which:
+                with patch(
+                    f"{self._EM_MOD}.subprocess", self._dialog_subprocess_mock(10)
+                ):
+                    self.assertFalse(
+                        ExecutionMonitor.show_long_execution_dialog("T", "M")
+                    )
+                    which.assert_not_called()
+
+    def test_spawn_watchdog_uses_resolved_interpreter(self):
+        """The watchdog must run under the resolved python, not
+        ``sys.executable``: inside Maya that is ``maya.exe``, and the safety
+        valve for a hung Maya would have launched a second Maya."""
+        fake_proc = MagicMock()
+        fake_proc.poll.return_value = None
+        with tempfile.TemporaryDirectory() as td:
+            hb = os.path.join(td, "hb.txt")
+            with patch.object(
+                ExecutionMonitor, "_interpreter_override", "X:/mayapy.exe"
+            ):
+                with patch("subprocess.Popen", return_value=fake_proc) as popen:
+                    ExecutionMonitor._spawn_watchdog_subprocess(
+                        pid=1234,
+                        heartbeat_path=hb,
+                        timeout=5.0,
+                        check_interval=0.5,
+                        kill_tree=True,
+                    )
+                    self.assertEqual(popen.call_args[0][0][0], "X:/mayapy.exe")
+
+    def test_spawn_watchdog_skipped_without_interpreter(self):
+        """No resolvable python: no watchdog, and the caller is told."""
+        logger = MagicMock()
+        with patch.object(
+            ExecutionMonitor, "_get_python_executable", return_value=None
+        ):
+            with patch("subprocess.Popen") as popen:
+                proc, stop = ExecutionMonitor._spawn_watchdog_subprocess(
+                    pid=1,
+                    heartbeat_path="hb",
+                    timeout=1.0,
+                    check_interval=0.5,
+                    kill_tree=False,
+                    logger=logger,
+                )
+        self.assertIsNone(proc)
+        self.assertIsNone(stop)
+        popen.assert_not_called()
+        logger.warning.assert_called()
+
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
+        return_value=True,
+    )
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
+    )
+    def test_escape_with_scope_keeps_threshold_callback(self, mock_is_escape, _fg):
+        """With a scope, an Esc request must not end monitoring.
+
+        The flag is only a request; an operation with no checkpoint ignores it
+        and keeps running, and the threshold dialog is then the one place the
+        user is told why nothing happened (and offered Force Stop). The old
+        thread exited on the first Esc, so that dialog never came.
+        """
+        mock_is_escape.return_value = True
+        scope = CancelScope("test")
+        callback = MagicMock(return_value=True)
+
+        @ExecutionMonitor.on_long_execution(
+            threshold=0.3,
+            callback=callback,
+            allow_escape_cancel=True,
+            escape_hold_seconds=0,
+            cancel_scope=scope,
+        )
+        def monolith():
+            time.sleep(0.8)  # never reaches a checkpoint
+            return "finished"
+
+        self.assertEqual(monolith(), "finished")
+        self.assertTrue(scope.cancelled)
+        self.assertEqual(scope.reason, "escape")
+        callback.assert_called()
+
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_foreground_process",
+        return_value=True,
+    )
+    @patch(
+        "pythontk.core_utils.execution_monitor._execution_monitor.ExecutionMonitor.is_escape_pressed"
+    )
+    def test_callback_exception_keeps_escape_watch_alive(self, mock_is_escape, _fg):
+        """A failing callback must not take the monitor thread (and the Esc
+        watch) down with it."""
+        fired = threading.Event()
+        scope = CancelScope("test")
+
+        def broken_callback():
+            fired.set()
+            raise RuntimeError("logger sink exploded")
+
+        mock_is_escape.side_effect = lambda: fired.is_set()
+
+        @ExecutionMonitor.on_long_execution(
+            threshold=0.1,
+            callback=broken_callback,
+            allow_escape_cancel=True,
+            escape_hold_seconds=0,
+            cancel_scope=scope,
+        )
+        def func():
+            for _ in range(50):
+                if not scope.tick():
+                    return "cancelled"
+                time.sleep(0.1)
+            return "finished"
+
+        self.assertEqual(func(), "cancelled")
+
+    def test_is_escape_pressed_returns_bool(self):
+        with patch("sys.platform", "win32"):
+            with patch("ctypes.windll.user32.GetAsyncKeyState", return_value=0x8000):
+                self.assertIs(ExecutionMonitor.is_escape_pressed(), True)
+
+
+class TestSidecar(unittest.TestCase):
+    """The out-of-process Tk half (``_sidecar.py``): indicator, dialog, watchdog."""
+
+    @staticmethod
+    def _dead_pid():
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait(timeout=10)
+        return proc.pid
+
+    def test_sidecar_is_self_contained(self):
+        """Runs under any host python: no pythontk import, Tk imported lazily
+        (the watchdog subcommand must work where tkinter is absent)."""
+        import ast
+
+        with open(_SIDECAR, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        top_level = set()
+        for node in tree.body:  # module-level statements only
+            if isinstance(node, ast.Import):
+                top_level.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                top_level.add((node.module or "").split(".")[0])
+        self.assertNotIn("tkinter", top_level, "tkinter must be imported lazily")
+        self.assertNotIn("pythontk", top_level)
+        everywhere = {
+            (n.module or "").split(".")[0]
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ImportFrom)
+        } | {
+            alias.name.split(".")[0]
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Import)
+            for alias in n.names
+        }
+        self.assertNotIn("pythontk", everywhere)
+
+    def test_watchdog_kills_stalled_process(self):
+        """End-to-end: a heartbeat that stops updating gets its owner killed."""
+        with tempfile.TemporaryDirectory() as td:
+            hb = os.path.join(td, "hb.txt")
+            with open(hb, "w", encoding="utf-8") as f:
+                f.write("0")
+            victim = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"]
+            )
+            try:
+                wd = subprocess.Popen(
+                    [
+                        sys.executable,
+                        _SIDECAR,
+                        "watchdog",
+                        str(victim.pid),
+                        hb,
+                        "--timeout=0.5",
+                        "--check-interval=0.1",
+                        f"--stop-file={hb}.stop",
+                    ]
+                )
+                try:
+                    victim.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.fail("watchdog did not kill the stalled process")
+                self.assertEqual(wd.wait(timeout=5), 0)
+            finally:
+                if victim.poll() is None:
+                    victim.kill()
+
+    def test_watchdog_exits_on_stop_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            hb = os.path.join(td, "hb.txt")
+            stop = hb + ".stop"
+            with open(hb, "w", encoding="utf-8") as f:
+                f.write("0")
+            with open(stop, "w", encoding="utf-8") as f:
+                f.write("stop")
+            wd = subprocess.Popen(
+                [
+                    sys.executable,
+                    _SIDECAR,
+                    "watchdog",
+                    str(os.getpid()),
+                    hb,
+                    "--timeout=60",
+                    "--check-interval=0.1",
+                    f"--stop-file={stop}",
+                ]
+            )
+            self.assertEqual(wd.wait(timeout=10), 0)
+
+    @unittest.skipUnless(_HAS_DISPLAY, "Requires a display (headless CI has no GUI)")
+    def test_indicator_exits_when_parent_dies(self):
+        """A borderless topmost overlay has no close button; an orphan left by
+        a host crash could only be removed from the task manager. It watches
+        its parent and closes itself."""
+        proc = subprocess.Popen(
+            [sys.executable, _SIDECAR, "indicator", f"--parent-pid={self._dead_pid()}"],
+            stderr=subprocess.PIPE,
+        )
+        try:
+            _, err = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            self.fail("indicator outlived its (dead) parent")
+        self.assertEqual(proc.returncode, 0, err.decode(errors="replace"))
+
+    @unittest.skipUnless(_HAS_DISPLAY, "Requires a display (headless CI has no GUI)")
+    def test_dialog_exits_when_parent_dies(self):
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                _SIDECAR,
+                "dialog",
+                "T",
+                "M",
+                "--force-label=Force Stop",
+                f"--parent-pid={self._dead_pid()}",
+            ],
+            stderr=subprocess.PIPE,
+        )
+        try:
+            _, err = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            self.fail("dialog outlived its (dead) parent")
+        # Closed by the parent watch == "window closed" (3), i.e. keep waiting.
+        self.assertEqual(proc.returncode, 3, err.decode(errors="replace"))
+
+    @unittest.skipUnless(_HAS_DISPLAY, "Requires a display (headless CI has no GUI)")
+    def test_dialog_window_fits_its_content(self):
+        """The dialog sizes to its message. It used to be a fixed 450x180, and
+        the fullest message (Esc hint + no-checkpoint note + a force button)
+        needs ~244px: Tk's packer then dropped the button row entirely, so
+        the user got a warning with nothing to click."""
+        import importlib.util
+        import tkinter as tk
+
+        spec = importlib.util.spec_from_file_location("_sidecar", _SIDECAR)
+        sidecar = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sidecar)
+
+        message = (
+            "Slot 'tb016' on 'widget' (taking longer than 60.0s...)\n\n"
+            "The operation is not responding.\n"
+            "You can keep waiting or cancel the operation."
+            "\n\nPress and hold Esc at any time to cancel the operation."
+            "\n\nNote: this operation has not reported any cancellable points "
+            "yet, so Cancel will only take effect if and when it reaches one."
+        )
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            sidecar.build_dialog(root, "Title", message, force_label="Force Stop")
+            sidecar.fit_and_center(root)
+            root.update_idletasks()
+            size = root.geometry().split("+")[0]
+            width, height = (int(v) for v in size.split("x"))
+            self.assertGreaterEqual(height, root.winfo_reqheight())
+            self.assertGreaterEqual(width, root.winfo_reqwidth())
+        finally:
+            root.destroy()
+
+
+class TestKillProcessIsBounded(unittest.TestCase):
+    """``kill_process`` must not be able to hang the watchdog that calls it.
+
+    On Windows it shells out to ``taskkill /F`` with ``subprocess.run`` and no
+    timeout. ``run_watchdog`` calls it and returns immediately after, so a
+    ``taskkill`` that never comes back -- an unkillable target stuck in a
+    driver call, a wedged WMI -- leaves the watchdog process alive forever.
+    That is the exact failure the sidecar exists to prevent, in the sidecar.
+    """
+
+    def _kill_process(self):
+        from pythontk.core_utils.execution_monitor import _sidecar
+
+        return _sidecar
+
+    @unittest.skipUnless(sys.platform == "win32", "taskkill path is Windows-only")
+    def test_taskkill_is_given_a_timeout(self):
+        sidecar = self._kill_process()
+        with patch.object(sidecar.subprocess, "run") as run:
+            sidecar.kill_process(4321, tree=True)
+        self.assertEqual(run.call_count, 1)
+        timeout = run.call_args.kwargs.get("timeout")
+        self.assertIsNotNone(timeout, "taskkill was invoked with no timeout")
+        self.assertGreater(timeout, 0)
+        self.assertLessEqual(timeout, 60, "a watchdog kill must be bounded tightly")
+
+    @unittest.skipUnless(sys.platform == "win32", "taskkill path is Windows-only")
+    def test_a_hanging_taskkill_does_not_propagate(self):
+        """``subprocess.run`` kills the child and raises on timeout; the
+        watchdog must absorb that and finish, not die or block."""
+        sidecar = self._kill_process()
+        with patch.object(
+            sidecar.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(cmd="taskkill", timeout=1),
+        ):
+            sidecar.kill_process(4321, tree=True)  # must simply return
+
+    def test_run_watchdog_returns_after_a_kill(self):
+        """End to end: a dead-heartbeat watchdog kills and returns 0 rather
+        than looping or blocking."""
+        sidecar = self._kill_process()
+        calls = []
+        with patch.object(
+            sidecar, "kill_process", side_effect=lambda *a, **k: calls.append(a)
+        ):
+            with patch.object(sidecar, "process_alive", return_value=True):
+                rc = sidecar.run_watchdog(
+                    pid=4321,
+                    heartbeat_path=os.path.join(
+                        tempfile.gettempdir(), "no_such_heartbeat"
+                    ),
+                    timeout=-1,  # already expired
+                    check_interval=0.01,
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(calls), 1)
 
 
 class TestExecutionMonitorPythonExecutable(unittest.TestCase):
@@ -992,6 +1486,9 @@ class TestExecutionMonitorPythonExecutable(unittest.TestCase):
                 mock_exists.side_effect = side_effect
 
                 result = ExecutionMonitor._get_python_executable()
+                if expected_result is None:
+                    self.assertIsNone(result)
+                    return
                 self.assertEqual(
                     result.lower().replace("\\", "/"),
                     expected_result.lower().replace("\\", "/"),
@@ -1027,9 +1524,24 @@ class TestExecutionMonitorPythonExecutable(unittest.TestCase):
         self._test_resolution(exe, {exe, python}, python)
 
     def test_unknown_app_no_python(self):
-        """UnknownApp.exe with no python sibling returns itself (safest fallback)."""
+        """UnknownApp.exe with no python anywhere resolves to None.
+
+        Returning the host binary itself was never usable: the callers hand the
+        result a *python script* to run, so inside a host with no discoverable
+        interpreter (Blender 4.x before ``set_interpreter``) the "spinner" was a
+        second copy of the host application.
+        """
         exe = r"C:\App\UnknownApp.exe"
-        self._test_resolution(exe, {exe}, exe)
+        with patch("sys.prefix", r"C:\App"), patch("sys.base_prefix", r"C:\App"):
+            self._test_resolution(exe, {exe}, None)
+
+    def test_embedded_python_under_sys_prefix(self):
+        """A host binary whose bundled python lives under ``sys.prefix``
+        (Blender: ``<ver>/python/bin/python.exe``) resolves to that python."""
+        exe = r"C:\Blender\blender.exe"
+        python = r"C:\Blender\4.2\python\bin\python.exe"
+        with patch("sys.prefix", r"C:\Blender\4.2\python"):
+            self._test_resolution(exe, {exe, python}, python)
 
     def test_nuke(self):
         """Nuke13.0.exe with a sibling python.exe."""
@@ -1050,14 +1562,14 @@ class TestExecutionMonitorSpinner(unittest.TestCase):
         "Requires a display (headless CI has no GUI)",
     )
     def test_spinner_process_start_stop(self):
-        """Start and stop the spinner process directly."""
-        process = ExecutionMonitor._start_spinner_process()
+        """Start and stop the indicator process directly."""
+        process = ExecutionMonitor._start_indicator_process()
         self.assertIsNotNone(process)
 
         time.sleep(1)
         self.assertIsNone(process.poll())  # still running
 
-        ExecutionMonitor._stop_spinner_process(process)
+        ExecutionMonitor._stop_indicator_process(process)
         self.assertIsNotNone(process.poll())  # stopped
 
     @unittest.skipUnless(
@@ -1067,20 +1579,13 @@ class TestExecutionMonitorSpinner(unittest.TestCase):
     def test_spinner_subprocess_stays_alive(self):
         """The spinner subprocess runs without crashing.
 
-        Launches _spinner.py directly and confirms it stays alive for at
-        least 2 seconds (proves the tkinter mainloop is running).
+        Launches the sidecar indicator directly and confirms it stays alive
+        for at least 2 seconds (proves the tkinter mainloop is running).
         """
-        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        script_path = os.path.join(
-            current_dir,
-            "pythontk",
-            "core_utils",
-            "execution_monitor",
-            "_spinner.py",
-        )
+        script_path = _SIDECAR
 
         if not os.path.exists(script_path):
-            self.skipTest("Spinner script not found")
+            self.skipTest("Sidecar script not found")
 
         executable = ExecutionMonitor._get_python_executable()
         startupinfo = None
@@ -1090,7 +1595,7 @@ class TestExecutionMonitorSpinner(unittest.TestCase):
             startupinfo.wShowWindow = subprocess.SW_HIDE
 
         proc = subprocess.Popen(
-            [executable, script_path],
+            [executable, script_path, "indicator"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             startupinfo=startupinfo,
@@ -1119,20 +1624,13 @@ class TestExecutionMonitorSpinner(unittest.TestCase):
         parsed by argparse as an option flag and exits with code 2 —
         the launcher must use the '=' form.
         """
-        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        script_path = os.path.join(
-            current_dir,
-            "pythontk",
-            "core_utils",
-            "execution_monitor",
-            "_spinner.py",
-        )
+        script_path = _SIDECAR
         if not os.path.exists(script_path):
-            self.skipTest("Spinner script not found")
+            self.skipTest("Sidecar script not found")
 
         executable = ExecutionMonitor._get_python_executable()
         proc = subprocess.Popen(
-            [executable, script_path, "--pos=-100,-200"],
+            [executable, script_path, "indicator", "--pos=-100,-200"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )

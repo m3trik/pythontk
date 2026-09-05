@@ -73,6 +73,8 @@ class ModuleAttributeResolver:
         self.lazy_import = lazy_import
 
         self.imported_modules: Dict[str, ModuleType] = {}
+        #: Parsed trees for the CURRENT build only -- see :meth:`_parse_module`.
+        self._ast_cache: Dict[str, Optional[ast.AST]] = {}
         self.class_to_module: Dict[str, str] = {}
         self.method_to_module: Dict[str, Tuple[str, str]] = {}
         self.submodules: set[str] = set()
@@ -85,7 +87,17 @@ class ModuleAttributeResolver:
         self.class_to_module.clear()
         self.method_to_module.clear()
         self.submodules.clear()
+        # Fresh per build: a rebuild is how ModuleReloader picks up an edited
+        # file, so trees must never survive into the next one.
+        self._ast_cache.clear()
+        try:
+            self._walk_and_register()
+        finally:
+            self._ast_cache.clear()
+        return self
 
+    def _walk_and_register(self) -> None:
+        """The body of :meth:`build`, run with the AST cache live."""
         for _, modname, _ in pkgutil.walk_packages(
             self._package_path, prefix=f"{self.package_name}."
         ):
@@ -137,8 +149,6 @@ class ModuleAttributeResolver:
                 self._register_all_classes(module)
             else:
                 self._register_selected_classes(module, classes)
-
-        return self
 
     def rebuild(
         self, include: Optional[Mapping[str, Union[Sequence[str], str]]] = None
@@ -272,7 +282,27 @@ class ModuleAttributeResolver:
         return True
 
     def _parse_module(self, module_name: str) -> Optional[ast.AST]:
-        """Helper to parse a module file into an AST."""
+        """Parse a module file into an AST, once per build.
+
+        Both ``_is_safe_to_lazy_load`` and ``_scan_module_attributes`` need the
+        tree of any module on the lazy path, so an un-memoized parse read and
+        parsed each of them twice -- measured at 13 calls for 7 modules on
+        pythontk's own bootstrap, which every package here boots through.
+
+        The cache is cleared by :meth:`build` on entry and exit, so a rebuild
+        always re-reads from disk (what ``ModuleReloader`` relies on) and the
+        trees are not retained afterwards. Neither consumer mutates the tree.
+        """
+        if module_name in self._ast_cache:
+            return self._ast_cache[module_name]
+        tree = self._read_module_ast(module_name)
+        self._ast_cache[module_name] = tree
+        return tree
+
+    @staticmethod
+    def _read_module_ast(module_name: str) -> Optional[ast.AST]:
+        """Locate *module_name* on disk and parse it. ``None`` when it cannot
+        be found or read."""
         try:
             loader = pkgutil.get_loader(module_name)
             if not loader or not hasattr(loader, "get_filename"):

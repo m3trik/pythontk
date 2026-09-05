@@ -52,7 +52,12 @@ ShiftAudio = Callable[..., None]
 
 
 class ShotApply:
-    """ShotApply — module namespace."""
+    """Commit a resolved ``MovePlan`` through injected writer callables.
+
+    Walks a plan from :mod:`~pythontk.core_utils.engines.shots.shot_plan`
+    in its predetermined order, calling the writers the host supplies — so
+    the commit order is testable without a DCC.
+    """
 
     @staticmethod
     def apply(

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from PIL import Image
 
 # From this package:
+from pythontk.core_utils.cancel_scope import CancelScope, OperationCancelled
 from pythontk.core_utils.class_property import ClassProperty
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.img_utils._img_utils import ImgUtils
@@ -772,7 +773,8 @@ class MapFactory(LoggingMixin):
     ) -> Dict[str, List[str]]:
         """Gap-fill each texture set with same-base-name siblings from ``directory``.
 
-        For every set, scans ``directory`` for files that resolve to the same base
+        For every set, scans ``directory`` **and its subdirectories** for files
+        that resolve to the same base
         name (honoring ``prefix``/``suffix``) and a recognized map type, then appends
         any whose map type is missing from the set. Provided files always win — an
         existing map slot is never replaced and files already present are not
@@ -794,9 +796,17 @@ class MapFactory(LoggingMixin):
         if not (directory and os.path.isdir(directory)):
             return texture_sets
 
+        # Recursive: the caller hands over a texture ROOT (a Maya project's
+        # ``sourceImages`` rule, say), and that root is routinely one folder
+        # per asset rather than a flat pile. A root-only scan finds nothing in
+        # that layout -- the maps sitting beside the ones already wired are one
+        # level down -- so discovery silently no-ops exactly where it is needed.
+        # Matching stays base-name + map-type, so depth widens the search
+        # without widening what can match.
         dir_files = FileUtils.get_dir_contents(
             directory,
             "filepath",
+            recursive=True,
             inc_files=[f"*.{ext}" for ext in ImgUtils.texture_file_types],
         )
         if not dir_files:
@@ -1129,8 +1139,16 @@ class MapFactory(LoggingMixin):
           unavailable (``extract_missing=False``, missing Pillow, or the packed
           entry is not a readable file), the packed map is kept and its loose
           components retire instead — the lossless direction.
-        - A packed map with **no loose components present** is the sole source
-          of its channels and is kept regardless of workflow.
+        - A packed map with **no loose components at all** is the same case with
+          nothing covered: every channel it carries is extracted and it retires.
+          A preset has to mean the same thing whatever the material happened to
+          start with, and this used to be the one shape that quietly kept the
+          packing — so one material came out packed and its neighbour unpacked
+          purely on whether a stray loose map sat beside it. The lossless
+          fallback above still applies: a packing whose channels cannot be
+          recovered is kept, because dropping it would lose all of them, as is
+          one whose channels the registry does not describe at all and that has
+          no loose component to take the slots over.
 
         Modifies ``sorted_maps`` in place. Values may be file paths or lists of
         paths (both caller shapes are preserved).
@@ -1192,12 +1210,11 @@ class MapFactory(LoggingMixin):
                         drop(redundant, f"superseded by {dominant}")
                 continue
 
-            if not any(r in sorted_maps and sorted_maps[r] for r in redundants):
-                continue  # sole source of its channels — keep it
-
-            # Unpacked workflow with loose components present. Judge coverage
-            # per declared channel: covered when the carried type — or a loose
-            # type a registered conversion derives it from — survives the drop.
+            # Unpacked workflow. Judge coverage per declared channel: covered
+            # when the carried type — or a loose type a registered conversion
+            # derives it from — survives the drop. With no loose components at
+            # all nothing is covered, so this extracts the whole packing, which
+            # is the point: the preset decides the shape, not the input set.
             present = {
                 t
                 for t, v in sorted_maps.items()
@@ -1205,6 +1222,22 @@ class MapFactory(LoggingMixin):
             }
 
             carried = map_def.carried_types() if map_def else []
+            if not (
+                carried or any(r in sorted_maps and sorted_maps[r] for r in redundants)
+            ):
+                # A packing that carries nothing checkable, with no loose
+                # component standing by to take the slots over: coverage cannot
+                # be judged and there is nothing to extract, so the drop below
+                # would be a pure loss. ``MapType.__post_init__`` already
+                # refuses a packing with no ``channels`` at all, which leaves
+                # one shape — every channel marked OPTIONAL, so
+                # ``carried_types()`` skips them all. Rare, and only reachable
+                # through a caller-registered type, but the failure is a map
+                # silently vanishing, and keeping it is this function's standing
+                # answer to "cannot be shown redundant". A packing that carries
+                # real channels needs no guard: they are extracted first.
+                continue
+
             uncovered = [t for t in carried if not cls._channel_covered(t, present)]
 
             if uncovered:
@@ -1497,6 +1530,28 @@ class MapFactory(LoggingMixin):
             )
         return extracted
 
+    @staticmethod
+    def _checkpoint(progress_result: Any = None) -> None:
+        """Cooperative cancel point for the batch loops.
+
+        Raises :class:`~pythontk.OperationCancelled` on either signal: the
+        ambient :class:`~pythontk.CancelScope` -- what a mayatk/blendertk
+        ``@Cancelable`` slot arms -- or a ``progress_callback`` that returned
+        ``False``, the progress-bar ``update()`` contract ``CancelScope.tick``
+        is written to match. ``None`` is deliberately NOT a cancel: a callback
+        that only prints returns it.
+
+        Call this on the thread that owns the scope. The ambient scope is a
+        ``ContextVar``, and a ``ThreadPoolExecutor`` worker starts with an empty
+        context, so a checkpoint inside a submitted task never fires -- the
+        parallel branch checks as it submits and collects instead.
+        """
+        if progress_result is False:
+            raise OperationCancelled(
+                "Texture batch cancelled from the progress callback"
+            )
+        CancelScope.check()
+
     @classmethod
     def prepare_maps(
         cls,
@@ -1518,13 +1573,18 @@ class MapFactory(LoggingMixin):
             output_dir: Optional output directory.
             group_by_set: Whether to automatically group textures into sets (default: True).
                           If False, all input files are treated as a single set.
-            discover_dir: Optional directory to scan for same-base-name sibling
-                          textures that aren't in ``source``. Any whose map type is
+            discover_dir: Optional directory tree to scan for same-base-name
+                          sibling textures that aren't in ``source``. Scanned
+                          RECURSIVELY, so a per-asset subfolder layout is
+                          reached. Any whose map type is
                           missing from a set is pulled in (gap-fill); provided files
                           always win — a present map type is never replaced. Honors
                           ``prefix``/``suffix`` when matching base names.
             max_workers: Number of threads for parallel processing.
-            progress_callback: Optional callback(current, total, message) for reporting progress.
+            progress_callback: Optional callback(current, total, message) for
+                reporting progress. Returning ``False`` cancels the batch --
+                the progress-bar ``update()`` contract; any other return value,
+                ``None`` included, continues.
             **kwargs: Configuration options overriding DEFAULT_CONFIG.
                       Key options:
                       - use_input_fallbacks (bool): Allow generating maps from alternative inputs (e.g. Diffuse -> Base Color).
@@ -1539,6 +1599,13 @@ class MapFactory(LoggingMixin):
         Returns:
             List[str] if a single asset was processed.
             Dict[str, List[str]] if multiple assets were processed (keyed by asset name).
+
+        Raises:
+            OperationCancelled: The ambient :class:`~pythontk.CancelScope` was
+                cancelled, or *progress_callback* returned ``False``. Checked
+                between sets, so the run stops at a set boundary rather than
+                returning a half-finished batch a caller would wire up as
+                complete.
         """
         # Normalize config
         workflow_config = cls.DEFAULT_CONFIG.copy()
@@ -1617,6 +1684,10 @@ class MapFactory(LoggingMixin):
         results = {}
         total_sets = len(texture_sets)
 
+        # Before anything is queued: an already-cancelled scope must not spin
+        # up a pool or touch the first set.
+        cls._checkpoint()
+
         if total_sets > 1:
             if logger:
                 logger.info(f"Found {total_sets} texture sets. Processing batch...")
@@ -1662,18 +1733,34 @@ class MapFactory(LoggingMixin):
                     # Retrieve the original task arguments
                     _, base_name_task, _ = future_to_set[future]
 
-                    if progress_callback:
+                    reported = (
                         progress_callback(
                             completed_count, total_sets, f"Processed {base_name_task}"
                         )
+                        if progress_callback
+                        else None
+                    )
+                    try:
+                        cls._checkpoint(reported)
+                    except OperationCancelled:
+                        # Drop everything still queued before unwinding: the
+                        # executor's __exit__ waits for shutdown, and would
+                        # otherwise run the whole remaining batch anyway.
+                        for pending in future_to_set:
+                            pending.cancel()
+                        raise
 
                     base_name, generated = future.result()
                     if generated:
                         results[base_name] = generated
         else:
             for i, (base_name, textures) in enumerate(texture_sets.items(), 1):
-                if progress_callback:
+                reported = (
                     progress_callback(i, total_sets, f"Processing {base_name}")
+                    if progress_callback
+                    else None
+                )
+                cls._checkpoint(reported)
 
                 if total_sets > 1 and logger:
                     logger.info(f"Processing set {i}/{total_sets}: {base_name}")

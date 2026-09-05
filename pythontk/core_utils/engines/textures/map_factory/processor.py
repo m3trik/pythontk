@@ -6,11 +6,12 @@ Holds the per-set inventory/config plus the cached image IO and save pipeline
 that the workflow handlers operate on. Split out of the monolithic
 ``map_factory`` module.
 
-``MapFactory`` is late-bound by this package's ``__init__`` (see the note there):
-the processor calls MapFactory's stateless conversion primitives at runtime,
-while MapFactory lists the handler classes at class-definition time, so a
-top-level import here would form a cycle.
+``MapFactory`` is resolved at call time through ``_factory()``: the processor
+calls its stateless conversion primitives at runtime, while MapFactory lists
+the handler classes at class-definition time, so a top-level import here
+would form a cycle.
 """
+
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
@@ -33,9 +34,29 @@ from .conversions import ConversionRegistry
 DEFAULT_EXTENSION = "png"  # Default extension for saved maps
 ALPHA_EXTENSION = "png"  # Default extension for maps requiring alpha channel
 
-# Late-bound by the package __init__ to break the runtime import cycle
-# with MapFactory's primitive library.
-MapFactory = None  # type: ignore
+
+def _factory():
+    """Resolve ``MapFactory`` at call time.
+
+    It cannot be imported at module level: ``MapFactory`` names the handler
+    classes at class-definition time, so a top-level import here closes a
+    cycle. The package ``__init__`` used to paper over that by assigning the
+    resolved class onto this module once everything was defined -- an
+    import-time side effect that also left the module wrong on its own, since
+    reloading it alone restored the ``None`` placeholder and every primitive
+    call raised ``AttributeError: 'NoneType' object has no attribute ...``.
+
+    Resolving inside the call is correct however the module was loaded, and
+    ``sys.modules`` makes the repeat cost a dict lookup. It is also the test
+    seam: patch this function to inject a stub factory.
+
+    (A module-level ``__getattr__`` looks like it would do the same job with no
+    call-site change, but PEP 562 covers ``module.attr`` from outside only -- a
+    bare global lookup inside this module raises ``NameError``.)
+    """
+    from ._map_factory import MapFactory
+
+    return MapFactory
 
 
 @dataclass
@@ -101,6 +122,27 @@ class TextureProcessor:
         # Return a copy to avoid mutation issues between consumers
         return self._image_cache[abs_path].copy()
 
+    @staticmethod
+    def _map_type_carries_alpha(map_type: str) -> bool:
+        """Does *map_type*'s registry definition declare an alpha band?
+
+        Alias-tolerant, because callers pass authoring spellings: ``get()``
+        answers None for an alias (``MaskMap``), while
+        ``resolve_type_from_path`` maps it to its canonical type.
+
+        Both signals are consulted, because neither alone is complete:
+        ``Metallic_Smoothness`` declares ``mode="RGBA"``, but ``MSAO`` leaves
+        ``mode`` as None and names its alpha only in ``channels``.
+        """
+        registry = MapRegistry()
+        resolved = registry.resolve_type_from_path(f"{map_type}.png") or map_type
+        map_def = registry.get(resolved)
+        if map_def is None:
+            return False
+        if "A" in (map_def.channels or {}):
+            return True
+        return str(map_def.mode or "").endswith("A")
+
     def save_map(
         self,
         image: Union[str, Any],
@@ -150,14 +192,26 @@ class TextureProcessor:
             else:
                 ext = DEFAULT_EXTENSION  # Fallback for generated images
 
-        # Force PNG for maps requiring alpha if source was JPG
-        if ext.lower() in ["jpg", "jpeg"] and map_type in [
-            "MaskMap",
-            "MSAO",
-            "MRAO",
-            "ORM",
-            "Albedo_Transparency",
-        ]:
+        # Force PNG for maps requiring alpha if source was JPG.
+        #
+        # The hand-written list below is a FLOOR, not the whole rule: it
+        # omitted Metallic_Smoothness, whose alpha carries URP's smoothness,
+        # so a JPG output profile wrote a .jpg that reopens RGB and the
+        # smoothness was gone. Ask the registry instead, and keep the list so
+        # MRAO/ORM (packed, but no alpha band) hold the protection they have
+        # today -- whether every lossy-unsafe map should escalate is a wider
+        # policy question than this rule answers.
+        if ext.lower() in ["jpg", "jpeg"] and (
+            map_type
+            in [
+                "MaskMap",
+                "MSAO",
+                "MRAO",
+                "ORM",
+                "Albedo_Transparency",
+            ]
+            or self._map_type_carries_alpha(map_type)
+        ):
             ext = ALPHA_EXTENSION
 
         # Generate output path (same convention output_path_for exposes)
@@ -206,7 +260,7 @@ class TextureProcessor:
             # Target Info
             max_size = self.config.get("max_size")
             if max_size:
-                if map_type in MapFactory.packed_grayscale_maps:
+                if map_type in _factory().packed_grayscale_maps:
                     scale = self.config.get("mask_map_scale", 1.0)
                     max_size = int(max_size * scale)
                 details.append(f"Limit: {max_size}px")
@@ -246,7 +300,7 @@ class TextureProcessor:
         should_optimize = optimize and allow_resize
 
         max_size = self.config.get("max_size")
-        if max_size and map_type in MapFactory.packed_grayscale_maps:
+        if max_size and map_type in _factory().packed_grayscale_maps:
             scale = self.config.get("mask_map_scale", 1.0)
             max_size = int(max_size * scale)
 
@@ -534,7 +588,7 @@ class TextureProcessor:
             raise ValueError(
                 "Cannot convert Specular to Metallic: Input map is missing"
             )
-        metallic_img = MapFactory.create_metallic_from_spec(specular_path)
+        metallic_img = _factory().create_metallic_from_spec(specular_path)
         if self.logger:
             self.logger.info(
                 "Created metallic from specular", extra={"preset": "highlight"}
@@ -548,7 +602,7 @@ class TextureProcessor:
             raise ValueError(
                 "Cannot convert Smoothness to Roughness: Input map is missing"
             )
-        roughness_img = MapFactory.convert_smoothness_to_roughness(
+        roughness_img = _factory().convert_smoothness_to_roughness(
             smoothness_path, self.output_dir, save=False
         )
         if self.logger:
@@ -564,7 +618,7 @@ class TextureProcessor:
             raise ValueError(
                 "Cannot convert Roughness to Smoothness: Input map is missing"
             )
-        smooth_img = MapFactory.convert_roughness_to_smoothness(
+        smooth_img = _factory().convert_roughness_to_smoothness(
             roughness_path, self.output_dir, save=False
         )
         if self.logger:
@@ -580,7 +634,7 @@ class TextureProcessor:
             raise ValueError(
                 "Cannot convert Specular to Roughness: Input map is missing"
             )
-        rough_img = MapFactory.create_roughness_from_spec(specular_path)
+        rough_img = _factory().create_roughness_from_spec(specular_path)
         if self.logger:
             self.logger.info(
                 "Created roughness from specular", extra={"preset": "highlight"}
@@ -592,7 +646,7 @@ class TextureProcessor:
             raise ValueError(
                 "Cannot convert DirectX Normal to OpenGL: Input map is missing"
             )
-        gl_img = MapFactory.convert_normal_map_format(
+        gl_img = _factory().convert_normal_map_format(
             dx_path, target_format="opengl", save=False
         )
         if self.logger:
@@ -606,7 +660,7 @@ class TextureProcessor:
             raise ValueError(
                 "Cannot convert OpenGL Normal to DirectX: Input map is missing"
             )
-        dx_img = MapFactory.convert_normal_map_format(
+        dx_img = _factory().convert_normal_map_format(
             gl_path, target_format="directx", save=False
         )
         if self.logger:
@@ -620,7 +674,7 @@ class TextureProcessor:
     ) -> "Image.Image":
         if not bump_path:
             raise ValueError("Cannot convert Bump to Normal: Input map is missing")
-        normal_img = MapFactory.convert_bump_to_normal(
+        normal_img = _factory().convert_bump_to_normal(
             bump_path,
             output_format=self.config.get("normal_type", "opengl").lower(),
             save=False,
@@ -638,7 +692,7 @@ class TextureProcessor:
             raise ValueError(
                 "Cannot extract Glossiness from Specular: Input map is missing"
             )
-        gloss_img = MapFactory.extract_gloss_from_spec(specular_path)
+        gloss_img = _factory().extract_gloss_from_spec(specular_path)
         if not gloss_img:
             raise ValueError("Could not extract gloss from specular map")
 
@@ -666,7 +720,7 @@ class TextureProcessor:
         if self.inventory.get("Metallic") and self.inventory.get("Smoothness"):
             return
 
-        metallic_img, smoothness_img = MapFactory.unpack_metallic_smoothness(
+        metallic_img, smoothness_img = _factory().unpack_metallic_smoothness(
             source_path, self.output_dir, optimize=False, save=False
         )
 
@@ -709,7 +763,7 @@ class TextureProcessor:
         ):
             return
 
-        metallic_img, ao_img, smoothness_img = MapFactory.unpack_msao_texture(
+        metallic_img, ao_img, smoothness_img = _factory().unpack_msao_texture(
             source_path, self.output_dir, optimize=False, save=False
         )
 
@@ -766,7 +820,7 @@ class TextureProcessor:
         ):
             return
 
-        metallic_img, roughness_img, ao_img = MapFactory.unpack_mrao_texture(
+        metallic_img, roughness_img, ao_img = _factory().unpack_mrao_texture(
             source_path, self.output_dir, optimize=False, save=False
         )
 
@@ -817,7 +871,7 @@ class TextureProcessor:
         ):
             return
 
-        ao_img, roughness_img, metallic_img = MapFactory.unpack_orm_texture(
+        ao_img, roughness_img, metallic_img = _factory().unpack_orm_texture(
             source_path, self.output_dir, optimize=False, save=False
         )
 
@@ -865,7 +919,7 @@ class TextureProcessor:
         if self.inventory.get("Base_Color") and self.inventory.get("Opacity"):
             return
 
-        base_color_img, opacity_img = MapFactory.unpack_albedo_transparency(
+        base_color_img, opacity_img = _factory().unpack_albedo_transparency(
             source_path, self.output_dir, optimize=False, save=False
         )
 
@@ -947,7 +1001,7 @@ class TextureProcessor:
         if layout == "rgba":
             detail = self.resolve_map("Detail_Mask", "Detail", allow_conversion=False)
 
-        mrao_img = MapFactory.pack_mrao_texture(
+        mrao_img = _factory().pack_mrao_texture(
             metallic_map_path=metallic,
             roughness_map_path=roughness,
             ao_map_path=ao,
@@ -999,7 +1053,7 @@ class TextureProcessor:
         if layout == "rgba":
             detail = self.resolve_map("Detail_Mask", "Detail", allow_conversion=False)
 
-        mask_map = MapFactory.pack_msao_texture(
+        mask_map = _factory().pack_msao_texture(
             metallic_map_path=metallic,
             ao_map_path=ao,
             alpha_map_path=smoothness,
@@ -1037,7 +1091,7 @@ class TextureProcessor:
         if not metallic or not smoothness:
             raise ValueError("Missing components for Metallic-Smoothness map")
 
-        ms_map = MapFactory.pack_smoothness_into_metallic(
+        ms_map = _factory().pack_smoothness_into_metallic(
             metallic_map_path=metallic,
             alpha_map_path=smoothness,
             output_dir=self.output_dir,

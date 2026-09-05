@@ -1,6 +1,9 @@
 # !/usr/bin/python
 # coding=utf-8
 """Regression tests for the MapFactory workflow handlers (Strategy pattern)."""
+
+import ast
+import importlib
 import os
 import tempfile
 import shutil
@@ -18,6 +21,9 @@ from pythontk.core_utils.engines.textures.map_factory import (
     MaskMapHandler,
 )
 from pythontk.core_utils.engines.textures.map_factory import handlers as _handlers_mod
+from pythontk.core_utils.engines.textures.map_factory import (
+    processor as _processor_mod,
+)
 from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
 
@@ -35,9 +41,7 @@ class TestBaseColorHandlerAlbedoTransparencyFailure(unittest.TestCase):
         ImgUtils.save_image(
             ImgUtils.create_image("RGB", (16, 16), (128, 128, 128)), self.base_color
         )
-        ImgUtils.save_image(
-            ImgUtils.create_image("L", (16, 16), 128), self.opacity
-        )
+        ImgUtils.save_image(ImgUtils.create_image("L", (16, 16), 128), self.opacity)
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
@@ -66,13 +70,14 @@ class TestBaseColorHandlerAlbedoTransparencyFailure(unittest.TestCase):
         mock_factory.pack_transparency_into_albedo.side_effect = ValueError(
             "images do not match in size"
         )
-        with patch.object(_handlers_mod, "MapFactory", mock_factory):
+        with patch.object(_handlers_mod, "_factory", lambda: mock_factory):
             result = handler.process(ctx)
 
+        # 0. The seam was actually reached. Without this the test passes just as
+        #    happily when the patch misses and the real primitive succeeds.
+        mock_factory.pack_transparency_into_albedo.assert_called_once()
         # 1. A map is still produced (not dropped entirely).
-        self.assertIsNotNone(
-            result, "handler dropped the map entirely on pack failure"
-        )
+        self.assertIsNotNone(result, "handler dropped the map entirely on pack failure")
         base = os.path.basename(result)
         # 2. It is emitted under the requested Albedo_Transparency slot, NOT
         #    silently renamed to a Base_Color map.
@@ -193,7 +198,9 @@ class TestMissingMapRule(unittest.TestCase):
     def setUp(self):
         import pythontk as ptk
 
-        self._artifacts = ptk.TempArtifacts("handlers_missing_map_rule")
+        self._artifacts = ptk.TempArtifacts(
+            "handlers_missing_map_rule", policy="scoped"
+        )
         self.test_dir = self._artifacts.dir_path()
         self.output_dir = os.path.join(self.test_dir, "output")
         os.makedirs(self.output_dir, exist_ok=True)
@@ -235,9 +242,7 @@ class TestMissingMapRule(unittest.TestCase):
             ),
         ):
             with self.subTest(config=config):
-                self.assertEqual(
-                    MapRegistry.resolve_missing_map_rule(config), expected
-                )
+                self.assertEqual(MapRegistry.resolve_missing_map_rule(config), expected)
 
     def test_multi_sits_between_skip_and_force(self):
         """Two of three channels resolved: only 'skip' refuses to pack."""
@@ -311,7 +316,6 @@ class TestMissingMapRule(unittest.TestCase):
                         f"'force' refused a set with only {map_type}",
                     )
 
-
     def test_mask_map_requires_smoothness_not_just_two_of_three(self):
         """Counting resolved channels hides the ONE unsafe 2-of-3 combination.
 
@@ -365,6 +369,67 @@ class TestMissingMapRule(unittest.TestCase):
                     self._result(MaskMapHandler, dict(inventory)),
                     f"the default rule refused a benign pair ({label})",
                 )
+
+
+class TestNoImportTimeInjection(unittest.TestCase):
+    """The package ``__init__`` used to assign ``MapFactory`` onto its own
+    submodules at import time -- the package's only cross-module attribute
+    assignment, and a direct violation of the no-side-effects-on-import rule.
+
+    The submodules declared ``MapFactory = None`` and relied on that injection,
+    so reloading one on its own put the ``None`` back and every primitive call
+    raised ``AttributeError: 'NoneType' object has no attribute ...``. A full
+    ``ModuleReloader`` run survived it only because the topological sort happens
+    to re-run the parent after its children -- correctness resting on reload
+    order. Each module now resolves the name in ``_factory()`` at call time.
+    """
+
+    SUBMODULES = (_handlers_mod, _processor_mod)
+
+    def test_reloading_a_submodule_alone_keeps_map_factory_resolvable(self):
+        for module in self.SUBMODULES:
+            with self.subTest(module=module.__name__):
+                reloaded = importlib.reload(module)
+                self.assertIs(
+                    reloaded._factory(),
+                    MapFactory,
+                    f"{module.__name__} lost MapFactory after a lone reload",
+                )
+
+    def test_the_package_init_assigns_nothing_onto_its_submodules(self):
+        """Guards the rule itself, not just this symptom: no module-level
+        assignment to an attribute of an imported module."""
+        init = os.path.join(os.path.dirname(_handlers_mod.__file__), "__init__.py")
+        with open(init, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        offenders = [
+            f"{ast.unparse(t)} (line {node.lineno})"
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            for t in node.targets
+            if isinstance(t, ast.Attribute)
+        ]
+        self.assertEqual(offenders, [], f"import-time side effect: {offenders}")
+
+    def test_the_retired_seam_name_cannot_come_back_silently(self):
+        """``MapFactory`` as a module global was the old DI seam, and a stale
+        ``patch.object(module, "MapFactory", ...)`` would now guard nothing.
+        It must stay absent so such a patch raises instead."""
+        for module in self.SUBMODULES:
+            with self.subTest(module=module.__name__):
+                self.assertFalse(hasattr(module, "MapFactory"))
+                with self.assertRaises(AttributeError):
+                    with patch.object(module, "MapFactory", MagicMock()):
+                        pass
+
+    def test_factory_is_the_di_seam(self):
+        """Patching ``_factory`` reaches the handlers, which is what the
+        albedo-transparency regression above relies on."""
+        stub = MagicMock()
+        with patch.object(_handlers_mod, "_factory", lambda: stub):
+            self.assertIs(_handlers_mod._factory(), stub)
+        self.assertIs(_handlers_mod._factory(), MapFactory)
+
 
 if __name__ == "__main__":
     unittest.main()

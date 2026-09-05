@@ -617,6 +617,15 @@ class ShotStore(_ShotStoreInternal):
         self._active_shot_id = shot_id
         self._notify(ActiveShotChanged(shot_id=shot_id))
 
+    def is_empty(self) -> bool:
+        """``True`` when the store declares no shots.
+
+        The scene-persistence adapters ask this before reacting to a scene
+        event (a frame-rate change) so an empty store is never marked dirty
+        and flushed onto a scene that had no store data.
+        """
+        return not self.shots
+
     # ---- observer --------------------------------------------------------
 
     def notify_settings_changed(self) -> None:
@@ -804,6 +813,18 @@ class ShotStore(_ShotStoreInternal):
             cls._invalidation_listeners.remove(callback)
         except ValueError:
             pass
+
+    @classmethod
+    def invalidate(cls) -> None:
+        """Drop the active store (the scene changed) and fire the invalidation listeners.
+
+        The backend keeps its subscriptions; the next :meth:`active` reloads
+        from it.  This is what a scene-persistence adapter calls from its
+        scene-opened job — the same entry point ``KeyStash`` exposes, so one
+        adapter can serve either store.
+        """
+        cls._active = None
+        cls._notify_invalidated()
 
     @classmethod
     def _notify_invalidated(cls) -> None:
@@ -1492,3 +1513,31 @@ class ShotStore(_ShotStoreInternal):
             seen.add(clip)
             specs.append((clip, int(round(shot.start)), int(round(shot.end))))
         return specs
+
+    @classmethod
+    def declared_range(cls, strategy: str = "name") -> Optional[Tuple[int, int]]:
+        """The ``(start, end)`` frames the active store's shots span, or None.
+
+        Read through :meth:`resolve_clip_specs` rather than off ``ShotBlock``
+        directly, so this range and the ``fbx_takes`` an export publishes are
+        rounded by the same code and cannot disagree about a fractional
+        boundary.
+
+        The authority is the STORE, not the published ``data_export`` carrier:
+        an exporter asking "what do the shots span?" is computing a number, and
+        must not stamp a metadata node to find out (the carrier is a
+        projection, and publishing it is a scene mutation the user may have
+        deliberately switched off).
+
+        Returns:
+            The union of every shot, or None when no store is active or it
+            declares no shots -- so a caller can fall back rather than treat an
+            empty scene as the range ``(0, 0)``.
+        """
+        store = cls.active()
+        if store is None:
+            return None
+        specs = cls.resolve_clip_specs(store.sorted_shots(), strategy=strategy)
+        if not specs:
+            return None
+        return min(s for _, s, _ in specs), max(e for _, _, e in specs)

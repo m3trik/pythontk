@@ -1000,14 +1000,16 @@ class ImgUtils(HelpMixin):
         srgb = (colorspace or "sRGB").lower() != "linear"
         encoder.encode(im, name, codec=codec, srgb=srgb, mipmaps=True, quality=quality)
 
-    @staticmethod
-    def _save_high_bit_depth(im: "Image.Image", name: str, bit_depth: int) -> bool:
+    @classmethod
+    def _save_high_bit_depth(cls, im: "Image.Image", name: str, bit_depth: int) -> bool:
         """Write *im* at 16-bit. Returns True when handled, False when the request
         can't be honored (unsupported depth or container) — the caller then falls
         back to an 8-bit save. Either way the degrade is announced, never silent.
 
-        Grayscale uses Pillow's ``I;16``; RGB(A) routes through OpenCV ``uint16``.
-        8-bit sources are promoted (value*257); existing 16-bit data is preserved.
+        Grayscale uses Pillow's ``I;16``; a colour PNG is written by
+        :meth:`_write_png16` (standard library), a colour TIFF through OpenCV
+        ``uint16``. 8-bit sources are promoted (value*257); existing 16-bit
+        data is preserved.
         """
         if bit_depth != 16:  # only 16 is supported here; 32-bit float = EXR/HDR.
             print(
@@ -1028,16 +1030,49 @@ class ImgUtils(HelpMixin):
             Image.fromarray(arr).save(name)  # uint16 array → "I;16" natively
             return True
 
-        # RGB / RGBA — Pillow has no 16-bit colour mode, so use OpenCV uint16.
+        # RGB / RGBA — Pillow has no 16-bit colour mode. A PNG is written with
+        # the standard library (a data map a GPU must not sRGB-decode needs 16
+        # bits on any machine, OpenCV or not); a TIFF through OpenCV uint16.
+        rgb = im.convert("RGBA") if im.mode == "RGBA" else im.convert("RGB")
+        arr = np.asarray(rgb, dtype=np.uint16) * 257
+        if ext == "png":
+            cls._write_png16(arr, name)
+            return True
         try:
             import cv2
         except ImportError:
             return False
-        rgb = im.convert("RGBA") if im.mode == "RGBA" else im.convert("RGB")
-        arr = np.asarray(rgb, dtype=np.uint16) * 257
         code = cv2.COLOR_RGBA2BGRA if rgb.mode == "RGBA" else cv2.COLOR_RGB2BGR
         cv2.imwrite(name, cv2.cvtColor(arr, code))
         return True
+
+    @staticmethod
+    def _write_png16(arr: "np.ndarray", name: str) -> None:
+        """Write a ``(height, width, 3 | 4)`` ``uint16`` array as a 16-bit
+        RGB / RGBA PNG with the standard library alone: one IDAT, filter type
+        0 on every row, big-endian samples as the format requires.
+        """
+        import zlib
+
+        height, width, channels = arr.shape
+        if channels not in (3, 4):
+            raise ValueError(f"_write_png16: {channels} channels; expected 3 or 4.")
+        samples = np.ascontiguousarray(arr, dtype=">u2").view(np.uint8)
+        rows = samples.reshape(height, width * channels * 2)
+        raw = np.concatenate([np.zeros((height, 1), np.uint8), rows], axis=1)
+
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            body = kind + data
+            crc = zlib.crc32(body) & 0xFFFFFFFF
+            return struct.pack(">I", len(data)) + body + struct.pack(">I", crc)
+
+        colour_type = 6 if channels == 4 else 2
+        header = struct.pack(">IIBBBBB", width, height, 16, colour_type, 0, 0, 0)
+        with open(name, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\n")
+            fh.write(chunk(b"IHDR", header))
+            fh.write(chunk(b"IDAT", zlib.compress(raw.tobytes(), 6)))
+            fh.write(chunk(b"IEND", b""))
 
     @staticmethod
     def _save_via_cv2(im: "Image.Image", name: str) -> None:
@@ -1597,7 +1632,7 @@ class ImgUtils(HelpMixin):
     @CoreUtils.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
-    ):
+    ) -> Union[Image.Image, List[Image.Image]]:
         """Create mask(s) from the given image(s).
 
         Parameters:
@@ -2745,8 +2780,10 @@ class ImgUtils(HelpMixin):
         return mask
 
     @staticmethod
-    def _fill_triangle(mask, tri):
-        """Fill a 2D triangle (3x2 float pixel coords) into ``mask`` with 255.
+    def _fill_triangle(mask, tri, value=255):
+        """Fill a 2D triangle (3x2 float pixel coords) into ``mask`` with *value*
+        (255 by default; into a float buffer the value is MAX-composited, so a
+        per-triangle scalar field — a penumbra width — survives overlaps).
 
         Samples at pixel CENTERS and keeps the vertices in floating point.
         Both matter to any caller that reads the downsampled result as a
@@ -2785,7 +2822,10 @@ class ImgUtils(HelpMixin):
         l3 = 1.0 - l1 - l2
         inside = (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
         sub = mask[y0 : y1 + 1, x0 : x1 + 1]
-        sub[inside] = 255
+        if mask.dtype.kind == "f":
+            sub[inside] = np.maximum(sub[inside], value)
+        else:
+            sub[inside] = value
 
     @classmethod
     def _contact_falloff(cls, mask, falloff_source, falloff_power, vertical_weight):
@@ -2899,6 +2939,360 @@ class ImgUtils(HelpMixin):
         result = np.zeros((size, size, 4), dtype=np.uint8)
         result[:, :, 3] = alpha
         return result
+
+    @classmethod
+    def rasterize_height_fields(
+        cls,
+        meshes,
+        *,
+        up: int = 1,
+        size: int = 64,
+        ground: float = 0.0,
+        bounds=None,
+        padding: float = 0.02,
+    ):
+        """Top and bottom height fields of world meshes over their footprint.
+
+        A z-buffer pair: per footprint pixel the highest and the lowest
+        surface height above *ground* (a solid column is ``[z_bot, z_top]``,
+        the hull a horizon-map bake reads — :mod:`pythontk.geo_utils.shadow_horizon`).
+        Rows run along the second horizontal axis and columns along the first
+        (:meth:`ShadowProjection.horizontal_axes`), with no image flip: this is
+        data, indexed ``field[ib, ia]``. Triangles are area-filled at pixel
+        centres and their edges are splatted at half-pixel steps, so a member
+        thinner than a pixel (a chair leg, a diagonal brace) still registers
+        as a one-pixel line instead of vanishing.
+
+        Parameters:
+            meshes: Iterable of ``(points, tris)`` — ``(N, 3)`` points,
+                ``(M, 3)`` vertex-index triangles.
+            up: Vertical axis index.
+            size: Pixels per side over the footprint.
+            ground: Height of the ground plane along *up*; heights are
+                relative to it and clamped at 0 (a surface below the ground
+                cannot block a ground texel).
+            bounds: ``(a0, a1, b0, b1)`` horizontal extent to rasterize; None
+                fits the geometry with *padding*.
+            padding: Margin as a fraction of the larger extent when fitting.
+
+        Returns:
+            ``(z_top, z_bot, mask, bounds)`` — two ``(size, size)`` float32
+            fields (0 where empty), a bool coverage mask, and the bounds used.
+        """
+        from pythontk.geo_utils.shadow_projection import ShadowProjection
+
+        a, b = ShadowProjection.horizontal_axes(up)
+        tris_all = []
+        for pts, tris in meshes:
+            pts = np.asarray(pts, dtype=float).reshape(-1, 3)
+            tris = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
+            if len(pts) and len(tris):
+                tris_all.append(pts[tris])  # (M, 3, 3)
+        size = int(size)
+        empty = (
+            np.zeros((size, size), np.float32),
+            np.zeros((size, size), np.float32),
+            np.zeros((size, size), bool),
+        )
+        if not tris_all:
+            return empty + (
+                (0.0, 1.0, 0.0, 1.0)
+                if bounds is None
+                else tuple(float(v) for v in bounds),
+            )
+        T = np.concatenate(tris_all, axis=0)
+        z = T[:, :, up] - float(ground)
+        # wholly buried triangles block nothing; a face ON the ground (a
+        # box's floor) is what pins the column's bottom to 0 and stays
+        keep = (z >= -1e-9).any(axis=1)
+        T, z = T[keep], np.maximum(z[keep], 0.0)
+        if not len(T):
+            return empty + (
+                (0.0, 1.0, 0.0, 1.0)
+                if bounds is None
+                else tuple(float(v) for v in bounds),
+            )
+        pa, pb = T[:, :, a], T[:, :, b]
+        if bounds is None:
+            lo_a, hi_a, lo_b, hi_b = pa.min(), pa.max(), pb.min(), pb.max()
+            pad = float(padding) * max(hi_a - lo_a, hi_b - lo_b, 1e-3) + 1e-6
+            bounds = (lo_a - pad, hi_a + pad, lo_b - pad, hi_b + pad)
+        a0, a1, b0, b1 = (float(v) for v in bounds)
+        sa, sb = max(a1 - a0, 1e-9), max(b1 - b0, 1e-9)
+        x = (pa - a0) / sa * size  # (M, 3) pixel coords
+        y = (pb - b0) / sb * size
+        z_top = np.full((size, size), -np.inf, dtype=np.float64)
+        z_bot = np.full((size, size), np.inf, dtype=np.float64)
+        # area fill at pixel centres, per triangle
+        for i in range(len(T)):
+            xs, ys, zs = x[i], y[i], z[i]
+            x0, x1 = int(np.floor(xs.min())), int(np.ceil(xs.max()))
+            y0, y1 = int(np.floor(ys.min())), int(np.ceil(ys.max()))
+            x0, y0 = max(x0, 0), max(y0, 0)
+            x1, y1 = min(x1, size - 1), min(y1, size - 1)
+            if x1 < x0 or y1 < y0:
+                continue
+            ax_, ay_ = xs[0], ys[0]
+            bx_, by_ = xs[1], ys[1]
+            cx_, cy_ = xs[2], ys[2]
+            denom = (by_ - cy_) * (ax_ - cx_) + (cx_ - bx_) * (ay_ - cy_)
+            if abs(denom) < 1e-12:
+                continue
+            yy, xx = np.mgrid[y0 : y1 + 1, x0 : x1 + 1]
+            xx = xx + 0.5
+            yy = yy + 0.5
+            l1 = ((by_ - cy_) * (xx - cx_) + (cx_ - bx_) * (yy - cy_)) / denom
+            l2 = ((cy_ - ay_) * (xx - cx_) + (ax_ - cx_) * (yy - cy_)) / denom
+            l3 = 1.0 - l1 - l2
+            inside = (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
+            if not inside.any():
+                continue
+            zz = l1 * zs[0] + l2 * zs[1] + l3 * zs[2]
+            top = z_top[y0 : y1 + 1, x0 : x1 + 1]
+            bot = z_bot[y0 : y1 + 1, x0 : x1 + 1]
+            top[inside] = np.maximum(top[inside], zz[inside])
+            bot[inside] = np.minimum(bot[inside], zz[inside])
+        # edge splat at half-pixel steps, all edges at once
+        e0 = np.concatenate([x[:, [0, 1]], x[:, [1, 2]], x[:, [2, 0]]], axis=0)
+        e1 = np.concatenate([y[:, [0, 1]], y[:, [1, 2]], y[:, [2, 0]]], axis=0)
+        ez = np.concatenate([z[:, [0, 1]], z[:, [1, 2]], z[:, [2, 0]]], axis=0)
+        length = np.hypot(e0[:, 1] - e0[:, 0], e1[:, 1] - e1[:, 0])
+        counts = np.minimum(np.ceil(length * 2.0).astype(int) + 1, 4 * size)
+        total = int(counts.sum())
+        edge_id = np.repeat(np.arange(len(counts)), counts)
+        offsets = np.cumsum(counts) - counts
+        frac = (np.arange(total) - offsets[edge_id]) / np.maximum(
+            counts[edge_id] - 1, 1
+        )
+        sx = e0[edge_id, 0] + (e0[edge_id, 1] - e0[edge_id, 0]) * frac
+        sy = e1[edge_id, 0] + (e1[edge_id, 1] - e1[edge_id, 0]) * frac
+        sz = ez[edge_id, 0] + (ez[edge_id, 1] - ez[edge_id, 0]) * frac
+        ia = np.floor(sx).astype(int)
+        ib = np.floor(sy).astype(int)
+        inb = (ia >= 0) & (ia < size) & (ib >= 0) & (ib < size)
+        np.maximum.at(z_top, (ib[inb], ia[inb]), sz[inb])
+        np.minimum.at(z_bot, (ib[inb], ia[inb]), sz[inb])
+        mask = np.isfinite(z_top) & (z_top > 0.0)
+        z_top = np.where(mask, z_top, 0.0).astype(np.float32)
+        z_bot = np.where(mask, np.maximum(z_bot, 0.0), 0.0).astype(np.float32)
+        return z_top, z_bot, mask, (a0, a1, b0, b1)
+
+    @classmethod
+    def rasterize_shadow(
+        cls,
+        meshes,
+        light=None,
+        ground=0.0,
+        size=512,
+        *,
+        up=1,
+        direction=None,
+        source_size=0.0,
+        max_stretch=None,
+        canvas=None,
+        contact=None,
+        radius=None,
+        height=None,
+        padding=0.04,
+        uniform_alpha=True,
+        falloff_power=0.8,
+        vertical_weight=0.3,
+        blur_amount=1.0,
+    ):
+        """Rasterize the shadow world-space meshes cast onto the ground plane.
+
+        The physically projected successor of :meth:`rasterize_silhouette`: every
+        triangle is mapped onto the ground through the source
+        (:meth:`ShadowProjection.project` — perspective from a position, parallel
+        along a direction) and filled where it lands, so an overhead source
+        draws the footprint, a low one the long stretched shape, and a near one
+        the perspective-grown head. A source with a size draws a penumbra that
+        widens with each point's height above the ground — sharp at the contact,
+        soft at the tip — as a variable-radius blur.
+
+        The texture covers a canvas rectangle in the shadow's ``(u, w)`` frame
+        (``u`` along the bearing away from the light, ``w`` across it; see
+        :class:`ShadowProjection`): rows run from the light-side edge at the
+        top of the saved image to the far edge at the bottom, columns along
+        ``w``. Returned with the :class:`ShadowRaster` that says exactly where
+        that canvas sits, so the caller places its plane on it.
+
+        Parameters:
+            meshes: iterable of ``(points, tris)`` — ``(N,3)`` world points and
+                ``(M,3)`` vertex-index triangles.
+            light: World position of a positional source (ignored with
+                *direction*).
+            ground: Height of the ground plane along the up axis.
+            size: Square texture resolution.
+            up: Index of the vertical axis (Maya 1, Blender 2).
+            direction: Unit direction a directional source shines along.
+            source_size: A positional source's diameter (world units), or a
+                directional source's angular diameter (radians); 0 = a point
+                source, sharp everywhere.
+            max_stretch: Reach cap in object heights
+                (:attr:`ShadowProjection.DEFAULT_MAX_STRETCH`).
+            canvas: ``(u_lo, u_hi, w_lo, w_hi)`` to draw into a given canvas
+                (a baked plane keeps its rect); None fits the canvas to the
+                projected shadow plus its penumbra and *padding*.
+            contact / radius / height: The model's inputs — the base centre,
+                footprint radius and height of the occluder's bounding
+                cylinder. Pass the values the live expression reads (its
+                contact handle, its stamped constants) so the canvas
+                fractions are measured in the frame that will place the
+                plane; None derives them from the meshes' bounds.
+            padding: Margin around a fitted canvas, as a fraction of its
+                larger extent.
+            uniform_alpha: Physically flat shadow (the default). False adds the
+                stylised contact falloff (alpha fading from the footprint to
+                the tip, shaped by *falloff_power* / *vertical_weight*).
+            blur_amount: Edge anti-aliasing blur (pixels) applied before the
+                penumbra.
+
+        Returns:
+            ``(rgba, raster)`` — a ``(size, size, 4)`` uint8 array (black RGB,
+            shadow in alpha) and the :class:`ShadowRaster` it was drawn into.
+        """
+        from pythontk.geo_utils.shadow_projection import (
+            ShadowProjection,
+            ShadowRaster,
+        )
+
+        meshes = [
+            (
+                np.asarray(p, dtype=float).reshape(-1, 3),
+                np.asarray(t, dtype=np.int64).reshape(-1, 3),
+            )
+            for p, t in meshes
+            if len(p) and len(t)
+        ]
+        if not meshes:
+            raise ValueError("rasterize_shadow: no geometry provided.")
+        size = int(size)
+        a, b = ShadowProjection.horizontal_axes(up)
+        if contact is None or radius is None or height is None:
+            all_pts = np.concatenate([p for p, _ in meshes], axis=0)
+            mn, mx = all_pts.min(axis=0), all_pts.max(axis=0)
+            if contact is None:
+                contact = np.zeros(3)
+                contact[a], contact[b] = 0.5 * (mn[a] + mx[a]), 0.5 * (mn[b] + mx[b])
+                contact[up] = mn[up]
+            if radius is None:
+                radius = 0.5 * math.hypot(mx[a] - mn[a], mx[b] - mn[b])
+            if height is None:
+                height = mx[up] - mn[up]
+        contact = np.asarray(contact, dtype=float).reshape(3)
+        radius = max(float(radius), 1e-3)
+        height = max(float(height), 1e-3)
+        model = ShadowProjection.model(
+            contact,
+            light,
+            ground,
+            radius,
+            height,
+            up=up,
+            direction=direction,
+            max_stretch=max_stretch,
+        )
+        stretch = (
+            ShadowProjection.DEFAULT_MAX_STRETCH if max_stretch is None else max_stretch
+        )
+        slide = math.hypot(model.anchor[0] - contact[a], model.anchor[1] - contact[b])
+        max_len = stretch * height + slide
+
+        projected = []  # (uw, penumbra widths, tris)
+        for pts, tris in meshes:
+            res = ShadowProjection.project(
+                pts, light, ground, up=up, direction=direction, max_length=max_len
+            )
+            if res is None:
+                projected = []
+                break
+            uw = ShadowProjection.to_frame(res[0], model)
+            # A point level with the source spreads without bound; the
+            # penumbra can never usefully exceed the reach cap.
+            widths = np.minimum(float(source_size) * res[1], max_len)
+            projected.append((uw, widths, tris))
+
+        if canvas is not None:
+            rect = tuple(float(v) for v in canvas)
+        elif projected:
+            all_uw = np.concatenate([uw for uw, _, _ in projected], axis=0)
+            pen = max(float(w.max()) for _, w, _ in projected)
+            lo, hi = all_uw.min(axis=0), all_uw.max(axis=0)
+            pad = float(padding) * max(hi[0] - lo[0], hi[1] - lo[1], 1e-3) + 0.5 * pen
+            rect = (lo[0] - pad, hi[0] + pad, lo[1] - pad, hi[1] + pad)
+        else:  # nothing cast — the model's own rect, fully transparent
+            rect = model.rect((-1.0, 1.0, -0.5, 0.5))
+        u_lo, u_hi, w_lo, w_hi = rect
+        du, dw = max(u_hi - u_lo, 1e-9), max(w_hi - w_lo, 1e-9)
+
+        # Pre-flip orientation (the light-side edge at the BOTTOM row, as
+        # rasterize_silhouette's contact row): rows run far -> near.
+        mask = np.zeros((size, size), dtype=np.uint8)
+        soft = np.zeros((size, size), dtype=np.float32)  # penumbra sigma, px
+        px_per_unit = size / (0.5 * (du + dw))
+        pen_max = 0.0
+        for uw, widths, tris in projected:
+            cols = (uw[:, 1] - w_lo) / dw * size
+            rows = (1.0 - (uw[:, 0] - u_lo) / du) * size
+            proj = np.stack([cols, rows], axis=1)
+            sigma = widths * px_per_unit * 0.25  # a step blurs over ~4 sigma
+            pen_max = max(pen_max, float(widths.max()))
+            for tri in tris:
+                cls._fill_triangle(mask, proj[tri])
+                if sigma[tri].max() > 0.0:
+                    cls._fill_triangle(soft, proj[tri], float(sigma[tri].mean()))
+
+        base = mask
+        if blur_amount and blur_amount > 0:
+            base = cls.gaussian_blur(base, radius=blur_amount)
+        s_max = float(soft.max())
+        if s_max >= 0.5:
+            base = cls._variable_blur(base, mask, soft, s_max)
+
+        alpha = base.astype(np.float32) / 255.0
+        if not uniform_alpha:
+            # The footprint centre (the frame origin) in saved-image coords:
+            # rows there run near -> far, so the origin's row is measured
+            # from the near edge.
+            origin = ((0.0 - w_lo) / dw, (0.0 - u_lo) / du)
+            alpha *= cls._contact_falloff(mask, origin, falloff_power, vertical_weight)
+        result = np.zeros((size, size, 4), dtype=np.uint8)
+        result[:, :, 3] = np.flipud(np.clip(alpha * 255.0, 0, 255).astype(np.uint8))
+        raster = ShadowRaster(
+            model=model,
+            rect=rect,
+            fractions=ShadowProjection.fractions(rect, model),
+            penumbra=pen_max,
+        )
+        return result, raster
+
+    @classmethod
+    def _variable_blur(cls, base, mask, sigma, s_max, levels=(0.125, 0.25, 0.5, 1.0)):
+        """Blur *base* by the per-pixel *sigma* field (pixels), as a blend
+        between a few uniformly blurred levels. *sigma* is defined inside
+        *mask* only; it is carried past the edge by a normalized convolution
+        so the blur reaches as far out as the penumbra does."""
+        m = (mask > 0).astype(np.uint8) * 255
+        q = np.clip(sigma / s_max * 255.0, 0, 255).astype(np.uint8)
+        reach = max(s_max, 1.0)
+        num = cls.gaussian_blur(q, radius=reach).astype(np.float32)
+        den = cls.gaussian_blur(m, radius=reach).astype(np.float32)
+        field = np.where(den > 1.0, num / np.maximum(den, 1.0) * s_max, 0.0)
+        field = np.clip(field, 0.0, s_max)
+        radii = [0.0] + [s_max * f for f in levels]
+        stack = [base.astype(np.float32)] + [
+            cls.gaussian_blur(base, radius=r).astype(np.float32) for r in radii[1:]
+        ]
+        out = stack[0].copy()
+        for i in range(len(radii) - 1):
+            lo, hi = radii[i], radii[i + 1]
+            sel = (field >= lo) & (field <= hi)
+            if not sel.any():
+                continue
+            t = (field[sel] - lo) / max(hi - lo, 1e-9)
+            out[sel] = stack[i][sel] * (1.0 - t) + stack[i + 1][sel] * t
+        return np.clip(out + 0.5, 0, 255).astype(np.uint8)
 
     @classmethod
     def convert_rgb_to_gray(cls, data):

@@ -37,6 +37,31 @@ class Placeholder:
         return f"<Placeholder for {self.class_type.__name__}>"
 
 
+class _StrongRef:
+    """A callable that stands in for a ``weakref.ref`` inside a
+    ``WeakValueDictionary``'s backing store.
+
+    ``str``, ``int``, ``tuple`` and friends cannot be weak-referenced, and a
+    namespace of settings is full of them. The write paths used to catch that
+    ``TypeError`` and put the bare value into ``.data`` -- but every read in
+    ``WeakValueDictionary`` CALLS what it finds there, so a single such write
+    made the whole mapping raise ``'str' object is not callable``.
+
+    Storing this instead keeps the container's contract intact: it is callable
+    and returns the referent, so lookup, ``in``, ``keys()``, iteration and
+    ``pop`` all behave. The referent is held strongly -- which is the point,
+    since there is nothing else keeping it alive -- and released with its key.
+    """
+
+    __slots__ = ("_value",)
+
+    def __init__(self, value: Any):
+        self._value = value
+
+    def __call__(self) -> Any:
+        return self._value
+
+
 class NamespaceHandler(LoggingMixin):
     """A NamespaceHandler that manages its own internal dictionary without attaching
     attributes directly to the owner object.
@@ -155,13 +180,25 @@ class NamespaceHandler(LoggingMixin):
 
         self._placeholders.pop(name, None)
 
-        if self._use_weakref:
-            try:
-                self._attributes[name] = value
-            except TypeError:
-                self._attributes.data[name] = value
-        else:
-            self._attributes[name] = value
+        self._store(self._attributes, name, value)
+
+    def _store(self, attributes, key: str, value: Any) -> None:
+        """Write *value* into *attributes*, honouring the weakref policy.
+
+        The single place that knows what to do when a value cannot be weakly
+        referenced; the three call sites used to carry byte-identical copies
+        of this, and all three copies corrupted the backing store.
+        """
+        if not self._use_weakref:
+            attributes[key] = value
+            return
+        try:
+            attributes[key] = value
+        except TypeError:
+            attributes.data[key] = _StrongRef(value)
+            self.logger.debug(
+                f"[{self._identifier}] Not weakref-able, stored strong ref for: {key}"
+            )
 
     def __getitem__(self, key: str, resolve_placeholders: bool = True) -> Any:
         if key in self._attributes:
@@ -182,13 +219,7 @@ class NamespaceHandler(LoggingMixin):
 
         self._placeholders.pop(key, None)  # Clean up any previous placeholder
 
-        if self._use_weakref:
-            try:
-                self._attributes[key] = value
-            except TypeError:
-                self._attributes.data[key] = value
-        else:
-            self._attributes[key] = value
+        self._store(self._attributes, key, value)
 
     def __delitem__(self, key: str):
         self._attributes.pop(key, None)
@@ -293,16 +324,7 @@ class NamespaceHandler(LoggingMixin):
             if resolver:
                 resolved = resolver(key)
                 if resolved is not None:
-                    if self._use_weakref:
-                        try:
-                            attributes[key] = resolved
-                        except TypeError:
-                            attributes.data[key] = resolved
-                            self.logger.debug(
-                                f"[{self._identifier}] Not weakref-able, stored strong ref for: {key}"
-                            )
-                    else:
-                        attributes[key] = resolved
+                    self._store(attributes, key, resolved)
                     return resolved
         finally:
             if hasattr(self, guard_key):

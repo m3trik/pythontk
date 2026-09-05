@@ -399,16 +399,20 @@ class MathUtils(HelpMixin):
             MathUtils.max_axis_skew([(1, 0, 0), (0, 2, 0), (0, 0, 0.5)])  -> 0.0
             MathUtils.max_axis_skew([(1, 0, 0), (0.5, 1, 0), (0, 0, 1)])  # sheared > 0
         """
-        vectors = [tuple(axis) for axis in axes]
-        lengths = [math.sqrt(sum(c * c for c in v)) for v in vectors]
-        if any(length < degenerate_length for length in lengths):
+        # Unrolled on purpose: this runs once per node per sampled frame in
+        # the DCC shear scans (6000+ calls per scene-export pass), where the
+        # generator-and-zip form cost 0.04 ms a call -- a quarter second of
+        # pure Python per scan.
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = (tuple(axis) for axis in axes)
+        la = math.sqrt(ax * ax + ay * ay + az * az)
+        lb = math.sqrt(bx * bx + by * by + bz * bz)
+        lc = math.sqrt(cx * cx + cy * cy + cz * cz)
+        if la < degenerate_length or lb < degenerate_length or lc < degenerate_length:
             return 0.0
         return max(
-            abs(
-                sum(a * b for a, b in zip(vectors[i], vectors[j]))
-                / (lengths[i] * lengths[j])
-            )
-            for i, j in ((0, 1), (0, 2), (1, 2))
+            abs((ax * bx + ay * by + az * bz) / (la * lb)),
+            abs((ax * cx + ay * cy + az * cz) / (la * lc)),
+            abs((bx * cx + by * cy + bz * cz) / (lb * lc)),
         )
 
     @staticmethod
@@ -877,8 +881,8 @@ class MathUtils(HelpMixin):
             return (centers[0] + centers[1]) / 2.0
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
-    def move_decimal_point(num, places):
+    @CoreUtils.listify
+    def move_decimal_point(num, places) -> Union[float, List[float]]:
         """Move the decimal place in a given number.
 
         Parameters:
@@ -922,8 +926,8 @@ class MathUtils(HelpMixin):
         return (b[0] - a[0], b[1] - a[1], b[2] - a[2])
 
     @staticmethod
-    @CoreUtils.listify(threading=True)
-    def clamp(n=0.0, minimum=0.0, maximum=1.0):
+    @CoreUtils.listify
+    def clamp(n=0.0, minimum=0.0, maximum=1.0) -> Union[float, List[float]]:
         """Clamps the value x between min and max.
 
         Parameters:
@@ -1098,17 +1102,17 @@ class MathUtils(HelpMixin):
         x, y, z = p
 
         if v is not None:  # move along a vector if one is given.
-            assert isinstance(
-                d, (float, int)
-            ), "# Error: {}\n  The distance parameter requires an integer or float value when moving along a vector.\n  {} {} given. #".format(
-                __file__, type(d), d
+            assert isinstance(d, (float, int)), (
+                "# Error: {}\n  The distance parameter requires an integer or float value when moving along a vector.\n  {} {} given. #".format(
+                    __file__, type(d), d
+                )
             )
             dx, dy, dz = cls.normalize(v, d)
         else:
-            assert isinstance(
-                d, (list, tuple, set)
-            ), "# Error: {}\n  The distance parameter requires an list, tuple, set value when not moving along a vector.\n  {} {} given. #".format(
-                __file__, type(d), d
+            assert isinstance(d, (list, tuple, set)), (
+                "# Error: {}\n  The distance parameter requires an list, tuple, set value when not moving along a vector.\n  {} {} given. #".format(
+                    __file__, type(d), d
+                )
             )
             dx, dy, dz = d
 
@@ -1243,7 +1247,9 @@ class MathUtils(HelpMixin):
         scalar = sum(
             (aa * bb for aa, bb in zip(ba, bc))
         )  # get scalar from normalized vectors
-        scalar = max(-1.0, min(1.0, scalar))  # guard float rounding past +-1 (collinear)
+        scalar = max(
+            -1.0, min(1.0, scalar)
+        )  # guard float rounding past +-1 (collinear)
 
         angle = acos(scalar)  # get the angle in radian
 
@@ -1475,11 +1481,7 @@ class MathUtils(HelpMixin):
         interior = [
             sum(stations[j : j + degree]) / degree for j in range(1, n - degree)
         ]
-        return (
-            [stations[0]] * (degree + 1)
-            + interior
-            + [stations[-1]] * (degree + 1)
-        )
+        return [stations[0]] * (degree + 1) + interior + [stations[-1]] * (degree + 1)
 
     @staticmethod
     def bspline_basis(
@@ -2109,7 +2111,7 @@ class MathUtils(HelpMixin):
         that will survive (see :meth:`IterUtils.find_extrema_indices`), solve
         one slope per kept key (value per time unit) by least squares
         against every dropped sample.  This is the tangent-restoration half
-        of an "unbake": the result is what a hand-keyed curve through the
+        of a reduce-to-extremes pass: the result is what a hand-keyed curve through the
         kept keys would need to trace the baked motion.
 
         A segment whose samples all sit within *flat_tolerance* of its start

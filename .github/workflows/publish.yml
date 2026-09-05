@@ -64,6 +64,11 @@ jobs:
       - name: Build
         if: steps.version.outputs.publish == 'true'
         run: |
+          # Start from a clean tree. setuptools reuses a stale build/lib and
+          # *.egg-info from an earlier run, so a file deleted since then can
+          # still be copied into the wheel -- reproduced as a poisoned wheel
+          # that passed every other check.
+          rm -rf dist build *.egg-info
           python -m build --wheel
           python -m twine check dist/*
       
@@ -76,15 +81,43 @@ jobs:
         # short on 2026-08-13 — the simple index lagged past it and the
         # chain aborted on "No matching distribution found").
         run: |
+          installed=false
           for attempt in 1 2 3 4 5 6 7 8; do
-            if pip install dist/*.whl; then exit 0; fi
+            if pip install dist/*.whl; then installed=true; break; fi
             if [ "$attempt" -lt 8 ]; then
               echo "Install attempt $attempt failed; retrying in 30s (index propagation lag?)"
               sleep 30
             fi
           done
-          echo "::error::Wheel install (with dependencies) failed"
-          exit 1
+          if [ "$installed" != true ]; then
+            echo "::error::Wheel install (with dependencies) failed"
+            exit 1
+          fi
+          # Installing only proves the pins RESOLVE. Import the installed
+          # wheel too, from a directory with no pythontk source in it -- run
+          # from the checkout, the repo would shadow the install and the
+          # check would pass on source that was never packaged. Four runtime
+          # data files resolve relative to __file__ and two of them degrade
+          # silently when missing, so the import also asserts they shipped.
+          cd "$RUNNER_TEMP"
+          python -c "
+          import pythontk, os
+          print('imported pythontk', pythontk.__version__, 'from', pythontk.__file__)
+          root = os.path.dirname(pythontk.__file__)
+          shipped = {
+              os.path.relpath(os.path.join(d, f), root).replace(os.sep, '/')
+              for d, _, fs in os.walk(root) for f in fs
+              if not f.endswith(('.py', '.pyc'))
+          }
+          missing = {
+              'core_utils/engines/shots/manifest/mapping/default.json',
+              'core_utils/execution_monitor/task_indicator.gif',
+              'geo_utils/shadow_horizon.glsl',
+              'net_utils/preview/viewer.html',
+          } - shipped
+          assert not missing, f'wheel is missing runtime data files: {sorted(missing)}'
+          print(f'{len(shipped)} non-.py data file(s) present in the wheel')
+          "
 
       - name: Publish
         if: steps.version.outputs.publish == 'true' && inputs.dry_run != true

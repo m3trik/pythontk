@@ -8,7 +8,8 @@ import os
 import tempfile
 import shutil
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+import pythontk as ptk
 from pythontk import ImgUtils
 from pythontk.core_utils.engines.textures.map_factory import (
     MapFactory,
@@ -326,6 +327,43 @@ class TestMapFactoryRefactored(unittest.TestCase):
         self.assertEqual(
             sum(1 for p in result[base] if "BaseColor" in os.path.basename(p)), 1
         )
+
+    def test_supplement_finds_siblings_in_a_subdirectory(self):
+        """Gap-fill reaches maps in a SUBDIRECTORY of the scan root.
+
+        Regression: a Maya project's ``sourceimages`` is routinely organized as
+        one folder per asset, and the tool that opts into discovery hands over
+        the ``sourceImages`` rule -- the ROOT. A root-only scan found nothing
+        in that layout, so a material whose Metallic/Roughness sat one level
+        down kept whatever was already wired (a stale packed map) instead of
+        converting to the preset's loose maps.
+        """
+        root = os.path.join(self.test_dir, "discover_nested")
+        nested = os.path.join(root, "gadget")
+        os.makedirs(nested, exist_ok=True)
+        try:
+            for fn, mode, color in [
+                ("gadget_BaseColor.png", "RGB", (128, 128, 128)),
+                ("gadget_Roughness.png", "L", 128),
+                ("gadget_Metallic.png", "L", 32),
+            ]:
+                ImgUtils.save_image(
+                    ImgUtils.create_image(mode, (8, 8), color),
+                    os.path.join(nested, fn),
+                )
+
+            base_color = os.path.join(nested, "gadget_BaseColor.png")
+            sets = {MapFactory.get_base_texture_name(base_color): [base_color]}
+            # The ROOT is what gets passed, not the folder the files live in.
+            result = MapFactory._supplement_sets_from_dir(sets, root)
+
+            types = {
+                MapFactory.resolve_map_type(p) for p in next(iter(result.values()))
+            }
+            self.assertIn("Roughness", types)
+            self.assertIn("Metallic", types)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def test_supplement_does_not_replace_present_type(self):
         """A connected map slot is never replaced by a same-type sibling on disk."""
@@ -1051,6 +1089,56 @@ class TestTextureProcessorLogic(unittest.TestCase):
             path = context.save_map(img, "Roughness")
             self.assertTrue(path.endswith("_Roughness.png"))
 
+    def test_packed_alpha_map_never_lands_in_a_jpg_container(self):
+        """A JPEG cannot carry alpha, so a packed map whose alpha IS a
+        material input must escalate to PNG.
+
+        ``Metallic_Smoothness`` declares ``mode="RGBA"``, ``is_packed=True``
+        and ``channels={"RGB": "Metallic", "A": "Smoothness"}`` -- URP reads
+        smoothness out of that alpha. The escalation was driven by a
+        hand-written five-name list that omitted it, so choosing JPG wrote a
+        .jpg that reopens RGB and the smoothness was simply gone.
+        ``ImgUtils.dropped_channels`` names this exact failure in its own
+        docstring. ``MaskMap`` is here as an alias that must keep resolving,
+        and ``MSAO`` / ``Albedo_Transparency`` guard the types the old list
+        already covered.
+
+        ``Emissive_Mask`` is pinned deliberately: it declares ``mode="RGBA"``
+        without any packed-channel semantics, so the registry-derived rule
+        escalates it too. That is a SECOND behaviour change beyond the
+        reported defect and it is correct -- JPEG drops its alpha the same
+        way -- but it is listed here so it stays intentional rather than
+        emergent. Measured: these two are the only types the derived rule
+        adds over the old hand-written list.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            context = TextureProcessor(
+                inventory={},
+                config={"dry_run": True},
+                output_dir=tmp,
+                base_name="test",
+                ext="jpg",
+                conversion_registry=ConversionRegistry(),
+                logger=None,
+            )
+            img = ImgUtils.create_image("RGBA", (8, 8), (128, 128, 128, 255))
+            for key in (
+                "Metallic_Smoothness",
+                "Emissive_Mask",
+                "Albedo_Transparency",
+                "MSAO",
+                "MaskMap",
+            ):
+                with self.subTest(map_type=key):
+                    path = context.save_map(img, key)
+                    self.assertTrue(
+                        path.lower().endswith(".png"),
+                        f"{key} was written to a container that drops its "
+                        f"alpha: {path}",
+                    )
+
     def test_normal_map_orientation_convention(self):
         """Regression: convert_bump_to_normal produced DirectX orientation
         under the 'opengl' label (green = -row-derivative instead of +),
@@ -1106,11 +1194,16 @@ class TestTextureProcessorLogic(unittest.TestCase):
             "imgtk_test",
             "im_Normal_OpenGL.png",
         )
-        if os.path.exists(asset):
-            self.assertEqual(
-                MapFactory.detect_normal_map_format(asset, threshold=0.15),
-                "OpenGL",
-            )
+        # NOT guarded by os.path.exists: this is the only reference to
+        # test/test_assets/ anywhere in the suite, and behind that guard the
+        # test reported green with the fixture deleted -- a zero-sample pass
+        # on the one assertion that reads a real bake rather than a generated
+        # hemisphere. A missing fixture must fail loudly.
+        self.assertTrue(os.path.exists(asset), f"missing test fixture: {asset}")
+        self.assertEqual(
+            MapFactory.detect_normal_map_format(asset, threshold=0.15),
+            "OpenGL",
+        )
 
     def test_fine_detail_survives_the_downsample_shortcut(self):
         """A low-amplitude, high-frequency map must not read as indeterminate.
@@ -1356,6 +1449,171 @@ class TestArchiveSupersededOriginals(unittest.TestCase):
 
         self.assertIn("mat_Base_Color.png", self._names())
         self.assertTrue(all(os.path.isfile(p) for p in result))
+
+
+class TestMapFactoryCancellation(unittest.TestCase):
+    """``prepare_maps`` had no cancel checkpoint in either batch branch.
+
+    mayatk's material updater runs it under ``@Cancelable(300)``, and every
+    live caller leaves ``max_workers`` at 1, so a cancelled scope was simply
+    never observed: the user held Esc, ``execution_monitor`` set the flag, and
+    the batch ground through every remaining texture set. ``OperationCancelled``
+    already derives from ``BaseException`` precisely so it slips past the loop's
+    ``except Exception`` handlers -- nothing was raising it.
+    """
+
+    SETS = 6
+
+    def setUp(self):
+        self.processed = []
+        self.files = [f"asset_{i}_Base_color.png" for i in range(self.SETS)]
+
+    def _stub(self, on_set=None):
+        """Patch the per-set worker out, recording each call.
+
+        *on_set* runs after each recorded set, so a test can cancel mid-batch;
+        the record lives on ``self`` so an ``OperationCancelled`` unwinding the
+        batch does not take the count with it.
+        """
+
+        def fake(textures, config, output_dir=None, logger=None):
+            self.processed.append(textures[0])
+            if on_set is not None:
+                on_set(len(self.processed))
+            return list(textures)
+
+        return patch.object(MapFactory, "_process_map_set", side_effect=fake)
+
+    def test_serial_batch_stops_at_the_next_set_after_cancel(self):
+        """The branch every live caller takes: ``max_workers`` defaults to 1."""
+        with ptk.CancelScope(name="batch") as scope:
+            stop = lambda n: scope.cancel("Esc") if n >= 2 else None  # noqa: E731
+            with self._stub(on_set=stop):
+                with self.assertRaises(ptk.OperationCancelled):
+                    MapFactory.prepare_maps(self.files)
+        self.assertEqual(len(self.processed), 2, "batch ran past the cancel")
+
+    def test_a_scope_cancelled_up_front_does_no_work_at_all(self):
+        with ptk.CancelScope(name="batch") as scope:
+            scope.cancel("Esc")
+            with self._stub():
+                with self.assertRaises(ptk.OperationCancelled):
+                    MapFactory.prepare_maps(self.files)
+        self.assertEqual(self.processed, [])
+
+    def test_parallel_batch_honors_cancel_on_the_collecting_thread(self):
+        """The ambient scope is a ``ContextVar``, so a pool worker starts with
+        an empty context and never sees it -- the checkpoint has to live on the
+        thread that submits and collects, not inside the submitted task."""
+        with ptk.CancelScope(name="batch") as scope:
+            scope.cancel("Esc")
+            with self._stub():
+                with self.assertRaises(ptk.OperationCancelled):
+                    MapFactory.prepare_maps(self.files, max_workers=4)
+        self.assertLess(len(self.processed), self.SETS)
+
+    def test_no_active_scope_leaves_the_batch_untouched(self):
+        """The checkpoint is a no-op when nothing is monitoring."""
+        self.assertIsNone(ptk.CancelScope.current())
+        with self._stub():
+            result = MapFactory.prepare_maps(self.files)
+        self.assertEqual(len(self.processed), self.SETS)
+        self.assertEqual(len(result), self.SETS)
+
+    def test_progress_callback_returning_false_cancels(self):
+        """``CancelScope.tick`` is written to match the progress-bar
+        ``update()`` contract, and ``Cancelable`` documents progress reporting
+        as the free checkpoint; the return value was discarded."""
+        calls = []
+
+        def progress(current, total, message):
+            calls.append(current)
+            return len(calls) < 3  # False from the third call on
+
+        with self._stub():
+            with self.assertRaises(ptk.OperationCancelled):
+                MapFactory.prepare_maps(self.files, progress_callback=progress)
+        self.assertLess(len(self.processed), self.SETS)
+
+    def test_a_progress_callback_returning_none_is_not_a_cancel(self):
+        """A plain callback that only prints returns ``None``; treating that as
+        a cancel would break every existing caller."""
+        seen = []
+
+        def progress(current, total, message):
+            seen.append(current)  # returns None
+
+        with self._stub():
+            MapFactory.prepare_maps(self.files, progress_callback=progress)
+        self.assertEqual(len(self.processed), self.SETS)
+        self.assertEqual(len(seen), self.SETS)
+
+
+class TestConversionPluginSeam(unittest.TestCase):
+    """``ConversionRegistry`` carried two registration protocols, and only one
+    of them could ever run.
+
+    ``_scan_pending`` preferred ``cls.register_conversions(registry)`` and fell
+    back to ``register_from_class``, which scans members for a
+    ``_conversion_info`` attribute. Nothing in any of the seven ecosystem
+    packages sets ``_conversion_info`` -- there is no decorator that produces
+    it -- and the one registered plugin (``MapFactory``) defines
+    ``register_conversions``, so the fallback was measured at zero invocations
+    while five real conversions resolved. Its practical effect was to turn a
+    plugin that forgot ``register_conversions`` into a silent no-op.
+    """
+
+    def test_a_plugin_without_register_conversions_is_refused(self):
+        """Previously accepted, then silently contributed nothing."""
+        registry = ConversionRegistry()
+
+        class NotAPlugin:
+            pass
+
+        with self.assertRaises(TypeError) as caught:
+            registry.add_plugin(NotAPlugin)
+        self.assertIn("register_conversions", str(caught.exception))
+
+    def test_a_valid_plugin_is_still_scanned_lazily(self):
+        """The deferral is the point of ``add_plugin``: no registration work
+        happens until the first lookup."""
+        registry = ConversionRegistry()
+        scanned = []
+
+        class Plugin:
+            @classmethod
+            def register_conversions(cls, reg):
+                scanned.append(reg)
+                reg.register(
+                    target_type="Widget",
+                    source_types=["Gadget"],
+                    converter=lambda inv, ctx: "converted",
+                )
+
+        registry.add_plugin(Plugin)
+        self.assertEqual(scanned, [], "add_plugin scanned eagerly")
+        found = registry.get_conversions_for("Widget")
+        self.assertEqual(len(scanned), 1)
+        self.assertEqual(len(found), 1)
+        # Scanned once, not on every lookup.
+        registry.get_conversions_for("Widget")
+        self.assertEqual(len(scanned), 1)
+
+    def test_register_from_class_is_deprecated(self):
+        registry = ConversionRegistry()
+
+        class Legacy:
+            pass
+
+        with self.assertWarns(DeprecationWarning) as caught:
+            registry.register_from_class(Legacy)
+        self.assertIn("register_conversions", str(caught.warning))
+
+    def test_the_live_registration_path_is_unaffected(self):
+        """Guards the deletion: MapFactory's own conversions still resolve."""
+        registry = ConversionRegistry()
+        registry.add_plugin(MapFactory)
+        self.assertTrue(registry.get_conversions_for("Metallic"))
 
 
 if __name__ == "__main__":

@@ -6,9 +6,11 @@ Each handler decides whether it applies to a given ``TextureProcessor`` context
 and, if so, produces one or more output maps. Split out of the monolithic
 ``map_factory`` module.
 
-``MapFactory`` is late-bound by this package's ``__init__`` (handlers call its
-stateless primitives at runtime).
+``MapFactory`` is resolved at call time through ``_factory()`` (handlers call
+its stateless primitives at runtime, but MapFactory names the handler classes
+at class-definition time, so importing it here would form a cycle).
 """
+
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
@@ -17,9 +19,29 @@ from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 from .processor import TextureProcessor
 
-# Late-bound by the package __init__ to break the runtime import cycle
-# with MapFactory's primitive library.
-MapFactory = None  # type: ignore
+
+def _factory():
+    """Resolve ``MapFactory`` at call time.
+
+    It cannot be imported at module level: ``MapFactory`` names the handler
+    classes at class-definition time, so a top-level import here closes a
+    cycle. The package ``__init__`` used to paper over that by assigning the
+    resolved class onto this module once everything was defined -- an
+    import-time side effect that also left the module wrong on its own, since
+    reloading it alone restored the ``None`` placeholder and every primitive
+    call raised ``AttributeError: 'NoneType' object has no attribute ...``.
+
+    Resolving inside the call is correct however the module was loaded, and
+    ``sys.modules`` makes the repeat cost a dict lookup. It is also the test
+    seam: patch this function to inject a stub factory.
+
+    (A module-level ``__getattr__`` looks like it would do the same job with no
+    call-site change, but PEP 562 covers ``module.attr`` from outside only -- a
+    bare global lookup inside this module raises ``NameError``.)
+    """
+    from ._map_factory import MapFactory
+
+    return MapFactory
 
 
 class WorkflowHandler(ABC):
@@ -125,7 +147,7 @@ class ORMMapHandler(WorkflowHandler):
             # absent inputs (R=255 white AO, G/B=0) — shared with the
             # standalone pack/unpack pair the DCC bridges call. save=False
             # returns the PIL image so save_map keeps routing the write.
-            orm_map = MapFactory.pack_orm_texture(ao, roughness, metallic, save=False)
+            orm_map = _factory().pack_orm_texture(ao, roughness, metallic, save=False)
             if context.logger:
                 context.logger.info(
                     "Created Unreal/glTF ORM map", extra={"preset": "highlight"}
@@ -208,7 +230,7 @@ class MRAOMapHandler(WorkflowHandler):
             )
 
         try:
-            mrao_image = MapFactory.pack_mrao_texture(
+            mrao_image = _factory().pack_mrao_texture(
                 metallic_map_path=metallic,
                 roughness_map_path=roughness,
                 ao_map_path=ao,
@@ -336,7 +358,7 @@ class MaskMapHandler(WorkflowHandler):
             )
 
         try:
-            mask_map_image = MapFactory.pack_msao_texture(
+            mask_map_image = _factory().pack_msao_texture(
                 metallic_map_path=metallic,
                 ao_map_path=ao,
                 alpha_map_path=smoothness,
@@ -416,7 +438,7 @@ class MetallicSmoothnessHandler(WorkflowHandler):
             return context.save_map(metallic, "Metallic", source_images=[metallic])
 
         try:
-            combined = MapFactory.pack_smoothness_into_metallic(
+            combined = _factory().pack_smoothness_into_metallic(
                 metallic, alpha_map, invert_alpha=invert, save=False
             )
             if context.logger:
@@ -541,7 +563,7 @@ class BaseColorHandler(WorkflowHandler):
                 )
             if opacity:
                 try:
-                    combined = MapFactory.pack_transparency_into_albedo(
+                    combined = _factory().pack_transparency_into_albedo(
                         base_color, opacity, save=False
                     )
                     if context.logger:
@@ -598,7 +620,7 @@ class BaseColorHandler(WorkflowHandler):
                 try:
                     base_img = ImgUtils.ensure_image(base_color)
                     metallic_img = ImgUtils.ensure_image(metallic)
-                    cleaned = MapFactory.convert_base_color_to_albedo(
+                    cleaned = _factory().convert_base_color_to_albedo(
                         base_img, metallic_img
                     )
                     if context.logger:
@@ -701,7 +723,7 @@ class NormalMapHandler(WorkflowHandler):
             normal_map = context.inventory["Normal"]
 
             # Attempt to detect format
-            detected_format = MapFactory.detect_normal_map_format(normal_map)
+            detected_format = _factory().detect_normal_map_format(normal_map)
 
             if detected_format:
                 if context.logger:
@@ -733,11 +755,11 @@ class NormalMapHandler(WorkflowHandler):
                         # We can use the registry converters if we temporarily treat it as the detected type
                         # Or just call MapFactory directly
                         if detected_format == "DirectX":  # Target is OpenGL
-                            converted = MapFactory.convert_normal_map_format(
+                            converted = _factory().convert_normal_map_format(
                                 normal_map, target_format="opengl", save=False
                             )
                         else:  # Detected OpenGL, Target is DirectX
-                            converted = MapFactory.convert_normal_map_format(
+                            converted = _factory().convert_normal_map_format(
                                 normal_map, target_format="directx", save=False
                             )
 

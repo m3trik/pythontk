@@ -81,7 +81,12 @@ class _BehaviorsInternal(object):
 
 
 class Behaviors(_BehaviorsInternal):
-    """Behaviors — module namespace."""
+    """Load JSON keying recipes and resolve them to keyframe math.
+
+    A behavior template names an attribute keyframe pattern (fade-in,
+    fade-out, ...) anchored to the start or end of a time range; this
+    resolves one to concrete key times and values.
+    """
 
     @staticmethod
     @functools.lru_cache(maxsize=None)

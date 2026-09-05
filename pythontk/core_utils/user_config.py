@@ -84,6 +84,36 @@ class UserConfig:
             return {}
         return data
 
+    @staticmethod
+    def save_file(path: Union[str, os.PathLike], data: Mapping[str, Any]) -> None:
+        """Write *data* to *path* as a JSON object, atomically.
+
+        The counterpart :meth:`load_file` never had. Without it every caller
+        that needed to persist a config hand-rolled a writer, and none of them
+        were atomic -- so an interrupted save left a half-written file that
+        ``load_file`` then silently discarded as unreadable, taking the user's
+        settings with it.
+
+        Refuses a non-mapping rather than writing one: ``load_file`` returns
+        ``{}`` for anything that is not a JSON object, so a list written here
+        would round-trip to nothing and look like data loss at read time.
+
+        Parameters:
+            path: Destination; missing parent directories are created.
+            data: The config object to store.
+
+        Raises:
+            TypeError: *data* is not a mapping, or is not JSON-serialisable.
+        """
+        from pythontk.file_utils._file_utils import FileUtils
+
+        if not isinstance(data, Mapping):
+            raise TypeError(
+                f"UserConfig.save_file expects a JSON object (mapping), got "
+                f"{type(data).__name__}; load_file would read it back as {{}}."
+            )
+        FileUtils.write_json(path, dict(data), indent=4)
+
     @classmethod
     def resolve(
         cls,

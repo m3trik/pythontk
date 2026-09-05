@@ -24,6 +24,9 @@ Run with::
 
     python -m pytest test_packaging_metadata.py -v
 """
+
+import ast
+import fnmatch
 import os
 import re
 import unittest
@@ -163,6 +166,260 @@ class PackagingMetadataTestCase(unittest.TestCase):
         """The parser must not be fooled by the other legal requirement shapes."""
         requirements = ["Pillow", "numpy[all] >= 1.24 ; python_version >= '3.9'"]
         self.assertEqual(self._specifier(requirements, "numpy"), ">= 1.24")
+
+
+class TestDataFileParity(unittest.TestCase):
+    """The sdist and the wheel must ship the same non-``.py`` files.
+
+    Two independent declarations decide that -- ``recursive-include`` in
+    ``MANIFEST.in`` for the sdist, ``[tool.setuptools.package-data]`` in
+    ``pyproject.toml`` for the wheel -- and nothing kept them in step. They
+    had already drifted: the wheel listed ``*.md`` and ``*.txt`` while the
+    sdist did not, so ``pythontk/core_utils/README.md`` and its two siblings
+    shipped in one channel and not the other; the sdist listed ``*.png``,
+    which the wheel did not.
+
+    Four runtime data files resolve relative to ``__file__`` and two of them
+    degrade silently when absent, so a file that misses a channel is not a
+    packaging nicety -- it is a feature that quietly stops working for whoever
+    installed from that channel.
+    """
+
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    @staticmethod
+    def _sdist_patterns(text):
+        return sorted(
+            {
+                p
+                for line in re.findall(r"recursive-include\s+\S+\s+(.*)", text)
+                for p in line.split()
+            }
+        )
+
+    @staticmethod
+    def _wheel_patterns(text):
+        block = re.search(
+            r"\[tool\.setuptools\.package-data\]\s*\n(.*?)(?=\n\[|\Z)", text, re.S
+        )
+        return sorted(set(re.findall(r'"(\*\.[A-Za-z0-9]+)"', block.group(1))))
+
+    def _patterns(self):
+        with open(os.path.join(self.ROOT, "MANIFEST.in"), encoding="utf-8") as f:
+            sdist = self._sdist_patterns(f.read())
+        with open(os.path.join(self.ROOT, "pyproject.toml"), encoding="utf-8") as f:
+            wheel = self._wheel_patterns(f.read())
+        return sdist, wheel
+
+    def _data_files(self):
+        pkg = os.path.join(self.ROOT, "pythontk")
+        return [
+            os.path.relpath(os.path.join(d, f), pkg).replace(os.sep, "/")
+            for d, _, fs in os.walk(pkg)
+            for f in fs
+            if not f.endswith((".py", ".pyc")) and "__pycache__" not in d
+        ]
+
+    def test_the_two_channels_declare_the_same_patterns(self):
+        sdist, wheel = self._patterns()
+        self.assertTrue(sdist, "no recursive-include patterns found in MANIFEST.in")
+        self.assertEqual(
+            sdist,
+            wheel,
+            "MANIFEST.in (sdist) and package-data (wheel) disagree; a pattern "
+            f"in only one ships to only one channel.\n  only sdist: "
+            f"{sorted(set(sdist) - set(wheel))}\n  only wheel: "
+            f"{sorted(set(wheel) - set(sdist))}",
+        )
+
+    def test_every_shipped_data_file_matches_a_pattern(self):
+        """A new data-file extension has to be declared, not discovered in a
+        bug report from whoever installed the release."""
+        sdist, wheel = self._patterns()
+        files = self._data_files()
+        self.assertTrue(files, "no non-.py files found under pythontk/")
+        for rel in sorted(files):
+            base = os.path.basename(rel)
+            with self.subTest(file=rel):
+                self.assertTrue(
+                    any(fnmatch.fnmatch(base, p) for p in sdist),
+                    f"{rel} is not covered by any MANIFEST.in pattern; it "
+                    "would be missing from the sdist",
+                )
+                self.assertTrue(
+                    any(fnmatch.fnmatch(base, p) for p in wheel),
+                    f"{rel} is not covered by any package-data pattern; it "
+                    "would be missing from the wheel",
+                )
+
+
+class TestNoDccImports(unittest.TestCase):
+    """pythontk is the bottom of the stack: DCC-agnostic and zero-dep.
+
+    The only guard on that was a substring search over ONE file
+    (``test_map_compositor.TestEnginePurity``), covering Qt and nothing else,
+    across 1 of 142 modules -- and a substring match reads its own comments and
+    docstrings as violations while missing ``import  maya`` with two spaces.
+    This walks the AST of every module instead.
+
+    Two different rules, because the two hazards differ:
+
+    * A **DCC** module (``maya``, ``bpy``, ``nuke`` ...) must not appear at
+      all. pythontk has no business talking to one, at any scope, and today
+      not one module does.
+    * A **Qt binding** must not be imported at MODULE level, because that is
+      what makes the module unimportable without Qt. Resolving one lazily
+      inside a function, tolerantly, is the sanctioned pattern -- exactly what
+      ``net_utils/rpc/plugin_core._qtcore`` does so the RPC server stays
+      importable in a plain interpreter.
+    """
+
+    PACKAGE = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pythontk"
+    )
+    DCC = frozenset(
+        {
+            "maya",
+            "pymel",
+            "bpy",
+            "bmesh",
+            "nuke",
+            "MaxPlus",
+            "pymxs",
+            "unreal",
+            "hou",
+            "substance_painter",
+            "sd",
+            "krita",
+        }
+    )
+    QT = frozenset(
+        {"PySide2", "PySide6", "PyQt5", "PyQt6", "qtpy", "shiboken2", "shiboken6"}
+    )
+
+    def _modules(self):
+        import ast
+
+        for d, _, fs in os.walk(self.PACKAGE):
+            if "__pycache__" in d:
+                continue
+            for f in sorted(fs):
+                if not f.endswith(".py"):
+                    continue
+                path = os.path.join(d, f)
+                with open(path, encoding="utf-8") as fh:
+                    source = fh.read()
+                rel = os.path.relpath(path, self.PACKAGE).replace(os.sep, "/")
+                yield rel, ast.parse(source, filename=path)
+
+    @staticmethod
+    def _imports(tree, top_level_only):
+        """``(lineno, root_module)`` for each import in *tree*.
+
+        With *top_level_only*, only imports in the module body -- the ones that
+        run on ``import pythontk`` -- counting a ``try:`` / ``if`` wrapper at
+        module level as still module level, since it executes just the same.
+        """
+        import ast
+
+        def walk(nodes):
+            for node in nodes:
+                if isinstance(node, ast.Import):
+                    for a in node.names:
+                        yield node.lineno, a.name.split(".")[0]
+                elif isinstance(node, ast.ImportFrom):
+                    # A relative import has no root package name to judge.
+                    if node.level == 0 and node.module:
+                        yield node.lineno, node.module.split(".")[0]
+                elif top_level_only:
+                    if isinstance(node, (ast.Try, ast.If, ast.With)):
+                        yield from walk(ast.iter_child_nodes(node))
+                else:
+                    yield from walk(ast.iter_child_nodes(node))
+
+        return list(walk(tree.body if top_level_only else [tree]))
+
+    def test_no_module_imports_a_dcc_at_any_scope(self):
+        offenders = []
+        scanned = 0
+        for rel, tree in self._modules():
+            scanned += 1
+            for lineno, root in self._imports(tree, top_level_only=False):
+                if root in self.DCC:
+                    offenders.append(f"{rel}:{lineno} imports {root}")
+        self.assertGreater(scanned, 100, f"only {scanned} modules scanned; walk broke")
+        self.assertEqual(
+            offenders, [], "pythontk must not import a DCC:\n" + "\n".join(offenders)
+        )
+
+    def test_no_module_imports_qt_at_module_level(self):
+        offenders = []
+        scanned = 0
+        for rel, tree in self._modules():
+            scanned += 1
+            for lineno, root in self._imports(tree, top_level_only=True):
+                if root in self.QT:
+                    offenders.append(f"{rel}:{lineno} imports {root}")
+        self.assertGreater(scanned, 100, f"only {scanned} modules scanned; walk broke")
+        self.assertEqual(
+            offenders,
+            [],
+            "Qt at module level makes the module unimportable without Qt; "
+            "resolve it lazily inside a function instead:\n" + "\n".join(offenders),
+        )
+
+    def test_the_walk_actually_sees_imports(self):
+        """A guard that scans nothing passes forever. Prove the walker finds
+        the deferred Qt import it is meant to tolerate."""
+        import ast
+
+        path = os.path.join(self.PACKAGE, "net_utils", "rpc", "plugin_core.py")
+        with open(path, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read(), filename=path)
+        deep = {root for _, root in self._imports(tree, top_level_only=False)}
+        top = {root for _, root in self._imports(tree, top_level_only=True)}
+        self.assertTrue(self.QT & deep, "function-scoped Qt import not detected")
+        self.assertFalse(self.QT & top, "that Qt import is not module level")
+
+
+class TestNoPlaceholderDocstrings(unittest.TestCase):
+    """A published class's docstring is what ``help()`` and ``API_REGISTRY.md``
+    show, so a stub is worse than none: it looks answered.
+
+    Eleven classes read ``"<Name> — module namespace."`` — a refactor's
+    placeholder that survived into the published surface, including
+    ``ShotPlanner`` (the whole planning layer) and ``PluginInstaller``.
+    """
+
+    #: Docstrings that describe nothing. Matched on the whole first line.
+    PLACEHOLDERS = (
+        re.compile(r"^\s*\S+\s*[—-]\s*module namespace\.?\s*$"),
+        re.compile(r"^\s*(TODO|FIXME|placeholder|stub)", re.I),
+    )
+
+    def test_no_published_class_has_a_placeholder_docstring(self):
+        offenders = []
+        checked = 0
+        root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "pythontk")
+        for dirpath, _, files in os.walk(root):
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(dirpath, name)
+                with open(path, encoding="utf-8") as fh:
+                    tree = ast.parse(fh.read())
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.ClassDef) or node.name.startswith("_"):
+                        continue
+                    doc = ast.get_docstring(node)
+                    if not doc:
+                        continue
+                    checked += 1
+                    first = doc.strip().splitlines()[0]
+                    if any(p.match(first) for p in self.PLACEHOLDERS):
+                        offenders.append(f"{name}::{node.name} -- {first}")
+        self.assertGreater(checked, 100, "sweep found almost no classes; it is broken")
+        self.assertEqual(offenders, [], f"placeholder docstrings: {offenders}")
 
 
 if __name__ == "__main__":
