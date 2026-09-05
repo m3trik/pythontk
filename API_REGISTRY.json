@@ -9658,7 +9658,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Remove every curve-proxy node (and its channels) from a GLB.",
-              "line": 4643,
+              "line": 4645,
               "deprecated": false
             },
             {
@@ -9667,7 +9667,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize authored opacity ramps as animated material alpha.",
-              "line": 4736,
+              "line": 4738,
               "deprecated": false
             },
             {
@@ -9676,7 +9676,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Drop every animation that carries no channels or no samplers.",
-              "line": 4826,
+              "line": 4828,
               "deprecated": false
             },
             {
@@ -9685,7 +9685,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Publish the GLB's clips as ``extras.animation_web``, joined to the shots.",
-              "line": 4900,
+              "line": 4902,
               "deprecated": false
             },
             {
@@ -9694,7 +9694,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 5194,
+              "line": 5196,
               "deprecated": false
             },
             {
@@ -9703,7 +9703,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 5279,
+              "line": 5281,
               "deprecated": false
             },
             {
@@ -9712,7 +9712,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget)",
               "summary": "Yield an open :class:`GlbEdit` for *glb*, writing once on close.",
-              "line": 5366,
+              "line": 5368,
               "deprecated": false
             },
             {
@@ -9721,7 +9721,7 @@
               "kind": "classmethod",
               "signature": "(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str",
               "summary": "Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.",
-              "line": 5629,
+              "line": 5631,
               "deprecated": false
             },
             {
@@ -9730,7 +9730,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]",
               "summary": ":meth:`optimize_glb_textures` kwargs for a WEB deliverable.",
-              "line": 5754,
+              "line": 5756,
               "deprecated": false
             },
             {
@@ -9739,7 +9739,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]",
               "summary": "Downsize and re-encode a GLB's embedded images for web delivery.",
-              "line": 5802,
+              "line": 5804,
               "deprecated": false
             },
             {
@@ -9748,7 +9748,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Pack and write the ORM (metallic/roughness) texture into a GLB, by name.",
-              "line": 6485,
+              "line": 6487,
               "deprecated": false
             },
             {
@@ -9757,7 +9757,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]",
               "summary": "Materials whose delivered ORM binding this pipeline never validated.",
-              "line": 6667,
+              "line": 6669,
               "deprecated": false
             },
             {
@@ -9766,7 +9766,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write emissive color / texture into a GLB's materials, by name.",
-              "line": 6795,
+              "line": 6797,
               "deprecated": false
             },
             {
@@ -9775,7 +9775,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Collapse byte-identical embedded images onto one copy.",
-              "line": 6935,
+              "line": 6937,
               "deprecated": false
             },
             {
@@ -9784,7 +9784,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop textures no material samples, and the images/bufferViews only they used.",
-              "line": 7032,
+              "line": 7034,
               "deprecated": false
             },
             {
@@ -9793,7 +9793,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.",
-              "line": 7468,
+              "line": 7470,
               "deprecated": false
             },
             {
@@ -9802,7 +9802,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int",
               "summary": "Write ``normalTexture.scale`` into a GLB's materials.",
-              "line": 7527,
+              "line": 7529,
               "deprecated": false
             },
             {
@@ -9811,7 +9811,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write base colour / texture into a GLB's materials, by name.",
-              "line": 7597,
+              "line": 7599,
               "deprecated": false
             }
           ]
