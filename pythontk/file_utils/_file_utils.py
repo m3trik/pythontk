@@ -1316,7 +1316,7 @@ class FileUtils(HelpMixin):
         base_dir: str,
         prepend_base: bool = True,
         check_existence: bool = False,
-    ) -> str:
+    ) -> Union[str, List[str]]:
         """Convert an absolute file path to a relative path based on the given base directory.
 
         If the file path and the base directory are on different drives, no

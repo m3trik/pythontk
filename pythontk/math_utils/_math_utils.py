@@ -882,7 +882,7 @@ class MathUtils(HelpMixin):
 
     @staticmethod
     @CoreUtils.listify
-    def move_decimal_point(num, places):
+    def move_decimal_point(num, places) -> Union[float, List[float]]:
         """Move the decimal place in a given number.
 
         Parameters:
@@ -927,7 +927,7 @@ class MathUtils(HelpMixin):
 
     @staticmethod
     @CoreUtils.listify
-    def clamp(n=0.0, minimum=0.0, maximum=1.0):
+    def clamp(n=0.0, minimum=0.0, maximum=1.0) -> Union[float, List[float]]:
         """Clamps the value x between min and max.
 
         Parameters:

@@ -49,7 +49,7 @@ def pytest_collection_modifyitems(session, config, items):
     here = os.path.dirname(os.path.abspath(__file__))
     args = [a.split("::", 1)[0] for a in config.args]
     whole_dir = bool(args) and all(
-        os.path.abspath(a).rstrip("\/") == here for a in args
+        os.path.abspath(a).rstrip("\\/") == here for a in args
     )
     os.environ.pop(COLLECTED_COUNT_ENV, None)
     if whole_dir:

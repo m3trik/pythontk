@@ -57,7 +57,12 @@ class _ScriptRunnerInternal(object):
 
 
 class ScriptRunner(_ScriptRunnerInternal):
-    """ScriptRunner — module namespace."""
+    """Run a script in an external app, block, and collect its artifact.
+
+    The synchronous counterpart to :class:`~pythontk.ScriptLaunchDeliverer`,
+    which renders a script and launches a *detached* app: here the caller
+    needs the result, so the app is waited on and its output returned.
+    """
 
     @staticmethod
     def run_script_to_artifact(

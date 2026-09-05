@@ -237,7 +237,7 @@ class StrUtils(CoreUtils):
 
     @staticmethod
     @CoreUtils.listify
-    def set_case(string, case="title"):
+    def set_case(string, case="title") -> Union[str, List[str]]:
         """Format the given string(s) in the given case.
 
         Parameters:
@@ -623,7 +623,9 @@ class StrUtils(CoreUtils):
 
     @staticmethod
     @CoreUtils.listify
-    def truncate(string, length=75, mode="start", insert="..", head=None):
+    def truncate(
+        string, length=75, mode="start", insert="..", head=None
+    ) -> Union[str, List[str]]:
         """Shorten the given string to the given length.
         An ellipsis will be added to the section trimmed.
 
@@ -1877,7 +1879,7 @@ class StrUtils(CoreUtils):
 
     @staticmethod
     @CoreUtils.listify
-    def time_stamp(filepath, stamp="%m-%d-%Y  %H:%M"):
+    def time_stamp(filepath, stamp="%m-%d-%Y  %H:%M") -> Union[str, List[str]]:
         """Attach or detach a modified timestamp and date to/from a given file path.
 
         A path that already carries a default-format stamp prefix is returned

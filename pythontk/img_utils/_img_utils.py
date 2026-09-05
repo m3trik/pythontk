@@ -1597,7 +1597,7 @@ class ImgUtils(HelpMixin):
     @CoreUtils.listify(threading=True)
     def create_mask(
         cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)
-    ):
+    ) -> Union[Image.Image, List[Image.Image]]:
         """Create mask(s) from the given image(s).
 
         Parameters:

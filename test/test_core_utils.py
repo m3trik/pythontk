@@ -18,6 +18,8 @@ Run with:
     python -m pytest test_core_utils.py -q
 """
 
+import ast
+import os
 import unittest
 
 from pythontk import CoreUtils
@@ -211,6 +213,74 @@ class TestListifyThreadingPolicy(unittest.TestCase):
         import pythontk as ptk
 
         self.assertEqual(self._count_pools(lambda: ptk.StrUtils.set_case("solo")), 0)
+
+
+class TestListifyAnnotations(unittest.TestCase):
+    """``@listify`` changes the published return type, and the annotations
+    described the undecorated body.
+
+    Given a list the wrapper returns a list, so ``-> str`` on a listified
+    function is simply false -- and ``inspect.signature``, ``help()`` and
+    ``API_REGISTRY.md`` all republish it. ``format_path`` had the right shape
+    (``Union[str, List[str]]``) the whole time, so this is drift, not an
+    unsolved question.
+    """
+
+    @staticmethod
+    def _listified():
+        """Every ``@listify``-decorated function in the package, by AST."""
+        found = []
+        for root, _, files in os.walk(
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "pythontk")
+        ):
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(root, name)
+                with open(path, encoding="utf-8") as fh:
+                    tree = ast.parse(fh.read())
+                for node in ast.walk(tree):
+                    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    if any("listify" in ast.unparse(d) for d in node.decorator_list):
+                        found.append((path, node))
+        return found
+
+    def test_there_are_listified_functions_to_check(self):
+        """A zero-sample sweep is not a pass."""
+        self.assertGreaterEqual(len(self._listified()), 8)
+
+    def test_every_listified_function_is_annotated(self):
+        missing = [
+            f"{os.path.basename(p)}::{n.name}"
+            for p, n in self._listified()
+            if n.returns is None
+        ]
+        self.assertEqual(missing, [], f"listified but unannotated: {missing}")
+
+    def test_no_listified_function_promises_a_scalar_only_return(self):
+        lying = []
+        for path, node in self._listified():
+            if node.returns is None:
+                continue
+            annotation = ast.unparse(node.returns)
+            if "List[" not in annotation and "list" not in annotation:
+                lying.append(f"{os.path.basename(path)}::{node.name} -> {annotation}")
+        self.assertEqual(
+            lying, [], f"scalar-only annotation on a listified fn: {lying}"
+        )
+
+    def test_the_wrapper_really_does_return_a_list(self):
+        """The premise, measured rather than assumed."""
+        from pythontk import FileUtils
+
+        one = FileUtils.convert_to_relative_path("C:/a/b/c.png", "C:/a")
+        many = FileUtils.convert_to_relative_path(
+            ["C:/a/b/c.png", "C:/a/b/d.png"], "C:/a"
+        )
+        self.assertIsInstance(one, str)
+        self.assertIsInstance(many, list)
+        self.assertEqual(len(many), 2)
 
 
 if __name__ == "__main__":

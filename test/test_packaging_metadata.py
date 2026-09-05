@@ -25,6 +25,7 @@ Run with::
     python -m pytest test_packaging_metadata.py -v
 """
 
+import ast
 import fnmatch
 import os
 import re
@@ -379,6 +380,46 @@ class TestNoDccImports(unittest.TestCase):
         top = {root for _, root in self._imports(tree, top_level_only=True)}
         self.assertTrue(self.QT & deep, "function-scoped Qt import not detected")
         self.assertFalse(self.QT & top, "that Qt import is not module level")
+
+
+class TestNoPlaceholderDocstrings(unittest.TestCase):
+    """A published class's docstring is what ``help()`` and ``API_REGISTRY.md``
+    show, so a stub is worse than none: it looks answered.
+
+    Eleven classes read ``"<Name> — module namespace."`` — a refactor's
+    placeholder that survived into the published surface, including
+    ``ShotPlanner`` (the whole planning layer) and ``PluginInstaller``.
+    """
+
+    #: Docstrings that describe nothing. Matched on the whole first line.
+    PLACEHOLDERS = (
+        re.compile(r"^\s*\S+\s*[—-]\s*module namespace\.?\s*$"),
+        re.compile(r"^\s*(TODO|FIXME|placeholder|stub)", re.I),
+    )
+
+    def test_no_published_class_has_a_placeholder_docstring(self):
+        offenders = []
+        checked = 0
+        root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "pythontk")
+        for dirpath, _, files in os.walk(root):
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(dirpath, name)
+                with open(path, encoding="utf-8") as fh:
+                    tree = ast.parse(fh.read())
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.ClassDef) or node.name.startswith("_"):
+                        continue
+                    doc = ast.get_docstring(node)
+                    if not doc:
+                        continue
+                    checked += 1
+                    first = doc.strip().splitlines()[0]
+                    if any(p.match(first) for p in self.PLACEHOLDERS):
+                        offenders.append(f"{name}::{node.name} -- {first}")
+        self.assertGreater(checked, 100, "sweep found almost no classes; it is broken")
+        self.assertEqual(offenders, [], f"placeholder docstrings: {offenders}")
 
 
 if __name__ == "__main__":

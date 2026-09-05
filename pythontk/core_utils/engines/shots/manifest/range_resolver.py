@@ -17,7 +17,12 @@ from pythontk.core_utils.engines.shots.manifest.manifest_model import BuilderSte
 
 
 class RangeResolver:
-    """RangeResolver — module namespace."""
+    """Resolve build-step ranges from user entries and gap boundaries.
+
+    Turns partially specified ranges plus detected shot boundaries into a
+    complete ``(step_id, start, end, is_user)`` list covering every step.
+    Pure logic — no DCC, no IO.
+    """
 
     @staticmethod
     def prune_to_top_boundaries(

@@ -4,7 +4,6 @@
 
 import ast
 import importlib
-import io
 import os
 import tempfile
 import shutil
@@ -401,7 +400,8 @@ class TestNoImportTimeInjection(unittest.TestCase):
         """Guards the rule itself, not just this symptom: no module-level
         assignment to an attribute of an imported module."""
         init = os.path.join(os.path.dirname(_handlers_mod.__file__), "__init__.py")
-        tree = ast.parse(io.open(init, encoding="utf-8").read())
+        with open(init, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
         offenders = [
             f"{ast.unparse(t)} (line {node.lineno})"
             for node in tree.body

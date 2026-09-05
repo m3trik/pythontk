@@ -133,7 +133,12 @@ class _ManifestModelInternal(object):
 
 
 class ManifestModel(_ManifestModelInternal):
-    """ManifestModel — module namespace."""
+    """The shot manifest's data model and CSV parser.
+
+    Parses a structured production CSV into the step/object graph the rest
+    of the shot engine plans against, applying the column-mapping schema
+    and detecting each step's behaviors. DCC-agnostic.
+    """
 
     @staticmethod
     def detect_behaviors(text: str) -> List[str]:

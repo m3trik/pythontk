@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-4220%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-4234%20passed-brightgreen.svg)](../test/)
 
 # pythontk
 
@@ -15,9 +15,10 @@ Pure Python: no Qt, no DCC imports, two hard dependencies (`numpy`, `Pillow`). E
 
 pythontk is the bottom of the chain `pythontk → uitk → mayatk / blendertk → tentacle`: everything above imports it; it imports nothing above it. The environment-independent 80% of every tool lives at this layer — in effect, the ecosystem's standard library.
 
-Two rules shape it:
+Three rules shape it:
 
-- **Placed by data type, not domain.** Sharpest-frame extraction lives in `vid_utils`, perceptual-hash curation in `img_utils` — not in a "photogrammetry" package — so each primitive stays independently reusable. Domain pipelines (PBR conversion, photogrammetry ingest, timeline audio events) are compositions of these, assembled downstream.
+- **Primitives are placed by data type, not domain.** Sharpest-frame extraction lives in `vid_utils`, perceptual-hash curation in `img_utils` — not in a "photogrammetry" package — so each stays independently reusable.
+- **A domain pipeline lives here once more than one host needs it**, under `core_utils/engines/`: PBR/texture conversion (`engines/textures`, ~11.9k lines), the shot timeline (`engines/shots`, ~6.4k), instancing and the key stash. These are compositions of the primitives above, and they are here rather than downstream because Maya and Blender both drive them — "shared code moves down" outranks "placed by data type", and the alternative is two drifting copies. A pipeline only one host will ever use belongs in that host's toolkit.
 - **Shared code moves down.** When two downstream tools need the same helper, it moves here and becomes the single source of truth — Maya and Blender panels share one calculator engine, one material-report formatter, one point-clustering routine, instead of drifting copies.
 
 ## Install
