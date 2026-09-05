@@ -6,10 +6,10 @@ The engine emits status via ``self.logger`` (LoggingMixin). Tests attach
 an in-memory handler to capture records without going through Qt.
 """
 
-import io
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from typing import List
@@ -1877,11 +1877,40 @@ class TestWriterRouting(unittest.TestCase, _LoggerCaptureMixin):
         self.assertTrue(os.path.isfile(out))
         self.assertEqual(Image.open(out).size, (16, 16))
 
-    def test_the_module_guards_its_optional_imports(self):
+    def test_the_module_imports_without_pillow(self):
         """Its six siblings in the engine tolerate a missing Pillow; this one
-        imported it bare, so an install without Pillow failed at import."""
-        source = io.open(mc_module.__file__, encoding="utf-8").read()
-        self.assertIn("except ImportError", source)
+        imported it bare, so an install without Pillow failed at import.
+
+        Grepping for ``except ImportError`` is not enough: this module has a
+        module-level ``Layers = List[Tuple[str, Image.Image]]`` alias and seven
+        ``Image.Image`` annotations, all evaluated at import, so a try/except
+        alone still dies on ``NoneType has no attribute 'Image'``. Import it
+        for real with PIL denied.
+        """
+        import builtins
+        import importlib
+
+        name = mc_module.__name__
+        real_import = builtins.__import__
+
+        def deny_pil(module, *args, **kwargs):
+            if module == "PIL" or module.startswith("PIL."):
+                raise ImportError("simulated: no Pillow")
+            return real_import(module, *args, **kwargs)
+
+        saved = {k: v for k, v in sys.modules.items() if k.startswith("PIL")}
+        saved[name] = sys.modules.get(name)
+        for key in list(saved):
+            sys.modules.pop(key, None)
+        builtins.__import__ = deny_pil
+        try:
+            reloaded = importlib.import_module(name)
+            self.assertIsNone(reloaded.Image, "PIL should be absent here")
+        finally:
+            builtins.__import__ = real_import
+            sys.modules.pop(name, None)
+            sys.modules.update({k: v for k, v in saved.items() if v is not None})
+            importlib.import_module(name)
 
 
 if __name__ == "__main__":

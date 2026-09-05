@@ -9,6 +9,8 @@ text widget by calling ``self.logger.setup_logging_redirect(widget)``.
 Progress-bar updates go through a thin ``progress_callback``.
 """
 
+from __future__ import annotations
+
 import os
 import warnings
 from dataclasses import dataclass
@@ -28,7 +30,7 @@ except ImportError as e:
 
 import pythontk as ptk
 
-Layers = List[Tuple[str, Image.Image]]
+Layers = List[Tuple[str, "Image.Image"]]
 SortedImages = Dict[str, Layers]
 ProgressCallback = Callable[[float], None]
 
