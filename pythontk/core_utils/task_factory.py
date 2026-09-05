@@ -20,6 +20,8 @@ import time
 from inspect import signature
 from typing import Callable, Dict, Any, List, Optional, Tuple
 
+from pythontk.core_utils.cancel_scope import OperationCancelled
+
 
 class TaskFactory:
     """A factory class for managing and executing tasks in a scene export pipeline."""
@@ -34,9 +36,16 @@ class TaskFactory:
     #: subclass that declares nothing behaves exactly as it did.
     CHECK_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {}
 
+    #: Per-run progress hook, ``callback(current, total, message)`` -- the
+    #: ecosystem's ``progress_callback`` shape (uitk's ``progress_adapter``
+    #: reads exactly it). Set by the consumer for the duration of a run; see
+    #: :meth:`_report_progress` for the stream and its cancel contract.
+    progress_callback: Optional[Callable[..., Any]] = None
+
     def __init__(self, logger):
         self.logger = logger
         self._method_cache = {}
+        self.progress_callback = None
         #: Restores registered by :meth:`stage_deferred_restore`, keyed so the
         #: first stager of a given state wins. Insertion-ordered; run LIFO.
         self._deferred_restores: Dict[str, Callable] = {}
@@ -119,6 +128,40 @@ class TaskFactory:
             self._method_cache[method_name] = getattr(self, method_name, None)
         return self._method_cache[method_name]
 
+    def _report_progress(
+        self, current: Optional[int], total: Optional[int], message: Optional[str]
+    ) -> None:
+        """Hand one progress event to :attr:`progress_callback`, if any.
+
+        *current* is the number of run-list entries already done when
+        *message* starts: the dispatcher reports each entry before running it
+        and closes with ``(n, n, None)`` once the list is exhausted, so a
+        consumer can drive a determinate bar without knowing the pipeline. A
+        ``None`` pair is a text-only tick -- a subclass narrating a long entry
+        ("converting...") without moving the count.
+
+        An explicit ``False`` from the callback is a cancel request and raises
+        :class:`~pythontk.OperationCancelled` before the next entry runs -- the
+        contract a progress-bar ``update()`` and ``CancelScope.tick`` are
+        written to. ``None`` (a callback that only prints) is not a cancel. A
+        callback that raises anything else is a feedback bug: logged at DEBUG,
+        never allowed to fail the run.
+        """
+        callback = getattr(self, "progress_callback", None)
+        if callback is None:
+            return
+        try:
+            keep_going = callback(current, total, message)
+        except OperationCancelled:
+            raise
+        except Exception as e:  # noqa: BLE001 -- feedback never fails the run
+            self.logger.debug(f"progress_callback failed: {e}")
+            return
+        if keep_going is False:
+            raise OperationCancelled(
+                f"cancelled before {message}" if message else "cancelled"
+            )
+
     @contextlib.contextmanager
     def _manage_context(
         self,
@@ -167,7 +210,7 @@ class TaskFactory:
         counters = {True: 0, False: 0}
 
         try:
-            for task_name, value in valid_tasks.items():
+            for position, (task_name, value) in enumerate(valid_tasks.items()):
                 method = self._method_cache[task_name]  # Already cached
                 is_check = task_name.startswith("check_")
                 counters[is_check] += 1
@@ -206,6 +249,11 @@ class TaskFactory:
                     )
                     continue
 
+                # Reported before the call, so whoever is watching sees what is
+                # running NOW -- and can cancel before it starts.
+                self._report_progress(
+                    position, len(valid_tasks), f"{label} {index}/{total}: {task_name}"
+                )
                 self.logger.info(f"Executing {label} #{index}/{total}: {task_name}")
 
                 # Get revert method BEFORE executing the task
@@ -238,6 +286,9 @@ class TaskFactory:
                     self.logger.error(f"Error during task {task_name}: {e}")
                     raise
 
+            # The list is exhausted: whatever a failed check dropped was
+            # skipped, and a skipped entry is a done entry.
+            self._report_progress(len(valid_tasks), len(valid_tasks), None)
             yield task_results
         finally:
             self._revert_states(original_states)

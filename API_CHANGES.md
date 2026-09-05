@@ -42,7 +42,7 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `net_utils/preview_server.py::PreviewServer.url` — was `(self) -> Optional[str]`
 - `net_utils/preview_server.py::PreviewServer.version` — was `(self) -> int`
 
-## Added (156)
+## Added (162)
 
 - `core_utils/color.py::Palette.copy(self) -> 'Palette'`
 - `core_utils/color.py::Palette.setdefault(self, key: str, default: object = None) -> object`
@@ -110,10 +110,16 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_shadows(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.bake_node_frames(cls, src: str) -> int`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.prune_glb_animations(cls, glb: GlbTarget) -> List[str]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia(class)`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.downsize(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.embedded(cls, path: str) -> List[Dict[str, Any]]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.rewrite(cls, src: str, dst: str) -> None`
+- `file_utils/mesh_convert/glb_fades.py::GlbFades.apply_channels(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Rgb]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel(class)`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel.accessor_type(self) -> str`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel.base(self, gltf: Dict[str, Any], index: int) -> List[float]`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel.components(self) -> int`
 - `file_utils/mesh_convert/glb_reader.py::GlbReader.motion_span(self, key: Union[int, str], tolerance: float = 0.001) -> Optional[Tuple[float, float]]`
 - `geo_utils/shadow_horizon.py::HorizonMap(class)`
 - `geo_utils/shadow_horizon.py::HorizonMap.alpha(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray`
@@ -201,7 +207,7 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `net_utils/remote_file.py::RemoteFile.probe(cls, url: str, *, timeout: Optional[float] = None) -> Optional[str]`
 - `net_utils/remote_file.py::RemoteFile.read_bytes(cls, url: str, *, timeout: Optional[float] = None, reject_html: bool = True) -> bytes`
 
-## Signature changed (5)
+## Signature changed (12)
 
 - `core_utils/execution_monitor/_execution_monitor.py::ExecutionMonitor.is_escape_pressed`
   - was: `()`
@@ -212,9 +218,30 @@ _Diff vs the last release (origin/main @ ee27d5e)._
 - `core_utils/package_manager.py::PackageManager.start_version_check`
   - was: `(self, package_name=None, python_path=None) -> None`
   - now: `(self, package_name=None, python_path=None) -> threading.Thread`
+- `file_utils/_file_utils.py::FileUtils.convert_to_relative_path`
+  - was: `(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str`
+  - now: `(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> Union[str, List[str]]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_to_glb`
   - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str`
   - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = ()) -> str`
 - `file_utils/mesh_convert/fbx_file.py::FbxFile.load`
   - was: `(cls, path: str, decode_arrays: bool = False) -> 'FbxFile'`
   - now: `(cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True) -> 'FbxFile'`
+- `img_utils/_img_utils.py::ImgUtils.create_mask`
+  - was: `(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))`
+  - now: `(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)) -> Union[Image.Image, List[Image.Image]]`
+- `math_utils/_math_utils.py::MathUtils.clamp`
+  - was: `(n=0.0, minimum=0.0, maximum=1.0)`
+  - now: `(n=0.0, minimum=0.0, maximum=1.0) -> Union[float, List[float]]`
+- `math_utils/_math_utils.py::MathUtils.move_decimal_point`
+  - was: `(num, places)`
+  - now: `(num, places) -> Union[float, List[float]]`
+- `str_utils/_str_utils.py::StrUtils.set_case`
+  - was: `(string, case='title')`
+  - now: `(string, case='title') -> Union[str, List[str]]`
+- `str_utils/_str_utils.py::StrUtils.time_stamp`
+  - was: `(filepath, stamp='%m-%d-%Y  %H:%M')`
+  - now: `(filepath, stamp='%m-%d-%Y  %H:%M') -> Union[str, List[str]]`
+- `str_utils/_str_utils.py::StrUtils.truncate`
+  - was: `(string, length=75, mode='start', insert='..', head=None)`
+  - now: `(string, length=75, mode='start', insert='..', head=None) -> Union[str, List[str]]`

@@ -766,6 +766,146 @@ export default function probe(viewer) {
 }
 """
 
+    def _highlighted_glb(self):
+        """One node on a shared material, named by a HIGHLIGHT ramp only.
+
+        Visibility is constant-ON and there is no opacity ramp, so the only
+        thing moving the material is the emissive channel under test. The ramp
+        is authored so the arithmetic is checkable: intensity rises 0 -> 1 over
+        frames 0-60 at 30fps, i.e. exactly ``clip_time / 2``; the colour is
+        (0.2, 0.5, 1.0), so at t=1.0 the emissive reads (0.1, 0.25, 0.5).
+        """
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": [0, 1, 2]}],
+            "scene": 0,
+            "nodes": [
+                {"name": "GLOWER", "children": [3]},
+                {"name": "UNTOUCHED", "mesh": 0},
+                {"name": "data_export"},
+                {"name": "GLOWER_GEO", "mesh": 0},
+            ],
+            "meshes": [
+                {"primitives": [{"attributes": {"POSITION": 1}, "material": 0}]}
+            ],
+            "materials": [{"name": "SHARED", "pbrMetallicRoughness": {}}],
+            "animations": [
+                {
+                    "name": "SHOT",
+                    "samplers": [{"input": 0, "output": 2}],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 1, "path": "translation"}}
+                    ],
+                }
+            ],
+        }
+        channels = {
+            "fbx_takes": [{"name": "SHOT", "start": 0, "end": 60}],
+            "shot_metadata": {"version": 1, "fps": self.FPS},
+            "visibility_tracks": {
+                "version": 1,
+                "fps": self.FPS,
+                "tracks": [
+                    {
+                        "node": "GLOWER",
+                        "highlight": [[0, 0.0], [60, 1.0]],
+                        "highlight_color": [0.2, 0.5, 1.0],
+                    }
+                ],
+                "clip_span": {"*": [0, 60], "SHOT": [0, 60]},
+            },
+        }
+        gltf["nodes"][2]["extras"] = {
+            "fromFBX": {
+                "userProperties": {
+                    k: {"type": "eFbxString", "value": json.dumps(v)}
+                    for k, v in channels.items()
+                }
+            }
+        }
+        path = self._write(gltf)
+        ptk.MeshConvert.apply_glb_visibility(path)
+        ptk.MeshConvert.apply_glb_fades(path)
+        ptk.MeshConvert.apply_glb_animations(path)
+        return path
+
+    HIGHLIGHT_PROBE_JS = """
+export default function probe(viewer) {
+  const report = { ready: false, errors: [], samples: [] };
+  window.__probe = report;
+  const TIMES = [0.0, 1.0, 2.0];
+  let phase = 0;
+  let action = null;
+  let glower = null;
+  let untouched = null;
+  viewer.on('load', (detail) => {
+    try {
+      viewer.scene.traverse((o) => {
+        if (o.name === 'GLOWER_GEO') glower = o;
+        if (o.name === 'UNTOUCHED') untouched = o;
+      });
+      report.found = { glower: !!glower, untouched: !!untouched };
+      report.sharedInstance = !!(glower && untouched
+        && glower.material === untouched.material);
+      viewer.playClip('SHOT');
+      action = viewer.mixer.clipAction(detail.gltf.animations[0]);
+    } catch (e) { report.errors.push(String(e)); report.ready = true; }
+  });
+  let settle = -1;
+  viewer.on('frame', () => {
+    if (report.ready || !action || !glower) return;
+    try {
+      if (settle > 0) { settle -= 1; return; }
+      if (settle === 0) {
+        const e = glower.material.emissive;
+        const u = untouched ? untouched.material.emissive : null;
+        report.samples.push({
+          t: TIMES[phase - 1],
+          glower: [e.r, e.g, e.b],
+          glowerTransparent: glower.material.transparent,
+          untouched: u ? [u.r, u.g, u.b] : null,
+        });
+        settle = -1;
+      }
+      if (phase >= TIMES.length) { report.ready = true; return; }
+      action.paused = true;
+      action.time = TIMES[phase];
+      phase += 1;
+      settle = 1;
+    } catch (e) { report.errors.push(String(e)); report.ready = true; }
+  });
+}
+"""
+
+    def test_an_authored_highlight_drives_the_materials_emissive(self):
+        """The second channel of the pointer table plays like the first.
+
+        A highlight is an additive emissive ramp written to
+        ``/materials/N/emissiveFactor``; the page binds it to
+        ``material.emissive`` as a colour track. Same mixer, same playhead --
+        and no ``transparent``: an additive glow must not pay for alpha sorting.
+        """
+        probe = self.temp.path(extension=".js")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write(self.HIGHLIGHT_PROBE_JS)
+        found = self._load(self._highlighted_glb(), probe=probe)
+
+        self.assertEqual(found["errors"], [])
+        self.assertTrue(found["found"]["glower"], "fixture node missing")
+        samples = {round(s["t"], 3): s for s in found["samples"]}
+        self.assertEqual(sorted(samples), [0.0, 1.0, 2.0])
+        for got, want in zip(samples[0.0]["glower"], [0.0, 0.0, 0.0]):
+            self.assertAlmostEqual(got, want, places=3)
+        for got, want in zip(samples[1.0]["glower"], [0.1, 0.25, 0.5]):
+            self.assertAlmostEqual(got, want, places=3)
+        for got, want in zip(samples[2.0]["glower"], [0.2, 0.5, 1.0]):
+            self.assertAlmostEqual(got, want, places=3)
+        self.assertFalse(samples[2.0]["glowerTransparent"], "highlight must not blend")
+        # The material was isolated: the untouched sharer never glows.
+        self.assertFalse(found["sharedInstance"])
+        for c in samples[2.0]["untouched"]:
+            self.assertAlmostEqual(c, 0.0, places=3)
+
     def _fade_load(self, glb):
         """`_load`, but driving the fade probe instead of the general one."""
         probe = self.temp.path(extension=".js")

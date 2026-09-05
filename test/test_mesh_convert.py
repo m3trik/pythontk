@@ -7314,6 +7314,364 @@ class TestApplyGlbFades(unittest.TestCase):
         self.assertEqual(MeshConvert._presence_keys(track), [[8, 0], [23, 1]])
 
 
+class TestApplyGlbHighlight(unittest.TestCase):
+    """A second per-object channel on the same pointer pass as the fade.
+
+    ``highlight`` is an intensity ramp (0-1) published beside ``opacity`` on the
+    ``visibility_tracks`` carrier, with the object's ``highlight_color``. It is
+    written as an animated ``emissiveFactor`` -- VEC3, so it can never collide
+    with the fade's alpha, and additive, so it needs no ``alphaMode BLEND``.
+    The value composes over the material's own emissive so an LED panel that
+    is also highlighted keeps glowing at intensity 0.
+    """
+
+    FPS = 30.0
+    FADE = [[8, 0.0], [23, 1.0]]
+    PULSE = [[8, 0.0], [23, 1.0]]
+    BLUE = [0.2, 0.5, 1.0]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_highlight_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    # ------------------------------------------------------------------ helpers
+    def _carrier(self, tracks):
+        props = {
+            "fbx_takes": [{"name": "Shot_1", "start": 7, "end": 100}],
+            "shot_metadata": {"version": 1, "fps": self.FPS},
+            MeshConvert.VISIBILITY_TRACKS_KEY: {
+                "version": 1,
+                "fps": self.FPS,
+                "clip_span": {"Shot_1": [8, 23], "*": [8, 100]},
+                "tracks": tracks,
+            },
+        }
+        return {
+            "name": "data_export",
+            "extras": {
+                "fromFBX": {
+                    "userProperties": {
+                        k: {"type": "eFbxString", "value": json.dumps(v)}
+                        for k, v in props.items()
+                    }
+                }
+            },
+        }
+
+    def _glb(self, tracks, nodes, materials, meshes, name="highlight.glb"):
+        return _write_glb_file(
+            os.path.join(self.tmp, name),
+            {
+                "asset": {"version": "2.0"},
+                "nodes": list(nodes) + [self._carrier(tracks)],
+                "meshes": meshes,
+                "materials": materials,
+                "accessors": [],
+                "animations": [
+                    {
+                        "name": "Shot_1",
+                        "samplers": [],
+                        "channels": [],
+                        "extras": {"zero_frame": 7},
+                    }
+                ],
+                "buffers": [{"byteLength": 4}],
+            },
+            bin_chunk=b"\x00" * 4,
+        )
+
+    def _two_objects(self, hl_visibility=False, hl_emissive=None):
+        """FADER (fades) and HL (highlights), each on its own material."""
+        hl = {"node": "HL", "highlight": self.PULSE, "highlight_color": self.BLUE}
+        if hl_visibility:
+            hl["visibility"] = [[8, 0], [23, 1]]
+        glow = {"name": "GLOW", "pbrMetallicRoughness": {}}
+        if hl_emissive is not None:
+            glow["emissiveFactor"] = hl_emissive
+        return self._glb(
+            [
+                {
+                    "node": "FADER",
+                    "visibility": [[8, 0], [23, 1]],
+                    "opacity": self.FADE,
+                },
+                hl,
+            ],
+            [{"name": "FADER", "mesh": 0}, {"name": "HL", "mesh": 1}],
+            [
+                {
+                    "name": "SKIN",
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": [0.5, 0.25, 0.125, 1.0]
+                    },
+                },
+                glow,
+            ],
+            [
+                {"primitives": [{"attributes": {}, "material": 0}]},
+                {"primitives": [{"attributes": {}, "material": 1}]},
+            ],
+        )
+
+    def _pointer_channels(self, path, clip="Shot_1"):
+        """``[(pointer, times, values)]`` with values sized by the accessor type."""
+        with MeshConvert.open_glb(path) as edit:
+            gltf, blob = edit.gltf, edit.bin_data
+            animation = next(a for a in gltf["animations"] if a["name"] == clip)
+            out = []
+            for channel in animation.get("channels") or []:
+                target = channel.get("target") or {}
+                if target.get("path") != "pointer":
+                    continue
+                pointer = target["extensions"]["KHR_animation_pointer"]["pointer"]
+                sampler = animation["samplers"][channel["sampler"]]
+
+                def read(index):
+                    acc = gltf["accessors"][index]
+                    per = {"SCALAR": 1, "VEC3": 3, "VEC4": 4}[acc["type"]]
+                    view = gltf["bufferViews"][acc["bufferView"]]
+                    off = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
+                    flat = struct.unpack_from(f"<{acc['count'] * per}f", blob, off)
+                    return [flat[i : i + per] for i in range(0, len(flat), per)]
+
+                out.append(
+                    (
+                        pointer,
+                        [t[0] for t in read(sampler["input"])],
+                        read(sampler["output"]),
+                    )
+                )
+            return out
+
+    @staticmethod
+    def _by_kind(channels):
+        emissive = [c for c in channels if c[0].endswith("/emissiveFactor")]
+        alpha = [c for c in channels if c[0].endswith("/baseColorFactor")]
+        return alpha, emissive
+
+    # ------------------------------------------------------------------ tests
+    def test_a_highlight_ramp_becomes_an_animated_emissive_factor(self):
+        path = self._two_objects()
+        summary = MeshConvert.apply_glb_fades(path)
+        self.assertEqual(summary["nodes"], 2)
+        _alpha, emissive = self._by_kind(self._pointer_channels(path))
+        self.assertEqual(len(emissive), 1)
+        pointer, _times, values = emissive[0]
+        self.assertRegex(pointer, r"^/materials/\d+/emissiveFactor$")
+        # Intensity 0 -> the material's own (absent) emissive; 1 -> the colour.
+        self.assertEqual([round(c, 6) for c in values[1]], [0.0, 0.0, 0.0])
+        self.assertEqual([round(c, 6) for c in values[-1]], self.BLUE)
+
+    def test_the_highlight_composes_over_the_materials_own_emissive(self):
+        """An LED panel that is also highlighted keeps glowing at intensity 0."""
+        path = self._two_objects(hl_emissive=[0.1, 0.0, 0.0])
+        MeshConvert.apply_glb_fades(path)
+        _alpha, emissive = self._by_kind(self._pointer_channels(path))
+        _p, _t, values = emissive[0]
+        self.assertEqual([round(c, 6) for c in values[1]], [0.1, 0.0, 0.0])
+        self.assertEqual([round(c, 6) for c in values[-1]], [0.3, 0.5, 1.0])
+
+    def test_a_highlight_only_node_needs_no_visibility_track(self):
+        """Highlighted but never hidden is the common case, and it must ship."""
+        path = self._two_objects(hl_visibility=False)
+        MeshConvert.apply_glb_fades(path)
+        _alpha, emissive = self._by_kind(self._pointer_channels(path))
+        self.assertEqual(len(emissive), 1)
+
+    def test_a_highlight_alone_does_not_switch_the_material_to_blend(self):
+        """Additive emissive needs no alpha blending; BLEND sorts differently."""
+        path = self._two_objects()
+        MeshConvert.apply_glb_fades(path)
+        with MeshConvert.open_glb(path) as edit:
+            _alpha, emissive = self._by_kind(self._pointer_channels(path))
+            index = int(emissive[0][0].split("/")[2])
+            self.assertNotEqual(edit.gltf["materials"][index].get("alphaMode"), "BLEND")
+            skin = edit.gltf["materials"][
+                int(self._by_kind(self._pointer_channels(path))[0][0][0].split("/")[2])
+            ]
+            self.assertEqual(skin.get("alphaMode"), "BLEND")
+
+    def test_fade_and_highlight_on_one_node_share_one_isolated_material(self):
+        """Two channels on one object: one clone, both pointers on it."""
+        path = self._glb(
+            [
+                {
+                    "node": "BOTH",
+                    "visibility": [[8, 0], [23, 1]],
+                    "opacity": self.FADE,
+                    "highlight": self.PULSE,
+                    "highlight_color": self.BLUE,
+                }
+            ],
+            [{"name": "BOTH", "mesh": 0}, {"name": "OUTSIDER", "mesh": 0}],
+            [
+                {
+                    "name": "SKIN",
+                    "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1]},
+                }
+            ],
+            [{"primitives": [{"attributes": {}, "material": 0}]}],
+        )
+        MeshConvert.apply_glb_fades(path)
+        alpha, emissive = self._by_kind(self._pointer_channels(path))
+        self.assertEqual((len(alpha), len(emissive)), (1, 1))
+        self.assertEqual(alpha[0][0].split("/")[2], emissive[0][0].split("/")[2])
+        with MeshConvert.open_glb(path) as edit:
+            self.assertEqual(len(edit.gltf["materials"]), 2)  # source + ONE clone
+
+    def test_a_channel_added_after_the_first_pass_is_still_written(self):
+        """The guard is per pointer target, not per file."""
+        path = self._glb(
+            [{"node": "FADER", "visibility": [[8, 0], [23, 1]], "opacity": self.FADE}],
+            [{"name": "FADER", "mesh": 0}],
+            [
+                {
+                    "name": "SKIN",
+                    "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1]},
+                }
+            ],
+            [{"primitives": [{"attributes": {}, "material": 0}]}],
+        )
+        MeshConvert.apply_glb_fades(path)
+        alpha_before = len(self._by_kind(self._pointer_channels(path))[0])
+        with MeshConvert.open_glb(path) as edit:
+            carrier = next(
+                n for n in edit.gltf["nodes"] if n.get("name") == "data_export"
+            )
+            prop = carrier["extras"]["fromFBX"]["userProperties"][
+                MeshConvert.VISIBILITY_TRACKS_KEY
+            ]
+            channel = json.loads(prop["value"])
+            channel["tracks"][0]["highlight"] = self.PULSE
+            channel["tracks"][0]["highlight_color"] = self.BLUE
+            prop["value"] = json.dumps(channel)
+            edit.dirty = True
+        summary = MeshConvert.apply_glb_fades(path)
+        self.assertIsNotNone(summary)
+        alpha, emissive = self._by_kind(self._pointer_channels(path))
+        self.assertEqual(len(alpha), alpha_before)  # not duplicated
+        self.assertEqual(len(emissive), 1)  # newly written
+
+    def test_a_prop_never_cut_into_shots_still_gets_its_channel(self):
+        """No declared takes: the ramps' own extent is the window, as for the gate.
+
+        The converter's retained whole-timeline stack is the only clip, and it
+        knows its zero through ``clip_span["*"]``. The fade pass used to bail
+        here (visibility already fell back), so a highlighted prop exported
+        without a shot list shipped no highlight.
+        """
+        props = {
+            "shot_metadata": {"version": 1, "fps": self.FPS},
+            MeshConvert.VISIBILITY_TRACKS_KEY: {
+                "version": 1,
+                "fps": self.FPS,
+                "clip_span": {"*": [8, 23]},
+                "tracks": [
+                    {
+                        "node": "HL",
+                        "highlight": self.PULSE,
+                        "highlight_color": self.BLUE,
+                    }
+                ],
+            },
+        }
+        carrier = self._carrier({})
+        carrier["extras"]["fromFBX"]["userProperties"] = {
+            k: {"type": "eFbxString", "value": json.dumps(v)} for k, v in props.items()
+        }
+        path = _write_glb_file(
+            os.path.join(self.tmp, "no_takes.glb"),
+            {
+                "asset": {"version": "2.0"},
+                "nodes": [{"name": "HL", "mesh": 0}, carrier],
+                "meshes": [{"primitives": [{"attributes": {}, "material": 0}]}],
+                "materials": [{"name": "GLOW", "pbrMetallicRoughness": {}}],
+                "accessors": [{"type": "SCALAR", "min": [0.0], "max": [15 / self.FPS]}],
+                "animations": [
+                    {
+                        "name": "Take 001",
+                        "samplers": [{"input": 0, "output": 0}],
+                        "channels": [
+                            {"sampler": 0, "target": {"node": 0, "path": "translation"}}
+                        ],
+                    }
+                ],
+                "buffers": [{"byteLength": 4}],
+            },
+            bin_chunk=b"\x00" * 4,
+        )
+        summary = MeshConvert.apply_glb_fades(path)
+        self.assertIsNotNone(summary)
+        _alpha, emissive = self._by_kind(self._pointer_channels(path, "Take 001"))
+        self.assertEqual(len(emissive), 1)
+        self.assertEqual([round(c, 6) for c in emissive[0][2][-1]], self.BLUE)
+
+    def test_a_cleared_channel_reads_as_absent_not_unparsable(self):
+        """A producer with nothing to publish clears its channel to ""."""
+        gltf = {
+            "nodes": [
+                {
+                    "name": "data_export",
+                    "extras": {
+                        "fromFBX": {
+                            "userProperties": {
+                                "fbx_takes": {"type": "eFbxString", "value": ""}
+                            }
+                        }
+                    },
+                }
+            ]
+        }
+        with self.assertNoLogs("pythontk", level="WARNING"):
+            self.assertIsNone(MeshConvert.data_export_channel(gltf, "fbx_takes"))
+
+    def test_curve_proxy_nodes_are_stripped_from_the_glb(self):
+        """The FBX transport's transient child must not ship in the GLB."""
+        path = _write_glb_file(
+            os.path.join(self.tmp, "proxy.glb"),
+            {
+                "asset": {"version": "2.0"},
+                "scenes": [{"nodes": [0]}],
+                "nodes": [
+                    {"name": "hlCube", "mesh": 0, "children": [1]},
+                    {
+                        "name": "hlCube__highlight",
+                        "extras": {
+                            "fromFBX": {
+                                "userProperties": {
+                                    MeshConvert.CURVE_PROXY_MARKER: {
+                                        "type": "eFbxBool",
+                                        "value": True,
+                                    }
+                                }
+                            }
+                        },
+                    },
+                ],
+                "meshes": [{"primitives": [{"attributes": {}}]}],
+                "accessors": [{"type": "SCALAR", "min": [0.0], "max": [1.0]}],
+                "animations": [
+                    {
+                        "name": "Take 001",
+                        "samplers": [{"input": 0, "output": 0}],
+                        "channels": [
+                            {"sampler": 0, "target": {"node": 1, "path": "scale"}}
+                        ],
+                    }
+                ],
+                "buffers": [{"byteLength": 4}],
+            },
+            bin_chunk=b"\x00" * 4,
+        )
+        removed = MeshConvert.strip_glb_curve_proxies(path)
+        self.assertEqual(removed, ["hlCube__highlight"])
+        with MeshConvert.open_glb(path) as edit:
+            names = [n.get("name") for n in edit.gltf["nodes"]]
+            self.assertNotIn("hlCube__highlight", names)
+            self.assertEqual(edit.gltf["nodes"][0].get("children", []), [])
+            self.assertEqual(edit.gltf["animations"][0]["channels"], [])
+
+
 class TestApplyGlbClips(unittest.TestCase):
     """Shot clips cut from the whole-timeline stack instead of by Maya's split.
 

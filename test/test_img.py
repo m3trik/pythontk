@@ -1406,15 +1406,54 @@ class ImageFormatCapabilityTest(unittest.TestCase):
         self.assertEqual(back.mode, "I;16")
         self.assertEqual(back.getpixel((0, 0)), 128 * 257)  # promoted 8→16
 
-    @unittest.skipUnless(HAS_CV2, "cv2 required for 16-bit RGB")
-    def test_save_16bit_rgb_png(self):
+    def test_save_16bit_rgb_png_needs_no_cv2(self):
+        """A 16-bit colour PNG comes from the standard library (a data map a
+        GPU must not sRGB-decode needs 16 bits on any machine): filter type 0
+        on every row, the 8-bit samples promoted, decoded here without OpenCV."""
+        import struct
+        import zlib
+
+        import numpy as np
+
+        p = os.path.join(self.tmp, "c16.png")
+        ImgUtils.save_image(self.img, p, bit_depth=16)
+        with open(p, "rb") as fh:
+            data = fh.read()
+        self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+        width, height, depth, colour = struct.unpack(">IIBB", data[16:26])
+        self.assertEqual((depth, colour), (16, 2), "16-bit RGB")
+        idat, pos = b"", 8
+        while pos < len(data):
+            length, kind = struct.unpack(">I4s", data[pos : pos + 8])
+            if kind == b"IDAT":
+                idat += data[pos + 8 : pos + 8 + length]
+            pos += 12 + length
+        rows = np.frombuffer(zlib.decompress(idat), np.uint8)
+        rows = rows.reshape(height, 1 + width * 6)
+        self.assertTrue((rows[:, 0] == 0).all(), "filter type 0 on every row")
+        samples = rows[:, 1:].copy().view(">u2").reshape(height, width, 3)
+        expected = np.asarray(self.img.convert("RGB"), dtype=np.uint16) * 257
+        np.testing.assert_array_equal(samples.astype(np.uint16), expected)
+
+        rgba = os.path.join(self.tmp, "c16a.png")
+        ImgUtils.save_image(self.img.convert("RGBA"), rgba, bit_depth=16)
+        with open(rgba, "rb") as fh:
+            head = fh.read(26)
+        self.assertEqual(struct.unpack(">IIBB", head[16:26])[2:], (16, 6), "RGBA")
+
+    @unittest.skipUnless(HAS_CV2, "cv2 reads the file back")
+    def test_save_16bit_rgb_png_reads_back_through_cv2(self):
+        """The standard-library file is a PNG another decoder accepts."""
         import cv2
+        import numpy as np
 
         p = os.path.join(self.tmp, "c16.png")
         ImgUtils.save_image(self.img, p, bit_depth=16)
         arr = cv2.imread(p, cv2.IMREAD_UNCHANGED)
         self.assertEqual(arr.dtype.name, "uint16")
         self.assertEqual(arr.shape[2], 3)
+        expected = np.asarray(self.img.convert("RGB"), dtype=np.uint16) * 257
+        np.testing.assert_array_equal(arr[..., ::-1], expected)
 
     def test_16bit_unsupported_container_falls_back_to_8bit(self):
         """A 16-bit request on a container that can't hold it must not raise —

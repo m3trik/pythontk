@@ -1800,6 +1800,87 @@ class TestShadowRigLive(unittest.TestCase):
         self.assertEqual(plane["uMode"], 1)
         self._assert_tracks_reference(found, expected, points)
 
+    def test_a_blender_frame_shadows_too(self):
+        """Blender's frame arrives as ``(X, -Z)`` in the file's axes -- its
+        bake runs bearing from local X toward local Y, which the Y-up
+        conversion turns into -Z -- so its bearing sense is the mirror of
+        Maya's ``(X, Z)``. The frame's up is the CONTACT's up, never a cross
+        product of A and B: ``cross(B, A)`` is +Y for one sense and -Y for
+        the other, which put every Blender-exported source below the horizon
+        and drew nothing. Measured before the fix: alpha 0 at every point.
+
+        The map is baked in that mirrored sense (the pole at map coords
+        ``(x, -z)``) and the reference is fed frame-mapped points, exactly
+        as the shader maps world points through A and B.
+        """
+        azimuth, _, _, _ = _pole_geometry_frame()
+        # World bearing of the light, and the pole's WORLD position; in the
+        # (X, -Z) frame the map coords are (x, -z) for both.
+        source = [2.0 * math.cos(azimuth), 3.0, 2.0 * math.sin(azimuth)]
+        points = self._scatter_points(self.POSITIONAL_EDGES)
+        to_frame = lambda x, z: (x, -z)  # noqa: E731 -- dot(P, A), dot(P, B)
+        _, _, _, pole_world = _pole_geometry_frame()
+        png = _pole_horizon_png(
+            POLE_BINS,
+            POLE_TILE,
+            POLE_RMIN,
+            POLE_RMAX,
+            to_frame(*pole_world),
+            POLE_RADIUS,
+            POLE_HEIGHT,
+            POLE_MAX_STRETCH,
+        )
+        maps = self.temp.dir_path()
+        with open(os.path.join(maps, "Box_horizon.png"), "wb") as fh:
+            fh.write(png)
+        hmap = ptk.HorizonMap.from_rgba(
+            np.asarray(Image.open(io.BytesIO(png)).convert("RGBA")),
+            bins=POLE_BINS,
+            size=POLE_TILE,
+            r_min=POLE_RMIN,
+            r_max=POLE_RMAX,
+            max_stretch=POLE_MAX_STRETCH,
+        )
+        frame_pts = [[fx, 0.0, fz] for fx, fz in (to_frame(x, z) for x, z in points)]
+        frame_light = [source[0], source[1], -source[2]]
+        expected = hmap.alpha(frame_pts, light=frame_light)
+        self.assertGreater(int((expected > 0.5).sum()), 4)
+
+        record = _record(
+            "Box_horizon_plane",
+            type="horizon",
+            follow_source=False,
+            max_stretch=POLE_MAX_STRETCH,
+            horizon={
+                "texture": "Box_horizon.png",
+                "bins": POLE_BINS,
+                "tile": list(POLE_TILE),
+                "layout": [8, 8],
+                "layers": 2,
+                "mapping": "logpolar",
+                "r_min": POLE_RMIN,
+                "r_max": POLE_RMAX,
+                "frame_a": [1, 0, 0],
+                "frame_b": [0, 0, -1],
+                "encoding": 1,
+                "rect": [1, 1, 0, 0],
+                "max_stretch": POLE_MAX_STRETCH,
+            },
+        )
+        glb = self._glb(
+            None,
+            nodes=[
+                {"name": "Box_horizon_plane", "mesh": 0, "scale": [14.0, 1.0, 14.0]},
+                {"name": "shadow_source", "translation": source},
+                {"name": "Box_contact_loc"},
+                _data_export_node(_payload([record])),
+            ],
+            materials=[_plane_material("Box_horizon_MAT")],
+            search_dirs=[maps],
+        )
+        found = self._load(glb, action=HORIZON_SAMPLES_JS, points=points)
+        self._assert_tracks_reference(found, expected, points)
+
 
 if __name__ == "__main__":
     unittest.main()

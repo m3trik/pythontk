@@ -75,7 +75,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/mesh_convert/fbx_file.py`](#file_utils--mesh_convert--fbx_file) — Zero-dependency binary-FBX reader: header, node records, objects, takes.
 - [`file_utils/mesh_convert/fbx_media.py`](#file_utils--mesh_convert--fbx_media) — Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
 - [`file_utils/mesh_convert/glb_clips.py`](#file_utils--mesh_convert--glb_clips) — Rebuild a GLB's shot clips from its one whole-timeline animation.
-- [`file_utils/mesh_convert/glb_fades.py`](#file_utils--mesh_convert--glb_fades) — Write authored opacity ramps into a GLB as ``KHR_animation_pointer`` channels.
+- [`file_utils/mesh_convert/glb_fades.py`](#file_utils--mesh_convert--glb_fades) — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
 - [`file_utils/mesh_convert/glb_reader.py`](#file_utils--mesh_convert--glb_reader) — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
 - [`file_utils/metadata.py`](#file_utils--metadata)
@@ -374,7 +374,7 @@ Key stash — park keyframes outside the working animation, retrieve later.
 
 Behaviors — load JSON keying recipes and resolve them to keyframe math.
 
-- **[`class Behaviors(_BehaviorsInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L83)** — Behaviors — module namespace.
+- **[`class Behaviors(_BehaviorsInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L83)** — Load JSON keying recipes and resolve them to keyframe math.
   - `Behaviors.templates() -> TemplateSet` *(static)* — The shared :class:`~pythontk.TemplateSet` backing behavior discovery.
   - `Behaviors.load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]` *(static)* — Load a JSON behavior template by stem name.
   - `Behaviors.list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]` *(static)* — Return stem names of all available behavior templates.
@@ -412,20 +412,20 @@ Shot Manifest engine — pure planning/orchestration core with scene hooks.
 
 Pure Shot Manifest data model + CSV parser.
 
-- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L135)** — ManifestModel — module namespace.
+- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L135)** — The shot manifest's data model and CSV parser.
   - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
   - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
-- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L337)** — One asset within a step.
-- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L347)** — One step (= one future sequencer shot).
+- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L342)** — One asset within a step.
+- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L352)** — One step (= one future sequencer shot).
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
   - `BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert detection candidates to BuilderSteps + pre-filled ranges.
-- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L417)** — Immutable build instruction computed before any store mutation.
-- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L456)** — Assessment result for one object within a step.
-- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L472)** — Assessment result for one step.
+- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L422)** — Immutable build instruction computed before any store mutation.
+- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L461)** — Assessment result for one object within a step.
+- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L477)** — Assessment result for one step.
   - `StepStatus.status(self) -> str` *(property)* — Worst-of-children rollup.
   - `StepStatus.missing_count(self) -> int` *(property)*
   - `StepStatus.total_count(self) -> int` *(property)*
-- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L524)** — Maps logical fields to CSV header names (case-insensitive).
+- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L529)** — Maps logical fields to CSV header names (case-insensitive).
   - `ColumnMap.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON-safe dict (tuples → lists).
   - `ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'` *(class)* — Reconstruct from a dict produced by :meth:`to_dict`.
 
@@ -434,7 +434,7 @@ Pure Shot Manifest data model + CSV parser.
 
 CSV mapping resolver — interprets JSON mapping files.
 
-- **[`class Mapping(_MappingInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L275)** — Mapping — module namespace.
+- **[`class Mapping(_MappingInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L275)** — Resolve a CSV's columns through a declarative JSON mapping file.
   - `Mapping.templates() -> TemplateSet` *(static)* — The shared :class:`~pythontk.TemplateSet` backing mapping discovery.
   - `Mapping.discover(directory: Optional[str] = None) -> List[str]` *(static)* — List available mapping names (without ``.json``).
   - `Mapping.load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]` *(static)* — Read a mapping JSON by *name*, validate it, and return the parsed dict.
@@ -456,7 +456,7 @@ Schema for a CSV *mapping* file, defined as a dataclass.
 
 Range resolution algorithm for the Shot Manifest.
 
-- **[`class RangeResolver`](pythontk/pythontk/core_utils/engines/shots/manifest/range_resolver.py#L19)** — RangeResolver — module namespace.
+- **[`class RangeResolver`](pythontk/pythontk/core_utils/engines/shots/manifest/range_resolver.py#L19)** — Resolve build-step ranges from user entries and gap boundaries.
   - `RangeResolver.prune_to_top_boundaries(region_starts: List[float], n_steps: int) -> List[float]` *(static)* — Keep only *n_steps* region starts by selecting the largest gaps.
   - `RangeResolver.resolve_ranges(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], gap_starts: List[float], gap_end_map: Dict[float, float], gap: float, use_selected_keys: bool, last_resolved: List[Tuple[str, float, Optional[float], bool]], from_step_idx: int = 0, default_duration: float = 0, duration_fn: Optional[Callable[..., float]] = None) -> List[Tuple[str, float, Optional[float], bool]]` *(static)* — Compute a resolved ``(start, end)`` for every step.
 
@@ -465,7 +465,7 @@ Range resolution algorithm for the Shot Manifest.
 
 Commit a resolved :class:`MovePlan` via injected writer callables.
 
-- **[`class ShotApply`](pythontk/pythontk/core_utils/engines/shots/shot_apply.py#L54)** — ShotApply — module namespace.
+- **[`class ShotApply`](pythontk/pythontk/core_utils/engines/shots/shot_apply.py#L54)** — Commit a resolved ``MovePlan`` through injected writer callables.
   - `ShotApply.apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None` *(static)* — Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).
 
 <a id="core_utils--engines--shots--shot_detection"></a>
@@ -473,7 +473,7 @@ Commit a resolved :class:`MovePlan` via injected writer callables.
 
 Pure shot-boundary detection math.
 
-- **[`class ShotDetection`](pythontk/pythontk/core_utils/engines/shots/shot_detection.py#L45)** — ShotDetection — module namespace.
+- **[`class ShotDetection`](pythontk/pythontk/core_utils/engines/shots/shot_detection.py#L45)** — Shot-boundary detection math over plain animation data.
   - `ShotDetection.cluster_segments_by_gap(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]` *(static)* — Cluster per-object animation segments into shot-region candidates.
   - `ShotDetection.boundaries_from_key_entries(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]` *(static)* — Build shot-region candidates from ``(time, value, object)`` key entries.
 
@@ -590,7 +590,7 @@ DCC-agnostic shot data model and persistent store.
 Pure planning layer for multi-shot topology transformations.
 
 - **[`class ShotBoundaryConflict(RuntimeError)`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L37)** — Two poses would be forced onto one sample by collapsing a gap.
-- **[`class ShotPlanner(_ShotPlannerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L207)** — ShotPlanner — module namespace.
+- **[`class ShotPlanner(_ShotPlannerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L207)** — Compute WHAT moves WHERE for a multi-shot timeline edit.
   - `ShotPlanner.envelope_for(sorted_shots: List, index: int) -> tuple` *(static)* — ``(env_start, env_end, lo_open, hi_closed)`` for one shot's window.
   - `ShotPlanner.in_window(t: float, lo: float, hi: float, lo_open: bool = False, hi_closed: bool = False, eps: float = _EPS) -> bool` *(static)* — Is sample *t* inside the window ``[lo, hi)`` as shaped by the flags?
   - `ShotPlanner.objects_to_adopt(keyed: Dict[str, Sequence[float]], owned: Optional[Iterable[str]], lo: float, hi: float, lo_open: bool = False, hi_closed: bool = False, eps: float = _EPS) -> List[str]` *(static)* — Objects a moving shot may claim over the window it is about to move.
@@ -603,11 +603,11 @@ Pure planning layer for multi-shot topology transformations.
   - `ShotPlanner.plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan` *(static)* — Build a plan that shifts every shot starting at or after
   - `ShotPlanner.plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan` *(static)* — Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.
   - `ShotPlanner.plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan` *(static)* — Build a plan that shifts every shot ending at or before
-- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L735)** — A single shot's source and destination ranges.
+- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L741)** — A single shot's source and destination ranges.
   - `ShotMove.delta(self) -> float` *(property)*
   - `ShotMove.moves(self) -> bool` *(property)*
-- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L770)** — Resolved multi-shot timeline mutation.
-- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L793)** — One inter-shot gap whose WIDTH changes, and where its content must land.
+- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L776)** — Resolved multi-shot timeline mutation.
+- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L799)** — One inter-shot gap whose WIDTH changes, and where its content must land.
   - `GapRetime.width(self) -> float` *(property)*
   - `GapRetime.scale(self) -> float` *(property)* — Time factor about the gap's left edge (0.0 collapses the gap).
   - `GapRetime.shrinks(self) -> bool` *(property)*
@@ -618,9 +618,9 @@ Pure planning layer for multi-shot topology transformations.
 
 Pure image-compositing engine — alpha-composite layered texture maps
 
-- **[`class BatchResult(Enum)`](pythontk/pythontk/core_utils/engines/textures/map_compositor.py#L27)** — Outcome of a full composite + retry-with-mask cycle.
-- **[`class NormalOutputMode(Enum)`](pythontk/pythontk/core_utils/engines/textures/map_compositor.py#L35)** — How the engine handles DirectX/OpenGL normal-map output.
-- **[`class MapCompositor(ptk.LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_compositor.py#L55)** — Alpha-composite layered texture maps and auto-generate the
+- **[`class BatchResult(Enum)`](pythontk/pythontk/core_utils/engines/textures/map_compositor.py#L38)** — Outcome of a full composite + retry-with-mask cycle.
+- **[`class NormalOutputMode(Enum)`](pythontk/pythontk/core_utils/engines/textures/map_compositor.py#L46)** — How the engine handles DirectX/OpenGL normal-map output.
+- **[`class MapCompositor(ptk.LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_compositor.py#L66)** — Alpha-composite layered texture maps and auto-generate the
   - `MapCompositor.removeNormalMap(self) -> bool` *(property)*
   - `MapCompositor.written_paths(self) -> List[str]` *(property)* — Files written by the most recent batch, in write order.
   - `MapCompositor.reset(self) -> None` — Clear per-session state (masks, progress counters).
@@ -1104,8 +1104,8 @@ Helpers for hot-reloading packages and their submodules.
 
 Reusable module attribute resolver for package-style imports.
 
-- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L773) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
-- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L861) — Create multi-inheritance namespace classes from groups of related classes.
+- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L803) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
+- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L891) — Create multi-inheritance namespace classes from groups of related classes.
 - **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L35)** — Discover and resolve attributes exposed from package submodules lazily.
   - `ModuleAttributeResolver.build(self) -> 'ModuleAttributeResolver'` — Populate resolver dictionaries based on current include spec.
   - `ModuleAttributeResolver.rebuild(self, include: Optional[Mapping[str, Union[Sequence[str], str]]] = None) -> 'ModuleAttributeResolver'` — Reset include spec (optional) and rebuild dictionaries.
@@ -1114,7 +1114,7 @@ Reusable module attribute resolver for package-style imports.
   - `ModuleAttributeResolver.bind_to(self, module_globals: MutableMapping[str, object], *, install_getattr: bool = True, eager: bool = False, names: Optional[Iterable[str]] = None) -> None` — Bind resolver helpers into a module's globals dictionary.
   - `ModuleAttributeResolver.iter_registered_names(self) -> Iterable[str]` — Return an iterable of attribute names known to the resolver.
   - `ModuleAttributeResolver.clear_module_cache(self) -> None` — Drop cached module imports managed by the resolver.
-- **[`class PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L432)** — Facade that wires a :class:`ModuleAttributeResolver` into a package module.
+- **[`class PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L462)** — Facade that wires a :class:`ModuleAttributeResolver` into a package module.
   - `PackageResolverHandle.install(self, *, expose_maps: bool = True, install_helpers: bool = True, allow_getattr: Optional[bool] = None, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> None` — Publish resolver artifacts into the target module globals.
   - `PackageResolverHandle.configure(self, *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, merge: bool = True, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver` — Reconfigure the underlying resolver and optionally re-export symbols.
   - `PackageResolverHandle.build_dictionaries(self, include_override: Optional[IncludeMapping] = None, *, eager: bool = False, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver` — Compatibility wrapper mirroring the legacy ``build_dictionaries`` helper.
@@ -1298,16 +1298,16 @@ Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 
 Run a script in an external app, block until it exits, and collect an artifact.
 
-- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L59)** — ScriptRunner — module namespace.
+- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L59)** — Run a script in an external app, block, and collect its artifact.
   - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
-- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L186)** — What a successful :func:`run_script_to_artifact` returns.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L191)** — What a successful :func:`run_script_to_artifact` returns.
 
 <a id="core_utils--script_template"></a>
 ### `core_utils/script_template.py`
 
 Generic on-disk script-template discovery + ``__KEY__`` rendering.
 
-- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L91)** — ScriptTemplate — module namespace.
+- **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L91)** — Discover on-disk script templates and render their ``__KEY__`` slots.
   - `ScriptTemplate.list_templates(template_dir, extension: str = '.py') -> List[Path]` *(static)* — Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).
   - `ScriptTemplate.normalize_modes(modes: Optional[Sequence[str]]) -> Tuple[str, ...]` *(static)* — Fold legacy on-disk spellings in *modes* to the canonical values.
   - `ScriptTemplate.declared_values(template_path, field: str) -> Optional[Tuple[str, ...]]` *(static)* — Return the strings a template declares via ``<field> = (...)``, VERBATIM.
@@ -1370,7 +1370,7 @@ SymbolRecord - the shared public-API symbol shape.
 
 Generic task/check pipeline primitive -- host- and Qt-free.
 
-- **[`class TaskFactory`](pythontk/pythontk/core_utils/task_factory.py#L24)** — A factory class for managing and executing tasks in a scene export pipeline.
+- **[`class TaskFactory`](pythontk/pythontk/core_utils/task_factory.py#L26)** — A factory class for managing and executing tasks in a scene export pipeline.
   - `TaskFactory.stage_deferred_restore(self, key: str, restore: Callable) -> bool` — Register *restore* to run **after** the caller's real work — once per *key*.
   - `TaskFactory.stage_deferred_context(self, key: str, cm) -> bool` — Enter context manager *cm* now and stage its exit as the deferred restore.
   - `TaskFactory.run_deferred_restores(self) -> None` — Run + clear every restore staged by :meth:`stage_deferred_restore`.
@@ -1457,7 +1457,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.reveal_in_file_manager(cls, path, _runner=None)` *(class)* — Open the OS file manager showing ``path`` (selecting the file when supported, else
   - `FileUtils.get_file_info(cls, paths, info, hash_algo=None, force_tuples=False)` *(class)* — Returns file and directory information for a list of file strings based on specified parameters.
   - `FileUtils.format_path(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]` *(static)* — Format a given filepath(s).
-  - `FileUtils.convert_to_relative_path(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str` *(static)* — Convert an absolute file path to a relative path based on the given base directory.
+  - `FileUtils.convert_to_relative_path(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> Union[str, List[str]]` *(static)* — Convert an absolute file path to a relative path based on the given base directory.
   - `FileUtils.remap_file_paths(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]` *(static)* — Remap a list of file paths to a new directory while preserving their relative
   - `FileUtils.append_path(cls, path, **kwargs)` *(class)* — Append a directory to the python path.
   - `FileUtils.get_object_path(obj, inc_filename: bool = False) -> str` *(static)* — Retrieve the absolute file path associated with a Python object.
@@ -1507,6 +1507,7 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize keyed visibility as STEP ``scale`` channels the file can play.
   - `MeshConvert.clip_spans(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]` *(class)* — Per take, the first and last authored frame inside its window.
   - `MeshConvert.build_visibility_tracks(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]` *(class)* — Wrap *tracks* in the versioned ``visibility_tracks`` envelope.
+  - `MeshConvert.strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]` *(class)* — Remove every curve-proxy node (and its channels) from a GLB.
   - `MeshConvert.apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize authored opacity ramps as animated material alpha.
   - `MeshConvert.prune_glb_animations(cls, glb: GlbTarget) -> List[str]` *(class)* — Drop every animation that carries no channels or no samplers.
   - `MeshConvert.apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish the GLB's clips as ``extras.animation_web``, joined to the shots.
@@ -1589,10 +1590,15 @@ Rebuild a GLB's shot clips from its one whole-timeline animation.
 <a id="file_utils--mesh_convert--glb_fades"></a>
 ### `file_utils/mesh_convert/glb_fades.py`
 
-Write authored opacity ramps into a GLB as ``KHR_animation_pointer`` channels.
+Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
 
-- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L149)** — Publish authored alpha ramps as animated material channels.
+- **[`class PointerChannel`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L78)** — One animatable material property and how a published ramp reaches it.
+  - `PointerChannel.components(self) -> int` *(property)*
+  - `PointerChannel.accessor_type(self) -> str` *(property)*
+  - `PointerChannel.base(self, gltf: Dict[str, Any], index: int) -> List[float]` — The material's own value for this property, defaulted per spec.
+- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L334)** — Publish authored material ramps as animated material channels.
   - `GlbFades.apply(cls, edit: Any, fades: Dict[str, Sequence[Sequence[float]]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write one alpha channel per faded node per clip.
+  - `GlbFades.apply_channels(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Rgb]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write every channel of every node, per clip, in one pass.
 
 <a id="file_utils--mesh_convert--glb_reader"></a>
 ### `file_utils/mesh_convert/glb_reader.py`
@@ -1892,7 +1898,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.invert_grayscale_image(cls, image: Union[str, Image.Image]) -> Image.Image` *(class)* — Inverts a grayscale image.
   - `ImgUtils.invert_channels(cls, image, channels='RGBA')` *(class)* — Invert specified channels in an image.
   - `ImgUtils.swizzle_channels(cls, image, mapping)` *(class)* — Reorder, duplicate, or constant-fill an image's channels.
-  - `ImgUtils.create_mask(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))` *(class)* — Create mask(s) from the given image(s).
+  - `ImgUtils.create_mask(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)) -> Union[Image.Image, List[Image.Image]]` *(class)* — Create mask(s) from the given image(s).
   - `ImgUtils.fill_masked_area(cls, image, color, mask)` *(class)* — Parameters:
   - `ImgUtils.fill(cls, image, color=(0, 0, 0, 0))` *(class)* — Parameters:
   - `ImgUtils.get_background(cls, image, mode=None, average=False)` *(class)* — Sample the pixel values of each corner of an image and if they are uniform, return the result.
@@ -2024,9 +2030,9 @@ One atlas per shadow-rig type: equal cells, a tile rewritten in place.
   - `MathUtils.kmeans_clustering(points: Sequence[Sequence[float]], k: int, max_iterations: int = 30, seed_indices: Optional[List[int]] = None) -> List[List[int]]` *(static)* — Perform K-Means clustering on a set of points.
   - `MathUtils.kmeans_1d(values: Sequence[float], k: int = 3, max_iterations: int = 10) -> Tuple[List[float], List[List[float]]]` *(static)* — Perform 1D K-Means clustering to find natural breakpoints in scalar data.
   - `MathUtils.get_kmeans_threshold(cls, values: Sequence[float], k: int = 3) -> float` *(class)* — Use K-Means to find an adaptive threshold separating "parts" from "bodies".
-  - `MathUtils.move_decimal_point(num, places)` *(static)* — Move the decimal place in a given number.
+  - `MathUtils.move_decimal_point(num, places) -> Union[float, List[float]]` *(static)* — Move the decimal place in a given number.
   - `MathUtils.get_vector_from_two_points(a: List[float], b: List[float]) -> Tuple[float, float, float]` *(static)* — Get a directional vector from a given start and end point.
-  - `MathUtils.clamp(n=0.0, minimum=0.0, maximum=1.0)` *(static)* — Clamps the value x between min and max.
+  - `MathUtils.clamp(n=0.0, minimum=0.0, maximum=1.0) -> Union[float, List[float]]` *(static)* — Clamps the value x between min and max.
   - `MathUtils.clamp_range(start, end, clamp_start=None, clamp_end=None, validate=True)` *(static)* — Clamp a numeric range (start, end) to optional boundaries with validation.
   - `MathUtils.normalize(cls, vector, amount=1)` *(class)* — Normalize a 2 or 3 dimensional vector.
   - `MathUtils.get_magnitude(vector)` *(static)* — Get the magnatude (length) of a given vector.
@@ -2197,7 +2203,7 @@ Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 
 Generic DCC plugin installer (symlink-first, copytree fallback).
 
-- **[`class PluginInstaller(_PluginInstallerInternal)`](pythontk/pythontk/net_utils/rpc/installer.py#L81)** — PluginInstaller — module namespace.
+- **[`class PluginInstaller(_PluginInstallerInternal)`](pythontk/pythontk/net_utils/rpc/installer.py#L81)** — Install a DCC plugin into its host's folder, symlink-first.
   - `PluginInstaller.is_plugin_current(plugin_src: Union[str, Path], dest: Union[str, Path]) -> bool` *(static)* — True when *dest* already serves the current *plugin_src*.
   - `PluginInstaller.install_plugin(plugin_src: Union[str, Path], dest: Union[str, Path], force: bool = False) -> Optional[Path]` *(static)* — Install *plugin_src* at *dest*, refreshing it when it has drifted.
   - `PluginInstaller.uninstall_plugin(dest: Union[str, Path]) -> bool` *(static)* — Remove a plugin install at *dest*.
@@ -2208,10 +2214,10 @@ Generic DCC plugin installer (symlink-first, copytree fallback).
 
 One-shot batch pipeline over :class:`RpcClient`.
 
-- **[`class RpcJob`](pythontk/pythontk/net_utils/rpc/job.py#L32)** — RpcJob — module namespace.
+- **[`class RpcJob`](pythontk/pythontk/net_utils/rpc/job.py#L32)** — Run a batch of :class:`Call`\ s over one :class:`RpcClient` session.
   - `RpcJob.run_batch(calls: List[Call], client: RpcClient, stop_on_error: bool = False) -> List[Result]` *(static)* — Connect, fire every call in *calls*, return a Result per call.
-- **[`class Call`](pythontk/pythontk/net_utils/rpc/job.py#L73)** — One queued op invocation.
-- **[`class Result`](pythontk/pythontk/net_utils/rpc/job.py#L86)** — Outcome of a single :class:`Call`.
+- **[`class Call`](pythontk/pythontk/net_utils/rpc/job.py#L78)** — One queued op invocation.
+- **[`class Result`](pythontk/pythontk/net_utils/rpc/job.py#L91)** — Outcome of a single :class:`Call`.
 
 <a id="net_utils--rpc--plugin_core"></a>
 ### `net_utils/rpc/plugin_core.py`
@@ -2256,7 +2262,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
   - `StrUtils.replace_placeholders(text: str, **kwargs) -> str` *(static)* — Replace placeholders in a string with provided values.
   - `StrUtils.resolve_placeholders(text: str, **kwargs) -> dict` *(static)* — Resolve placeholders and report what was substituted vs.
   - `StrUtils.replace_delimited(text: str, context: dict, prefix: str = '__', suffix: str = '__') -> str` *(static)* — Replace delimited placeholders in *text* using *context*.
-  - `StrUtils.set_case(string, case='title')` *(static)* — Format the given string(s) in the given case.
+  - `StrUtils.set_case(string, case='title') -> Union[str, List[str]]` *(static)* — Format the given string(s) in the given case.
   - `StrUtils.get_mangled_name(class_input, attribute_name)` *(static)* — Returns the mangled name for a private attribute of a class.
   - `StrUtils.get_matching_hierarchy_items(hierarchy_items, target, upstream=False, exact=False, downstream=False, reverse=False, delimiters='|')` *(static)* — Find the closest match(es) for a given 'target' string in a list of hierarchical strings.
   - `StrUtils.split_delimited_string(string: str, delimiter: str = '|', max_split: Optional[int] = None, occurrence: Optional[int] = None, strip_whitespace: bool = False, remove_empty: bool = False, func: Optional[Callable] = None) -> Union[List[str], Tuple[str, str]]` *(static)* — Split a delimited string with flexible control over the result format.
@@ -2264,7 +2270,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
   - `StrUtils.insert(cls, src, ins, at, occurrence=1, before=False)` *(class)* — Insert character(s) into a string at a given location.
   - `StrUtils.rreplace(string, old, new='', count=None)` *(static)* — Replace occurrances in a string from right to left.
   - `StrUtils.collapse_delimiter_runs(string, delimiter='_', strip_trailing=True)` *(static)* — Collapse consecutive delimiter runs to a single delimiter.
-  - `StrUtils.truncate(string, length=75, mode='start', insert='..', head=None)` *(static)* — Shorten the given string to the given length.
+  - `StrUtils.truncate(string, length=75, mode='start', insert='..', head=None) -> Union[str, List[str]]` *(static)* — Shorten the given string to the given length.
   - `StrUtils.get_trailing_integers(string, inc=0, as_string=False)` *(static)* — Returns any integers from the end of the given string.
   - `StrUtils.find_str(cls, find, strings, regex=False, ignore_case=False)` *(class)* — Filter for elements that containing the given string in a list of strings.
   - `StrUtils.find_str_and_format(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)` *(class)* — Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…
@@ -2280,7 +2286,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
   - `StrUtils.alpha_sequence(index: int) -> str` *(static)* — Excel-column-style alphabetic label for a 0-based index.
   - `StrUtils.sequential_suffixes(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]` *(static)* — Generate ``count`` sequential labels for naming sibling items.
   - `StrUtils.resolve_name_collisions(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]` *(static)* — Reduce a batch of names to a shared base form, then disambiguate
-  - `StrUtils.time_stamp(filepath, stamp='%m-%d-%Y  %H:%M')` *(static)* — Attach or detach a modified timestamp and date to/from a given file path.
+  - `StrUtils.time_stamp(filepath, stamp='%m-%d-%Y  %H:%M') -> Union[str, List[str]]` *(static)* — Attach or detach a modified timestamp and date to/from a given file path.
 
 <a id="str_utils--fuzzy_matcher"></a>
 ### `str_utils/fuzzy_matcher.py`

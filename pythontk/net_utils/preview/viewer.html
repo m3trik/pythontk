@@ -845,7 +845,39 @@ function clipLabel(entry, anyDeclared) {
 // playhead, same scrub, same pause, no per-frame code and no frame arithmetic.
 // The GLB is the single statement of the fade; the day three.js ships support,
 // this function deletes and nothing else changes.
-const ALPHA_POINTER = /^\/materials\/(\d+)\/pbrMetallicRoughness\/baseColorFactor$/;
+// The material properties a pointer can reach, and how each lane reaches the
+// three.js material. One row per channel the exporter's table writes
+// (pythontk `glb_fades.CHANNELS`): alpha is the fourth lane of the base colour
+// factor and lands on `material.opacity`; a highlight is the whole VEC3
+// emissive factor and lands on `material.emissive` as a colour track. Adding a
+// channel there is adding a row here; the wiring below is shared.
+const POINTER_BINDINGS = [
+  {
+    pointer: /^\/materials\/(\d+)\/pbrMetallicRoughness\/baseColorFactor$/,
+    blended: true,
+    track(mesh, material, times, output, count) {
+      // The whole VEC4 is animated (glTF has no pointer to one component); the
+      // alpha is its fourth lane. RGB is the material's own and is left to it.
+      const alphas = new Float32Array(count);
+      for (let k = 0; k < count; k += 1) alphas[k] = output.getW(k);
+      return new THREE.NumberKeyframeTrack(`${mesh.uuid}.material.opacity`, times, alphas);
+    },
+  },
+  {
+    pointer: /^\/materials\/(\d+)\/emissiveFactor$/,
+    blended: false,
+    track(mesh, material, times, output, count) {
+      // glTF factors are linear, as is the material's working colour space.
+      const rgb = new Float32Array(count * 3);
+      for (let k = 0; k < count; k += 1) {
+        rgb[k * 3] = output.getX(k);
+        rgb[k * 3 + 1] = output.getY(k);
+        rgb[k * 3 + 2] = output.getZ(k);
+      }
+      return new THREE.ColorKeyframeTrack(`${mesh.uuid}.material.emissive`, times, rgb);
+    },
+  },
+];
 
 // A blended surface writes depth only while it is OPAQUE.
 //
@@ -920,8 +952,13 @@ async function wirePointerTracks(gltf) {
       const target = channel.target || {};
       if (target.path !== 'pointer') continue;
       const pointer = target.extensions?.KHR_animation_pointer?.pointer || '';
-      const match = ALPHA_POINTER.exec(pointer);
-      if (!match) continue;
+      let binding = null;
+      let match = null;
+      for (const candidate of POINTER_BINDINGS) {
+        match = candidate.pointer.exec(pointer);
+        if (match) { binding = candidate; break; }
+      }
+      if (!binding) continue;
       const owners = byIndex.get(Number(match[1]));
       if (!owners) continue;
       const sampler = defs[i].samplers[channel.sampler];
@@ -929,21 +966,18 @@ async function wirePointerTracks(gltf) {
         parser.getDependency('accessor', sampler.input),
         parser.getDependency('accessor', sampler.output),
       ]);
-      // The whole VEC4 is animated (glTF has no pointer to one component); the
-      // alpha is its fourth lane. RGB is the material's own and is left to it.
-      const alphas = new Float32Array(input.count);
-      for (let k = 0; k < input.count; k += 1) alphas[k] = output.getW(k);
+      const times = Array.from(input.array);
       for (const [material, mesh] of owners) {
         // Bound by uuid rather than name: glTF names are not unique (the
         // production assembly ships two `vdat533`), and a name binding would
         // drive the first match and leave the rest at full alpha.
-        clip.tracks.push(new THREE.NumberKeyframeTrack(
-          `${mesh.uuid}.material.opacity`, Array.from(input.array), alphas,
-        ));
-        // alphaMode BLEND already set transparent + depthWrite off at load;
-        // stated here too so a file whose clone lost it still fades.
-        material.transparent = true;
-        blended.add(material);
+        clip.tracks.push(binding.track(mesh, material, times, output, input.count));
+        if (binding.blended) {
+          // alphaMode BLEND already set transparent + depthWrite off at load;
+          // stated here too so a file whose clone lost it still fades.
+          material.transparent = true;
+          blended.add(material);
+        }
         wired += 1;
       }
     }
@@ -1125,7 +1159,7 @@ async function load(url, version) {
   el.stats.textContent = describe(current)
     + (lightmapped ? ` · ${lightmapped}/${materialCount} lightmapped materials` : '')
     + (clipCount ? ` · ${clipCount} clip${clipCount === 1 ? '' : 's'}` : '')
-    + (fadeCount ? ` · ${fadeCount} fade${fadeCount === 1 ? '' : 's'}` : '');
+    + (fadeCount ? ` · ${fadeCount} material track${fadeCount === 1 ? '' : 's'}` : '');
   emit('load', { model: current, gltf, lightmapped, materialCount, clips: clipCount });
   setStatus(`v${version} · updated ${new Date().toLocaleTimeString()}`, 'live');
   layout();

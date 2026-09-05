@@ -403,7 +403,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, apply_glb_fades, prune_glb_animations, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+  - methods: conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, apply_glb_fades, prune_glb_animations, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
@@ -424,9 +424,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class GlbClips(_GlbClipsInternal)`
   - methods: rebuild
 
-### `file_utils/mesh_convert/glb_fades.py` — Write authored opacity ramps into a GLB as ``KHR_animation_pointer`` channels.
+### `file_utils/mesh_convert/glb_fades.py` — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
+- `class PointerChannel`
+  - methods: components, accessor_type, base
 - `class GlbFades(_GlbFadesInternal)`
-  - methods: apply
+  - methods: apply, apply_channels
 
 ### `file_utils/mesh_convert/glb_reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - `class GlbReader(_GlbReaderInternal)`

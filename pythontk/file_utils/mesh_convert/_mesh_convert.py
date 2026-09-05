@@ -1198,6 +1198,13 @@ class MeshConvert(HelpMixin):
                             len(shadows["planes"]),
                             cls.SHADOW_WEB_KEY,
                         )
+                # Before every animation pass: a curve proxy is an FBX-only
+                # transport node whose scale channel would otherwise count as
+                # clip content and ship as a stray animated child.
+                try:
+                    cls.strip_glb_curve_proxies(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB curve-proxy strip skipped: %s", exc)
                 # FIRST of the three animation passes: it REPLACES the declared
                 # clips, so a gate or a manifest entry written before it would
                 # describe clips that no longer exist.
@@ -2358,6 +2365,11 @@ class MeshConvert(HelpMixin):
                     continue
                 # FBX2glTF wraps each property as {"type": ..., "value": ...}.
                 raw = entry.get("value") if isinstance(entry, dict) else entry
+                if isinstance(raw, str) and not raw.strip():
+                    # A producer with nothing to publish CLEARS its channel to
+                    # "" rather than deleting the attribute, so an empty string
+                    # is "absent", not "unparsable".
+                    return None
                 try:
                     return json.loads(raw) if isinstance(raw, str) else raw
                 except (TypeError, ValueError) as error:
@@ -4564,31 +4576,163 @@ class MeshConvert(HelpMixin):
     def _authored_fades(cls, gltf: Dict[str, Any]) -> Dict[str, List[List[float]]]:
         """Per-node alpha ramps from the visibility channel, or ``{}``.
 
-        Only ramps that actually ramp: a track whose ``opacity`` merely mirrors
-        its on/off keys says nothing the stepped scale channel does not already
-        say, and writing it as an alpha channel would animate a "fade" that
-        was never authored as one.
+        The ``opacity`` slice of :meth:`_authored_ramps`, kept because the
+        presence gate reasons about the fade alone.
         """
+        return cls._authored_ramps(gltf)[0].get("opacity", {})
+
+    @classmethod
+    def _authored_ramps(
+        cls, gltf: Dict[str, Any]
+    ) -> Tuple[
+        Dict[str, Dict[str, List[List[float]]]], Dict[str, Dict[str, List[float]]]
+    ]:
+        """Every published per-node ramp, by channel, plus each channel's colours.
+
+        Reads the ``visibility_tracks`` carrier once for every row of the
+        pointer-channel table: a track is a per-node dict whose sibling keys
+        are named ramps (``opacity``, ``highlight``, ...), so a new channel is
+        a new key on the same record rather than a new carrier.
+
+        Only ``opacity`` is filtered to ramps that actually ramp: a track whose
+        ``opacity`` merely mirrors its on/off keys says nothing the stepped
+        scale channel does not already say, and writing it as an alpha channel
+        would animate a "fade" that was never authored as one. One predicate,
+        in one place: the gate that makes a node PRESENT for its fade
+        (:meth:`_presence_keys`) reads the same answer. A stepped highlight,
+        by contrast, is a real on/off highlight and ships.
+
+        Returns:
+            ``({channel: {node: [[frame, value], ...]}}, {channel: {node: [r, g, b]}})``.
+        """
+        from pythontk.file_utils.mesh_convert.glb_fades import CHANNELS
+
         channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+        ramps: Dict[str, Dict[str, List[List[float]]]] = {}
+        colors: Dict[str, Dict[str, List[float]]] = {}
         if not isinstance(channel, dict):
-            return {}
-        fades: Dict[str, List[List[float]]] = {}
+            return ramps, colors
         for track in channel.get("tracks") or []:
             if not isinstance(track, dict) or not track.get("node"):
                 continue
-            keys = [
-                [float(k[0]), float(k[1])]
-                for k in cls._numeric_pairs(track.get("opacity") or [])
-            ]
-            if len(keys) < 2:
-                continue
-            # One predicate, in one place: the gate that makes a node PRESENT
-            # for its fade reads the same answer, and a node gated as fading
-            # whose ramp was not published (or the reverse) would be a node
-            # visible with no alpha to apply.
-            if cls._is_fade(keys):
-                fades[str(track["node"])] = keys
-        return fades
+            node = str(track["node"])
+            for name, spec in CHANNELS.items():
+                keys = [
+                    [float(k[0]), float(k[1])]
+                    for k in cls._numeric_pairs(track.get(name) or [])
+                ]
+                if len(keys) < 2:
+                    continue
+                if name == "opacity" and not cls._is_fade(keys):
+                    continue
+                ramps.setdefault(name, {})[node] = keys
+                rgb = track.get(spec.color_key) if spec.color_key else None
+                if isinstance(rgb, (list, tuple)) and len(rgb) >= 3:
+                    try:
+                        colors.setdefault(name, {})[node] = [float(c) for c in rgb[:3]]
+                    except (TypeError, ValueError):
+                        pass
+        return ramps, colors
+
+    #: FBX user property that marks a transient curve-proxy node: the per-object
+    #: float transport for engines that flatten custom-property curves (a child
+    #: transform named ``<node>__<attr>`` whose ``scale.x`` carries the curve).
+    #: Both DCC producers stamp it; :meth:`strip_glb_curve_proxies` removes the
+    #: node from the GLB, where the ramp already rides ``visibility_tracks``.
+    CURVE_PROXY_MARKER = "curveProxy"
+
+    @classmethod
+    def strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]:
+        """Remove every curve-proxy node (and its channels) from a GLB.
+
+        The proxy is an FBX-side transport artifact: Unity flattens animated
+        custom properties onto the root Animator with empty paths, so the DCC
+        stages a child transform per keyed channel whose ``scale.x`` carries
+        the curve, and the Unity importer rebinds and deletes it. FBX2glTF
+        carries that child through as a node with a ``scale`` channel --
+        measured: ``hlCube__highlight`` arrived with its 0->1 scale intact --
+        which in the GLB is a stray animated node under the object. The GLB
+        route gets the ramp from ``visibility_tracks`` instead, so the node is
+        removed here, BEFORE the clip rebuild counts its channel as content.
+
+        Nodes are identified by the :attr:`CURVE_PROXY_MARKER` user property,
+        never by name, so an artist's own ``foo__bar`` transform is safe.
+
+        Returns:
+            The removed node names, in file order.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            nodes = gltf.get("nodes") or []
+            doomed = {
+                index
+                for index, node in enumerate(nodes)
+                if cls._node_user_property(node, cls.CURVE_PROXY_MARKER)
+            }
+            if not doomed:
+                return []
+            remap: Dict[int, int] = {}
+            kept: List[Dict[str, Any]] = []
+            for index, node in enumerate(nodes):
+                if index in doomed:
+                    continue
+                remap[index] = len(kept)
+                kept.append(node)
+
+            def renumber(indices: Any) -> List[int]:
+                return [remap[i] for i in indices if isinstance(i, int) and i in remap]
+
+            for node in kept:
+                if "children" in node:
+                    node["children"] = renumber(node["children"])
+                    if not node["children"]:
+                        del node["children"]
+            for scene in gltf.get("scenes") or []:
+                if "nodes" in scene:
+                    scene["nodes"] = renumber(scene["nodes"])
+            for skin in gltf.get("skins") or []:
+                if "joints" in skin:
+                    skin["joints"] = renumber(skin["joints"])
+                if isinstance(skin.get("skeleton"), int):
+                    skin["skeleton"] = remap.get(skin["skeleton"])
+                    if skin["skeleton"] is None:
+                        del skin["skeleton"]
+            for animation in gltf.get("animations") or []:
+                survivors = []
+                for channel in animation.get("channels") or []:
+                    target = channel.get("target") or {}
+                    node = target.get("node")
+                    if isinstance(node, int):
+                        if node in doomed:
+                            continue
+                        target["node"] = remap[node]
+                    survivors.append(channel)
+                animation["channels"] = survivors
+            gltf["nodes"] = kept
+            edit.dirty = True
+            removed = [str(nodes[i].get("name") or i) for i in sorted(doomed)]
+            logger.info(
+                "Curve proxies: %d transport node(s) stripped from the GLB (%s).",
+                len(removed),
+                ", ".join(removed),
+            )
+            return removed
+
+    @staticmethod
+    def _node_user_property(node: Dict[str, Any], key: str) -> Any:
+        """One user property off a node's extras, in either on-disk shape.
+
+        FBX2glTF nests user properties under ``extras.fromFBX.userProperties``
+        as ``{"type", "value"}`` records; a native glTF writer puts a plain
+        value at ``extras[key]``.
+        """
+        extras = (node or {}).get("extras") or {}
+        nested = ((extras.get("fromFBX") or {}).get("userProperties") or {}).get(key)
+        if isinstance(nested, dict):
+            return nested.get("value")
+        if nested is not None:
+            return nested
+        return extras.get(key)
 
     @classmethod
     def apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
@@ -4618,8 +4762,8 @@ class MeshConvert(HelpMixin):
 
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
-            fades = cls._authored_fades(gltf)
-            if not fades:
+            ramps, colors = cls._authored_ramps(gltf)
+            if not ramps:
                 return None
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
             channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
@@ -4630,7 +4774,7 @@ class MeshConvert(HelpMixin):
                 logger.warning(
                     "Fades: %d authored ramp(s) carry no frame rate, so their "
                     "frame numbers cannot be placed in time -- not applied.",
-                    len(fades),
+                    sum(len(per_node) for per_node in ramps.values()),
                 )
                 return None
 
@@ -4638,14 +4782,22 @@ class MeshConvert(HelpMixin):
             spans = (channel or {}).get("clip_span")
             if not isinstance(spans, dict):
                 spans = {}
-            union = (
-                (
+            if windows:
+                union = (
                     min(s for s, _ in windows.values()),
                     max(e for _, e in windows.values()),
                 )
-                if windows
-                else None
-            )
+            else:
+                # No declared takes (an animated prop never cut into shots):
+                # the ramps' own extent is the only window there is, and it is
+                # the right one -- the same fallback the visibility gate makes.
+                frames = [
+                    float(key[0])
+                    for per_node in ramps.values()
+                    for keys in per_node.values()
+                    for key in keys
+                ]
+                union = (min(frames), max(frames)) if frames else None
             # Each clip's own window and origin, resolved exactly the way the
             # gate resolves them -- a ramp placed against a different zero than
             # the gate it accompanies would fade at a different instant than
@@ -4668,7 +4820,9 @@ class MeshConvert(HelpMixin):
                 )
             if not clip_windows:
                 return None
-            return GlbFades.apply(edit, fades, clip_windows, zeros, float(fps))
+            return GlbFades.apply_channels(
+                edit, ramps, colors, clip_windows, zeros, float(fps)
+            )
 
     @classmethod
     def prune_glb_animations(cls, glb: GlbTarget) -> List[str]:

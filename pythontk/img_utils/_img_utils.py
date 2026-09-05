@@ -1000,14 +1000,16 @@ class ImgUtils(HelpMixin):
         srgb = (colorspace or "sRGB").lower() != "linear"
         encoder.encode(im, name, codec=codec, srgb=srgb, mipmaps=True, quality=quality)
 
-    @staticmethod
-    def _save_high_bit_depth(im: "Image.Image", name: str, bit_depth: int) -> bool:
+    @classmethod
+    def _save_high_bit_depth(cls, im: "Image.Image", name: str, bit_depth: int) -> bool:
         """Write *im* at 16-bit. Returns True when handled, False when the request
         can't be honored (unsupported depth or container) — the caller then falls
         back to an 8-bit save. Either way the degrade is announced, never silent.
 
-        Grayscale uses Pillow's ``I;16``; RGB(A) routes through OpenCV ``uint16``.
-        8-bit sources are promoted (value*257); existing 16-bit data is preserved.
+        Grayscale uses Pillow's ``I;16``; a colour PNG is written by
+        :meth:`_write_png16` (standard library), a colour TIFF through OpenCV
+        ``uint16``. 8-bit sources are promoted (value*257); existing 16-bit
+        data is preserved.
         """
         if bit_depth != 16:  # only 16 is supported here; 32-bit float = EXR/HDR.
             print(
@@ -1028,16 +1030,49 @@ class ImgUtils(HelpMixin):
             Image.fromarray(arr).save(name)  # uint16 array → "I;16" natively
             return True
 
-        # RGB / RGBA — Pillow has no 16-bit colour mode, so use OpenCV uint16.
+        # RGB / RGBA — Pillow has no 16-bit colour mode. A PNG is written with
+        # the standard library (a data map a GPU must not sRGB-decode needs 16
+        # bits on any machine, OpenCV or not); a TIFF through OpenCV uint16.
+        rgb = im.convert("RGBA") if im.mode == "RGBA" else im.convert("RGB")
+        arr = np.asarray(rgb, dtype=np.uint16) * 257
+        if ext == "png":
+            cls._write_png16(arr, name)
+            return True
         try:
             import cv2
         except ImportError:
             return False
-        rgb = im.convert("RGBA") if im.mode == "RGBA" else im.convert("RGB")
-        arr = np.asarray(rgb, dtype=np.uint16) * 257
         code = cv2.COLOR_RGBA2BGRA if rgb.mode == "RGBA" else cv2.COLOR_RGB2BGR
         cv2.imwrite(name, cv2.cvtColor(arr, code))
         return True
+
+    @staticmethod
+    def _write_png16(arr: "np.ndarray", name: str) -> None:
+        """Write a ``(height, width, 3 | 4)`` ``uint16`` array as a 16-bit
+        RGB / RGBA PNG with the standard library alone: one IDAT, filter type
+        0 on every row, big-endian samples as the format requires.
+        """
+        import zlib
+
+        height, width, channels = arr.shape
+        if channels not in (3, 4):
+            raise ValueError(f"_write_png16: {channels} channels; expected 3 or 4.")
+        samples = np.ascontiguousarray(arr, dtype=">u2").view(np.uint8)
+        rows = samples.reshape(height, width * channels * 2)
+        raw = np.concatenate([np.zeros((height, 1), np.uint8), rows], axis=1)
+
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            body = kind + data
+            crc = zlib.crc32(body) & 0xFFFFFFFF
+            return struct.pack(">I", len(data)) + body + struct.pack(">I", crc)
+
+        colour_type = 6 if channels == 4 else 2
+        header = struct.pack(">IIBBBBB", width, height, 16, colour_type, 0, 0, 0)
+        with open(name, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\n")
+            fh.write(chunk(b"IHDR", header))
+            fh.write(chunk(b"IDAT", zlib.compress(raw.tobytes(), 6)))
+            fh.write(chunk(b"IEND", b""))
 
     @staticmethod
     def _save_via_cv2(im: "Image.Image", name: str) -> None:
