@@ -12,6 +12,13 @@ import shutil
 import sys
 import tempfile
 import unittest
+
+try:  # the EXR writer routes through OpenCV; CI runners ship without it
+    import cv2  # noqa: F401
+
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 from typing import List
 
 import numpy as np
@@ -1828,6 +1835,7 @@ class TestWriterRouting(unittest.TestCase, _LoggerCaptureMixin):
                 im.putpixel((x, y), fg)
         return im
 
+    @unittest.skipUnless(HAS_CV2, "cv2 required for EXR")
     def test_an_exr_set_is_written_instead_of_raising(self):
         MapCompositor().process_batch(
             {
@@ -1843,6 +1851,7 @@ class TestWriterRouting(unittest.TestCase, _LoggerCaptureMixin):
         self.assertTrue(os.path.isfile(out), f"not written: {os.listdir(self.tmp)}")
         self.assertGreater(os.path.getsize(out), 0)
 
+    @unittest.skipUnless(HAS_CV2, "cv2 required for EXR")
     def test_the_normal_map_counterpart_is_written_through_the_same_writer(self):
         """The second raw save: the inverted-green counterpart map."""
         engine = MapCompositor()
