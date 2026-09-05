@@ -8,7 +8,8 @@ import os
 import tempfile
 import shutil
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+import pythontk as ptk
 from pythontk import ImgUtils
 from pythontk.core_utils.engines.textures.map_factory import (
     MapFactory,
@@ -1448,6 +1449,104 @@ class TestArchiveSupersededOriginals(unittest.TestCase):
 
         self.assertIn("mat_Base_Color.png", self._names())
         self.assertTrue(all(os.path.isfile(p) for p in result))
+
+
+class TestMapFactoryCancellation(unittest.TestCase):
+    """``prepare_maps`` had no cancel checkpoint in either batch branch.
+
+    mayatk's material updater runs it under ``@Cancelable(300)``, and every
+    live caller leaves ``max_workers`` at 1, so a cancelled scope was simply
+    never observed: the user held Esc, ``execution_monitor`` set the flag, and
+    the batch ground through every remaining texture set. ``OperationCancelled``
+    already derives from ``BaseException`` precisely so it slips past the loop's
+    ``except Exception`` handlers -- nothing was raising it.
+    """
+
+    SETS = 6
+
+    def setUp(self):
+        self.processed = []
+        self.files = [f"asset_{i}_Base_color.png" for i in range(self.SETS)]
+
+    def _stub(self, on_set=None):
+        """Patch the per-set worker out, recording each call.
+
+        *on_set* runs after each recorded set, so a test can cancel mid-batch;
+        the record lives on ``self`` so an ``OperationCancelled`` unwinding the
+        batch does not take the count with it.
+        """
+
+        def fake(textures, config, output_dir=None, logger=None):
+            self.processed.append(textures[0])
+            if on_set is not None:
+                on_set(len(self.processed))
+            return list(textures)
+
+        return patch.object(MapFactory, "_process_map_set", side_effect=fake)
+
+    def test_serial_batch_stops_at_the_next_set_after_cancel(self):
+        """The branch every live caller takes: ``max_workers`` defaults to 1."""
+        with ptk.CancelScope(name="batch") as scope:
+            stop = lambda n: scope.cancel("Esc") if n >= 2 else None  # noqa: E731
+            with self._stub(on_set=stop):
+                with self.assertRaises(ptk.OperationCancelled):
+                    MapFactory.prepare_maps(self.files)
+        self.assertEqual(len(self.processed), 2, "batch ran past the cancel")
+
+    def test_a_scope_cancelled_up_front_does_no_work_at_all(self):
+        with ptk.CancelScope(name="batch") as scope:
+            scope.cancel("Esc")
+            with self._stub():
+                with self.assertRaises(ptk.OperationCancelled):
+                    MapFactory.prepare_maps(self.files)
+        self.assertEqual(self.processed, [])
+
+    def test_parallel_batch_honors_cancel_on_the_collecting_thread(self):
+        """The ambient scope is a ``ContextVar``, so a pool worker starts with
+        an empty context and never sees it -- the checkpoint has to live on the
+        thread that submits and collects, not inside the submitted task."""
+        with ptk.CancelScope(name="batch") as scope:
+            scope.cancel("Esc")
+            with self._stub():
+                with self.assertRaises(ptk.OperationCancelled):
+                    MapFactory.prepare_maps(self.files, max_workers=4)
+        self.assertLess(len(self.processed), self.SETS)
+
+    def test_no_active_scope_leaves_the_batch_untouched(self):
+        """The checkpoint is a no-op when nothing is monitoring."""
+        self.assertIsNone(ptk.CancelScope.current())
+        with self._stub():
+            result = MapFactory.prepare_maps(self.files)
+        self.assertEqual(len(self.processed), self.SETS)
+        self.assertEqual(len(result), self.SETS)
+
+    def test_progress_callback_returning_false_cancels(self):
+        """``CancelScope.tick`` is written to match the progress-bar
+        ``update()`` contract, and ``Cancelable`` documents progress reporting
+        as the free checkpoint; the return value was discarded."""
+        calls = []
+
+        def progress(current, total, message):
+            calls.append(current)
+            return len(calls) < 3  # False from the third call on
+
+        with self._stub():
+            with self.assertRaises(ptk.OperationCancelled):
+                MapFactory.prepare_maps(self.files, progress_callback=progress)
+        self.assertLess(len(self.processed), self.SETS)
+
+    def test_a_progress_callback_returning_none_is_not_a_cancel(self):
+        """A plain callback that only prints returns ``None``; treating that as
+        a cancel would break every existing caller."""
+        seen = []
+
+        def progress(current, total, message):
+            seen.append(current)  # returns None
+
+        with self._stub():
+            MapFactory.prepare_maps(self.files, progress_callback=progress)
+        self.assertEqual(len(self.processed), self.SETS)
+        self.assertEqual(len(seen), self.SETS)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from PIL import Image
 
 # From this package:
+from pythontk.core_utils.cancel_scope import CancelScope, OperationCancelled
 from pythontk.core_utils.class_property import ClassProperty
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.img_utils._img_utils import ImgUtils
@@ -1529,6 +1530,28 @@ class MapFactory(LoggingMixin):
             )
         return extracted
 
+    @staticmethod
+    def _checkpoint(progress_result: Any = None) -> None:
+        """Cooperative cancel point for the batch loops.
+
+        Raises :class:`~pythontk.OperationCancelled` on either signal: the
+        ambient :class:`~pythontk.CancelScope` -- what a mayatk/blendertk
+        ``@Cancelable`` slot arms -- or a ``progress_callback`` that returned
+        ``False``, the progress-bar ``update()`` contract ``CancelScope.tick``
+        is written to match. ``None`` is deliberately NOT a cancel: a callback
+        that only prints returns it.
+
+        Call this on the thread that owns the scope. The ambient scope is a
+        ``ContextVar``, and a ``ThreadPoolExecutor`` worker starts with an empty
+        context, so a checkpoint inside a submitted task never fires -- the
+        parallel branch checks as it submits and collects instead.
+        """
+        if progress_result is False:
+            raise OperationCancelled(
+                "Texture batch cancelled from the progress callback"
+            )
+        CancelScope.check()
+
     @classmethod
     def prepare_maps(
         cls,
@@ -1558,7 +1581,10 @@ class MapFactory(LoggingMixin):
                           always win — a present map type is never replaced. Honors
                           ``prefix``/``suffix`` when matching base names.
             max_workers: Number of threads for parallel processing.
-            progress_callback: Optional callback(current, total, message) for reporting progress.
+            progress_callback: Optional callback(current, total, message) for
+                reporting progress. Returning ``False`` cancels the batch --
+                the progress-bar ``update()`` contract; any other return value,
+                ``None`` included, continues.
             **kwargs: Configuration options overriding DEFAULT_CONFIG.
                       Key options:
                       - use_input_fallbacks (bool): Allow generating maps from alternative inputs (e.g. Diffuse -> Base Color).
@@ -1573,6 +1599,13 @@ class MapFactory(LoggingMixin):
         Returns:
             List[str] if a single asset was processed.
             Dict[str, List[str]] if multiple assets were processed (keyed by asset name).
+
+        Raises:
+            OperationCancelled: The ambient :class:`~pythontk.CancelScope` was
+                cancelled, or *progress_callback* returned ``False``. Checked
+                between sets, so the run stops at a set boundary rather than
+                returning a half-finished batch a caller would wire up as
+                complete.
         """
         # Normalize config
         workflow_config = cls.DEFAULT_CONFIG.copy()
@@ -1651,6 +1684,10 @@ class MapFactory(LoggingMixin):
         results = {}
         total_sets = len(texture_sets)
 
+        # Before anything is queued: an already-cancelled scope must not spin
+        # up a pool or touch the first set.
+        cls._checkpoint()
+
         if total_sets > 1:
             if logger:
                 logger.info(f"Found {total_sets} texture sets. Processing batch...")
@@ -1696,18 +1733,34 @@ class MapFactory(LoggingMixin):
                     # Retrieve the original task arguments
                     _, base_name_task, _ = future_to_set[future]
 
-                    if progress_callback:
+                    reported = (
                         progress_callback(
                             completed_count, total_sets, f"Processed {base_name_task}"
                         )
+                        if progress_callback
+                        else None
+                    )
+                    try:
+                        cls._checkpoint(reported)
+                    except OperationCancelled:
+                        # Drop everything still queued before unwinding: the
+                        # executor's __exit__ waits for shutdown, and would
+                        # otherwise run the whole remaining batch anyway.
+                        for pending in future_to_set:
+                            pending.cancel()
+                        raise
 
                     base_name, generated = future.result()
                     if generated:
                         results[base_name] = generated
         else:
             for i, (base_name, textures) in enumerate(texture_sets.items(), 1):
-                if progress_callback:
+                reported = (
                     progress_callback(i, total_sets, f"Processing {base_name}")
+                    if progress_callback
+                    else None
+                )
+                cls._checkpoint(reported)
 
                 if total_sets > 1 and logger:
                     logger.info(f"Processing set {i}/{total_sets}: {base_name}")
