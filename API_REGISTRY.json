@@ -2267,16 +2267,16 @@
         {
           "name": "ShotApply",
           "summary": "Commit a resolved ``MovePlan`` through injected writer callables.",
-          "line": 54,
+          "line": 55,
           "bases": [],
           "members": [
             {
               "name": "apply",
               "qualname": "ShotApply.apply",
               "kind": "staticmethod",
-              "signature": "(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None",
+              "signature": "(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None, objects_for: Optional[Callable[[int], Iterable[str]]] = None) -> None",
               "summary": "Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).",
-              "line": 63,
+              "line": 64,
               "deprecated": false
             }
           ]
@@ -2665,7 +2665,7 @@
               "kind": "method",
               "signature": "(self, tag: Any) -> bool",
               "summary": "Attach *tag* to the newest restore point.",
-              "line": 414,
+              "line": 428,
               "deprecated": false
             },
             {
@@ -2674,7 +2674,7 @@
               "kind": "method",
               "signature": "(self, redo: bool = False) -> Any",
               "summary": "Return the tag of the restore point the next apply would consume.",
-              "line": 422,
+              "line": 436,
               "deprecated": false
             },
             {
@@ -2683,7 +2683,7 @@
               "kind": "method",
               "signature": "(self, redo: bool = False) -> bool",
               "summary": "True when a restore point is available in that direction.",
-              "line": 427,
+              "line": 441,
               "deprecated": false
             },
             {
@@ -2692,7 +2692,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Drop the most recent restore point without applying it.",
-              "line": 431,
+              "line": 445,
               "deprecated": false
             },
             {
@@ -2701,7 +2701,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Apply the most recent restore point (the undo direction).",
-              "line": 447,
+              "line": 461,
               "deprecated": false
             },
             {
@@ -2710,7 +2710,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Re-apply the state a restore stepped back from (the redo direction).",
-              "line": 469,
+              "line": 483,
               "deprecated": false
             },
             {
@@ -2719,7 +2719,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Drop both ledger sides (scene swap: colliding shot_ids across",
-              "line": 484,
+              "line": 498,
               "deprecated": false
             },
             {
@@ -2728,7 +2728,7 @@
               "kind": "staticmethod",
               "signature": "() -> bool",
               "summary": "Return whether the scene contains animation (overridable hook).",
-              "line": 539,
+              "line": 556,
               "deprecated": false
             },
             {
@@ -2737,7 +2737,7 @@
               "kind": "method",
               "signature": "(self) -> List[Dict[str, Any]]",
               "summary": "Detect shot-region candidates from the scene (overridable hook).",
-              "line": 550,
+              "line": 567,
               "deprecated": false
             },
             {
@@ -2746,7 +2746,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[int, str]",
               "summary": "Assess whether each shot's objects exist in the scene (hook).",
-              "line": 564,
+              "line": 581,
               "deprecated": false
             },
             {
@@ -2755,7 +2755,7 @@
               "kind": "method",
               "signature": "(self, strategy: Optional[str] = None) -> Optional[str]",
               "summary": "Project the export view onto a DCC carrier (overridable hook).",
-              "line": 587,
+              "line": 604,
               "deprecated": false
             },
             {
@@ -2764,7 +2764,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[int]",
               "summary": "The currently selected shot, or ``None``.",
-              "line": 609,
+              "line": 626,
               "deprecated": false
             },
             {
@@ -2773,7 +2773,7 @@
               "kind": "method",
               "signature": "(self, shot_id: Optional[int]) -> None",
               "summary": "Set the active shot and notify listeners.",
-              "line": 613,
+              "line": 630,
               "deprecated": false
             },
             {
@@ -2782,7 +2782,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "``True`` when the store declares no shots.",
-              "line": 620,
+              "line": 637,
               "deprecated": false
             },
             {
@@ -2791,7 +2791,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Fire a ``\"settings_changed\"`` event.",
-              "line": 631,
+              "line": 648,
               "deprecated": false
             },
             {
@@ -2800,7 +2800,7 @@
               "kind": "method",
               "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
               "summary": "Register a listener called on store mutations.",
-              "line": 640,
+              "line": 657,
               "deprecated": false
             },
             {
@@ -2809,7 +2809,7 @@
               "kind": "method",
               "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
               "summary": "Remove a previously registered listener.",
-              "line": 657,
+              "line": 674,
               "deprecated": false
             },
             {
@@ -2818,7 +2818,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Defer listener notifications until the block exits.",
-              "line": 678,
+              "line": 695,
               "deprecated": false
             },
             {
@@ -2827,7 +2827,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> bool",
               "summary": "Return whether the gap between two adjacent shots is locked.",
-              "line": 702,
+              "line": 719,
               "deprecated": false
             },
             {
@@ -2836,7 +2836,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> None",
               "summary": "Lock a gap so its width is preserved during global respace.",
-              "line": 706,
+              "line": 723,
               "deprecated": false
             },
             {
@@ -2845,7 +2845,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> None",
               "summary": "Unlock a gap so it follows the global gap value.",
-              "line": 713,
+              "line": 730,
               "deprecated": false
             },
             {
@@ -2854,7 +2854,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Lock every adjacent gap.",
-              "line": 719,
+              "line": 736,
               "deprecated": false
             },
             {
@@ -2863,7 +2863,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Unlock every gap.",
-              "line": 728,
+              "line": 745,
               "deprecated": false
             },
             {
@@ -2872,7 +2872,7 @@
               "kind": "classmethod",
               "signature": "(cls, backend: Optional[ScenePersistence]) -> None",
               "summary": "Set the persistence backend used by :meth:`active` and :meth:`save`.",
-              "line": 737,
+              "line": 754,
               "deprecated": false
             },
             {
@@ -2881,7 +2881,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'ShotStore'",
               "summary": "Return the current active store, creating one if needed.",
-              "line": 746,
+              "line": 763,
               "deprecated": false
             },
             {
@@ -2890,7 +2890,7 @@
               "kind": "classmethod",
               "signature": "(cls, store: 'ShotStore') -> None",
               "summary": "Replace the active store instance.",
-              "line": 772,
+              "line": 789,
               "deprecated": false
             },
             {
@@ -2899,7 +2899,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Reset the active store and persistence backend.",
-              "line": 777,
+              "line": 794,
               "deprecated": false
             },
             {
@@ -2908,7 +2908,7 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
               "summary": "Register a callback fired when the active store is discarded.",
-              "line": 795,
+              "line": 812,
               "deprecated": false
             },
             {
@@ -2917,7 +2917,7 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
               "summary": "Remove a previously registered invalidation listener.",
-              "line": 808,
+              "line": 825,
               "deprecated": false
             },
             {
@@ -2926,7 +2926,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Drop the active store (the scene changed) and fire the invalidation listeners.",
-              "line": 818,
+              "line": 835,
               "deprecated": false
             },
             {
@@ -2935,7 +2935,7 @@
               "kind": "method",
               "signature": "(self, frame: float) -> float",
               "summary": "Return *frame* rounded to the nearest integer when snapping is on.",
-              "line": 921,
+              "line": 938,
               "deprecated": false
             },
             {
@@ -2944,7 +2944,7 @@
               "kind": "method",
               "signature": "(self) -> float",
               "summary": "Derive the predominant inter-shot gap from current shot positions.",
-              "line": 934,
+              "line": 951,
               "deprecated": false
             },
             {
@@ -2953,7 +2953,7 @@
               "kind": "method",
               "signature": "(self) -> List[ShotBlock]",
               "summary": "Return shots ordered by start time.",
-              "line": 955,
+              "line": 972,
               "deprecated": false
             },
             {
@@ -2962,7 +2962,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int) -> Optional[ShotBlock]",
               "summary": "",
-              "line": 959,
+              "line": 976,
               "deprecated": false
             },
             {
@@ -2971,7 +2971,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[ShotBlock]",
               "summary": "Return the first shot whose name matches *name*, or ``None``.",
-              "line": 965,
+              "line": 982,
               "deprecated": false
             },
             {
@@ -2980,7 +2980,7 @@
               "kind": "method",
               "signature": "(self, name: str, start: float, end: float, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
               "summary": "Create a new shot and add it to the store.",
-              "line": 972,
+              "line": 989,
               "deprecated": false
             },
             {
@@ -2989,7 +2989,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int, *, start: Optional[float] = None, end: Optional[float] = None, name: Optional[str] = None, objects: Optional[List[str]] = None, description: Optional[str] = None, locked: Optional[bool] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[ShotBlock]",
               "summary": "Update fields on an existing shot.",
-              "line": 1017,
+              "line": 1034,
               "deprecated": false
             },
             {
@@ -2998,7 +2998,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int) -> bool",
               "summary": "Remove a shot by ID.",
-              "line": 1060,
+              "line": 1077,
               "deprecated": false
             },
             {
@@ -3007,7 +3007,7 @@
               "kind": "method",
               "signature": "(self, name: str, duration: float, gap: float = 0, start_frame: Optional[float] = None, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
               "summary": "Append a shot after the last existing shot, with gap-aware placement.",
-              "line": 1070,
+              "line": 1087,
               "deprecated": false
             },
             {
@@ -3016,7 +3016,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> bool",
               "summary": "Return True if *obj_name* is hidden in the sequencer UI.",
-              "line": 1111,
+              "line": 1128,
               "deprecated": false
             },
             {
@@ -3025,7 +3025,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str, hidden: bool = True) -> None",
               "summary": "Show or hide *obj_name* in the sequencer UI.",
-              "line": 1115,
+              "line": 1132,
               "deprecated": false
             },
             {
@@ -3034,7 +3034,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> bool",
               "summary": "Return True if *obj_name* is pinned (kept even when missing).",
-              "line": 1127,
+              "line": 1144,
               "deprecated": false
             },
             {
@@ -3043,7 +3043,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str, pinned: bool = True) -> None",
               "summary": "Pin or unpin *obj_name*.",
-              "line": 1131,
+              "line": 1148,
               "deprecated": false
             },
             {
@@ -3052,7 +3052,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> None",
               "summary": "Remove *obj_name* from every shot's object list.",
-              "line": 1148,
+              "line": 1165,
               "deprecated": false
             },
             {
@@ -3061,7 +3061,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "Serialise shots and settings to a plain dict.",
-              "line": 1166,
+              "line": 1183,
               "deprecated": false
             },
             {
@@ -3070,7 +3070,7 @@
               "kind": "method",
               "signature": "(self, strategy: str = 'name') -> Dict[str, Any]",
               "summary": "Build the FBX/Unity export view from the current shots.",
-              "line": 1201,
+              "line": 1218,
               "deprecated": false
             },
             {
@@ -3079,7 +3079,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Republish the active store's export view.",
-              "line": 1239,
+              "line": 1256,
               "deprecated": false
             },
             {
@@ -3088,7 +3088,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Opt every export this session into carrying the active store's shots.",
-              "line": 1259,
+              "line": 1276,
               "deprecated": false
             },
             {
@@ -3097,7 +3097,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Remove the before-export preparer for the rest of the session.",
-              "line": 1272,
+              "line": 1289,
               "deprecated": false
             },
             {
@@ -3106,7 +3106,7 @@
               "kind": "classmethod",
               "signature": "(cls, data: Dict[str, Any]) -> 'ShotStore'",
               "summary": "Restore from serialised data.",
-              "line": 1303,
+              "line": 1320,
               "deprecated": false
             },
             {
@@ -3115,7 +3115,7 @@
               "kind": "method",
               "signature": "(self, new_fps: float) -> None",
               "summary": "Scale all shot timings from the current ``scene_fps`` to *new_fps*.",
-              "line": 1369,
+              "line": 1386,
               "deprecated": false
             },
             {
@@ -3124,7 +3124,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Flag the store as needing a save.",
-              "line": 1394,
+              "line": 1411,
               "deprecated": false
             },
             {
@@ -3133,7 +3133,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Persist via the configured backend (no-op if none set).",
-              "line": 1412,
+              "line": 1429,
               "deprecated": false
             },
             {
@@ -3142,7 +3142,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "True when detection settings are actionable.",
-              "line": 1437,
+              "line": 1454,
               "deprecated": false
             },
             {
@@ -3151,7 +3151,7 @@
               "kind": "method",
               "signature": "(self, overwrite: bool = False) -> List[ShotBlock]",
               "summary": "Detect shot regions and define them in the store.",
-              "line": 1454,
+              "line": 1471,
               "deprecated": false
             },
             {
@@ -3160,7 +3160,7 @@
               "kind": "staticmethod",
               "signature": "(node) -> str",
               "summary": "Leaf name with namespace preserved: ``\"|grp|ns:obj\"`` -> ``\"ns:obj\"``.",
-              "line": 1486,
+              "line": 1503,
               "deprecated": false
             },
             {
@@ -3169,7 +3169,7 @@
               "kind": "staticmethod",
               "signature": "(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]",
               "summary": "Resolve ``[(clip_name, start, end), …]`` — the single source of truth for",
-              "line": 1496,
+              "line": 1513,
               "deprecated": false
             },
             {
@@ -3178,7 +3178,7 @@
               "kind": "classmethod",
               "signature": "(cls, strategy: str = 'name') -> Optional[Tuple[int, int]]",
               "summary": "The ``(start, end)`` frames the active store's shots span, or None.",
-              "line": 1518,
+              "line": 1535,
               "deprecated": false
             }
           ]
@@ -3240,7 +3240,7 @@
               "kind": "staticmethod",
               "signature": "(plan: MovePlan) -> List[Tuple[float, float, bool, bool, float]]",
               "summary": "The windows *plan* will actually move, shaped for :meth:`key_collisions`.",
-              "line": 320,
+              "line": 326,
               "deprecated": false
             },
             {
@@ -3249,7 +3249,7 @@
               "kind": "staticmethod",
               "signature": "(store: ShotStore, shot_id: int, new_start: float) -> MovePlan",
               "summary": "A plan that moves one shot to ``new_start``, rippling nothing.",
-              "line": 343,
+              "line": 349,
               "deprecated": false
             },
             {
@@ -3258,7 +3258,7 @@
               "kind": "staticmethod",
               "signature": "(store: ShotStore, plan: MovePlan, eps: float = _EPS) -> List[Tuple[int, int, float, float]]",
               "summary": "Shared samples this plan pulls apart.",
-              "line": 393,
+              "line": 399,
               "deprecated": false
             },
             {
@@ -3267,7 +3267,7 @@
               "kind": "staticmethod",
               "signature": "(windows: Sequence[Tuple[float, float, bool, bool, float]], times: Iterable[float], eps: float = 0.001) -> List[Tuple[float, List[float], List[float]]]",
               "summary": "Samples of one curve that a plan would land on the same frame.",
-              "line": 447,
+              "line": 453,
               "deprecated": false
             },
             {
@@ -3276,7 +3276,7 @@
               "kind": "staticmethod",
               "signature": "(store: ShotStore, gap: float, start_frame: float) -> MovePlan",
               "summary": "Build a plan that lays shots out sequentially with uniform gaps.",
-              "line": 499,
+              "line": 505,
               "deprecated": false
             },
             {
@@ -3285,16 +3285,16 @@
               "kind": "staticmethod",
               "signature": "(store: ShotStore, plan: MovePlan) -> List[GapRetime]",
               "summary": "Every gap in *plan* whose width changes, as a :class:`GapRetime`.",
-              "line": 541,
+              "line": 547,
               "deprecated": false
             },
             {
               "name": "plan_ripple_downstream",
               "qualname": "ShotPlanner.plan_ripple_downstream",
               "kind": "staticmethod",
-              "signature": "(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan",
+              "signature": "(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float, carry_gap: bool = False) -> MovePlan",
               "summary": "Build a plan that shifts every shot starting at or after",
-              "line": 584,
+              "line": 590,
               "deprecated": false
             },
             {
@@ -3303,16 +3303,16 @@
               "kind": "staticmethod",
               "signature": "(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan",
               "summary": "Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.",
-              "line": 624,
+              "line": 661,
               "deprecated": false
             },
             {
               "name": "plan_ripple_upstream",
               "qualname": "ShotPlanner.plan_ripple_upstream",
               "kind": "staticmethod",
-              "signature": "(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan",
+              "signature": "(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float, carry_gap: bool = False) -> MovePlan",
               "summary": "Build a plan that shifts every shot ending at or before",
-              "line": 703,
+              "line": 740,
               "deprecated": false
             }
           ]
@@ -3320,7 +3320,7 @@
         {
           "name": "ShotMove",
           "summary": "A single shot's source and destination ranges.",
-          "line": 741,
+          "line": 799,
           "bases": [],
           "members": [
             {
@@ -3329,7 +3329,7 @@
               "kind": "property",
               "signature": "(self) -> float",
               "summary": "",
-              "line": 767,
+              "line": 825,
               "deprecated": false
             },
             {
@@ -3338,7 +3338,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 771,
+              "line": 829,
               "deprecated": false
             }
           ]
@@ -3346,14 +3346,14 @@
         {
           "name": "MovePlan",
           "summary": "Resolved multi-shot timeline mutation.",
-          "line": 776,
+          "line": 834,
           "bases": [],
           "members": []
         },
         {
           "name": "GapRetime",
           "summary": "One inter-shot gap whose WIDTH changes, and where its content must land.",
-          "line": 799,
+          "line": 857,
           "bases": [],
           "members": [
             {
@@ -3362,7 +3362,7 @@
               "kind": "property",
               "signature": "(self) -> float",
               "summary": "",
-              "line": 827,
+              "line": 885,
               "deprecated": false
             },
             {
@@ -3371,7 +3371,7 @@
               "kind": "property",
               "signature": "(self) -> float",
               "summary": "Time factor about the gap's left edge (0.0 collapses the gap).",
-              "line": 831,
+              "line": 889,
               "deprecated": false
             },
             {
@@ -3380,7 +3380,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 836,
+              "line": 894,
               "deprecated": false
             },
             {
@@ -3389,7 +3389,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 840,
+              "line": 898,
               "deprecated": false
             }
           ]
@@ -5897,6 +5897,66 @@
         }
       ],
       "classes": []
+    },
+    {
+      "relpath": "core_utils/export_profile.py",
+      "summary": "The Scene Exporter panels' export-button contract, written once.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ExportProfile",
+          "summary": "Pure helpers over Scene Exporter task / check definitions.",
+          "line": 21,
+          "bases": [],
+          "members": [
+            {
+              "name": "legal_name",
+              "qualname": "ExportProfile.legal_name",
+              "kind": "staticmethod",
+              "signature": "(name: str) -> str",
+              "summary": "The switchboard's objectName rule: non-alphanumerics become ``_``.",
+              "line": 28,
+              "deprecated": false
+            },
+            {
+              "name": "widget_key",
+              "qualname": "ExportProfile.widget_key",
+              "kind": "classmethod",
+              "signature": "(cls, name: str, spec: Mapping[str, Any]) -> str",
+              "summary": "The objectName the panel gives *name*'s widget (and the preset stores).",
+              "line": 39,
+              "deprecated": false
+            },
+            {
+              "name": "value_method",
+              "qualname": "ExportProfile.value_method",
+              "kind": "classmethod",
+              "signature": "(cls, spec: Mapping[str, Any]) -> str",
+              "summary": "The read the export button performs on the widget (``b000``'s rule).",
+              "line": 44,
+              "deprecated": false
+            },
+            {
+              "name": "run_config",
+              "qualname": "ExportProfile.run_config",
+              "kind": "classmethod",
+              "signature": "(cls, values: Mapping[str, Any], task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]], override_checks: bool = False, ignore_groups_case_sensitive: bool = False, default_export_mode: str = 'visible') -> Dict[str, Any]",
+              "summary": "The export button's contract: widget values -> ``perform_export`` inputs.",
+              "line": 54,
+              "deprecated": false
+            },
+            {
+              "name": "read_values",
+              "qualname": "ExportProfile.read_values",
+              "kind": "classmethod",
+              "signature": "(cls, widgets: Mapping[str, Any], *tables: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]",
+              "summary": "Read the panel's live widgets into ``{objectName: value}``.",
+              "line": 118,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
     },
     {
       "relpath": "core_utils/git.py",
@@ -9494,7 +9554,7 @@
               "name": "fbx_to_glb",
               "qualname": "MeshConvert.fbx_to_glb",
               "kind": "classmethod",
-              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = ()) -> str",
+              "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), report: Optional[Dict[str, Any]] = None) -> str",
               "summary": "Convert an FBX file to a binary glTF 2.0 (GLB) file.",
               "line": 965,
               "deprecated": false
@@ -9505,7 +9565,7 @@
               "kind": "classmethod",
               "signature": "(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Wrap *sections* in the versioned scene-sidecar envelope.",
-              "line": 1274,
+              "line": 1322,
               "deprecated": false
             },
             {
@@ -9514,7 +9574,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict) -> int",
               "summary": "Drop the FBX's handoff block from a converted glTF's node extras.",
-              "line": 1382,
+              "line": 1430,
               "deprecated": false
             },
             {
@@ -9523,7 +9583,7 @@
               "kind": "classmethod",
               "signature": "(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]",
               "summary": "The standalone-reader contract for an FBX, ready to publish.",
-              "line": 1415,
+              "line": 1463,
               "deprecated": false
             },
             {
@@ -9532,7 +9592,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]",
               "summary": "Apply a scene-sidecar envelope to a GLB and embed it in its extras.",
-              "line": 1495,
+              "line": 1543,
               "deprecated": false
             },
             {
@@ -9541,7 +9601,7 @@
               "kind": "classmethod",
               "signature": "(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]",
               "summary": "``{path: map type}`` for envelope textures authored for another engine.",
-              "line": 1917,
+              "line": 1965,
               "deprecated": false
             },
             {
@@ -9550,7 +9610,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The scene-sidecar envelope embedded in a GLB, or ``None``.",
-              "line": 1968,
+              "line": 2016,
               "deprecated": false
             },
             {
@@ -9559,7 +9619,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, Any]",
               "summary": "Check a delivered GLB against the envelope it carries.",
-              "line": 1980,
+              "line": 2028,
               "deprecated": false
             },
             {
@@ -9568,7 +9628,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict, key: str) -> Optional[Any]",
               "summary": "Decoded value of one ``data_export`` channel in a parsed glTF, or ``None``.",
-              "line": 2328,
+              "line": 2376,
               "deprecated": false
             },
             {
@@ -9577,7 +9637,7 @@
               "kind": "classmethod",
               "signature": "(cls, data_export: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "Copy of a ``data_export`` snapshot with build-time locate hints removed.",
-              "line": 2398,
+              "line": 2446,
               "deprecated": false
             },
             {
@@ -9586,7 +9646,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.",
-              "line": 2542,
+              "line": 2590,
               "deprecated": false
             },
             {
@@ -9595,7 +9655,16 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, List[str]]",
               "summary": "Split a GLB's bake manifest by whether this GLB actually carries each object.",
-              "line": 2617,
+              "line": 2665,
+              "deprecated": false
+            },
+            {
+              "name": "lightmap_report",
+              "qualname": "MeshConvert.lightmap_report",
+              "kind": "staticmethod",
+              "signature": "(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]",
+              "summary": "``{\"expected\", \"bound\", \"unbound\", \"out_of_scope\"}`` for one bind.",
+              "line": 2701,
               "deprecated": false
             },
             {
@@ -9604,7 +9673,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]",
               "summary": "Wire a host DCC's committed lightmaps into a GLB for the web viewer.",
-              "line": 2653,
+              "line": 2726,
               "deprecated": false
             },
             {
@@ -9613,7 +9682,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]",
               "summary": "Bind a scene's shadow-rig maps into a GLB;",
-              "line": 3415,
+              "line": 3488,
               "deprecated": false
             },
             {
@@ -9622,7 +9691,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Rebuild the declared shot clips as exact slices of the whole timeline.",
-              "line": 3899,
+              "line": 3972,
               "deprecated": false
             },
             {
@@ -9631,7 +9700,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize keyed visibility as STEP ``scale`` channels the file can play.",
-              "line": 4000,
+              "line": 4073,
               "deprecated": false
             },
             {
@@ -9640,7 +9709,7 @@
               "kind": "classmethod",
               "signature": "(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]",
               "summary": "Per take, the first and last authored frame inside its window.",
-              "line": 4137,
+              "line": 4258,
               "deprecated": false
             },
             {
@@ -9649,7 +9718,7 @@
               "kind": "classmethod",
               "signature": "(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]",
               "summary": "Wrap *tracks* in the versioned ``visibility_tracks`` envelope.",
-              "line": 4202,
+              "line": 4323,
               "deprecated": false
             },
             {
@@ -9658,7 +9727,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Remove every curve-proxy node (and its channels) from a GLB.",
-              "line": 4645,
+              "line": 4766,
               "deprecated": false
             },
             {
@@ -9667,7 +9736,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize authored opacity ramps as animated material alpha.",
-              "line": 4738,
+              "line": 4859,
               "deprecated": false
             },
             {
@@ -9676,7 +9745,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Drop every animation that carries no channels or no samplers.",
-              "line": 4828,
+              "line": 4952,
               "deprecated": false
             },
             {
@@ -9685,7 +9754,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Publish the GLB's clips as ``extras.animation_web``, joined to the shots.",
-              "line": 4902,
+              "line": 5026,
               "deprecated": false
             },
             {
@@ -9694,7 +9763,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 5196,
+              "line": 5320,
               "deprecated": false
             },
             {
@@ -9703,7 +9772,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 5281,
+              "line": 5405,
               "deprecated": false
             },
             {
@@ -9712,7 +9781,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget)",
               "summary": "Yield an open :class:`GlbEdit` for *glb*, writing once on close.",
-              "line": 5368,
+              "line": 5492,
               "deprecated": false
             },
             {
@@ -9721,7 +9790,7 @@
               "kind": "classmethod",
               "signature": "(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str",
               "summary": "Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.",
-              "line": 5631,
+              "line": 5755,
               "deprecated": false
             },
             {
@@ -9730,7 +9799,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]",
               "summary": ":meth:`optimize_glb_textures` kwargs for a WEB deliverable.",
-              "line": 5756,
+              "line": 5880,
               "deprecated": false
             },
             {
@@ -9739,7 +9808,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]",
               "summary": "Downsize and re-encode a GLB's embedded images for web delivery.",
-              "line": 5804,
+              "line": 5928,
               "deprecated": false
             },
             {
@@ -9748,7 +9817,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Pack and write the ORM (metallic/roughness) texture into a GLB, by name.",
-              "line": 6487,
+              "line": 6611,
               "deprecated": false
             },
             {
@@ -9757,7 +9826,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]",
               "summary": "Materials whose delivered ORM binding this pipeline never validated.",
-              "line": 6669,
+              "line": 6793,
               "deprecated": false
             },
             {
@@ -9766,7 +9835,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write emissive color / texture into a GLB's materials, by name.",
-              "line": 6797,
+              "line": 6921,
               "deprecated": false
             },
             {
@@ -9775,7 +9844,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Collapse byte-identical embedded images onto one copy.",
-              "line": 6937,
+              "line": 7061,
               "deprecated": false
             },
             {
@@ -9784,7 +9853,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop textures no material samples, and the images/bufferViews only they used.",
-              "line": 7034,
+              "line": 7158,
               "deprecated": false
             },
             {
@@ -9793,7 +9862,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.",
-              "line": 7470,
+              "line": 7594,
               "deprecated": false
             },
             {
@@ -9802,7 +9871,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int",
               "summary": "Write ``normalTexture.scale`` into a GLB's materials.",
-              "line": 7529,
+              "line": 7653,
               "deprecated": false
             },
             {
@@ -9811,7 +9880,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write base colour / texture into a GLB's materials, by name.",
-              "line": 7599,
+              "line": 7723,
               "deprecated": false
             }
           ]
@@ -10188,7 +10257,7 @@
         {
           "name": "PointerChannel",
           "summary": "One animatable material property and how a published ramp reaches it.",
-          "line": 78,
+          "line": 111,
           "bases": [],
           "members": [
             {
@@ -10197,7 +10266,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "",
-              "line": 101,
+              "line": 139,
               "deprecated": false
             },
             {
@@ -10206,7 +10275,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "",
-              "line": 105,
+              "line": 143,
               "deprecated": false
             },
             {
@@ -10215,7 +10284,7 @@
               "kind": "method",
               "signature": "(self, gltf: Dict[str, Any], index: int) -> List[float]",
               "summary": "The material's own value for this property, defaulted per spec.",
-              "line": 108,
+              "line": 146,
               "deprecated": false
             }
           ]
@@ -10223,7 +10292,7 @@
         {
           "name": "GlbFades",
           "summary": "Publish authored material ramps as animated material channels.",
-          "line": 334,
+          "line": 373,
           "bases": [
             "_GlbFadesInternal"
           ],
@@ -10234,7 +10303,7 @@
               "kind": "classmethod",
               "signature": "(cls, edit: Any, fades: Dict[str, Sequence[Sequence[float]]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]",
               "summary": "Write one alpha channel per faded node per clip.",
-              "line": 340,
+              "line": 379,
               "deprecated": false
             },
             {
@@ -10243,7 +10312,42 @@
               "kind": "classmethod",
               "signature": "(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Rgb]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]",
               "summary": "Write every channel of every node, per clip, in one pass.",
-              "line": 367,
+              "line": 406,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "file_utils/mesh_convert/glb_pipeline.py",
+      "summary": "FBX -> GLB: the one build every GLB deliverable goes through.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "GlbPipeline",
+          "summary": "FBX -> GLB, with every deliverable's passes, for every deliverable.",
+          "line": 49,
+          "bases": [
+            "LoggingMixin"
+          ],
+          "members": [
+            {
+              "name": "envelope",
+              "qualname": "GlbPipeline.envelope",
+              "kind": "classmethod",
+              "signature": "(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]",
+              "summary": "The scene-sidecar envelope a build applies, from a host's reader.",
+              "line": 60,
+              "deprecated": false
+            },
+            {
+              "name": "build",
+              "qualname": "GlbPipeline.build",
+              "kind": "classmethod",
+              "signature": "(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]",
+              "summary": "Build the GLB for *src* and report what each stage did.",
+              "line": 104,
               "deprecated": false
             }
           ]
@@ -11420,149 +11524,104 @@
     },
     {
       "relpath": "geo_utils/shadow_horizon.py",
-      "summary": "Coverage-aware horizon maps: a ground shadow that follows the light at runtime.",
+      "summary": "Height-field shadow maps: a ground shadow that follows the light at runtime.",
       "functions": [],
       "classes": [
         {
-          "name": "HorizonMap",
-          "summary": "A baked horizon map and the frame it was baked in.",
-          "line": 73,
+          "name": "HeightFieldMap",
+          "summary": "A baked height-field shadow map and the frame it was baked in.",
+          "line": 71,
           "bases": [
             "NamedTuple"
           ],
           "members": [
             {
-              "name": "encode_angle",
-              "qualname": "HorizonMap.encode_angle",
-              "kind": "method",
-              "signature": "(self, angle: np.ndarray) -> np.ndarray",
-              "summary": "``cot(angle) / max_stretch`` clamped to ``[0, 1]`` — the interval",
-              "line": 98,
-              "deprecated": false
-            },
-            {
-              "name": "decode_cot",
-              "qualname": "HorizonMap.decode_cot",
-              "kind": "method",
-              "signature": "(self, value: np.ndarray) -> np.ndarray",
-              "summary": "The cotangent an encoded channel value stands for.",
-              "line": 111,
-              "deprecated": false
-            },
-            {
-              "name": "layers",
-              "qualname": "HorizonMap.layers",
+              "name": "levels",
+              "qualname": "HeightFieldMap.levels",
               "kind": "property",
               "signature": "(self) -> int",
-              "summary": "",
-              "line": 117,
+              "summary": "Pyramid levels above level 0: ``log2(S)`` (the top is one cell).",
+              "line": 94,
               "deprecated": false
             },
             {
               "name": "tiles",
-              "qualname": "HorizonMap.tiles",
+              "qualname": "HeightFieldMap.tiles",
               "kind": "property",
               "signature": "(self) -> int",
-              "summary": "Tiles in the PNG: one per layer per bin.",
-              "line": 121,
+              "summary": "Tiles across the image: ``K`` spans, the aux tile, the pyramid.",
+              "line": 99,
               "deprecated": false
             },
             {
-              "name": "layout",
-              "qualname": "HorizonMap.layout",
+              "name": "pixel",
+              "qualname": "HeightFieldMap.pixel",
               "kind": "property",
-              "signature": "(self) -> Tuple[int, int]",
-              "summary": "``(cols, rows)`` of the tile grid a PNG lays the tiles out in.",
-              "line": 126,
+              "signature": "(self) -> Tuple[float, float]",
+              "summary": "A footprint pixel's extent along the two horizontal axes.",
+              "line": 104,
               "deprecated": false
             },
             {
-              "name": "tile_index",
-              "qualname": "HorizonMap.tile_index",
-              "kind": "method",
-              "signature": "(self, layer: int, k: int) -> int",
-              "summary": "Tile ``t`` of bin *k*'s *layer*: grounded tiles first.",
-              "line": 130,
+              "name": "aspect",
+              "qualname": "HeightFieldMap.aspect",
+              "kind": "property",
+              "signature": "(self) -> float",
+              "summary": "The larger pixel pitch over the smaller, ``>= 1``.",
+              "line": 110,
               "deprecated": false
             },
             {
-              "name": "tile_rects",
-              "qualname": "HorizonMap.tile_rects",
+              "name": "hull",
+              "qualname": "HeightFieldMap.hull",
               "kind": "method",
-              "signature": "(self) -> List[Tuple[float, float, float, float]]",
-              "summary": "Per tile, its ``(scaleX, scaleY, offsetX, offsetY)`` inside the",
-              "line": 134,
+              "signature": "(self) -> Tuple[np.ndarray, np.ndarray]",
+              "summary": "``(lo, hi)`` ``(S, S)``: each column's outermost span bounds",
+              "line": 120,
+              "deprecated": false
+            },
+            {
+              "name": "pyramid",
+              "qualname": "HeightFieldMap.pyramid",
+              "kind": "method",
+              "signature": "(self) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]",
+              "summary": "Per level ``1 ..",
+              "line": 127,
               "deprecated": false
             },
             {
               "name": "to_rgba",
-              "qualname": "HorizonMap.to_rgba",
+              "qualname": "HeightFieldMap.to_rgba",
               "kind": "method",
               "signature": "(self) -> np.ndarray",
-              "summary": "The map as one ``uint8`` RGBA image: ``2 × bins`` tiles in a",
-              "line": 144,
+              "summary": "The map as one ``uint8`` RGBA image ``(S, S x (K + 2), 4)``.",
+              "line": 191,
               "deprecated": false
             },
             {
               "name": "from_rgba",
-              "qualname": "HorizonMap.from_rgba",
+              "qualname": "HeightFieldMap.from_rgba",
               "kind": "classmethod",
-              "signature": "(cls, pixels: np.ndarray, *, bins: int, size: Sequence[int], r_min: float, r_max: float, ground: float = 0.0, up: int = 1, max_stretch: Optional[float] = None) -> 'HorizonMap'",
-              "summary": "Rebuild a map from an image written by :meth:`to_rgba`.",
-              "line": 161,
-              "deprecated": false
-            },
-            {
-              "name": "texel_positions",
-              "qualname": "HorizonMap.texel_positions",
-              "kind": "method",
-              "signature": "(self) -> np.ndarray",
-              "summary": "Horizontal frame coordinates ``(H, W, 2)`` of every texel centre.",
-              "line": 213,
-              "deprecated": false
-            },
-            {
-              "name": "uv",
-              "qualname": "HorizonMap.uv",
-              "kind": "method",
-              "signature": "(self, horizontal) -> Tuple[np.ndarray, np.ndarray, np.ndarray]",
-              "summary": "Log-polar ``(u, v, inside)`` for horizontal frame points ``(N, 2)``:",
-              "line": 223,
-              "deprecated": false
-            },
-            {
-              "name": "taps",
-              "qualname": "HorizonMap.taps",
-              "kind": "method",
-              "signature": "(self, layer: int, k, u, v) -> Tuple[np.ndarray, np.ndarray, np.ndarray]",
-              "summary": "The four texels around ``(u, v)`` in *layer*'s bin ``k`` — the way",
-              "line": 234,
-              "deprecated": false
-            },
-            {
-              "name": "mask_bits",
-              "qualname": "HorizonMap.mask_bits",
-              "kind": "staticmethod",
-              "signature": "(values: np.ndarray) -> np.ndarray",
-              "summary": "``(..., 16)`` booleans from the ``B, A`` channels of texel values",
-              "line": 268,
+              "signature": "(cls, rgba: np.ndarray, *, size: int, spans: int, bounds: Sequence[float], ground: float, up: int, height_scale: float) -> 'HeightFieldMap'",
+              "summary": "A map decoded from the image :meth:`to_rgba` wrote (or a copy of",
+              "line": 243,
               "deprecated": false
             },
             {
               "name": "alpha",
-              "qualname": "HorizonMap.alpha",
+              "qualname": "HeightFieldMap.alpha",
               "kind": "method",
               "signature": "(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray",
-              "summary": "Shadow alpha ``(N,)`` at frame *points* for one source — the",
-              "line": 278,
+              "summary": "Shadow alpha ``(N,)`` at frame *points* for one source -- the",
+              "line": 304,
               "deprecated": false
             }
           ]
         },
         {
           "name": "ShadowHorizon",
-          "summary": "Bake, measure and lay out coverage-aware horizon maps (module doc).",
-          "line": 509,
+          "summary": "Bake, measure and lay out height-field shadow maps (module doc).",
+          "line": 498,
           "bases": [],
           "members": [
             {
@@ -11570,53 +11629,44 @@
               "qualname": "ShadowHorizon.shader_source",
               "kind": "classmethod",
               "signature": "(cls, language: str = 'glsl') -> str",
-              "summary": "The shared horizon evaluation, spelled for *language*.",
-              "line": 541,
+              "summary": "The shared shadow evaluation, spelled for *language*.",
+              "line": 524,
               "deprecated": false
             },
             {
-              "name": "layout",
-              "qualname": "ShadowHorizon.layout",
-              "kind": "staticmethod",
-              "signature": "(tiles: int) -> Tuple[int, int]",
-              "summary": "``(cols, rows)`` of the grid holding *tiles*: ``cols = ceil(sqrt(tiles))``.",
-              "line": 582,
-              "deprecated": false
-            },
-            {
-              "name": "range_for",
-              "qualname": "ShadowHorizon.range_for",
+              "name": "record",
+              "qualname": "ShadowHorizon.record",
               "kind": "classmethod",
-              "signature": "(cls, radius: float, height: float, max_stretch: Optional[float] = None) -> Tuple[float, float]",
-              "summary": "``(r_min, r_max)``: an eighth of the footprint radius to the reach",
-              "line": 589,
+              "signature": "(cls, *, texture: str, size: int, spans: int, levels: int, bounds: Sequence[float], height_scale: float, frame_a: Sequence[float], frame_b: Sequence[float], rect: Sequence[float]) -> Dict[str, object]",
+              "summary": "The ``horizon`` block of a ``shadow_metadata`` v2 plane record.",
+              "line": 566,
               "deprecated": false
             },
             {
               "name": "bake",
               "qualname": "ShadowHorizon.bake",
               "kind": "classmethod",
-              "signature": "(cls, meshes, *, ground: float = 0.0, up: int = 1, radius: Optional[float] = None, height: Optional[float] = None, bins: int = DEFAULT_BINS, size: Sequence[int] = DEFAULT_SIZE, r_min: Optional[float] = None, r_max: Optional[float] = None, max_stretch: Optional[float] = None, footprint: int = DEFAULT_FOOTPRINT, threads: Optional[int] = None) -> HorizonMap",
+              "signature": "(cls, meshes, *, ground: float = 0.0, up: int = 1, size: int = DEFAULT_SIZE, spans: int = DEFAULT_SPANS, bounds=None, padding: float = DEFAULT_PADDING) -> HeightFieldMap",
               "summary": "Bake the map of *meshes* in the map's frame.",
-              "line": 647,
+              "line": 612,
               "deprecated": false
             },
             {
               "name": "measure",
               "qualname": "ShadowHorizon.measure",
               "kind": "classmethod",
-              "signature": "(cls, hmap: HorizonMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]",
-              "summary": "Compare :meth:`HorizonMap.alpha` with the exact projection at random",
-              "line": 948,
+              "signature": "(cls, hmap: HeightFieldMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]",
+              "summary": "Compare :meth:`HeightFieldMap.alpha` with the exact projection at",
+              "line": 774,
               "deprecated": false
             },
             {
               "name": "bake_adaptive",
               "qualname": "ShadowHorizon.bake_adaptive",
               "kind": "classmethod",
-              "signature": "(cls, meshes, *, threshold: float = 0.05, max_bins: int = 64, measure_samples: int = 6, **kwargs) -> Tuple[HorizonMap, Dict[str, float]]",
-              "summary": "Bake at :attr:`ADAPTIVE_BINS` in turn until :meth:`measure`'s",
-              "line": 1056,
+              "signature": "(cls, meshes, *, threshold: float = 0.05, max_size: int = 256, measure_samples: int = 6, **kwargs) -> Tuple[HeightFieldMap, Dict[str, float]]",
+              "summary": "Bake at :attr:`ADAPTIVE_SIZES` in turn until :meth:`measure`'s",
+              "line": 886,
               "deprecated": false
             }
           ]
@@ -11631,7 +11681,7 @@
         {
           "name": "ShadowModel",
           "summary": "The analytic shadow of a bounding cylinder (see :meth:`ShadowProjection.model`).",
-          "line": 60,
+          "line": 64,
           "bases": [
             "NamedTuple"
           ],
@@ -11642,7 +11692,7 @@
               "kind": "property",
               "signature": "(self) -> float",
               "summary": "The near edge along ``u``, relative to the anchor (``-base``).",
-              "line": 93,
+              "line": 97,
               "deprecated": false
             },
             {
@@ -11651,7 +11701,7 @@
               "kind": "property",
               "signature": "(self) -> float",
               "summary": "Extent along ``u`` (``reach + base + top``).",
-              "line": 98,
+              "line": 102,
               "deprecated": false
             },
             {
@@ -11660,7 +11710,7 @@
               "kind": "property",
               "signature": "(self) -> Vec2",
               "summary": "Unit ``w`` — across the bearing, the plane's local +X.",
-              "line": 103,
+              "line": 107,
               "deprecated": false
             },
             {
@@ -11669,7 +11719,7 @@
               "kind": "method",
               "signature": "(self, fractions: Sequence[float]) -> Rect",
               "summary": "The canvas rectangle *fractions* denote at this model, absolute in",
-              "line": 107,
+              "line": 111,
               "deprecated": false
             },
             {
@@ -11678,7 +11728,7 @@
               "kind": "method",
               "signature": "(self, fractions: Sequence[float]) -> Tuple[Vec2, float, float]",
               "summary": "Where a plane carrying a canvas of *fractions* sits at this model:",
-              "line": 126,
+              "line": 131,
               "deprecated": false
             }
           ]
@@ -11686,7 +11736,7 @@
         {
           "name": "ShadowProjection",
           "summary": "Planar shadow projection: exact per-point mapping plus the live model.",
-          "line": 140,
+          "line": 145,
           "bases": [],
           "members": [
             {
@@ -11695,7 +11745,7 @@
               "kind": "staticmethod",
               "signature": "(up: int = 1) -> Tuple[int, int]",
               "summary": "The two horizontal axis indices, in order, for the vertical *up*.",
-              "line": 156,
+              "line": 161,
               "deprecated": false
             },
             {
@@ -11704,7 +11754,7 @@
               "kind": "classmethod",
               "signature": "(cls, contact, direction, scale: float) -> Tuple[float, float, float]",
               "summary": "A directional source written as a point: *scale* x :attr:`FAR_FACTOR`",
-              "line": 169,
+              "line": 174,
               "deprecated": false
             },
             {
@@ -11713,7 +11763,7 @@
               "kind": "classmethod",
               "signature": "(cls, contact, light=None, ground: float = 0.0, radius: float = 0.5, height: float = 1.0, *, up: int = 1, direction=None, max_stretch: Optional[float] = None) -> ShadowModel",
               "summary": "The shadow of the bounding cylinder standing on *contact*.",
-              "line": 179,
+              "line": 184,
               "deprecated": false
             },
             {
@@ -11722,7 +11772,7 @@
               "kind": "classmethod",
               "signature": "(cls, points, light=None, ground: float = 0.0, *, up: int = 1, direction=None, max_length: Optional[float] = None) -> Optional[Tuple[np.ndarray, np.ndarray]]",
               "summary": "Project world *points* onto the ground plane along the light's rays.",
-              "line": 263,
+              "line": 268,
               "deprecated": false
             },
             {
@@ -11731,7 +11781,7 @@
               "kind": "staticmethod",
               "signature": "(ground_points, model: ShadowModel) -> np.ndarray",
               "summary": "``(N, 2)`` ground coordinates -> ``(u, w)`` relative to the model's",
-              "line": 337,
+              "line": 342,
               "deprecated": false
             },
             {
@@ -11740,7 +11790,7 @@
               "kind": "staticmethod",
               "signature": "(rect: Rect, model: ShadowModel) -> Tuple[float, float, float, float]",
               "summary": "Express a ``(u, w)`` canvas *rect* as the stamp a plane carries so a",
-              "line": 349,
+              "line": 354,
               "deprecated": false
             }
           ]
@@ -11748,7 +11798,7 @@
         {
           "name": "ShadowRaster",
           "summary": "What a rasterized shadow texture was drawn into (``ImgUtils.rasterize_shadow``).",
-          "line": 367,
+          "line": 372,
           "bases": [
             "NamedTuple"
           ],
@@ -12422,12 +12472,21 @@
               "deprecated": false
             },
             {
+              "name": "rasterize_height_spans",
+              "qualname": "ImgUtils.rasterize_height_spans",
+              "kind": "classmethod",
+              "signature": "(cls, meshes, *, up: int = 1, size: int = 64, ground: float = 0.0, bounds=None, padding: float = 0.02, spans: int = 1)",
+              "summary": "The solid vertical spans of world meshes per footprint pixel: a",
+              "line": 2992,
+              "deprecated": false
+            },
+            {
               "name": "rasterize_shadow",
               "qualname": "ImgUtils.rasterize_shadow",
               "kind": "classmethod",
               "signature": "(cls, meshes, light=None, ground=0.0, size=512, *, up=1, direction=None, source_size=0.0, max_stretch=None, canvas=None, contact=None, radius=None, height=None, padding=0.04, uniform_alpha=True, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.0)",
               "summary": "Rasterize the shadow world-space meshes cast onto the ground plane.",
-              "line": 3081,
+              "line": 3215,
               "deprecated": false
             },
             {
@@ -12436,7 +12495,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Convert an RGB Image data array to grayscale (luma weights).",
-              "line": 3298,
+              "line": 3432,
               "deprecated": false
             },
             {
@@ -12445,7 +12504,7 @@
               "kind": "staticmethod",
               "signature": "(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]",
               "summary": "Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.",
-              "line": 3314,
+              "line": 3448,
               "deprecated": false
             },
             {
@@ -12454,7 +12513,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert an RGB image to HSV mode.",
-              "line": 3374,
+              "line": 3508,
               "deprecated": false
             },
             {
@@ -12463,7 +12522,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a high-bit-depth grayscale image to 8-bit 'L'.",
-              "line": 3389,
+              "line": 3523,
               "deprecated": false
             },
             {
@@ -12472,7 +12531,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a float grayscale image to 8-bit 'L', rescaling the unit range.",
-              "line": 3420,
+              "line": 3554,
               "deprecated": false
             },
             {
@@ -12481,7 +12540,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 3460,
+              "line": 3594,
               "deprecated": false
             },
             {
@@ -12490,7 +12549,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 3556,
+              "line": 3690,
               "deprecated": false
             },
             {
@@ -12499,7 +12558,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 3709,
+              "line": 3843,
               "deprecated": false
             },
             {
@@ -12508,7 +12567,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 3721,
+              "line": 3855,
               "deprecated": false
             },
             {
@@ -12517,7 +12576,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, percentile=None)",
               "summary": "Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.",
-              "line": 3739,
+              "line": 3873,
               "deprecated": false
             },
             {
@@ -12526,7 +12585,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> List[Image.Image]",
               "summary": "Generate a mipmap chain for an image.",
-              "line": 3801,
+              "line": 3935,
               "deprecated": false
             },
             {
@@ -12535,7 +12594,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 3828,
+              "line": 3962,
               "deprecated": false
             },
             {
@@ -12544,7 +12603,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 3848,
+              "line": 3982,
               "deprecated": false
             },
             {
@@ -12553,7 +12612,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 3889,
+              "line": 4023,
               "deprecated": false
             },
             {
@@ -12562,7 +12621,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 3950,
+              "line": 4084,
               "deprecated": false
             }
           ]
@@ -12996,7 +13055,7 @@
               "kind": "staticmethod",
               "signature": "(values: Sequence[float], value_tolerance: float = 1e-05) -> 'np.ndarray'",
               "summary": "Return the indices that define a sampled curve's shape.",
-              "line": 752,
+              "line": 767,
               "deprecated": false
             }
           ]
@@ -13465,6 +13524,24 @@
               "summary": "Fit cubic-Hermite tangent slopes at a subset of samples so the",
               "line": 2101,
               "deprecated": false
+            },
+            {
+              "name": "evaluate_hermite",
+              "qualname": "MathUtils.evaluate_hermite",
+              "kind": "staticmethod",
+              "signature": "(times: Sequence[float], values: Sequence[float], keep_indices: Sequence[int], in_slopes: Sequence[float], out_slopes: Sequence[float], at: Optional[Sequence[float]] = None) -> 'np.ndarray'",
+              "summary": "Evaluate the sparse cubic-Hermite curve a reduction produces.",
+              "line": 2216,
+              "deprecated": false
+            },
+            {
+              "name": "reduce_samples",
+              "qualname": "MathUtils.reduce_samples",
+              "kind": "staticmethod",
+              "signature": "(times: Sequence[float], values: Sequence[float], value_tolerance: float = 1e-05, max_error: Optional[float] = None) -> Tuple[List[int], List[float], List[float]]",
+              "summary": "Pick the keys and tangents that reproduce dense samples within a bound.",
+              "line": 2275,
+              "deprecated": false
             }
           ]
         }
@@ -13778,7 +13855,7 @@
         {
           "name": "PreviewBridge",
           "summary": "Hand-off bridge whose target is a live preview page rather than an application.",
-          "line": 26,
+          "line": 25,
           "bases": [
             "HandoffBridge"
           ],
@@ -13789,7 +13866,7 @@
               "kind": "method",
               "signature": "(self) -> Sequence[str]",
               "summary": "Extra directories the lightmap pass resolves the manifest's EXRs against.",
-              "line": 46,
+              "line": 45,
               "deprecated": false
             },
             {
@@ -13798,7 +13875,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "glTF-appropriate export defaults, read by both DCC export mixins.",
-              "line": 64,
+              "line": 63,
               "deprecated": false
             },
             {
@@ -13807,7 +13884,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The preview URL, or ``None`` before the first push.",
-              "line": 136,
+              "line": 132,
               "deprecated": false
             },
             {
@@ -13816,7 +13893,7 @@
               "kind": "method",
               "signature": "(self, scope: str = 'selected') -> List[Any]",
               "summary": "The objects *scope* resolves to, through the host hooks.",
-              "line": 141,
+              "line": 137,
               "deprecated": false
             },
             {
@@ -13825,7 +13902,7 @@
               "kind": "method",
               "signature": "(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]",
               "summary": "Export and publish, returning the deliverer's result (``None`` on failure).",
-              "line": 168,
+              "line": 164,
               "deprecated": false
             },
             {
@@ -13834,7 +13911,7 @@
               "kind": "method",
               "signature": "(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]",
               "summary": "Publish a GLB that already exists on disk, unchanged.",
-              "line": 225,
+              "line": 221,
               "deprecated": false
             },
             {
@@ -13843,7 +13920,7 @@
               "kind": "staticmethod",
               "signature": "(result: Optional[Dict[str, Any]]) -> str",
               "summary": "One plain-text line describing what the scene sidecar did.",
-              "line": 294,
+              "line": 290,
               "deprecated": false
             },
             {
@@ -13852,7 +13929,7 @@
               "kind": "staticmethod",
               "signature": "(result: Optional[Dict[str, Any]]) -> str",
               "summary": "One plain-text line on the lightmaps: bound, or how many came back unlit.",
-              "line": 323,
+              "line": 319,
               "deprecated": false
             },
             {
@@ -13861,7 +13938,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Stop serving and release the port.",
-              "line": 364,
+              "line": 360,
               "deprecated": false
             }
           ]
@@ -13874,44 +13951,9 @@
       "functions": [],
       "classes": [
         {
-          "name": "PreviewPassContext",
-          "summary": "What a post-conversion preview pass reads, and reports into.",
-          "line": 26,
-          "bases": [],
-          "members": [
-            {
-              "name": "logger",
-              "qualname": "PreviewPassContext.logger",
-              "kind": "property",
-              "signature": "(self)",
-              "summary": "The bridge's logger -- every pass reports through the push's own sink.",
-              "line": 51,
-              "deprecated": false
-            },
-            {
-              "name": "sidecar",
-              "qualname": "PreviewPassContext.sidecar",
-              "kind": "property",
-              "signature": "(self) -> Optional[Dict[str, Any]]",
-              "summary": "The scene-sidecar envelope the producer attached, if any.",
-              "line": 56,
-              "deprecated": false
-            },
-            {
-              "name": "lightmap_search_dirs",
-              "qualname": "PreviewPassContext.lightmap_search_dirs",
-              "kind": "property",
-              "signature": "(self) -> Sequence[str]",
-              "summary": "The host's live texture folders (:meth:`PreviewBridge.lightmap_search_dirs`).",
-              "line": 61,
-              "deprecated": false
-            }
-          ]
-        },
-        {
           "name": "PreviewDeliverer",
-          "summary": "Hand-off strategy: convert the produced FBX to GLB and publish it.",
-          "line": 75,
+          "summary": "Hand-off strategy: build the GLB and publish it to the preview page.",
+          "line": 24,
           "bases": [
             "Deliverer"
           ],
@@ -13922,7 +13964,7 @@
               "kind": "method",
               "signature": "(self) -> PreviewServer",
               "summary": "The bridge's server, started, creating it on first use.",
-              "line": 165,
+              "line": 81,
               "deprecated": false
             },
             {
@@ -13931,7 +13973,7 @@
               "kind": "method",
               "signature": "(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]",
               "summary": "Put *glb* on the server and report what the viewer now sees.",
-              "line": 370,
+              "line": 87,
               "deprecated": false
             },
             {
@@ -13940,7 +13982,7 @@
               "kind": "method",
               "signature": "(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
               "summary": "",
-              "line": 432,
+              "line": 149,
               "deprecated": false
             }
           ]
@@ -13955,7 +13997,7 @@
         {
           "name": "PreviewServer",
           "summary": "Serve a directory of preview assets on loopback, with a live manifest.",
-          "line": 324,
+          "line": 339,
           "bases": [
             "LoggingMixin",
             "_PreviewServerInternal"
@@ -13967,7 +14009,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[int]",
               "summary": "The bound port, or ``None`` before :meth:`start`.",
-              "line": 443,
+              "line": 459,
               "deprecated": false
             },
             {
@@ -13976,7 +14018,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The viewer URL, or ``None`` before :meth:`start`.",
-              "line": 448,
+              "line": 464,
               "deprecated": false
             },
             {
@@ -13985,7 +14027,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "Number of published revisions;",
-              "line": 453,
+              "line": 469,
               "deprecated": false
             },
             {
@@ -13994,7 +14036,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 458,
+              "line": 474,
               "deprecated": false
             },
             {
@@ -14003,7 +14045,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Whether a page is currently watching this server.",
-              "line": 461,
+              "line": 477,
               "deprecated": false
             },
             {
@@ -14012,7 +14054,7 @@
               "kind": "property",
               "signature": "(self) -> tuple",
               "summary": "Registered names of the viewer scripts currently active, in load order.",
-              "line": 489,
+              "line": 505,
               "deprecated": false
             },
             {
@@ -14021,7 +14063,7 @@
               "kind": "method",
               "signature": "(self, name: str, path: Optional[Union[str, Path]] = None) -> 'PreviewServer'",
               "summary": "Activate a viewer script, on disk and in the manifest at once.",
-              "line": 494,
+              "line": 510,
               "deprecated": false
             },
             {
@@ -14030,7 +14072,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> 'PreviewServer'",
               "summary": "Deactivate a viewer script (unknown names are ignored), and sweep it.",
-              "line": 524,
+              "line": 540,
               "deprecated": false
             },
             {
@@ -14039,7 +14081,7 @@
               "kind": "method",
               "signature": "(self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]) -> 'PreviewServer'",
               "summary": "Replace the whole active set (``None`` or empty clears it).",
-              "line": 534,
+              "line": 550,
               "deprecated": false
             },
             {
@@ -14048,7 +14090,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "The payload served at ``/manifest.json``.",
-              "line": 649,
+              "line": 665,
               "deprecated": false
             },
             {
@@ -14057,7 +14099,7 @@
               "kind": "method",
               "signature": "(self) -> 'PreviewServer'",
               "summary": "Bind the port and serve on a daemon thread.",
-              "line": 664,
+              "line": 682,
               "deprecated": false
             },
             {
@@ -14066,7 +14108,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Stop serving and release the port.",
-              "line": 694,
+              "line": 712,
               "deprecated": false
             },
             {
@@ -14075,7 +14117,7 @@
               "kind": "method",
               "signature": "(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int",
               "summary": "Place an asset in the serve root and bump the manifest version.",
-              "line": 711,
+              "line": 729,
               "deprecated": false
             },
             {
@@ -14084,7 +14126,7 @@
               "kind": "method",
               "signature": "(self, settings: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "Write delivery dials into the published GLB, and remember them.",
-              "line": 779,
+              "line": 797,
               "deprecated": false
             },
             {
@@ -14093,7 +14135,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Open the viewer in the default browser.",
-              "line": 858,
+              "line": 876,
               "deprecated": false
             }
           ]
@@ -15014,9 +15056,18 @@
               "name": "resolve_ffmpeg",
               "qualname": "VidUtils.resolve_ffmpeg",
               "kind": "classmethod",
-              "signature": "(cls, required: bool = True, auto_install: bool = False) -> Optional[str]",
+              "signature": "(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = False) -> Optional[str]",
               "summary": "Finds FFmpeg executable path in system path or managed installs.",
               "line": 73,
+              "deprecated": false
+            },
+            {
+              "name": "ensure_ffmpeg",
+              "qualname": "VidUtils.ensure_ffmpeg",
+              "kind": "classmethod",
+              "signature": "(cls, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]",
+              "summary": "Guarantee ffmpeg, offering the managed install when none is found.",
+              "line": 161,
               "deprecated": false
             },
             {
@@ -15025,7 +15076,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath: str) -> float",
               "summary": "Extracts frame rate from a video file using FFmpeg.",
-              "line": 133,
+              "line": 194,
               "deprecated": false
             },
             {
@@ -15034,7 +15085,7 @@
               "kind": "classmethod",
               "signature": "(cls, input_filepath: str) -> Optional[int]",
               "summary": "Find the first frame number of a printf-style image sequence on disk.",
-              "line": 172,
+              "line": 233,
               "deprecated": false
             },
             {
@@ -15043,7 +15094,7 @@
               "kind": "classmethod",
               "signature": "(cls, input_filepath: str, output_filepath: str = None, frame_rate: Union[float, int] = None, delete_original: bool = False, start_number: Optional[int] = None, audio_filepath: Optional[str] = None, audio_offset: float = 0.0, **ffmpeg_options) -> Union[str, None]",
               "summary": "Compresses a video file or image sequence using FFmpeg.",
-              "line": 205,
+              "line": 266,
               "deprecated": false
             }
           ]

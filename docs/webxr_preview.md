@@ -30,26 +30,25 @@ format: a third-party glTF tool opens it and gets a sane, if plainer, result.
 ## The chain
 
 ```
-  Maya / Blender selection
+  Maya / Blender selection            (scope: selected / visible / all)
         |
-        |  MayaExportMixin / BlenderExportMixin      (host-specific: read selection, export FBX)
+        |  MayaExportMixin / BlenderExportMixin._export_fbx  (the hand-off mixin's
+        |  FBX write, inside the export bracket: the visibility and render-effects
+        |  producers refresh the data_export carrier, viewport material bindings are
+        |  suspended and one curve proxy per keyed channel is staged for the write,
+        |  then everything is put back). PreviewBridge attaches the scene sidecar
+        |  SceneState read from the same objects.
         v
-  FBX  ---------------------------------------------  carries geometry, UVs (incl. lightmap UV),
-        |                                             materials, embedded textures, and the
-        |                                             `data_export` node's user properties
-        |  PreviewDeliverer.PAYLOAD_PASSES
-        |    downsize_textures  embedded PNG/JPEG to the delivery ceiling (FbxMedia)
-        |  MeshConvert.fbx_to_glb  ->  FBX2glTF --binary --user-properties
-        v
-  GLB   (raw conversion)
+  FBX   (payload: geometry + embedded textures + the carrier + the curve proxies)
         |
-        |  PreviewDeliverer.EDIT_PASSES   (one open edit session, in this order)
-        |    scene_sidecar    repair base colour / emissive / metallic-roughness
-        |    prune_textures   drop images no material samples (Maya's env cubes)
-        |    lightmaps        bind baked maps + write the `lightmap_web` manifest
-        |  PreviewDeliverer.FILE_PASSES   (the closed file)
-        |    optimize_textures  resize to 2048, re-encode WebP (or KTX2/basis, opt-in),
-        |                       repack the BIN chunk
+        |  GlbPipeline.build  --  the SAME build TaskManager.create_glb runs for the
+        |  Scene Exporter's GLB deliverable; the two callers hand it dials only:
+        |    downsize   FbxMedia.downsize the embedded textures to the texture ceiling
+        |    convert    MeshConvert.fbx_to_glb: alpha repair, image dedupe, scene sidecar,
+        |               dead-texture sweep, lightmaps (the host's live map folders),
+        |               shadow rigs, curve-proxy strip, clips, visibility gates, fades,
+        |               animation manifest -- one edit session, and a report back
+        |    optimize   MeshConvert.optimize_glb_textures, last, on the closed file
         v
   GLB   (deliverable)  --  PreviewServer.publish()  ->  version += 1
         |
@@ -63,17 +62,27 @@ format: a third-party glTF tool opens it and gets a sane, if plainer, result.
   the lighting the asset was signed off in
 ```
 
+The preview's job is to show what the target platform will get, so the GLB **content** is never
+the preview's own: the sidecar, the lightmaps, the render effects, the texture policy all come out
+of `GlbPipeline`, and a fix to any of them lands in the export and the preview at once. What the
+preview decides for itself stops at the delivery container (the viewer's texture format), where its
+scratch files live, and the fact that it runs **no export tasks or validation checks** -- those
+belong to the Scene Exporter, and the preview must stay fast enough to press after every tweak.
+When you want the exporter's *whole* run checked, export the GLB and publish that file (see
+*Publishing a GLB you already have*).
+
 Ownership, because it decides where a fix goes:
 
 | Layer | Owns |
 |---|---|
 | `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page **and the active viewer scripts** |
-| `pythontk.PreviewDeliverer` | FBX → GLB → publish, and the ordered **pass registries** (`PAYLOAD_PASSES` before the conversion, `EDIT_PASSES` / `FILE_PASSES` after it) |
-| `pythontk.PreviewBridge` | the glTF-appropriate export defaults and the `push()` / `publish_file()` / `url` / `stop()` surface |
+| `pythontk.GlbPipeline` | **the GLB build** -- downsize, convert, optimize, in that order, for the preview AND the Scene Exporters' GLB output |
+| `pythontk.PreviewDeliverer` | the build's dials (container, scratch, release) and the publish |
+| `pythontk.PreviewBridge` | the glTF-appropriate export defaults, the sidecar attach and the `push()` / `publish_file()` / `url` / `stop()` surface |
 | `pythontk.MeshConvert` | every GLB edit, the sidecar envelope schema, the lightmap binding, **the published rendering policy** |
 | `net_utils/preview/viewer.html` | rebinding the carrier slot to a real `lightMap`, scale/framing, and **spending** the rendering policy it reads out of the file |
 | `net_utils/preview/scripts/*.js` | optional behaviour the page gains by activation, never by being edited |
-| `mayatk` / `blendertk` | reading the host's selection, exporting the FBX, reading scene state |
+| `mayatk` / `blendertk` | reading the host's selection, exporting the FBX inside the export bracket, reading scene state |
 
 Both DCC bridges are under 80 lines, most of that docstring. Everything else is shared, because
 mayatk and blendertk cannot import each other and anything written twice drifts twice.
@@ -158,34 +167,23 @@ combined with smoothing groups, and the converter triangulates on the way to glT
 
 ## Extending it
 
-Two seams, and the rule for choosing is where the work happens: **in the delivery** (a pass) or
-**in the page** (a script). Both are registries, so extending means an entry plus a file — never an
-edit to the path every DCC bridge already runs through.
+Two seams, and the rule for choosing is where the work happens: **in the deliverable** (the shared
+GLB build) or **in the page** (a script). Neither is an edit to a DCC bridge: the build is one chain
+both producers run, and the scripts are a registry the page imports from.
 
-### Passes — work on the deliverable
+### The build — work on the deliverable
 
-`PreviewDeliverer` runs its post-conversion work as an ordered registry, `name → method`:
+The GLB's content is made by `GlbPipeline.build`, which is the same call `TaskManager.create_glb`
+makes in both Scene Exporters. A step that belongs in the deliverable -- a channel repair, a Draco
+encode, a per-slot resolution ceiling -- goes into that chain (`MeshConvert.fbx_to_glb`'s edit
+session for anything that reads the JSON chunk, the pipeline's stages for anything that rewrites the
+container), and the preview shows it on the next push because it never had a chain of its own. The
+rule of thumb: if a fix would need to be made twice, it is in the wrong place.
 
-```python
-class DracoPreview(ptk.PreviewDeliverer):
-    FILE_PASSES = {**ptk.PreviewDeliverer.FILE_PASSES, "draco": "_pass_draco"}
-
-    def _pass_draco(self, context):
-        encode(context.glb)          # context: .glb .edit .payload .request .results .logger
-```
-
-`PAYLOAD_PASSES` run on the exported **FBX** before the converter reads it (downsize embedded
-textures to the delivery ceiling — see *Cost and budget*); `EDIT_PASSES` run inside **one** open GLB
-edit session (sidecar → prune → lightmaps); `FILE_PASSES` run on the **closed** file (optimize). The
-split is real rather than stylistic: a file pass rewrites the container — repacking the BIN chunk,
-re-encoding payloads — which is exactly what an open edit session cannot have happening underneath
-it, and `context.edit` is `None` there so a stale handle fails loudly instead of writing through dead
-buffers. A payload pass may replace `context.payload.primary` with a rewritten scratch file; the
-conversion reads the payload after them.
-
-Each pass is guarded **individually**. A deliverable missing one repair still beats no deliverable,
-and the alternative failed in the worst direction: one early failure took the lightmap wiring down
-with it, so the model arrived unlit with nothing naming the pass that actually broke.
+The three stages have three failure policies, and they are the exporters' policies: the downsize is
+a speed win the texture ceiling re-applies anyway, so its failure is a warning; a failed conversion
+or texture pass raises and the push reports it, rather than publishing a GLB that quietly skipped
+the 94.7 MB -> ~15 MB pass.
 
 ### Scripts — work in the page
 
@@ -246,7 +244,7 @@ correct set are named accordingly (`*_Normal_OpenGL`, `*_NRML_OGL`).
 | `baseColorTexture` | FBX, or the sidecar's `base_color` | A packed `Albedo_Transparency` map passes through **as-is** — its RGB+A layout already *is* glTF's base-colour layout |
 | `normalTexture` | FBX, `texCoord` 0 | Wired by the converter; nothing repairs it because nothing loses it |
 | `metallicRoughnessTexture` | the sidecar's `metallic_roughness`, repacked | glTF ORM: **R=occlusion, G=roughness, B=metallic** |
-| `emissiveTexture` / factor | FBX, or the sidecar's `emissive` | Emission weight folded in; magnitude above 1 preserved via `KHR_materials_emissive_strength` |
+| `emissiveTexture` / factor | FBX, or the sidecar's `emissive` | Emission weight folded in; magnitude above 1 preserved via `KHR_materials_emissive_strength`. A **highlighted** object's isolated copy drops the map: glTF emission is factor × map, so a mapped material (factor at white) would clamp the additive `highlight` channel to nothing and mask its colour where the map is black — the copy glows from the channel alone |
 | `occlusionTexture` | the packed ORM (`texCoord` 0), displaced by **the lightmap** (`texCoord` 1) on baked materials | glTF has no lightmap slot; see below |
 
 ### Normal maps are wired
@@ -596,7 +594,8 @@ those runs shared the machine with the experiments above):
 
 | Option | Effect |
 |---|---|
-| Include Textures **off** | FBX 366 → 12 MB, no sidecar textures, no optimize pass — and the conversion still takes minutes |
+| Export Preset | the push's tasks, checks, textures, animation and sidecar are the chosen Scene Exporter preset's rows (2026-09-05; the dials below were the option box's own before that and are kept for the costs they measured) |
+| Textures **off** | FBX 366 → 12 MB, no sidecar textures, no optimize pass — and the conversion still takes minutes |
 | Scene Sidecar **off** | saves the 17 s ORM repack; the preview then shows FBX2glTF's own packing, which reads metallic 1 on grayscale source sets |
 | Texture Format **KTX2** | texture pass 57 s instead of 21 s (`toktx`, UASTC for data maps / ETC1S for colour) and 42 MB instead of 35 MB on the wire — the win is GPU memory, not the push |
 | Include Animation **on** | push 719 s: Maya's FBX write becomes 84 s (it bakes complex animation), the FBX 482 MB, the conversion 616 s, and the GLB 101 MB — 73 MB of it animation accessors |
@@ -610,7 +609,7 @@ script is one file copy, and loopback serves the asset at ~370 MB/s.
 Cheaper wins taken on the Python side (~44 s of the push): `dedupe_glb_images` collapses the
 byte-identical copies FBX2glTF emits per material before anything pays to encode them; the preview
 releases its consumed FBX (and the SDK's extracted `.fbm`) as soon as the GLB exists instead of
-leaving ~700 MB per push to the 7-day sweep; `PreviewDeliverer.PAYLOAD_PASSES` downsizes the FBX's
+leaving ~700 MB per push to the 7-day sweep; `GlbPipeline`'s first stage downsizes the FBX's
 embedded textures to the delivery ceiling first (`FbxMedia.downsize`, 7.5 s) so the raw GLB the
 converter hands back is 96 MB rather than 340 MB and every later pass reads a 2K file
 (re-measured quiet, end to end, the push went from 419 s to 333 s: the converter ~365 → ~290 s, the sidecar's inline passes 17 → 9 s, the optimize pass 21 → 10 s); the lossless-WebP effort is 75 rather than 100 (identical bytes, 14% less of the

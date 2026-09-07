@@ -40,6 +40,7 @@ Served surface:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -247,7 +248,21 @@ class _PreviewServerInternal:
         if not src.is_file():  # pragma: no cover - packaging failure
             self.logger.warning("Viewer page missing from the package: %s", src)
             return
-        self._sync_file(src, self.root / "index.html")
+        served = self.root / "index.html"
+        self._sync_file(src, served)
+        # Fingerprint of the page actually SERVED (a caller-owned root keeps its
+        # own copy, which may differ from the package), published in the
+        # manifest so an OPEN tab can tell its script has been superseded and
+        # reload itself: the poll swaps the model but never the JavaScript
+        # running it, so a viewer edit otherwise reached a running session's
+        # page only via F5 (measured 2026-09-05: a highlight channel the GLB
+        # carried, and a page from before the binding existed).
+        try:
+            stamp = hashlib.sha1(served.read_bytes()).hexdigest()[:12]
+        except OSError:
+            stamp = ""
+        with self._lock:
+            self._viewer_stamp = stamp
 
     def _sync_file(self, src: Path, dst: Path) -> None:
         """Place *src* at *dst* unless the caller owns it or it is already current.
@@ -413,6 +428,7 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         self._viewer = viewer
         self._lock = threading.Lock()
         self._version = 0
+        self._viewer_stamp = ""
         self._asset: Optional[str] = None
         #: The file the current asset was published FROM, so a setting the page
         #: writes can reach the caller's own deliverable and not only the copy.
@@ -651,6 +667,8 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         with self._lock:
             return {
                 "version": self._version,
+                # Page fingerprint; the viewer reloads when it changes.
+                "viewer": self._viewer_stamp,
                 "asset": self._asset,
                 "updated": self._updated,
                 "title": self.title,

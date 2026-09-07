@@ -5,7 +5,7 @@ import logging
 import subprocess
 import shutil
 import re
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 # from this package:
 from pythontk.core_utils.help_mixin import HelpMixin
@@ -71,7 +71,10 @@ class VidUtils(HelpMixin):
 
     @classmethod
     def resolve_ffmpeg(
-        cls, required: bool = True, auto_install: bool = False
+        cls,
+        required: bool = True,
+        auto_install: bool = False,
+        prompt: Union[bool, Callable[[str], bool]] = False,
     ) -> Optional[str]:
         """Finds FFmpeg executable path in system path or managed installs.
 
@@ -80,6 +83,15 @@ class VidUtils(HelpMixin):
                            unavailable.
             auto_install:  If True, downloads and installs ffmpeg when
                            it cannot be found on the system PATH.
+            prompt:        Consent policy for that download -- ``False``
+                           (default) installs without asking, ``True`` asks
+                           on the console, a callable ``(question) -> bool``
+                           is asked instead (a panel passes its dialog). See
+                           :meth:`AppInstaller.consent`. The default differs
+                           from the sibling resolvers because
+                           ``auto_install=True`` alone has always installed
+                           silently here and callers rely on it;
+                           :meth:`ensure_ffmpeg` is the consenting entry point.
 
         Returns:
             str: Path to the FFmpeg executable, or None if not found
@@ -87,7 +99,7 @@ class VidUtils(HelpMixin):
 
         Raises:
             FileNotFoundError: If FFmpeg is not located and *required*
-                is True.
+                is True -- including a declined or unanswerable download.
         """
         ffmpeg_path = shutil.which("ffmpeg")
         if ffmpeg_path:
@@ -104,30 +116,79 @@ class VidUtils(HelpMixin):
             return managed
 
         install_error = None
+        not_installed = None
         if auto_install:
-            try:
-                return AppInstaller.ensure(
-                    "ffmpeg",
-                    platforms=FFMPEG_PLATFORMS,
-                    executable="ffmpeg",
+            answer = AppInstaller.consent(
+                prompt,
+                "FFmpeg is not installed.\n"
+                "Download it into the pythontk tools folder now?",
+            )
+            if answer is None:
+                not_installed = (
+                    "no interactive console is available to confirm the "
+                    "download (pass prompt=False to install non-interactively)"
                 )
-            except Exception as error:  # noqa: BLE001 -- reported, not hidden
-                # NOT swallowed. ``ensure`` raises on a checksum mismatch and
-                # on a truncated download as well as on a plain network
-                # failure, and reporting every one of those as "not found in
-                # the system path" sends the user looking in the wrong place --
-                # a corrupted or tampered payload most of all.
-                logger.warning("FFmpeg auto-install failed: %s", error)
-                install_error = error
+            elif not answer:
+                not_installed = "the download was declined"
+            else:
+                try:
+                    return AppInstaller.ensure(
+                        "ffmpeg",
+                        platforms=FFMPEG_PLATFORMS,
+                        executable="ffmpeg",
+                    )
+                except Exception as error:  # noqa: BLE001 -- reported, not hidden
+                    # NOT swallowed. ``ensure`` raises on a checksum mismatch and
+                    # on a truncated download as well as on a plain network
+                    # failure, and reporting every one of those as "not found in
+                    # the system path" sends the user looking in the wrong place --
+                    # a corrupted or tampered payload most of all.
+                    logger.warning("FFmpeg auto-install failed: %s", error)
+                    install_error = error
 
         if required:
             message = (
                 "FFmpeg is required but was not found on PATH or in a managed install."
             )
+            if not_installed:
+                message += f" It was not installed: {not_installed}."
             if install_error is not None:
                 message += f" The auto-install attempt failed: {install_error}"
             raise FileNotFoundError(message)
         return None
+
+    @classmethod
+    def ensure_ffmpeg(
+        cls, prompt: Union[bool, Callable[[str], bool]] = True
+    ) -> Optional[str]:
+        """Guarantee ffmpeg, offering the managed install when none is found.
+
+        The panel-side counterpart of :meth:`resolve_ffmpeg` and the ffmpeg
+        twin of :meth:`ImgUtils.ensure_ktx2_encoder`: a user who picks an
+        encoded output in a UI must be offered the install, never handed an
+        error after the work the encode was going to consume (a playblast
+        capture is minutes of viewport time; the encode needs ffmpeg for one
+        second at the end of it).
+
+        Parameters:
+            prompt: Consent policy for the download -- ``True`` asks on the
+                console, ``False`` needs none, a callable ``(question) -> bool``
+                is asked instead (a panel passes its dialog). See
+                :meth:`AppInstaller.consent`.
+
+        Returns:
+            The ffmpeg path this call INSTALLED, or ``None`` when ffmpeg was
+            already available -- so a caller reports "installed <path>" only
+            for the first.
+
+        Raises:
+            FileNotFoundError: There is still no ffmpeg -- declined, or the
+                install failed. The message names the fix, so a caller can
+                surface it verbatim.
+        """
+        if cls.resolve_ffmpeg(required=False):
+            return None
+        return cls.resolve_ffmpeg(required=True, auto_install=True, prompt=prompt)
 
     @classmethod
     def get_video_frame_rate(cls, filepath: str) -> float:

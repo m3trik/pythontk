@@ -194,6 +194,22 @@ class PreviewServerTestCase(unittest.TestCase):
 
     # -- manifest -------------------------------------------------------
 
+    def test_manifest_fingerprints_the_viewer_page(self):
+        """The page reloads itself when this changes, so it must be stable
+        across pushes and describe the page actually being served."""
+        server = self._serve()
+        _, body, _ = self._get("manifest.json")
+        stamp = json.loads(body)["viewer"]
+        self.assertRegex(stamp, r"^[0-9a-f]{12}$")
+        server.publish(self._asset(data=b"first"))
+        _, body, _ = self._get("manifest.json")
+        self.assertEqual(json.loads(body)["viewer"], stamp)
+
+    def test_manifest_carries_no_viewer_stamp_without_the_page(self):
+        self._serve(viewer=False)
+        _, body, _ = self._get("manifest.json")
+        self.assertEqual(json.loads(body)["viewer"], "")
+
     def test_manifest_before_publish_has_no_asset(self):
         self._serve()
         _, body, _ = self._get("manifest.json")
@@ -1024,7 +1040,7 @@ class _StubPreviewBridge(PreviewBridge):
         Path(path).write_bytes(b"fake-fbx-payload")
         return self._attach_sidecar(
             Payload(primary=path),
-            self.sections,
+            lambda: self.sections,
             source={"application": "stub", "version": "0"},
         )
 
@@ -1045,11 +1061,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         path = Path(self.temp.path(extension=".fbx"))
         path.write_bytes(b"fake-fbx-payload")
         return str(path)
-
-    #: Maya's own StingrayPBS environment maps. Every such material wires them,
-    #: so an `EMBED_TEXTURES` export carries them into the FBX and FBX2glTF
-    #: re-embeds them into the GLB -- where no glTF material can sample them.
-    ENVIRONMENT_MAPS = ("diffuse_cube", "specular_cube", "ibl_brdf_lut")
 
     @staticmethod
     def _glb_bytes(gltf):
@@ -1082,35 +1093,13 @@ class PreviewDelivererTestCase(unittest.TestCase):
         """
         self.converted.append({"src": src, "dst": dst, **kwargs})
         Path(dst).write_bytes(self._glb_bytes({"asset": {"version": "2.0"}}))
-        return dst
-
-    def _fake_convert_with_environment_maps(self, src, dst=None, **kwargs):
-        """Stand in for FBX2glTF on a StingrayPBS scene.
-
-        The shape the real converter produces there: the material's own map,
-        plus Maya's three environment maps re-embedded out of the FBX and bound
-        to nothing -- they are global shader inputs, and glTF has no slot for
-        them, so no material references the textures that carry them.
-        """
-        self.converted.append({"src": src, "dst": dst, **kwargs})
-        pixel = "data:image/png;base64,iVBORw0KGgo="
-        images = [{"name": "Albedo", "uri": pixel}]
-        images += [{"name": name, "uri": pixel} for name in self.ENVIRONMENT_MAPS]
-        Path(dst).write_bytes(
-            self._glb_bytes(
-                {
-                    "asset": {"version": "2.0"},
-                    "images": images,
-                    "textures": [{"source": i} for i in range(len(images))],
-                    "materials": [
-                        {
-                            "name": "m",
-                            "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
-                        }
-                    ],
-                }
-            )
-        )
+        # What the real chain does with the envelope it is handed: applies it
+        # inside the conversion and records the outcome in the caller's report.
+        # The deliverer applies nothing itself any more, so a stub that only
+        # wrote bytes would leave every sidecar assertion below testing air.
+        report = kwargs.get("report")
+        if report is not None and kwargs.get("sidecar"):
+            report["sidecar"] = MeshConvert.apply_scene_sidecar(dst, kwargs["sidecar"])
         return dst
 
     def _deliver(self, **kwargs):
@@ -1173,6 +1162,91 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self._push(scripts=[])
         self.assertEqual(self.server.scripts, ())
 
+    def test_the_glb_is_built_by_the_pipeline_the_exporters_run(self):
+        """One chain for the preview and the deliverable.
+
+        The deliverer hands ``GlbPipeline.build`` dials and nothing else: the
+        producer's envelope, the host's live map folders, the shared
+        web-delivery texture policy in the push's container, the viewer-only
+        fallback choice, the embed flag, and its own scratch allocator and
+        release hook. What the build reports is what the push returns.
+        """
+        from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
+
+        seen = {}
+
+        def _build(src, dst=None, **kwargs):
+            seen.update(kwargs, src=src, dst=dst)
+            Path(dst).write_bytes(self._glb_bytes({"asset": {"version": "2.0"}}))
+            return {
+                "glb": dst,
+                "src": src,
+                "scratch": [],
+                "payload_textures": None,
+                "sidecar": {"emissive": "1 of 1"},
+                "lightmaps": {
+                    "expected": 1,
+                    "bound": 1,
+                    "unbound": [],
+                    "out_of_scope": 0,
+                },
+                "textures": {},
+            }
+
+        self.bridge.lightmap_search_dirs = lambda: ["D:/maps"]
+        self.bridge.deliverer = PreviewDeliverer(
+            server=self.server, open_browser=False, texture_format="KTX2"
+        )
+        envelope = _sidecar({"emissive": {"m": {"color": (1, 0, 0)}}})
+        encoder = "pythontk.img_utils._img_utils.ImgUtils.resolve_ktx2_encoder"
+        with (
+            unittest.mock.patch.object(GlbPipeline, "build", side_effect=_build),
+            unittest.mock.patch(encoder, return_value="toktx"),
+        ):
+            result = self.bridge.deliverer.deliver(
+                self.bridge,
+                Payload(primary=self._fbx(), extras={"scene_sidecar": envelope}),
+                HandoffRequest(params={"EMBED_TEXTURES": False}),
+            )
+
+        self.assertEqual(seen["sidecar"], envelope)
+        self.assertEqual(seen["lightmap_dirs"], ["D:/maps"])
+        self.assertEqual(
+            seen["texture_params"],
+            {
+                **MeshConvert.web_delivery_texture_params(image_format="KTX2"),
+                "ktx2_fallback": False,  # streamed to the page, never imported
+            },
+        )
+        self.assertIs(seen["downsize"], False, "EMBED_TEXTURES off")
+        self.assertTrue(Path(seen["dst"]).name.startswith(_StubBridge.payload_prefix))
+        self.assertEqual(seen["release_source"], self.bridge._release_payload)
+        self.assertEqual(seen["scratch_path"](".fbx").endswith(".fbx"), True)
+        self.assertEqual(result["sidecar"], {"emissive": "1 of 1"})
+        self.assertEqual(result["lightmaps"]["bound"], 1)
+        self.assertTrue(result["sidecar_requested"])
+        self.assertEqual(result["version"], 1)
+
+    def test_a_texture_pass_failure_now_costs_the_push_and_says_so(self):
+        """The old per-pass guard published the raw GLB when the encode failed;
+        the shared chain fails the deliverable like the exporter always did."""
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        convert = (
+            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        )
+        optimize = (
+            "pythontk.file_utils.mesh_convert._mesh_convert."
+            "MeshConvert.optimize_glb_textures"
+        )
+        with (
+            unittest.mock.patch(convert, side_effect=self._fake_convert),
+            unittest.mock.patch(optimize, side_effect=RuntimeError("encode failed")),
+            self.assertLogs(self.bridge.logger, level="ERROR") as logged,
+        ):
+            result = self.bridge.send()
+        self.assertIsNone(result)
+        self.assertTrue(any("encode failed" in line for line in logged.output))
+
     def test_a_push_scoped_script_set_does_not_leak_into_the_next_push(self):
         """The knob is request-scoped, like ``texture_format`` beside it.
 
@@ -1188,116 +1262,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertEqual(self.server.scripts, ("turntable",))
         self._push()
         self.assertEqual(self.server.scripts, ("inspect",))
-
-    def test_the_edit_passes_run_in_the_declared_order(self):
-        """The order is measured, not stylistic, so the registry pins it.
-
-        Sidecar before lightmaps because the lightmap pass clones each material
-        AS IT STANDS -- reversed, every repair lands on a base material no
-        primitive references any more, and a production room rendered black in
-        its own preview. Prune between them because pruning renumbers image
-        indices and the sidecar records its texture map at its own tail.
-        """
-        self.assertEqual(
-            list(PreviewDeliverer.EDIT_PASSES),
-            ["scene_sidecar", "prune_textures", "lightmaps"],
-        )
-        self.assertEqual(list(PreviewDeliverer.FILE_PASSES), ["optimize_textures"])
-
-        ran = []
-        deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        for name, method in {
-            **PreviewDeliverer.EDIT_PASSES,
-            **PreviewDeliverer.FILE_PASSES,
-        }.items():
-            setattr(deliverer, method, lambda context, name=name: ran.append(name))
-        self.bridge.deliverer = deliverer
-        self._push()
-        self.assertEqual(
-            ran, ["scene_sidecar", "prune_textures", "lightmaps", "optimize_textures"]
-        )
-
-    def test_one_failing_pass_costs_neither_the_push_nor_the_passes_after_it(self):
-        """A deliverable missing one repair still beats no deliverable.
-
-        The guard is per pass for a reason that failed silently in the worst
-        direction before: an early pass raising took the lightmap wiring down
-        with it, and the model simply arrived unlit with nothing naming the
-        pass that actually broke.
-        """
-        ran = []
-        deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-
-        def explode(context):
-            ran.append("scene_sidecar")
-            raise RuntimeError("boom")
-
-        deliverer._pass_scene_sidecar = explode
-        for name, method in (
-            ("prune_textures", "_pass_prune_textures"),
-            ("lightmaps", "_pass_lightmaps"),
-            ("optimize_textures", "_pass_optimize_textures"),
-        ):
-            setattr(deliverer, method, lambda context, name=name: ran.append(name))
-        self.bridge.deliverer = deliverer
-
-        with self.assertLogs(self.bridge.logger, level="WARNING") as logged:
-            result = self._push()
-
-        self.assertEqual(
-            ran, ["scene_sidecar", "prune_textures", "lightmaps", "optimize_textures"]
-        )
-        self.assertEqual(result["version"], 1)  # the push still published
-        self.assertTrue(
-            any("scene_sidecar" in line and "boom" in line for line in logged.output),
-            f"the failing pass was not named in the log: {logged.output}",
-        )
-
-    def test_a_registered_pass_runs_without_touching_the_delivery_chain(self):
-        """Extension by entry, which is the whole point of the registry.
-
-        A consumer adding a pass (a Draco encode, a per-slot resolution
-        ceiling) subclasses and extends the dict -- it does not edit the
-        delivery path every DCC bridge in the ecosystem runs through.
-        """
-        ran = []
-
-        class _ExtraPassDeliverer(PreviewDeliverer):
-            FILE_PASSES = {
-                **PreviewDeliverer.FILE_PASSES,
-                "extra": "_pass_extra",
-            }
-
-            def _pass_extra(self, context):
-                # The context is the whole contract a pass is handed: the file
-                # it may rewrite, and somewhere to report into.
-                ran.append((context.glb.suffix, context.texture_format))
-                context.results["extra"] = True
-
-        self.bridge.deliverer = _ExtraPassDeliverer(
-            server=self.server, open_browser=False
-        )
-        self._push()
-        self.assertEqual(ran, [(".glb", "WEBP")])
-
-    def test_a_pass_sees_no_edit_session_once_the_file_is_closed(self):
-        """`edit` is None for a file pass, loudly rather than staled.
-
-        The file passes rewrite the container -- repacking the BIN chunk,
-        re-encoding payloads -- which is exactly what an open edit session
-        cannot have happening underneath it. A stale handle there would write
-        through a session whose buffers no longer describe the file.
-        """
-        seen = {}
-        deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        deliverer._pass_lightmaps = lambda context: seen.update(edit=context.edit)
-        deliverer._pass_optimize_textures = lambda context: seen.update(
-            after=context.edit
-        )
-        self.bridge.deliverer = deliverer
-        self._push()
-        self.assertIsNotNone(seen["edit"], "an edit pass got no session")
-        self.assertIsNone(seen["after"], "a file pass was handed a closed session")
 
     def test_deliver_publishes_and_reports_the_url(self):
         result = self._deliver()
@@ -1443,7 +1407,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
         with (
             unittest.mock.patch.object(
-                MeshConvert, "optimize_glb_textures"
+                MeshConvert, "optimize_glb_textures", return_value={}
             ) as optimize,
             unittest.mock.patch.object(ImgUtils, "resolve_ktx2_encoder") as resolve,
         ):
@@ -1497,7 +1461,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
         with (
             unittest.mock.patch.object(
-                MeshConvert, "optimize_glb_textures"
+                MeshConvert, "optimize_glb_textures", return_value={}
             ) as optimize,
             unittest.mock.patch.object(ImgUtils, "resolve_ktx2_encoder"),
             unittest.mock.patch.object(
@@ -1621,92 +1585,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
                 HandoffRequest(),
             )
         self.assertEqual(self.converted[-1].get("sidecar"), envelope)
-
-    def test_an_envelope_the_conversion_already_applied_is_read_back_not_reapplied(
-        self,
-    ):
-        """Applying twice would write the authored alpha mode over the fade
-        clones' BLEND and pop every fade; the outcome the conversion recorded
-        is what the panel gets."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        outcome = {"emissive": "1 of 1"}
-
-        def _converted_with_sidecar(src, dst=None, **kwargs):
-            self.converted.append({"src": src, "dst": dst, **kwargs})
-            Path(dst).write_bytes(
-                self._glb_bytes(
-                    {
-                        "asset": {"version": "2.0"},
-                        "extras": {MeshConvert.SIDECAR_APPLIED_KEY: outcome},
-                    }
-                )
-            )
-            return dst
-
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with unittest.mock.patch(target, side_effect=_converted_with_sidecar):
-            with unittest.mock.patch(emissive_target) as applied:
-                result = self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={
-                            "scene_sidecar": _sidecar(
-                                {"emissive": {"m": {"color": (1, 0, 0)}}}
-                            )
-                        },
-                    ),
-                    HandoffRequest(),
-                )
-        applied.assert_not_called()
-        self.assertEqual(result["sidecar"], outcome)
-
-    def test_dead_environment_maps_never_reach_the_texture_pass(self):
-        """Maya's IBL maps are dropped BEFORE the embed pass pays to re-encode them.
-
-        `EMBED_TEXTURES` puts every wired file texture in the FBX, and for a
-        StingrayPBS scene that includes Autodesk's own `diffuse_cube` /
-        `specular_cube` / `ibl_brdf_lut` (~2.6 MB a push). FBX2glTF re-embeds
-        them; nothing can ever sample them, because glTF has no global
-        environment slot. They were being carried all the way through the
-        texture optimize -- which decodes and re-encodes every image it finds --
-        and published, on any push whose producer offered no sidecar (the
-        `SCENE_SIDECAR` probe): the sweep that drops them ran only at the tail
-        of `apply_scene_sidecar`, so the probe path shipped the dead payload and
-        paid to compress it first.
-
-        Asserted on what the optimize pass *sees*, not just on the published
-        file: dropping them afterwards would still publish the right bytes while
-        paying the encode this exists to avoid.
-        """
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        seen = []
-
-        def _record(glb, *_args, **_kwargs):
-            seen.append([i.get("name") for i in self._glb_json(glb).get("images", [])])
-
-        convert = (
-            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        )
-        optimize = (
-            "pythontk.file_utils.mesh_convert._mesh_convert."
-            "MeshConvert.optimize_glb_textures"
-        )
-        with unittest.mock.patch(
-            convert, side_effect=self._fake_convert_with_environment_maps
-        ):
-            with unittest.mock.patch(optimize, side_effect=_record):
-                result = self.bridge.send()
-
-        self.assertEqual(result["version"], 1)
-        # The live map survives: this is a sweep of what nothing references,
-        # not a name-matched blocklist that could take a real texture with it.
-        self.assertEqual(seen, [["Albedo"]])
-        published = self._glb_json(Path(self.server.root) / "scene.glb")
-        self.assertEqual(
-            [i.get("name") for i in published.get("images", [])], ["Albedo"]
-        )
 
     def test_absent_sidecar_leaves_the_glb_untouched(self):
         """Sidecar off must be a true passthrough — that is what makes it a probe.
@@ -1832,7 +1710,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         fbx = self._fbx()
         payload = bridge._attach_sidecar(
             Payload(primary=fbx),
-            sections,
+            lambda: sections,
             source={"application": "stub", "version": "0"},
         )
 
@@ -1863,7 +1741,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         cases: a user with the checkbox ON was told "Scene sidecar off".
         """
         payload = _StubPreviewBridge()._attach_sidecar(
-            Payload(primary=self._fbx()), {}, source={"application": "stub"}
+            Payload(primary=self._fbx()), dict, source={"application": "stub"}
         )
         self.assertEqual(payload.extras["scene_sidecar"]["sections"], {})
 
@@ -1944,7 +1822,8 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
 
 class PayloadPassTestCase(unittest.TestCase):
-    """`PreviewDeliverer.PAYLOAD_PASSES`: the FBX is downsized before the converter reads it."""
+    """The build downsizes the FBX before the converter reads it (`GlbPipeline`),
+    and the deliverer's scratch / release hooks keep the bridge's store clean."""
 
     def setUp(self):
         self.temp = TempArtifacts("test_preview_payload_pass", policy="scoped")
@@ -1987,7 +1866,6 @@ class PayloadPassTestCase(unittest.TestCase):
         self.assertEqual(len(self.converted), 1)
         converted = self.converted[0]
         self.assertNotEqual(converted, original, "the converter read the 4K payload")
-        self.assertEqual(payload.primary, converted)
         self.assertFalse(
             os.path.exists(original), "the superseded scratch payload was not released"
         )
@@ -2439,136 +2317,6 @@ class LightmapSummaryTestCase(unittest.TestCase):
         self.assertIn("UNLIT", line)
         self.assertIn("wall_0", line)
         self.assertIn("+2 more", line)
-
-
-class LightmapReportTestCase(unittest.TestCase):
-    """The deliverer REPORTS the lightmap pass rather than only logging it."""
-
-    def setUp(self):
-        self.temp = TempArtifacts("test_preview_lightmap_report", policy="scoped")
-        self.server = PreviewServer(root=self.temp.dir_path(), port=0).start()
-        self.bridge = _StubBridge()
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-
-    def tearDown(self):
-        self.server.stop()
-        self.temp.cleanup()
-
-    @staticmethod
-    def _lit_glb(dst, manifest):
-        """A one-mesh GLB carrying *manifest* the way FBX2glTF transcribes it."""
-        carrier = {
-            "fromFBX": {
-                "userProperties": {
-                    "lightmap_metadata": {
-                        "type": "eFbxString",
-                        "value": json.dumps(manifest),
-                    }
-                }
-            }
-        }
-        gltf = {
-            "asset": {"version": "2.0"},
-            "nodes": [
-                {"name": "room", "mesh": 0},
-                {"name": "data_export", "extras": carrier},
-            ],
-            "meshes": [
-                {
-                    "primitives": [
-                        {
-                            "attributes": {
-                                "POSITION": 0,
-                                "TEXCOORD_0": 1,
-                                "TEXCOORD_1": 2,
-                            },
-                            "material": 0,
-                        }
-                    ]
-                }
-            ],
-            "materials": [{"name": "roomMat"}],
-        }
-        Path(dst).write_bytes(PreviewDelivererTestCase._glb_bytes(gltf))
-        return dst
-
-    def _push(self, gltf_writer):
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        with unittest.mock.patch(target, side_effect=gltf_writer):
-            return self.bridge.send()
-
-    def test_a_map_found_nowhere_is_reported_unbound(self):
-        manifest = {
-            "version": 1,
-            "dir": str(self.temp.dir_path()),  # the hint: exists, holds no map
-            "objects": [
-                {
-                    "name": "room",
-                    "map": "room_LightMap.exr",
-                    "uvIndex": 1,
-                    "intensity": 1.0,
-                    "scaleOffset": [1, 1, 0, 0],
-                }
-            ],
-        }
-
-        result = self._push(lambda src, dst=None, **kw: self._lit_glb(dst, manifest))
-
-        self.assertEqual(
-            result["lightmaps"],
-            {"expected": 1, "bound": 0, "unbound": ["room"], "out_of_scope": 0},
-        )
-        line = PreviewBridge.lightmap_summary(result)
-        self.assertIn("0/1", line)
-        self.assertIn("room", line)
-
-    def test_the_report_counts_only_objects_this_glb_actually_carries(self):
-        """The bake manifest is a SCENE record; a pushed selection is a subset.
-
-        Counting the whole manifest against a selection-scoped GLB reports every
-        object the artist did not select as previewing UNLIT -- dozens of them
-        on a production scene -- so the one line that says whether the preview is
-        lit cries wolf exactly when the preview is correct. An object with no
-        node in the GLB was not exported; it is out of scope, not unbound.
-        """
-        manifest = {
-            "version": 1,
-            "dir": str(self.temp.dir_path()),  # the hint: exists, holds no map
-            "objects": [
-                {
-                    "name": name,
-                    "map": "atlas_LightMap.exr",
-                    "uvIndex": 1,
-                    "intensity": 1.0,
-                    "scaleOffset": [1, 1, 0, 0],
-                }
-                # Only "room" gets a node in the GLB `_lit_glb` writes.
-                for name in ("room", "hallway", "stairwell")
-            ],
-        }
-
-        result = self._push(lambda src, dst=None, **kw: self._lit_glb(dst, manifest))
-
-        self.assertEqual(
-            result["lightmaps"],
-            {"expected": 1, "bound": 0, "unbound": ["room"], "out_of_scope": 2},
-        )
-        line = PreviewBridge.lightmap_summary(result)
-        self.assertIn("0/1", line)
-        for absent in ("hallway", "stairwell"):
-            self.assertNotIn(absent, line)
-
-    def test_no_manifest_reports_nothing_expected(self):
-        def bare(src, dst=None, **kw):
-            Path(dst).write_bytes(
-                PreviewDelivererTestCase._glb_bytes({"asset": {"version": "2.0"}})
-            )
-            return dst
-
-        result = self._push(bare)
-
-        self.assertEqual(result["lightmaps"]["expected"], 0)
-        self.assertEqual(PreviewBridge.lightmap_summary(result), "")
 
 
 class PreviewSettingsTestCase(unittest.TestCase):

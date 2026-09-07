@@ -394,11 +394,25 @@ class ShotStore(_ShotStoreInternal):
         :meth:`tag_boundary_snapshot`, once the edit has run and its effect
         on the native queue is known) — see the pairing note below.
         """
-        self._boundary_undo.append((self.snapshot_bounds(), tag))
+        self._boundary_undo.append((self._restore_point(), tag))
         if len(self._boundary_undo) > self._BOUNDARY_LEDGER_CAP:
             self._boundary_undo.pop(0)
         self._boundary_redo_stash = list(self._boundary_redo)
         self._boundary_redo.clear()
+
+    def _restore_point(self) -> dict:
+        """Everything a restore has to put back: the shot records AND the
+        edit ledger.
+
+        The ledger is a set of ``(curve, frame)`` claims on samples the shot
+        system wrote.  An edit moves those claims with the keys; the DCC's
+        undo moves the keys back but knows nothing of the claims, so without
+        this the ledger points at frames where the animator's own keys now
+        sit -- and the next reconcile, believing them its samples, moves or
+        cuts them.  Measured on a production assembly: one key drag, undone,
+        and the following drag cut 7 of 22 keys off a curve.
+        """
+        return {"shots": self.snapshot_bounds(), "ledger": self.edit_ledger.to_dict()}
 
     # ---- pairing with the DCC's own undo queue ---------------------------
     #
@@ -461,7 +475,7 @@ class ShotStore(_ShotStoreInternal):
         state, tag = self._boundary_undo.pop()
         # The tag rides across: redoing this edit re-applies the same DCC
         # step (or, when unpaired, again touches nothing).
-        self._boundary_redo.append((self.snapshot_bounds(), tag))
+        self._boundary_redo.append((self._restore_point(), tag))
         self._boundary_redo_stash = None
         self._apply_boundary_snapshot(state)
         return True
@@ -476,7 +490,7 @@ class ShotStore(_ShotStoreInternal):
         if not self._boundary_redo:
             return False
         state, tag = self._boundary_redo.pop()
-        self._boundary_undo.append((self.snapshot_bounds(), tag))
+        self._boundary_undo.append((self._restore_point(), tag))
         self._boundary_redo_stash = None
         self._apply_boundary_snapshot(state)
         return True
@@ -488,7 +502,10 @@ class ShotStore(_ShotStoreInternal):
         self._boundary_redo.clear()
         self._boundary_redo_stash = None
 
-    def _apply_boundary_snapshot(self, state: list) -> None:
+    def _apply_boundary_snapshot(self, state: dict) -> None:
+        """Put back a :meth:`_restore_point`: the ledger, then the shots."""
+        self.edit_ledger = ShotEditLedger.from_dict(state.get("ledger"))
+        state = state["shots"]
         snap_ids = {rec["shot_id"] for rec in state}
         with self.batch_update():
             for shot in list(self.shots):

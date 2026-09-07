@@ -278,6 +278,12 @@ class ShotPlanner(_ShotPlannerInternal):
     ) -> List[str]:
         """Objects a moving shot may claim over the window it is about to move.
 
+        DEPRECATED (2026-09-05, kept for one release): the hosts no longer
+        write adopted objects into a shot's member list -- ``ShotApply.apply``
+        takes ``objects_for`` and moves the whole keyed content of every
+        envelope instead, so membership stays a label (see that parameter).
+        Nothing in the ecosystem calls this any more.
+
         A mover shifts a shot's OWN object list within a window, so anything
         keyed inside that window but missing from the list is left behind:
         the shot moves and part of its animation does not.  Membership goes
@@ -586,26 +592,57 @@ class ShotPlanner(_ShotPlannerInternal):
         pivot_shot_id: int,
         after_frame: float,
         delta: float,
+        carry_gap: bool = False,
     ) -> MovePlan:
         """Build a plan that shifts every shot starting at or after
         ``after_frame`` by ``delta`` frames.
 
         The pivot shot is excluded — the caller's primary edit already
         placed it.  Snapping is applied to the resulting bounds.
+
+        ``carry_gap`` widens the FIRST moved shot's window back to
+        ``after_frame`` (exclusive), so whatever is keyed between the pivot's
+        bound and that shot travels too.  A bound change wants exactly that:
+        the pivot's content stays and everything beyond the bound ripples,
+        the tail parked in the gap included -- otherwise a grow swallowed the
+        tail and a shrink landed the neighbour on it.  A whole-shot move
+        carries its own trailing gap already (its envelope reaches the next
+        shot's start), so it leaves this off or the same keys would move
+        twice.  The sample ON ``after_frame`` is the pivot's closing pose and
+        stays with it either way.
         """
         shots = store.sorted_shots()
         if not shots or abs(delta) < _EPS:
             return MovePlan()
 
+        # With a real pivot, "downstream" is every shot AFTER it in order --
+        # a bound dragged INTO the neighbour (a key landing inside its span)
+        # sits past that neighbour's start, and selecting by frame would leave
+        # the very shot the drag overran where it was.  Pivot -1 (insert,
+        # delete: no shot is exempt) keeps the frame rule.
+        pivot_idx = next(
+            (i for i, s in enumerate(shots) if s.shot_id == pivot_shot_id), None
+        )
         moves: Dict[int, ShotMove] = {}
+        first = True
         for i, shot in enumerate(shots):
             if shot.shot_id == pivot_shot_id:
                 continue
-            if shot.start < after_frame:
+            if pivot_idx is not None:
+                if i < pivot_idx:
+                    continue
+            elif shot.start < after_frame:
                 continue
             env_start, env_end, lo_open, hi_closed = _ShotPlannerInternal._envelope_for(
                 shots, i
             )
+            if carry_gap and first:
+                # Everything beyond the pivot's bound moves, and only that:
+                # the window opens just past ``after_frame`` whether that
+                # is before this shot's start (its gap rides) or after it
+                # (what the bound now covers stays with the pivot).
+                env_start, lo_open = after_frame, True
+            first = False
             moves[shot.shot_id] = ShotMove(
                 shot_id=shot.shot_id,
                 old_start=shot.start,
@@ -705,23 +742,40 @@ class ShotPlanner(_ShotPlannerInternal):
         pivot_shot_id: int,
         before_frame: float,
         delta: float,
+        carry_gap: bool = False,
     ) -> MovePlan:
         """Build a plan that shifts every shot ending at or before
         ``before_frame`` by ``delta`` frames.
+
+        ``carry_gap`` is the upstream twin of :meth:`plan_ripple_downstream`'s:
+        the LAST moved shot's window is capped at ``before_frame`` (exclusive),
+        so the pivot's bound sample -- and anything the pivot now covers up to
+        it -- stays with the pivot.  A shot's envelope already reaches the
+        next shot's start, so the gap before the pivot rides regardless; the
+        cap matters when the caller's bound sits INSIDE that reach (a key
+        dragged onto the previous shot's end).
         """
         shots = store.sorted_shots()
         if not shots or abs(delta) < _EPS:
             return MovePlan()
 
+        pivot_idx = next(
+            (i for i, s in enumerate(shots) if s.shot_id == pivot_shot_id), None
+        )
         moves: Dict[int, ShotMove] = {}
+        last_id = None
         for i, shot in enumerate(shots):
             if shot.shot_id == pivot_shot_id:
                 continue
-            if shot.end > before_frame + _EPS:
+            if pivot_idx is not None:
+                if i > pivot_idx:
+                    continue
+            elif shot.end > before_frame + _EPS:
                 continue
             env_start, env_end, lo_open, hi_closed = _ShotPlannerInternal._envelope_for(
                 shots, i
             )
+            last_id = shot.shot_id
             moves[shot.shot_id] = ShotMove(
                 shot_id=shot.shot_id,
                 old_start=shot.start,
@@ -733,6 +787,10 @@ class ShotPlanner(_ShotPlannerInternal):
                 env_lo_open=lo_open,
                 env_hi_closed=hi_closed,
             )
+        if carry_gap and last_id is not None:
+            mv = moves[last_id]
+            if before_frame < mv.env_end - _EPS:
+                mv.env_end, mv.env_hi_closed = before_frame, False
 
         return _ShotPlannerInternal._finalize_plan(moves)
 

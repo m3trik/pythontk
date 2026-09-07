@@ -40,6 +40,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/textures/region_masks.py`](#core_utils--engines--textures--region_masks) — Region-mask engine — named face-group masks that gate texture regions at runtime.
 - [`core_utils/execution_monitor/_execution_monitor.py`](#core_utils--execution_monitor--_execution_monitor)
 - [`core_utils/execution_monitor/_sidecar.py`](#core_utils--execution_monitor--_sidecar) — Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
+- [`core_utils/export_profile.py`](#core_utils--export_profile) — The Scene Exporter panels' export-button contract, written once.
 - [`core_utils/git.py`](#core_utils--git)
 - [`core_utils/help_mixin.py`](#core_utils--help_mixin) — HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
 - [`core_utils/hierarchy_utils/hierarchy_analyzer.py`](#core_utils--hierarchy_utils--hierarchy_analyzer)
@@ -76,6 +77,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/mesh_convert/fbx_media.py`](#file_utils--mesh_convert--fbx_media) — Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
 - [`file_utils/mesh_convert/glb_clips.py`](#file_utils--mesh_convert--glb_clips) — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - [`file_utils/mesh_convert/glb_fades.py`](#file_utils--mesh_convert--glb_fades) — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
+- [`file_utils/mesh_convert/glb_pipeline.py`](#file_utils--mesh_convert--glb_pipeline) — FBX -> GLB: the one build every GLB deliverable goes through.
 - [`file_utils/mesh_convert/glb_reader.py`](#file_utils--mesh_convert--glb_reader) — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
 - [`file_utils/metadata.py`](#file_utils--metadata)
@@ -87,7 +89,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
-- [`geo_utils/shadow_horizon.py`](#geo_utils--shadow_horizon) — Coverage-aware horizon maps: a ground shadow that follows the light at runtime.
+- [`geo_utils/shadow_horizon.py`](#geo_utils--shadow_horizon) — Height-field shadow maps: a ground shadow that follows the light at runtime.
 - [`geo_utils/shadow_projection.py`](#geo_utils--shadow_projection) — Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC.
 - [`geo_utils/uv_pack.py`](#geo_utils--uv_pack) — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 - [`geo_utils/uv_transfer.py`](#geo_utils--uv_transfer) — Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
@@ -465,8 +467,8 @@ Range resolution algorithm for the Shot Manifest.
 
 Commit a resolved :class:`MovePlan` via injected writer callables.
 
-- **[`class ShotApply`](pythontk/pythontk/core_utils/engines/shots/shot_apply.py#L54)** — Commit a resolved ``MovePlan`` through injected writer callables.
-  - `ShotApply.apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None` *(static)* — Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).
+- **[`class ShotApply`](pythontk/pythontk/core_utils/engines/shots/shot_apply.py#L55)** — Commit a resolved ``MovePlan`` through injected writer callables.
+  - `ShotApply.apply(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None, objects_for: Optional[Callable[[int], Iterable[str]]] = None) -> None` *(static)* — Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).
 
 <a id="core_utils--engines--shots--shot_detection"></a>
 ### `core_utils/engines/shots/shot_detection.py`
@@ -600,14 +602,14 @@ Pure planning layer for multi-shot topology transformations.
   - `ShotPlanner.key_collisions(windows: Sequence[Tuple[float, float, bool, bool, float]], times: Iterable[float], eps: float = 0.001) -> List[Tuple[float, List[float], List[float]]]` *(static)* — Samples of one curve that a plan would land on the same frame.
   - `ShotPlanner.plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan` *(static)* — Build a plan that lays shots out sequentially with uniform gaps.
   - `ShotPlanner.plan_gap_retimes(store: ShotStore, plan: MovePlan) -> List[GapRetime]` *(static)* — Every gap in *plan* whose width changes, as a :class:`GapRetime`.
-  - `ShotPlanner.plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan` *(static)* — Build a plan that shifts every shot starting at or after
+  - `ShotPlanner.plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float, carry_gap: bool = False) -> MovePlan` *(static)* — Build a plan that shifts every shot starting at or after
   - `ShotPlanner.plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan` *(static)* — Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.
-  - `ShotPlanner.plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan` *(static)* — Build a plan that shifts every shot ending at or before
-- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L741)** — A single shot's source and destination ranges.
+  - `ShotPlanner.plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float, carry_gap: bool = False) -> MovePlan` *(static)* — Build a plan that shifts every shot ending at or before
+- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L799)** — A single shot's source and destination ranges.
   - `ShotMove.delta(self) -> float` *(property)*
   - `ShotMove.moves(self) -> bool` *(property)*
-- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L776)** — Resolved multi-shot timeline mutation.
-- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L799)** — One inter-shot gap whose WIDTH changes, and where its content must land.
+- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L834)** — Resolved multi-shot timeline mutation.
+- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L857)** — One inter-shot gap whose WIDTH changes, and where its content must land.
   - `GapRetime.width(self) -> float` *(property)*
   - `GapRetime.scale(self) -> float` *(property)* — Time factor about the gap's left edge (0.0 collapses the gap).
   - `GapRetime.shrinks(self) -> bool` *(property)*
@@ -949,6 +951,18 @@ Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
 - [`fit_and_center(root) -> None`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L415) — Size the dialog to its content and centre it on screen.
 - [`run_dialog(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L428) — Show the dialog;
 - [`main(argv=None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L456)
+
+<a id="core_utils--export_profile"></a>
+### `core_utils/export_profile.py`
+
+The Scene Exporter panels' export-button contract, written once.
+
+- **[`class ExportProfile`](pythontk/pythontk/core_utils/export_profile.py#L21)** — Pure helpers over Scene Exporter task / check definitions.
+  - `ExportProfile.legal_name(name: str) -> str` *(static)* — The switchboard's objectName rule: non-alphanumerics become ``_``.
+  - `ExportProfile.widget_key(cls, name: str, spec: Mapping[str, Any]) -> str` *(class)* — The objectName the panel gives *name*'s widget (and the preset stores).
+  - `ExportProfile.value_method(cls, spec: Mapping[str, Any]) -> str` *(class)* — The read the export button performs on the widget (``b000``'s rule).
+  - `ExportProfile.run_config(cls, values: Mapping[str, Any], task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]], override_checks: bool = False, ignore_groups_case_sensitive: bool = False, default_export_mode: str = 'visible') -> Dict[str, Any]` *(class)* — The export button's contract: widget values -> ``perform_export`` inputs.
+  - `ExportProfile.read_values(cls, widgets: Mapping[str, Any], *tables: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]` *(class)* — Read the panel's live widgets into ``{objectName: value}``.
 
 <a id="core_utils--git"></a>
 ### `core_utils/git.py`
@@ -1489,7 +1503,7 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
-  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = ()) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* — Drop the FBX's handoff block from a converted glTF's node extras.
   - `MeshConvert.build_fbx_handoff(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to publish.
@@ -1501,6 +1515,7 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]` *(class)* — Copy of a ``data_export`` snapshot with build-time locate hints removed.
   - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.
   - `MeshConvert.lightmap_manifest_coverage(cls, glb: GlbTarget) -> Dict[str, List[str]]` *(class)* — Split a GLB's bake manifest by whether this GLB actually carries each object.
+  - `MeshConvert.lightmap_report(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]` *(static)* — ``{"expected", "bound", "unbound", "out_of_scope"}`` for one bind.
   - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
   - `MeshConvert.apply_glb_shadows(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]` *(class)* — Bind a scene's shadow-rig maps into a GLB;
   - `MeshConvert.apply_glb_clips(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Rebuild the declared shot clips as exact slices of the whole timeline.
@@ -1592,13 +1607,22 @@ Rebuild a GLB's shot clips from its one whole-timeline animation.
 
 Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
 
-- **[`class PointerChannel`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L78)** — One animatable material property and how a published ramp reaches it.
+- **[`class PointerChannel`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L111)** — One animatable material property and how a published ramp reaches it.
   - `PointerChannel.components(self) -> int` *(property)*
   - `PointerChannel.accessor_type(self) -> str` *(property)*
   - `PointerChannel.base(self, gltf: Dict[str, Any], index: int) -> List[float]` — The material's own value for this property, defaulted per spec.
-- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L334)** — Publish authored material ramps as animated material channels.
+- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L373)** — Publish authored material ramps as animated material channels.
   - `GlbFades.apply(cls, edit: Any, fades: Dict[str, Sequence[Sequence[float]]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write one alpha channel per faded node per clip.
   - `GlbFades.apply_channels(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Rgb]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write every channel of every node, per clip, in one pass.
+
+<a id="file_utils--mesh_convert--glb_pipeline"></a>
+### `file_utils/mesh_convert/glb_pipeline.py`
+
+FBX -> GLB: the one build every GLB deliverable goes through.
+
+- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L49)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
+  - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
+  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
 
 <a id="file_utils--mesh_convert--glb_reader"></a>
 ### `file_utils/mesh_convert/glb_reader.py`
@@ -1786,50 +1810,44 @@ Rail-driven parametric surface — a general geometry primitive.
 <a id="geo_utils--shadow_horizon"></a>
 ### `geo_utils/shadow_horizon.py`
 
-Coverage-aware horizon maps: a ground shadow that follows the light at runtime.
+Height-field shadow maps: a ground shadow that follows the light at runtime.
 
-- **[`class HorizonMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L73)** — A baked horizon map and the frame it was baked in.
-  - `HorizonMap.encode_angle(self, angle: np.ndarray) -> np.ndarray` — ``cot(angle) / max_stretch`` clamped to ``[0, 1]`` — the interval
-  - `HorizonMap.decode_cot(self, value: np.ndarray) -> np.ndarray` — The cotangent an encoded channel value stands for.
-  - `HorizonMap.layers(self) -> int` *(property)*
-  - `HorizonMap.tiles(self) -> int` *(property)* — Tiles in the PNG: one per layer per bin.
-  - `HorizonMap.layout(self) -> Tuple[int, int]` *(property)* — ``(cols, rows)`` of the tile grid a PNG lays the tiles out in.
-  - `HorizonMap.tile_index(self, layer: int, k: int) -> int` — Tile ``t`` of bin *k*'s *layer*: grounded tiles first.
-  - `HorizonMap.tile_rects(self) -> List[Tuple[float, float, float, float]]` — Per tile, its ``(scaleX, scaleY, offsetX, offsetY)`` inside the
-  - `HorizonMap.to_rgba(self) -> np.ndarray` — The map as one ``uint8`` RGBA image: ``2 × bins`` tiles in a
-  - `HorizonMap.from_rgba(cls, pixels: np.ndarray, *, bins: int, size: Sequence[int], r_min: float, r_max: float, ground: float = 0.0, up: int = 1, max_stretch: Optional[float] = None) -> 'HorizonMap'` *(class)* — Rebuild a map from an image written by :meth:`to_rgba`.
-  - `HorizonMap.texel_positions(self) -> np.ndarray` — Horizontal frame coordinates ``(H, W, 2)`` of every texel centre.
-  - `HorizonMap.uv(self, horizontal) -> Tuple[np.ndarray, np.ndarray, np.ndarray]` — Log-polar ``(u, v, inside)`` for horizontal frame points ``(N, 2)``:
-  - `HorizonMap.taps(self, layer: int, k, u, v) -> Tuple[np.ndarray, np.ndarray, np.ndarray]` — The four texels around ``(u, v)`` in *layer*'s bin ``k`` — the way
-  - `HorizonMap.mask_bits(values: np.ndarray) -> np.ndarray` *(static)* — ``(..., 16)`` booleans from the ``B, A`` channels of texel values
-  - `HorizonMap.alpha(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray` — Shadow alpha ``(N,)`` at frame *points* for one source — the
-- **[`class ShadowHorizon`](pythontk/pythontk/geo_utils/shadow_horizon.py#L509)** — Bake, measure and lay out coverage-aware horizon maps (module doc).
-  - `ShadowHorizon.shader_source(cls, language: str = 'glsl') -> str` *(class)* — The shared horizon evaluation, spelled for *language*.
-  - `ShadowHorizon.layout(tiles: int) -> Tuple[int, int]` *(static)* — ``(cols, rows)`` of the grid holding *tiles*: ``cols = ceil(sqrt(tiles))``.
-  - `ShadowHorizon.range_for(cls, radius: float, height: float, max_stretch: Optional[float] = None) -> Tuple[float, float]` *(class)* — ``(r_min, r_max)``: an eighth of the footprint radius to the reach
-  - `ShadowHorizon.bake(cls, meshes, *, ground: float = 0.0, up: int = 1, radius: Optional[float] = None, height: Optional[float] = None, bins: int = DEFAULT_BINS, size: Sequence[int] = DEFAULT_SIZE, r_min: Optional[float] = None, r_max: Optional[float] = None, max_stretch: Optional[float] = None, footprint: int = DEFAULT_FOOTPRINT, threads: Optional[int] = None) -> HorizonMap` *(class)* — Bake the map of *meshes* in the map's frame.
-  - `ShadowHorizon.measure(cls, hmap: HorizonMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]` *(class)* — Compare :meth:`HorizonMap.alpha` with the exact projection at random
-  - `ShadowHorizon.bake_adaptive(cls, meshes, *, threshold: float = 0.05, max_bins: int = 64, measure_samples: int = 6, **kwargs) -> Tuple[HorizonMap, Dict[str, float]]` *(class)* — Bake at :attr:`ADAPTIVE_BINS` in turn until :meth:`measure`'s
+- **[`class HeightFieldMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L71)** — A baked height-field shadow map and the frame it was baked in.
+  - `HeightFieldMap.levels(self) -> int` *(property)* — Pyramid levels above level 0: ``log2(S)`` (the top is one cell).
+  - `HeightFieldMap.tiles(self) -> int` *(property)* — Tiles across the image: ``K`` spans, the aux tile, the pyramid.
+  - `HeightFieldMap.pixel(self) -> Tuple[float, float]` *(property)* — A footprint pixel's extent along the two horizontal axes.
+  - `HeightFieldMap.aspect(self) -> float` *(property)* — The larger pixel pitch over the smaller, ``>= 1``.
+  - `HeightFieldMap.hull(self) -> Tuple[np.ndarray, np.ndarray]` — ``(lo, hi)`` ``(S, S)``: each column's outermost span bounds
+  - `HeightFieldMap.pyramid(self) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]` — Per level ``1 ..
+  - `HeightFieldMap.to_rgba(self) -> np.ndarray` — The map as one ``uint8`` RGBA image ``(S, S x (K + 2), 4)``.
+  - `HeightFieldMap.from_rgba(cls, rgba: np.ndarray, *, size: int, spans: int, bounds: Sequence[float], ground: float, up: int, height_scale: float) -> 'HeightFieldMap'` *(class)* — A map decoded from the image :meth:`to_rgba` wrote (or a copy of
+  - `HeightFieldMap.alpha(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray` — Shadow alpha ``(N,)`` at frame *points* for one source -- the
+- **[`class ShadowHorizon`](pythontk/pythontk/geo_utils/shadow_horizon.py#L498)** — Bake, measure and lay out height-field shadow maps (module doc).
+  - `ShadowHorizon.shader_source(cls, language: str = 'glsl') -> str` *(class)* — The shared shadow evaluation, spelled for *language*.
+  - `ShadowHorizon.record(cls, *, texture: str, size: int, spans: int, levels: int, bounds: Sequence[float], height_scale: float, frame_a: Sequence[float], frame_b: Sequence[float], rect: Sequence[float]) -> Dict[str, object]` *(class)* — The ``horizon`` block of a ``shadow_metadata`` v2 plane record.
+  - `ShadowHorizon.bake(cls, meshes, *, ground: float = 0.0, up: int = 1, size: int = DEFAULT_SIZE, spans: int = DEFAULT_SPANS, bounds=None, padding: float = DEFAULT_PADDING) -> HeightFieldMap` *(class)* — Bake the map of *meshes* in the map's frame.
+  - `ShadowHorizon.measure(cls, hmap: HeightFieldMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]` *(class)* — Compare :meth:`HeightFieldMap.alpha` with the exact projection at
+  - `ShadowHorizon.bake_adaptive(cls, meshes, *, threshold: float = 0.05, max_size: int = 256, measure_samples: int = 6, **kwargs) -> Tuple[HeightFieldMap, Dict[str, float]]` *(class)* — Bake at :attr:`ADAPTIVE_SIZES` in turn until :meth:`measure`'s
 
 <a id="geo_utils--shadow_projection"></a>
 ### `geo_utils/shadow_projection.py`
 
 Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC.
 
-- **[`class ShadowModel(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L60)** — The analytic shadow of a bounding cylinder (see :meth:`ShadowProjection.model`).
+- **[`class ShadowModel(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L64)** — The analytic shadow of a bounding cylinder (see :meth:`ShadowProjection.model`).
   - `ShadowModel.near(self) -> float` *(property)* — The near edge along ``u``, relative to the anchor (``-base``).
   - `ShadowModel.length(self) -> float` *(property)* — Extent along ``u`` (``reach + base + top``).
   - `ShadowModel.across(self) -> Vec2` *(property)* — Unit ``w`` — across the bearing, the plane's local +X.
   - `ShadowModel.rect(self, fractions: Sequence[float]) -> Rect` — The canvas rectangle *fractions* denote at this model, absolute in
   - `ShadowModel.placement(self, fractions: Sequence[float]) -> Tuple[Vec2, float, float]` — Where a plane carrying a canvas of *fractions* sits at this model:
-- **[`class ShadowProjection`](pythontk/pythontk/geo_utils/shadow_projection.py#L140)** — Planar shadow projection: exact per-point mapping plus the live model.
+- **[`class ShadowProjection`](pythontk/pythontk/geo_utils/shadow_projection.py#L145)** — Planar shadow projection: exact per-point mapping plus the live model.
   - `ShadowProjection.horizontal_axes(up: int = 1) -> Tuple[int, int]` *(static)* — The two horizontal axis indices, in order, for the vertical *up*.
   - `ShadowProjection.far_point(cls, contact, direction, scale: float) -> Tuple[float, float, float]` *(class)* — A directional source written as a point: *scale* x :attr:`FAR_FACTOR`
   - `ShadowProjection.model(cls, contact, light=None, ground: float = 0.0, radius: float = 0.5, height: float = 1.0, *, up: int = 1, direction=None, max_stretch: Optional[float] = None) -> ShadowModel` *(class)* — The shadow of the bounding cylinder standing on *contact*.
   - `ShadowProjection.project(cls, points, light=None, ground: float = 0.0, *, up: int = 1, direction=None, max_length: Optional[float] = None) -> Optional[Tuple[np.ndarray, np.ndarray]]` *(class)* — Project world *points* onto the ground plane along the light's rays.
   - `ShadowProjection.to_frame(ground_points, model: ShadowModel) -> np.ndarray` *(static)* — ``(N, 2)`` ground coordinates -> ``(u, w)`` relative to the model's
   - `ShadowProjection.fractions(rect: Rect, model: ShadowModel) -> Tuple[float, float, float, float]` *(static)* — Express a ``(u, w)`` canvas *rect* as the stamp a plane carries so a
-- **[`class ShadowRaster(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L367)** — What a rasterized shadow texture was drawn into (``ImgUtils.rasterize_shadow``).
+- **[`class ShadowRaster(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L372)** — What a rasterized shadow texture was drawn into (``ImgUtils.rasterize_shadow``).
 
 <a id="geo_utils--uv_pack"></a>
 ### `geo_utils/uv_pack.py`
@@ -1918,6 +1936,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.rasterize_uv_triangles(cls, triangles, size: int = 512, supersample: int = 4) -> 'np.ndarray'` *(class)* — Rasterize filled UV-space triangles into a single-channel coverage image.
   - `ImgUtils.rasterize_silhouette(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)` *(class)* — Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.
   - `ImgUtils.rasterize_height_fields(cls, meshes, *, up: int = 1, size: int = 64, ground: float = 0.0, bounds=None, padding: float = 0.02)` *(class)* — Top and bottom height fields of world meshes over their footprint.
+  - `ImgUtils.rasterize_height_spans(cls, meshes, *, up: int = 1, size: int = 64, ground: float = 0.0, bounds=None, padding: float = 0.02, spans: int = 1)` *(class)* — The solid vertical spans of world meshes per footprint pixel: a
   - `ImgUtils.rasterize_shadow(cls, meshes, light=None, ground=0.0, size=512, *, up=1, direction=None, source_size=0.0, max_stretch=None, canvas=None, contact=None, radius=None, height=None, padding=0.04, uniform_alpha=True, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.0)` *(class)* — Rasterize the shadow world-space meshes cast onto the ground plane.
   - `ImgUtils.convert_rgb_to_gray(cls, data)` *(class)* — Convert an RGB Image data array to grayscale (luma weights).
   - `ImgUtils.kelvin_to_linear_rgb(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]` *(static)* — Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.
@@ -2067,6 +2086,8 @@ One atlas per shadow-rig type: equal cells, a tile rewritten in place.
   - `MathUtils.round_to_aggressive_preferred(cls, value: float) -> int` *(class)* — Round to aesthetically pleasing 'round' numbers (aggressive approach).
   - `MathUtils.calculate_rotation_distance(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float` *(static)* — Calculate the effective rotation distance between two Euler rotations.
   - `MathUtils.fit_hermite_slopes(times: Sequence[float], values: Sequence[float], keep_indices: Sequence[int], flat_tolerance: float = 0.0) -> Tuple[List[float], List[float]]` *(static)* — Fit cubic-Hermite tangent slopes at a subset of samples so the
+  - `MathUtils.evaluate_hermite(times: Sequence[float], values: Sequence[float], keep_indices: Sequence[int], in_slopes: Sequence[float], out_slopes: Sequence[float], at: Optional[Sequence[float]] = None) -> 'np.ndarray'` *(static)* — Evaluate the sparse cubic-Hermite curve a reduction produces.
+  - `MathUtils.reduce_samples(times: Sequence[float], values: Sequence[float], value_tolerance: float = 1e-05, max_error: Optional[float] = None) -> Tuple[List[int], List[float], List[float]]` *(static)* — Pick the keys and tangents that reproduce dense samples within a bound.
 
 <a id="math_utils--noise"></a>
 ### `math_utils/noise.py`
@@ -2125,7 +2146,7 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 The hand-off bridge whose target is a live preview page.
 
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L26)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L25)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Extra directories the lightmap pass resolves the manifest's EXRs against.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
@@ -2141,11 +2162,7 @@ The hand-off bridge whose target is a live preview page.
 
 FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 
-- **[`class PreviewPassContext`](pythontk/pythontk/net_utils/preview/deliverer.py#L26)** — What a post-conversion preview pass reads, and reports into.
-  - `PreviewPassContext.logger(self)` *(property)* — The bridge's logger -- every pass reports through the push's own sink.
-  - `PreviewPassContext.sidecar(self) -> Optional[Dict[str, Any]]` *(property)* — The scene-sidecar envelope the producer attached, if any.
-  - `PreviewPassContext.lightmap_search_dirs(self) -> Sequence[str]` *(property)* — The host's live texture folders (:meth:`PreviewBridge.lightmap_search_dirs`).
-- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L75)** — Hand-off strategy: convert the produced FBX to GLB and publish it.
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L24)** — Hand-off strategy: build the GLB and publish it to the preview page.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.publish(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Put *glb* on the server and report what the viewer now sees.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
@@ -2155,7 +2172,7 @@ FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L324)** — Serve a directory of preview assets on loopback, with a live manifest.
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L339)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -2317,7 +2334,8 @@ Portable hotkey-token helpers shared by the ecosystem's macro managers.
 
 - **[`class VidUtils(HelpMixin)`](pythontk/pythontk/vid_utils/_vid_utils.py#L16)**
   - `VidUtils.get_frame_rate(cls, value: Union[str, float, int]) -> Union[float, str]` *(class)* — Converts between frame rate names and values.
-  - `VidUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Finds FFmpeg executable path in system path or managed installs.
+  - `VidUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = False) -> Optional[str]` *(class)* — Finds FFmpeg executable path in system path or managed installs.
+  - `VidUtils.ensure_ffmpeg(cls, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Guarantee ffmpeg, offering the managed install when none is found.
   - `VidUtils.get_video_frame_rate(cls, filepath: str) -> float` *(class)* — Extracts frame rate from a video file using FFmpeg.
   - `VidUtils.get_sequence_start_number(cls, input_filepath: str) -> Optional[int]` *(class)* — Find the first frame number of a printf-style image sequence on disk.
   - `VidUtils.compress_video(cls, input_filepath: str, output_filepath: str = None, frame_rate: Union[float, int] = None, delete_original: bool = False, start_number: Optional[int] = None, audio_filepath: Optional[str] = None, audio_offset: float = 0.0, **ffmpeg_options) -> Union[str, None]` *(class)* — Compresses a video file or image sequence using FFmpeg.

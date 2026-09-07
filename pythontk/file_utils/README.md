@@ -28,6 +28,7 @@ The path-plumbing workhorse, in five clusters:
 
 - **Scene sidecar** — `build_scene_sidecar` / `apply_scene_sidecar` / `read_scene_sidecar`: a versioned envelope embedded into the glTF root `extras`, making the deliverable self-describing to any glTF tool with no side files. The schema has exactly one home here, so producers (DCC exporters, WebXR bridges) cannot fork it.
 - **Lightmaps** — `apply_glb_lightmaps` encodes baked HDR EXRs for web and binds them as `occlusionTexture` on `TEXCOORD_1` (glTF has no lightmap slot; occlusion is the shared convention, and naive viewers degrade to grey AO). No manifest = clean no-op.
+- **`GlbPipeline`** (`glb_pipeline.py`) — the one FBX → GLB build every deliverable goes through (downsize embedded textures to the ceiling → `fbx_to_glb` with the sidecar, live lightmap folders and a report → `optimize_glb_textures` last). The Scene Exporters' GLB output and the WebXR preview both call it and hand it dials only, so the two cannot disagree on a channel.
 - **GLB passes** — `optimize_glb_textures` (WebP default, or KTX2/Basis via `KHR_texture_basisu`; KTX2 needs the external `toktx` encoder), `check_glb_materials`, `fix_glb_phantom_opaque_alpha`, `set_glb_base_color` / `set_glb_metallic_roughness` / `set_glb_emissive`.
 
 The end-to-end DCC → GLB → headset pipeline this serves is documented in [Live WebXR preview](../../docs/webxr_preview.md).

@@ -209,7 +209,10 @@ class TestPlanGapRetimes(_ShotTest):
         and after them for the other."""
         store = _store(self._shots())
         plan = ShotPlanner.plan_respace(store, gap=60, start_frame=0)
-        by_pair = {(g.left_id, g.right_id): g for g in ShotPlanner.plan_gap_retimes(store, plan)}
+        by_pair = {
+            (g.left_id, g.right_id): g
+            for g in ShotPlanner.plan_gap_retimes(store, plan)
+        }
         self.assertTrue(by_pair[(1, 2)].shrinks)  # 135 -> 60
         self.assertTrue(by_pair[(2, 3)].grows)  # 15 -> 60
 
@@ -304,6 +307,86 @@ class TestPlanRipple(_ShotTest):
         self.assertNotIn(4, plan.moves)  # downstream of before_frame
         # Backward shift → front-to-back order.
         self.assertEqual(plan.sequence, [1, 2])
+
+    def test_carry_gap_hands_the_pivots_trailing_gap_to_the_first_moved_shot(self):
+        """A bound change ripples EVERYTHING beyond the bound -- the content
+        parked in the gap after the pivot included (the user's rule, 2026-09-06:
+        "only the current shot changes, everything else ripples").  Without it
+        a fade tail in that gap stayed put while the next shot moved, and a
+        grow swallowed it or a shrink landed the neighbour on it.  The pivot's
+        own bound sample stays: the window opens just past ``after_frame``."""
+        store = _store(
+            [
+                ShotBlock(1, "A", 0, 10, []),  # pivot
+                ShotBlock(2, "B", 20, 30, []),
+                ShotBlock(3, "C", 40, 50, []),
+            ]
+        )
+        plan = ShotPlanner.plan_ripple_downstream(store, 1, 10, 5, carry_gap=True)
+        b, c = plan.moves[2], plan.moves[3]
+        self.assertEqual(b.env_start, 10, "B's window opens at the pivot's bound")
+        self.assertTrue(b.env_lo_open, "...but the bound sample itself is A's")
+        self.assertEqual((c.env_start, c.env_lo_open), (40, False), "only the first")
+
+    def test_the_default_ripple_moves_shots_alone(self):
+        """A whole-shot move carries its own trailing gap, so the ripple it
+        asks for must not carry it too (the keys would move twice)."""
+        store = _store([ShotBlock(1, "A", 0, 10, []), ShotBlock(2, "B", 20, 30, [])])
+        plan = ShotPlanner.plan_ripple_downstream(store, 1, 10, 5)
+        self.assertEqual(
+            (plan.moves[2].env_start, plan.moves[2].env_lo_open), (20, False)
+        )
+
+    def test_carry_gap_on_the_seam_keeps_the_sample_with_the_pivot(self):
+        """A bound moved ONTO the next shot's start (a key dragged to the seam)
+        still owns the sample there: the window opens just past it."""
+        store = _store([ShotBlock(1, "A", 0, 10, []), ShotBlock(2, "B", 20, 30, [])])
+        plan = ShotPlanner.plan_ripple_downstream(store, 1, 20, 5, carry_gap=True)
+        self.assertEqual(
+            (plan.moves[2].env_start, plan.moves[2].env_lo_open), (20, True)
+        )
+
+    def test_carry_gap_upstream_caps_the_last_window_at_the_pivots_bound(self):
+        store = _store(
+            [
+                ShotBlock(1, "A", 0, 10, []),
+                ShotBlock(2, "B", 20, 30, []),
+                ShotBlock(3, "C", 40, 50, []),  # pivot
+            ]
+        )
+        plan = ShotPlanner.plan_ripple_upstream(store, 3, 35, -5, carry_gap=True)
+        self.assertEqual(
+            (plan.moves[2].env_end, plan.moves[2].env_hi_closed), (35, False)
+        )
+        self.assertEqual(
+            plan.moves[1].env_end, 20, "only the last moved shot is capped"
+        )
+        plain = ShotPlanner.plan_ripple_upstream(store, 3, 35, -5)
+        self.assertEqual(plain.moves[2].env_end, 40, "the default reaches the pivot")
+
+    def test_a_bound_dragged_into_the_neighbour_still_ripples_it(self):
+        """A key dragged INSIDE the next shot grows the pivot past that shot's
+        start; the neighbour is downstream by ORDER and must still move, and
+        the carried window opens at the new bound so what the bound now covers
+        stays with the pivot."""
+        store = _store([ShotBlock(1, "A", 0, 30, []), ShotBlock(2, "B", 30, 60, [])])
+        plan = ShotPlanner.plan_ripple_downstream(store, 1, 35, 5, carry_gap=True)
+        b = plan.moves[2]
+        self.assertEqual((b.new_start, b.env_start, b.env_lo_open), (35, 35, True))
+
+    def test_insert_and_delete_ripple_without_carry(self):
+        """Insert and delete ripple from a shot's own start with pivot -1 and
+        no carry, so the sample on that start moves with its shot as before;
+        with carry the same frame reads as the caller's bound and stays."""
+        store = _store([ShotBlock(1, "A", 0, 10, []), ShotBlock(2, "B", 20, 30, [])])
+        plain = ShotPlanner.plan_ripple_downstream(store, -1, 20, 5)
+        self.assertEqual(
+            (plain.moves[2].env_start, plain.moves[2].env_lo_open), (20, False)
+        )
+        carried = ShotPlanner.plan_ripple_downstream(store, -1, 20, 5, carry_gap=True)
+        self.assertEqual(
+            (carried.moves[2].env_start, carried.moves[2].env_lo_open), (20, True)
+        )
 
     def test_zero_delta_returns_empty_plan(self):
         store = _store(
@@ -503,6 +586,33 @@ class TestApplySkeleton(_ShotTest):
             move_keys=lambda *a, **k: calls.append(a),
         )
         self.assertEqual(calls, [])
+
+    def test_objects_for_replaces_the_member_list_in_every_phase(self):
+        """A host hands over its keyed CONTENT per envelope; the writer never
+        sees the shot's own list then.  Membership stays a label."""
+        store = self._cycle_store()
+        for s in store.shots:
+            s.objects = [f"member_of_{s.name}"]
+        plan = ShotPlanner.plan_respace(store, gap=30, start_frame=0)
+        seen = []
+        ShotApply.apply(
+            plan,
+            store,
+            move_keys=lambda objects, *a, **k: seen.append(sorted(objects)),
+            objects_for=lambda sid: ["everything", f"keyed_in_{sid}"],
+        )
+        self.assertEqual(len(seen), 4)
+        self.assertTrue(
+            all(
+                "everything" in objs and not any("member_of" in o for o in objs)
+                for objs in seen
+            ),
+            seen,
+        )
+        self.assertEqual(
+            {o for objs in seen for o in objs if o.startswith("keyed")},
+            {"keyed_in_2", "keyed_in_3"},
+        )
 
     def test_three_phase_writer_calls_and_inf_cap(self):
         """Parked cycle → phase-0 park + phase-2 land, both ``over=True``, and
@@ -1110,6 +1220,24 @@ class TestBoundaryLedger(unittest.TestCase):
         store.define_shot("A", 0, 50)
         store.define_shot("B", 60, 100)
         return store
+
+    def test_the_edit_ledger_rides_the_restore_point(self):
+        """Undo puts the claims back where the keys go back to; redo moves
+        them forward again.  A claim left at the post-edit frame after an
+        undo names an animator key as the system's sample."""
+        store = self._store()
+        store.edit_ledger.record_key("crv", 10.0, 0, "end")
+        store.edit_ledger.record_step("crv", 10.0, "auto", "auto")
+        store.push_boundary_snapshot()
+        store.edit_ledger.remap("crv", [(10.0, 20.0)])
+        store.edit_ledger.record_key("other", 5.0, 1, "start")
+        self.assertTrue(store.restore_boundary_snapshot())
+        self.assertEqual(store.edit_ledger.key_times("crv"), [10.0])
+        self.assertEqual(store.edit_ledger.step_times("crv"), [10.0])
+        self.assertEqual(store.edit_ledger.key_times("other"), [])
+        self.assertTrue(store.redo_boundary_snapshot())
+        self.assertEqual(store.edit_ledger.key_times("crv"), [20.0])
+        self.assertEqual(store.edit_ledger.key_times("other"), [5.0])
 
     def test_restore_returns_the_pre_edit_bounds(self):
         store = self._store()

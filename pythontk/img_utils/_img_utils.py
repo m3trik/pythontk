@@ -2979,9 +2979,53 @@ class ImgUtils(HelpMixin):
             ``(z_top, z_bot, mask, bounds)`` — two ``(size, size)`` float32
             fields (0 where empty), a bool coverage mask, and the bounds used.
         """
+
+        lo, hi, bounds = cls.rasterize_height_spans(
+            meshes, up=up, size=size, ground=ground, bounds=bounds, padding=padding
+        )
+        mask = ~np.isnan(hi[0])
+        z_top = np.where(mask, hi[0], 0.0).astype(np.float32)
+        z_bot = np.where(mask, lo[0], 0.0).astype(np.float32)
+        return z_top, z_bot, mask, bounds
+
+    @classmethod
+    def rasterize_height_spans(
+        cls,
+        meshes,
+        *,
+        up: int = 1,
+        size: int = 64,
+        ground: float = 0.0,
+        bounds=None,
+        padding: float = 0.02,
+        spans: int = 1,
+    ):
+        """The solid vertical spans of world meshes per footprint pixel: a
+        depth-peeled :meth:`rasterize_height_fields`.
+
+        Per pixel the surface crossings at its centre (every triangle the
+        centre falls in, at the triangle's height there) are sorted and
+        paired into solid spans -- a closed mesh enters and leaves -- and the
+        *spans* thickest are kept, the rest merged into their nearest
+        neighbour by gap so nothing solid is ever dropped (``spans=1`` is the
+        hull ``rasterize_height_fields`` returns). Triangle edges are splatted
+        at half-pixel steps as one hull span where the fill missed, so a
+        member thinner than a pixel still registers. A seat over a stretcher
+        keeps daylight between them; a plain height field fills it.
+
+        Parameters:
+            meshes, up, size, ground, bounds, padding: As :meth:`rasterize_height_fields`.
+            spans: Solid spans kept per pixel, ``K``.
+
+        Returns:
+            ``(lo, hi, bounds)`` -- two ``(K, size, size)`` float32 arrays,
+            ``NaN`` where a pixel has no span at that index, spans sorted by
+            height per pixel, and the bounds used.
+        """
         from pythontk.geo_utils.shadow_projection import ShadowProjection
 
         a, b = ShadowProjection.horizontal_axes(up)
+        spans = max(int(spans), 1)
         tris_all = []
         for pts, tris in meshes:
             pts = np.asarray(pts, dtype=float).reshape(-1, 3)
@@ -2989,29 +3033,21 @@ class ImgUtils(HelpMixin):
             if len(pts) and len(tris):
                 tris_all.append(pts[tris])  # (M, 3, 3)
         size = int(size)
-        empty = (
-            np.zeros((size, size), np.float32),
-            np.zeros((size, size), np.float32),
-            np.zeros((size, size), bool),
+        lo = np.full((spans, size, size), np.nan, np.float32)
+        hi = np.full((spans, size, size), np.nan, np.float32)
+        default_bounds = (
+            (0.0, 1.0, 0.0, 1.0) if bounds is None else tuple(float(v) for v in bounds)
         )
         if not tris_all:
-            return empty + (
-                (0.0, 1.0, 0.0, 1.0)
-                if bounds is None
-                else tuple(float(v) for v in bounds),
-            )
+            return lo, hi, default_bounds
         T = np.concatenate(tris_all, axis=0)
-        z = T[:, :, up] - float(ground)
-        # wholly buried triangles block nothing; a face ON the ground (a
-        # box's floor) is what pins the column's bottom to 0 and stays
-        keep = (z >= -1e-9).any(axis=1)
-        T, z = T[keep], np.maximum(z[keep], 0.0)
-        if not len(T):
-            return empty + (
-                (0.0, 1.0, 0.0, 1.0)
-                if bounds is None
-                else tuple(float(v) for v in bounds),
-            )
+        # Heights above the ground, clamped AT the ground: a face below it
+        # still crosses a column -- a box cut by the ground plane enters the
+        # solid at its buried floor -- and clamping puts that crossing on the
+        # ground, where the column's span then starts. A wholly buried mesh
+        # collapses to spans of no height, which block nothing and are dropped
+        # below.
+        z = np.maximum(T[:, :, up] - float(ground), 0.0)
         pa, pb = T[:, :, a], T[:, :, b]
         if bounds is None:
             lo_a, hi_a, lo_b, hi_b = pa.min(), pa.max(), pb.min(), pb.max()
@@ -3021,9 +3057,16 @@ class ImgUtils(HelpMixin):
         sa, sb = max(a1 - a0, 1e-9), max(b1 - b0, 1e-9)
         x = (pa - a0) / sa * size  # (M, 3) pixel coords
         y = (pb - b0) / sb * size
-        z_top = np.full((size, size), -np.inf, dtype=np.float64)
-        z_bot = np.full((size, size), np.inf, dtype=np.float64)
-        # area fill at pixel centres, per triangle
+        # Which way each face looks along up: a vertical ray ENTERS the solid
+        # through a face looking down and LEAVES through one looking up, so
+        # the crossings of a closed mesh count in and out whatever its
+        # winding, and a duplicate from a shared edge is a duplicate.
+        normal_up = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])[:, up]
+        facing = np.where(normal_up < 0.0, 1, -1).astype(np.int8)
+        # -- surface crossings at pixel centres, per triangle
+        cross_px: list = []
+        cross_z: list = []
+        cross_sign: list = []
         for i in range(len(T)):
             xs, ys, zs = x[i], y[i], z[i]
             x0, x1 = int(np.floor(xs.min())), int(np.ceil(xs.max()))
@@ -3048,11 +3091,11 @@ class ImgUtils(HelpMixin):
             if not inside.any():
                 continue
             zz = l1 * zs[0] + l2 * zs[1] + l3 * zs[2]
-            top = z_top[y0 : y1 + 1, x0 : x1 + 1]
-            bot = z_bot[y0 : y1 + 1, x0 : x1 + 1]
-            top[inside] = np.maximum(top[inside], zz[inside])
-            bot[inside] = np.minimum(bot[inside], zz[inside])
-        # edge splat at half-pixel steps, all edges at once
+            cross_px.append(((yy - 0.5) * size + (xx - 0.5))[inside].astype(np.int64))
+            cross_z.append(zz[inside].astype(np.float64))
+            cross_sign.append(np.full(int(inside.sum()), facing[i], np.int8))
+        # -- edge splat at half-pixel steps, all edges at once: the hull of
+        #    the samples a pixel receives, one span, where the fill missed
         e0 = np.concatenate([x[:, [0, 1]], x[:, [1, 2]], x[:, [2, 0]]], axis=0)
         e1 = np.concatenate([y[:, [0, 1]], y[:, [1, 2]], y[:, [2, 0]]], axis=0)
         ez = np.concatenate([z[:, [0, 1]], z[:, [1, 2]], z[:, [2, 0]]], axis=0)
@@ -3070,12 +3113,103 @@ class ImgUtils(HelpMixin):
         ia = np.floor(sx).astype(int)
         ib = np.floor(sy).astype(int)
         inb = (ia >= 0) & (ia < size) & (ib >= 0) & (ib < size)
-        np.maximum.at(z_top, (ib[inb], ia[inb]), sz[inb])
-        np.minimum.at(z_bot, (ib[inb], ia[inb]), sz[inb])
-        mask = np.isfinite(z_top) & (z_top > 0.0)
-        z_top = np.where(mask, z_top, 0.0).astype(np.float32)
-        z_bot = np.where(mask, np.maximum(z_bot, 0.0), 0.0).astype(np.float32)
-        return z_top, z_bot, mask, (a0, a1, b0, b1)
+        splat_top = np.full(size * size, -np.inf)
+        splat_bot = np.full(size * size, np.inf)
+        flat = ib[inb] * size + ia[inb]
+        np.maximum.at(splat_top, flat, sz[inb])
+        np.minimum.at(splat_bot, flat, sz[inb])
+        # -- the crossings into spans, pixel by pixel: sorted by height, the
+        #    running count of entries minus exits is non-zero INSIDE the
+        #    solid, so each gap between consecutive crossings with a non-zero
+        #    count is a span. Every crossing also stands as a zero-thickness
+        #    span of its own: an open surface (a single-sided plank) still
+        #    blocks at its height, and inside a closed span it merges away.
+        filled = np.zeros(size * size, bool)
+        if cross_px:
+            px = np.concatenate(cross_px)
+            zc = np.concatenate(cross_z)
+            sg = np.concatenate(cross_sign).astype(np.int64)
+            order = np.lexsort((sg, zc, px))
+            px, zc, sg = px[order], zc[order], sg[order]
+            # a shared edge reports the same surface twice at a pixel centre
+            # (the two triangles interpolate one edge, equal to rounding --
+            # a bit-exact compare let the pair through, and an unmatched
+            # entry fills the gap up to the next crossing solid)
+            same_z = np.abs(zc[1:] - zc[:-1]) <= 1e-9 * (1.0 + np.abs(zc[1:]))
+            dup = np.r_[False, (px[1:] == px[:-1]) & same_z & (sg[1:] == sg[:-1])]
+            px, zc, sg = px[~dup], zc[~dup], sg[~dup]
+            new_pixel = np.r_[True, px[1:] != px[:-1]]
+            seg = np.cumsum(new_pixel) - 1
+            total = np.cumsum(sg)
+            base = np.r_[0, total[:-1]][np.flatnonzero(new_pixel)][seg]
+            count = total - base  # entries minus exits below this crossing, inclusive
+            same_next = np.r_[px[1:] == px[:-1], False]
+            solid = same_next & (count != 0)
+            span_px = np.concatenate([px[solid], px])
+            span_lo = np.concatenate([zc[solid], zc])
+            span_hi = np.concatenate([np.r_[zc[1:], zc[-1:]][solid], zc])
+            filled[np.unique(px)] = True
+            cls._assign_spans(lo, hi, span_px, span_lo, span_hi, size, spans)
+        # -- the splat hull where the fill left a pixel empty
+        only_splat = np.isfinite(splat_top) & ~filled & (splat_top > 0.0)
+        idx = np.flatnonzero(only_splat)
+        if idx.size:
+            lo[0].reshape(-1)[idx] = np.maximum(splat_bot[idx], 0.0)
+            hi[0].reshape(-1)[idx] = splat_top[idx]
+        # a span that never rises above the ground blocks nothing
+        buried = ~np.isnan(hi) & (hi <= 0.0)
+        lo[buried] = np.nan
+        hi[buried] = np.nan
+        return lo, hi, (a0, a1, b0, b1)
+
+    @staticmethod
+    def _assign_spans(lo, hi, px, span_lo, span_hi, size, spans):
+        """Merge touching spans per pixel, keep the *spans* thickest (the
+        rest merged into the neighbour across the smallest gap) and write
+        them, sorted by height, into ``lo`` / ``hi`` ``(K, size, size)``."""
+        order = np.lexsort((span_lo, px))
+        px, span_lo, span_hi = px[order], span_lo[order], span_hi[order]
+        # A span merges into the one before it (same pixel) when it starts at
+        # or below that one's top: the running maximum of the tops, restarted
+        # per pixel by lifting each pixel's values onto their own plateau.
+        new_pixel = np.r_[True, px[1:] != px[:-1]]
+        seg = np.cumsum(new_pixel) - 1
+        lift = float(np.nanmax(span_hi) - np.nanmin(span_lo)) + 1.0
+        run_top = np.maximum.accumulate(span_hi + seg * lift) - seg * lift
+        prev_top = np.r_[-np.inf, run_top[:-1]]
+        start = new_pixel | (span_lo > prev_top + 1e-9)
+        group = np.cumsum(start) - 1
+        n_groups = int(group[-1]) + 1
+        g_lo = np.full(n_groups, np.inf)
+        g_hi = np.full(n_groups, -np.inf)
+        np.minimum.at(g_lo, group, span_lo)
+        np.maximum.at(g_hi, group, span_hi)
+        g_px = px[start]
+        # Per pixel the merged spans are sorted by height. Up to K of them
+        # scatter straight in; a pixel with more merges its smallest gaps
+        # first (rare: a shelf's boards, a chair's rungs) until K remain.
+        g_new = np.r_[True, g_px[1:] != g_px[:-1]]
+        g_seg = np.cumsum(g_new) - 1
+        g_rank = np.arange(len(g_px)) - np.flatnonzero(g_new)[g_seg]
+        g_count = np.diff(np.r_[np.flatnonzero(g_new), len(g_px)])[g_seg]
+        fits = g_count <= spans
+        iy, ix = np.divmod(g_px[fits], size)
+        lo[g_rank[fits], iy, ix] = g_lo[fits]
+        hi[g_rank[fits], iy, ix] = g_hi[fits]
+        for s in np.flatnonzero(g_new & ~fits):
+            c = int(g_count[s])
+            pixel = int(g_px[s])
+            py_, px_ = divmod(pixel, size)
+            l_ = list(g_lo[s : s + c])
+            h_ = list(g_hi[s : s + c])
+            while len(l_) > spans:
+                gaps = [l_[j + 1] - h_[j] for j in range(len(l_) - 1)]
+                j = int(np.argmin(gaps))
+                h_[j] = max(h_[j], h_[j + 1])
+                del l_[j + 1], h_[j + 1]
+            for k in range(len(l_)):
+                lo[k, py_, px_] = l_[k]
+                hi[k, py_, px_] = h_[k]
 
     @classmethod
     def rasterize_shadow(

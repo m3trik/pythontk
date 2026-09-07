@@ -1,247 +1,82 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ ee27d5e)._
+_Diff vs the last release (origin/main @ a03683a)._
 
-## Removed (37)
+## Removed (21)
 
-- `core_utils/execution_monitor/_dialog_viewer.py::run` — was `(title: str, message: str, force_label: str | None = None)`
-- `core_utils/execution_monitor/_gif_viewer.py::run` — was `(gif_path, target_size=DEFAULT_SIZE, pos=None)`
-- `core_utils/execution_monitor/_spinner.py::run` — was `(size=DEFAULT_SIZE, pos=None)`
-- `net_utils/preview_server.py::PreviewBridge` — was `(class)`
-- `net_utils/preview_server.py::PreviewBridge.lightmap_search_dirs` — was `(self) -> Sequence[str]`
-- `net_utils/preview_server.py::PreviewBridge.lightmap_summary` — was `(result: Optional[Dict[str, Any]]) -> str`
-- `net_utils/preview_server.py::PreviewBridge.params_defaults` — was `(self) -> Dict[str, Any]`
-- `net_utils/preview_server.py::PreviewBridge.publish_file` — was `(self, path: Union[str, Path], open_browser: Union[bool, str] = 'auto', scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]`
-- `net_utils/preview_server.py::PreviewBridge.push` — was `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str] = 'auto', texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, whole_scene: Optional[bool] = None, **params: Any) -> Optional[Dict[str, Any]]`
-- `net_utils/preview_server.py::PreviewBridge.scope_objects` — was `(self, scope: str = 'selected') -> List[Any]`
-- `net_utils/preview_server.py::PreviewBridge.sidecar_summary` — was `(result: Optional[Dict[str, Any]]) -> str`
-- `net_utils/preview_server.py::PreviewBridge.stop` — was `(self) -> None`
-- `net_utils/preview_server.py::PreviewBridge.url` — was `(self) -> Optional[str]`
-- `net_utils/preview_server.py::PreviewDeliverer` — was `(class)`
-- `net_utils/preview_server.py::PreviewDeliverer.deliver` — was `(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- `net_utils/preview_server.py::PreviewDeliverer.ensure_server` — was `(self) -> PreviewServer`
-- `net_utils/preview_server.py::PreviewDeliverer.publish` — was `(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]`
-- `net_utils/preview_server.py::PreviewPassContext` — was `(class)`
-- `net_utils/preview_server.py::PreviewPassContext.lightmap_search_dirs` — was `(self) -> Sequence[str]`
-- `net_utils/preview_server.py::PreviewPassContext.logger` — was `(self)`
-- `net_utils/preview_server.py::PreviewPassContext.sidecar` — was `(self) -> Optional[Dict[str, Any]]`
-- `net_utils/preview_server.py::PreviewServer` — was `(class)`
-- `net_utils/preview_server.py::PreviewServer.add_script` — was `(self, name: str, path: Optional[Union[str, Path]] = None) -> 'PreviewServer'`
-- `net_utils/preview_server.py::PreviewServer.apply_settings` — was `(self, settings: Dict[str, Any]) -> Dict[str, Any]`
-- `net_utils/preview_server.py::PreviewServer.has_viewer` — was `(self) -> bool`
-- `net_utils/preview_server.py::PreviewServer.is_running` — was `(self) -> bool`
-- `net_utils/preview_server.py::PreviewServer.manifest` — was `(self) -> Dict[str, Any]`
-- `net_utils/preview_server.py::PreviewServer.open_in_browser` — was `(self) -> bool`
-- `net_utils/preview_server.py::PreviewServer.port` — was `(self) -> Optional[int]`
-- `net_utils/preview_server.py::PreviewServer.publish` — was `(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int`
-- `net_utils/preview_server.py::PreviewServer.remove_script` — was `(self, name: str) -> 'PreviewServer'`
-- `net_utils/preview_server.py::PreviewServer.scripts` — was `(self) -> tuple`
-- `net_utils/preview_server.py::PreviewServer.set_scripts` — was `(self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]) -> 'PreviewServer'`
-- `net_utils/preview_server.py::PreviewServer.start` — was `(self) -> 'PreviewServer'`
-- `net_utils/preview_server.py::PreviewServer.stop` — was `(self) -> None`
-- `net_utils/preview_server.py::PreviewServer.url` — was `(self) -> Optional[str]`
-- `net_utils/preview_server.py::PreviewServer.version` — was `(self) -> int`
+- `geo_utils/shadow_horizon.py::HorizonMap` — was `(class)`
+- `geo_utils/shadow_horizon.py::HorizonMap.alpha` — was `(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::HorizonMap.decode_cot` — was `(self, value: np.ndarray) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::HorizonMap.encode_angle` — was `(self, angle: np.ndarray) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::HorizonMap.from_rgba` — was `(cls, pixels: np.ndarray, *, bins: int, size: Sequence[int], r_min: float, r_max: float, ground: float = 0.0, up: int = 1, max_stretch: Optional[float] = None) -> 'HorizonMap'`
+- `geo_utils/shadow_horizon.py::HorizonMap.layers` — was `(self) -> int`
+- `geo_utils/shadow_horizon.py::HorizonMap.layout` — was `(self) -> Tuple[int, int]`
+- `geo_utils/shadow_horizon.py::HorizonMap.mask_bits` — was `(values: np.ndarray) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::HorizonMap.taps` — was `(self, layer: int, k, u, v) -> Tuple[np.ndarray, np.ndarray, np.ndarray]`
+- `geo_utils/shadow_horizon.py::HorizonMap.texel_positions` — was `(self) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::HorizonMap.tile_index` — was `(self, layer: int, k: int) -> int`
+- `geo_utils/shadow_horizon.py::HorizonMap.tile_rects` — was `(self) -> List[Tuple[float, float, float, float]]`
+- `geo_utils/shadow_horizon.py::HorizonMap.tiles` — was `(self) -> int`
+- `geo_utils/shadow_horizon.py::HorizonMap.to_rgba` — was `(self) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::HorizonMap.uv` — was `(self, horizontal) -> Tuple[np.ndarray, np.ndarray, np.ndarray]`
+- `geo_utils/shadow_horizon.py::ShadowHorizon.layout` — was `(tiles: int) -> Tuple[int, int]`
+- `geo_utils/shadow_horizon.py::ShadowHorizon.range_for` — was `(cls, radius: float, height: float, max_stretch: Optional[float] = None) -> Tuple[float, float]`
+- `net_utils/preview/deliverer.py::PreviewPassContext` — was `(class)`
+- `net_utils/preview/deliverer.py::PreviewPassContext.lightmap_search_dirs` — was `(self) -> Sequence[str]`
+- `net_utils/preview/deliverer.py::PreviewPassContext.logger` — was `(self)`
+- `net_utils/preview/deliverer.py::PreviewPassContext.sidecar` — was `(self) -> Optional[Dict[str, Any]]`
 
-## Added (162)
+## Added (25)
 
-- `core_utils/color.py::Palette.copy(self) -> 'Palette'`
-- `core_utils/color.py::Palette.setdefault(self, key: str, default: object = None) -> object`
-- `core_utils/color.py::Palette.update(self, mapping=None, **kwargs: object) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash(class)`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.active(cls) -> 'KeyStash'`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.add_clip(self, objects: List[str], curves: List[Dict[str, Any]], label: Optional[str] = None, source_shot_id: Optional[int] = None, metadata: Optional[Dict[str, Any]] = None) -> StashedClip`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.add_invalidation_listener(cls, callback: Callable[[StashChanged], None]) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.add_listener(self, callback: Callable[[StashChanged], None]) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.batch_update(self)`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.clear_preview(self) -> Optional[Dict[str, Any]]`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.clips_for_object(self, name: str) -> List[StashedClip]`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.clips_for_shot(self, shot_id: int) -> List[StashedClip]`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.from_dict(cls, data: Dict[str, Any]) -> 'KeyStash'`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.gate_range(clip: StashedClip) -> Optional[Tuple[float, float]]`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.get_clip(self, clip_id: int) -> Optional[StashedClip]`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.invalidate(cls) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.is_empty(self) -> bool`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.mark_dirty(self) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.offset_for(clip: StashedClip, at: Optional[float]) -> float`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.remove_clip(self, clip_id: int, kind: str = 'dropped') -> Optional[StashedClip]`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.remove_invalidation_listener(cls, callback: Callable[[StashChanged], None]) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.remove_listener(self, callback: Callable[[StashChanged], None]) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.rescale_to_fps(self, new_fps: float) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.save(self) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.set_persistence(cls, backend: Optional[ScenePersistence]) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.set_preview(self, clip_id: int, payload: Optional[Dict[str, Any]] = None) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.to_dict(self) -> Dict[str, Any]`
-- `core_utils/engines/key_stash/key_stash_model.py::StashChanged(class)`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip(class)`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip.duration(self) -> float`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip.end(self) -> Optional[float]`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip.from_dict(cls, data: Dict[str, Any]) -> 'StashedClip'`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip.key_count(self) -> int`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip.rescale(self, ratio: float) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip.start(self) -> Optional[float]`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip.times(self) -> List[float]`
-- `core_utils/engines/key_stash/key_stash_model.py::StashedClip.to_dict(self) -> Dict[str, Any]`
-- `core_utils/engines/shots/shot_model.py::ShotStore.declared_range(cls, strategy: str = 'name') -> Optional[Tuple[int, int]]`
-- `core_utils/engines/shots/shot_model.py::ShotStore.invalidate(cls) -> None`
-- `core_utils/engines/shots/shot_model.py::ShotStore.is_empty(self) -> bool`
-- `core_utils/execution_monitor/_sidecar.py::build_dialog(root, title: str, message: str, force_label: str | None = None) -> list`
-- `core_utils/execution_monitor/_sidecar.py::fit_and_center(root) -> None`
-- `core_utils/execution_monitor/_sidecar.py::kill_process(pid: int, tree: bool = True) -> None`
-- `core_utils/execution_monitor/_sidecar.py::main(argv=None) -> int`
-- `core_utils/execution_monitor/_sidecar.py::process_alive(pid: int) -> bool`
-- `core_utils/execution_monitor/_sidecar.py::run_dialog(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int`
-- `core_utils/execution_monitor/_sidecar.py::run_indicator(size: int | None = None, pos=None, gif_path: str | None = None, parent_pid: int | None = None) -> int`
-- `core_utils/execution_monitor/_sidecar.py::run_watchdog(pid: int, heartbeat_path: str, timeout: float, check_interval: float = 1.0, kill_tree: bool = True, stop_file: str | None = None) -> int`
-- `core_utils/execution_monitor/_sidecar.py::watch_parent(root, pid: int | None, on_gone=None) -> None`
-- `core_utils/logging_mixin.py::LoggerExt.set_default_text_handler(handler: Union[type, object, None]) -> None`
-- `core_utils/package_manager.py::PackageManager.version_check_running(self) -> bool`
-- `core_utils/package_manager.py::PackageManager.wait_for_version_check(self, timeout: Optional[float] = None) -> bool`
-- `core_utils/test_sandbox.py::TestSandbox(class)`
-- `core_utils/test_sandbox.py::TestSandbox.activate(cls) -> str`
-- `core_utils/test_sandbox.py::TestSandbox.browser(cls) -> None`
-- `core_utils/test_sandbox.py::TestSandbox.is_active(cls) -> bool`
-- `core_utils/test_sandbox.py::TestSandbox.temp(cls) -> str`
-- `core_utils/user_config.py::UserConfig.save_file(path: Union[str, os.PathLike], data: Mapping[str, Any]) -> None`
-- `file_utils/_file_utils.py::FileUtils.describe_lock(cls, filepath: str) -> str`
-- `file_utils/_file_utils.py::FileUtils.is_locked(filepath: str) -> bool`
-- `file_utils/_file_utils.py::FileUtils.locking_processes(filepath: str) -> List[str]`
-- `file_utils/_file_utils.py::FileUtils.read_json(filepath, default=None, encoding: str = 'utf-8')`
-- `file_utils/_file_utils.py::FileUtils.write_json(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_shadows(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.bake_node_frames(cls, src: str) -> int`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.prune_glb_animations(cls, glb: GlbTarget) -> List[str]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]`
-- `file_utils/mesh_convert/fbx_media.py::FbxMedia(class)`
-- `file_utils/mesh_convert/fbx_media.py::FbxMedia.downsize(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]`
-- `file_utils/mesh_convert/fbx_media.py::FbxMedia.embedded(cls, path: str) -> List[Dict[str, Any]]`
-- `file_utils/mesh_convert/fbx_media.py::FbxMedia.rewrite(cls, src: str, dst: str) -> None`
-- `file_utils/mesh_convert/glb_fades.py::GlbFades.apply_channels(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Rgb]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
-- `file_utils/mesh_convert/glb_fades.py::PointerChannel(class)`
-- `file_utils/mesh_convert/glb_fades.py::PointerChannel.accessor_type(self) -> str`
-- `file_utils/mesh_convert/glb_fades.py::PointerChannel.base(self, gltf: Dict[str, Any], index: int) -> List[float]`
-- `file_utils/mesh_convert/glb_fades.py::PointerChannel.components(self) -> int`
-- `file_utils/mesh_convert/glb_reader.py::GlbReader.motion_span(self, key: Union[int, str], tolerance: float = 0.001) -> Optional[Tuple[float, float]]`
-- `geo_utils/shadow_horizon.py::HorizonMap(class)`
-- `geo_utils/shadow_horizon.py::HorizonMap.alpha(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray`
-- `geo_utils/shadow_horizon.py::HorizonMap.decode_cot(self, value: np.ndarray) -> np.ndarray`
-- `geo_utils/shadow_horizon.py::HorizonMap.encode_angle(self, angle: np.ndarray) -> np.ndarray`
-- `geo_utils/shadow_horizon.py::HorizonMap.from_rgba(cls, pixels: np.ndarray, *, bins: int, size: Sequence[int], r_min: float, r_max: float, ground: float = 0.0, up: int = 1, max_stretch: Optional[float] = None) -> 'HorizonMap'`
-- `geo_utils/shadow_horizon.py::HorizonMap.layers(self) -> int`
-- `geo_utils/shadow_horizon.py::HorizonMap.layout(self) -> Tuple[int, int]`
-- `geo_utils/shadow_horizon.py::HorizonMap.mask_bits(values: np.ndarray) -> np.ndarray`
-- `geo_utils/shadow_horizon.py::HorizonMap.taps(self, layer: int, k, u, v) -> Tuple[np.ndarray, np.ndarray, np.ndarray]`
-- `geo_utils/shadow_horizon.py::HorizonMap.texel_positions(self) -> np.ndarray`
-- `geo_utils/shadow_horizon.py::HorizonMap.tile_index(self, layer: int, k: int) -> int`
-- `geo_utils/shadow_horizon.py::HorizonMap.tile_rects(self) -> List[Tuple[float, float, float, float]]`
-- `geo_utils/shadow_horizon.py::HorizonMap.tiles(self) -> int`
-- `geo_utils/shadow_horizon.py::HorizonMap.to_rgba(self) -> np.ndarray`
-- `geo_utils/shadow_horizon.py::HorizonMap.uv(self, horizontal) -> Tuple[np.ndarray, np.ndarray, np.ndarray]`
-- `geo_utils/shadow_horizon.py::ShadowHorizon(class)`
-- `geo_utils/shadow_horizon.py::ShadowHorizon.bake(cls, meshes, *, ground: float = 0.0, up: int = 1, radius: Optional[float] = None, height: Optional[float] = None, bins: int = DEFAULT_BINS, size: Sequence[int] = DEFAULT_SIZE, r_min: Optional[float] = None, r_max: Optional[float] = None, max_stretch: Optional[float] = None, footprint: int = DEFAULT_FOOTPRINT, threads: Optional[int] = None) -> HorizonMap`
-- `geo_utils/shadow_horizon.py::ShadowHorizon.bake_adaptive(cls, meshes, *, threshold: float = 0.05, max_bins: int = 64, measure_samples: int = 6, **kwargs) -> Tuple[HorizonMap, Dict[str, float]]`
-- `geo_utils/shadow_horizon.py::ShadowHorizon.layout(tiles: int) -> Tuple[int, int]`
-- `geo_utils/shadow_horizon.py::ShadowHorizon.measure(cls, hmap: HorizonMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]`
-- `geo_utils/shadow_horizon.py::ShadowHorizon.range_for(cls, radius: float, height: float, max_stretch: Optional[float] = None) -> Tuple[float, float]`
-- `geo_utils/shadow_horizon.py::ShadowHorizon.shader_source(cls, language: str = 'glsl') -> str`
-- `geo_utils/shadow_projection.py::ShadowModel(class)`
-- `geo_utils/shadow_projection.py::ShadowModel.across(self) -> Vec2`
-- `geo_utils/shadow_projection.py::ShadowModel.length(self) -> float`
-- `geo_utils/shadow_projection.py::ShadowModel.near(self) -> float`
-- `geo_utils/shadow_projection.py::ShadowModel.placement(self, fractions: Sequence[float]) -> Tuple[Vec2, float, float]`
-- `geo_utils/shadow_projection.py::ShadowModel.rect(self, fractions: Sequence[float]) -> Rect`
-- `geo_utils/shadow_projection.py::ShadowProjection(class)`
-- `geo_utils/shadow_projection.py::ShadowProjection.far_point(cls, contact, direction, scale: float) -> Tuple[float, float, float]`
-- `geo_utils/shadow_projection.py::ShadowProjection.fractions(rect: Rect, model: ShadowModel) -> Tuple[float, float, float, float]`
-- `geo_utils/shadow_projection.py::ShadowProjection.horizontal_axes(up: int = 1) -> Tuple[int, int]`
-- `geo_utils/shadow_projection.py::ShadowProjection.model(cls, contact, light=None, ground: float = 0.0, radius: float = 0.5, height: float = 1.0, *, up: int = 1, direction=None, max_stretch: Optional[float] = None) -> ShadowModel`
-- `geo_utils/shadow_projection.py::ShadowProjection.project(cls, points, light=None, ground: float = 0.0, *, up: int = 1, direction=None, max_length: Optional[float] = None) -> Optional[Tuple[np.ndarray, np.ndarray]]`
-- `geo_utils/shadow_projection.py::ShadowProjection.to_frame(ground_points, model: ShadowModel) -> np.ndarray`
-- `geo_utils/shadow_projection.py::ShadowRaster(class)`
-- `img_utils/_img_utils.py::ImgUtils.rasterize_height_fields(cls, meshes, *, up: int = 1, size: int = 64, ground: float = 0.0, bounds=None, padding: float = 0.02)`
-- `img_utils/_img_utils.py::ImgUtils.rasterize_shadow(cls, meshes, light=None, ground=0.0, size=512, *, up=1, direction=None, source_size=0.0, max_stretch=None, canvas=None, contact=None, radius=None, height=None, padding=0.04, uniform_alpha=True, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.0)`
-- `img_utils/shadow_atlas.py::ShadowAtlas(class)`
-- `img_utils/shadow_atlas.py::ShadowAtlas.cell_pixel_rect(cls, index: int, cols: int, cell: Sequence[int], tile: Sequence[int]) -> PixelRect`
-- `img_utils/shadow_atlas.py::ShadowAtlas.grid(count: int, cell: Sequence[int]) -> Tuple[int, int, Tuple[int, int]]`
-- `img_utils/shadow_atlas.py::ShadowAtlas.pack(cls, tiles: Dict[str, np.ndarray], *, gutter: int = GUTTER, cell: Optional[Sequence[int]] = None, order: Optional[Sequence[str]] = None) -> Tuple[np.ndarray, Dict[str, Rect], Dict[str, PixelRect]]`
-- `img_utils/shadow_atlas.py::ShadowAtlas.uv_corners(cls, rect: Rect) -> List[Tuple[float, float]]`
-- `img_utils/shadow_atlas.py::ShadowAtlas.uv_rect(pixel_rect: PixelRect, atlas_size: Sequence[int]) -> Rect`
-- `img_utils/shadow_atlas.py::ShadowAtlas.write_tile(atlas: np.ndarray, pixel_rect: PixelRect, tile: np.ndarray) -> None`
-- `net_utils/preview/bridge.py::PreviewBridge(class)`
-- `net_utils/preview/bridge.py::PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]`
-- `net_utils/preview/bridge.py::PreviewBridge.lightmap_summary(result: Optional[Dict[str, Any]]) -> str`
-- `net_utils/preview/bridge.py::PreviewBridge.params_defaults(self) -> Dict[str, Any]`
-- `net_utils/preview/bridge.py::PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]`
-- `net_utils/preview/bridge.py::PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]`
-- `net_utils/preview/bridge.py::PreviewBridge.scope_objects(self, scope: str = 'selected') -> List[Any]`
-- `net_utils/preview/bridge.py::PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str`
-- `net_utils/preview/bridge.py::PreviewBridge.stop(self) -> None`
-- `net_utils/preview/bridge.py::PreviewBridge.url(self) -> Optional[str]`
-- `net_utils/preview/deliverer.py::PreviewDeliverer(class)`
-- `net_utils/preview/deliverer.py::PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- `net_utils/preview/deliverer.py::PreviewDeliverer.ensure_server(self) -> PreviewServer`
-- `net_utils/preview/deliverer.py::PreviewDeliverer.publish(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]`
-- `net_utils/preview/deliverer.py::PreviewPassContext(class)`
-- `net_utils/preview/deliverer.py::PreviewPassContext.lightmap_search_dirs(self) -> Sequence[str]`
-- `net_utils/preview/deliverer.py::PreviewPassContext.logger(self)`
-- `net_utils/preview/deliverer.py::PreviewPassContext.sidecar(self) -> Optional[Dict[str, Any]]`
-- `net_utils/preview/server.py::PreviewServer(class)`
-- `net_utils/preview/server.py::PreviewServer.add_script(self, name: str, path: Optional[Union[str, Path]] = None) -> 'PreviewServer'`
-- `net_utils/preview/server.py::PreviewServer.apply_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]`
-- `net_utils/preview/server.py::PreviewServer.has_viewer(self) -> bool`
-- `net_utils/preview/server.py::PreviewServer.is_running(self) -> bool`
-- `net_utils/preview/server.py::PreviewServer.manifest(self) -> Dict[str, Any]`
-- `net_utils/preview/server.py::PreviewServer.open_in_browser(self) -> bool`
-- `net_utils/preview/server.py::PreviewServer.port(self) -> Optional[int]`
-- `net_utils/preview/server.py::PreviewServer.publish(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int`
-- `net_utils/preview/server.py::PreviewServer.remove_script(self, name: str) -> 'PreviewServer'`
-- `net_utils/preview/server.py::PreviewServer.scripts(self) -> tuple`
-- `net_utils/preview/server.py::PreviewServer.set_scripts(self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]) -> 'PreviewServer'`
-- `net_utils/preview/server.py::PreviewServer.start(self) -> 'PreviewServer'`
-- `net_utils/preview/server.py::PreviewServer.stop(self) -> None`
-- `net_utils/preview/server.py::PreviewServer.url(self) -> Optional[str]`
-- `net_utils/preview/server.py::PreviewServer.version(self) -> int`
-- `net_utils/remote_file.py::RemoteFile(class)`
-- `net_utils/remote_file.py::RemoteFile.is_url(source: str) -> bool`
-- `net_utils/remote_file.py::RemoteFile.normalize(cls, url: str) -> str`
-- `net_utils/remote_file.py::RemoteFile.open(cls, url: str, *, timeout: Optional[float] = None, headers: Optional[Dict[str, str]] = None)`
-- `net_utils/remote_file.py::RemoteFile.probe(cls, url: str, *, timeout: Optional[float] = None) -> Optional[str]`
-- `net_utils/remote_file.py::RemoteFile.read_bytes(cls, url: str, *, timeout: Optional[float] = None, reject_html: bool = True) -> bytes`
+- `core_utils/export_profile.py::ExportProfile(class)`
+- `core_utils/export_profile.py::ExportProfile.legal_name(name: str) -> str`
+- `core_utils/export_profile.py::ExportProfile.read_values(cls, widgets: Mapping[str, Any], *tables: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportProfile.run_config(cls, values: Mapping[str, Any], task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]], override_checks: bool = False, ignore_groups_case_sensitive: bool = False, default_export_mode: str = 'visible') -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportProfile.value_method(cls, spec: Mapping[str, Any]) -> str`
+- `core_utils/export_profile.py::ExportProfile.widget_key(cls, name: str, spec: Mapping[str, Any]) -> str`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.lightmap_report(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline(class)`
+- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]`
+- `geo_utils/shadow_horizon.py::HeightFieldMap(class)`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.alpha(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.aspect(self) -> float`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.from_rgba(cls, rgba: np.ndarray, *, size: int, spans: int, bounds: Sequence[float], ground: float, up: int, height_scale: float) -> 'HeightFieldMap'`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.hull(self) -> Tuple[np.ndarray, np.ndarray]`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.levels(self) -> int`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.pixel(self) -> Tuple[float, float]`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.pyramid(self) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.tiles(self) -> int`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.to_rgba(self) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::ShadowHorizon.record(cls, *, texture: str, size: int, spans: int, levels: int, bounds: Sequence[float], height_scale: float, frame_a: Sequence[float], frame_b: Sequence[float], rect: Sequence[float]) -> Dict[str, object]`
+- `img_utils/_img_utils.py::ImgUtils.rasterize_height_spans(cls, meshes, *, up: int = 1, size: int = 64, ground: float = 0.0, bounds=None, padding: float = 0.02, spans: int = 1)`
+- `math_utils/_math_utils.py::MathUtils.evaluate_hermite(times: Sequence[float], values: Sequence[float], keep_indices: Sequence[int], in_slopes: Sequence[float], out_slopes: Sequence[float], at: Optional[Sequence[float]] = None) -> 'np.ndarray'`
+- `math_utils/_math_utils.py::MathUtils.reduce_samples(times: Sequence[float], values: Sequence[float], value_tolerance: float = 1e-05, max_error: Optional[float] = None) -> Tuple[List[int], List[float], List[float]]`
+- `vid_utils/_vid_utils.py::VidUtils.ensure_ffmpeg(cls, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]`
 
-## Signature changed (12)
+## Signature changed (8)
 
-- `core_utils/execution_monitor/_execution_monitor.py::ExecutionMonitor.is_escape_pressed`
-  - was: `()`
-  - now: `() -> bool`
-- `core_utils/execution_monitor/_execution_monitor.py::ExecutionMonitor.show_long_execution_dialog`
-  - was: `(title, message, force_action=None)`
-  - now: `(title, message, force_action=None, finished=None)`
-- `core_utils/package_manager.py::PackageManager.start_version_check`
-  - was: `(self, package_name=None, python_path=None) -> None`
-  - now: `(self, package_name=None, python_path=None) -> threading.Thread`
-- `file_utils/_file_utils.py::FileUtils.convert_to_relative_path`
-  - was: `(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> str`
-  - now: `(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> Union[str, List[str]]`
+- `core_utils/engines/shots/shot_apply.py::ShotApply.apply`
+  - was: `(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None) -> None`
+  - now: `(plan: MovePlan, store: ShotStore, move_keys: Optional[MoveKeys] = None, shift_audio: Optional[ShiftAudio] = None, progress_callback: Optional[Callable[[int, int, str], None]] = None, objects_for: Optional[Callable[[int], Iterable[str]]] = None) -> None`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.plan_ripple_downstream`
+  - was: `(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float) -> MovePlan`
+  - now: `(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float, carry_gap: bool = False) -> MovePlan`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.plan_ripple_upstream`
+  - was: `(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float) -> MovePlan`
+  - now: `(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float, carry_gap: bool = False) -> MovePlan`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_to_glb`
-  - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = ()) -> str`
-  - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = ()) -> str`
-- `file_utils/mesh_convert/fbx_file.py::FbxFile.load`
-  - was: `(cls, path: str, decode_arrays: bool = False) -> 'FbxFile'`
-  - now: `(cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True) -> 'FbxFile'`
-- `img_utils/_img_utils.py::ImgUtils.create_mask`
-  - was: `(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255))`
-  - now: `(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)) -> Union[Image.Image, List[Image.Image]]`
-- `math_utils/_math_utils.py::MathUtils.clamp`
-  - was: `(n=0.0, minimum=0.0, maximum=1.0)`
-  - now: `(n=0.0, minimum=0.0, maximum=1.0) -> Union[float, List[float]]`
-- `math_utils/_math_utils.py::MathUtils.move_decimal_point`
-  - was: `(num, places)`
-  - now: `(num, places) -> Union[float, List[float]]`
-- `str_utils/_str_utils.py::StrUtils.set_case`
-  - was: `(string, case='title')`
-  - now: `(string, case='title') -> Union[str, List[str]]`
-- `str_utils/_str_utils.py::StrUtils.time_stamp`
-  - was: `(filepath, stamp='%m-%d-%Y  %H:%M')`
-  - now: `(filepath, stamp='%m-%d-%Y  %H:%M') -> Union[str, List[str]]`
-- `str_utils/_str_utils.py::StrUtils.truncate`
-  - was: `(string, length=75, mode='start', insert='..', head=None)`
-  - now: `(string, length=75, mode='start', insert='..', head=None) -> Union[str, List[str]]`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = ()) -> str`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), report: Optional[Dict[str, Any]] = None) -> str`
+- `geo_utils/shadow_horizon.py::ShadowHorizon.bake`
+  - was: `(cls, meshes, *, ground: float = 0.0, up: int = 1, radius: Optional[float] = None, height: Optional[float] = None, bins: int = DEFAULT_BINS, size: Sequence[int] = DEFAULT_SIZE, r_min: Optional[float] = None, r_max: Optional[float] = None, max_stretch: Optional[float] = None, footprint: int = DEFAULT_FOOTPRINT, threads: Optional[int] = None) -> HorizonMap`
+  - now: `(cls, meshes, *, ground: float = 0.0, up: int = 1, size: int = DEFAULT_SIZE, spans: int = DEFAULT_SPANS, bounds=None, padding: float = DEFAULT_PADDING) -> HeightFieldMap`
+- `geo_utils/shadow_horizon.py::ShadowHorizon.bake_adaptive`
+  - was: `(cls, meshes, *, threshold: float = 0.05, max_bins: int = 64, measure_samples: int = 6, **kwargs) -> Tuple[HorizonMap, Dict[str, float]]`
+  - now: `(cls, meshes, *, threshold: float = 0.05, max_size: int = 256, measure_samples: int = 6, **kwargs) -> Tuple[HeightFieldMap, Dict[str, float]]`
+- `geo_utils/shadow_horizon.py::ShadowHorizon.measure`
+  - was: `(cls, hmap: HorizonMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]`
+  - now: `(cls, hmap: HeightFieldMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]`
+- `vid_utils/_vid_utils.py::VidUtils.resolve_ffmpeg`
+  - was: `(cls, required: bool = True, auto_install: bool = False) -> Optional[str]`
+  - now: `(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = False) -> Optional[str]`

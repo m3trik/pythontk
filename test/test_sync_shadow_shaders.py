@@ -3,7 +3,7 @@
 """Guard: the generated horizon shader bodies must not drift from the source.
 
 ``pythontk/geo_utils/shadow_horizon.glsl`` is the one implementation of the
-coverage-aware horizon evaluation, and ``HorizonMap.alpha`` beside it is the
+height-field shadow march, and ``HeightFieldMap.alpha`` beside it is the
 numeric oracle it is written against. Maya and Blender assemble it at runtime
 through :meth:`ShadowHorizon.shader_source`; the WebXR viewer and Unity cannot
 (a browser and a Unity project have no Python), so they carry generated
@@ -53,8 +53,8 @@ class TestShaderSourceSurface(unittest.TestCase):
         self.assertEqual(hlsl[len("#define SH_HLSL 1\n") :], glsl)
         for text in (glsl, hlsl):
             self.assertIn("float ShAlpha(", text)
-            self.assertIn("float ShLayerAlpha(", text)
-            self.assertIn("ShGrid ShMakeGrid(", text)
+            self.assertIn("float ShMarch(", text)
+            self.assertIn("ShField ShMakeField(", text)
 
     def test_the_body_declares_no_uniform_and_samples_no_texture(self):
         """It is a body, not a shader: the host owns every binding.

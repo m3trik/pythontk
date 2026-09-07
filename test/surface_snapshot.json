@@ -323,6 +323,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.vid_utils._vid_utils",
+    "name": "ensure_ffmpeg",
+    "qualname": "VidUtils.ensure_ffmpeg",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "ensure_image",
     "qualname": "ImgUtils.ensure_image",
@@ -347,6 +354,13 @@
     "module": "pythontk.math_utils._math_utils",
     "name": "eval_expression",
     "qualname": "MathUtils.eval_expression",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "evaluate_hermite",
+    "qualname": "MathUtils.evaluate_hermite",
     "tier": "bare"
   },
   {
@@ -1080,6 +1094,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "rasterize_height_spans",
+    "qualname": "ImgUtils.rasterize_height_spans",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "rasterize_shadow",
     "qualname": "ImgUtils.rasterize_shadow",
     "tier": "bare"
@@ -1103,6 +1124,13 @@
     "module": "pythontk.file_utils._file_utils",
     "name": "read_json",
     "qualname": "FileUtils.read_json",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "reduce_samples",
+    "qualname": "MathUtils.reduce_samples",
     "tier": "bare"
   },
   {
@@ -1723,6 +1751,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.export_profile",
+    "name": "ExportProfile",
+    "qualname": "ExportProfile",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils.mesh_convert.export_verify",
     "name": "ExportVerifier",
     "qualname": "ExportVerifier",
@@ -1800,6 +1835,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.glb_pipeline",
+    "name": "GlbPipeline",
+    "qualname": "GlbPipeline",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils.mesh_convert.glb_reader",
     "name": "GlbReader",
     "qualname": "GlbReader",
@@ -1817,6 +1859,13 @@
     "module": "pythontk.core_utils.app_handoff",
     "name": "HandoffRequest",
     "qualname": "HandoffRequest",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.shadow_horizon",
+    "name": "HeightFieldMap",
+    "qualname": "HeightFieldMap",
     "tier": "root"
   },
   {
@@ -1872,7 +1921,7 @@
     "kind": "class",
     "module": "pythontk.geo_utils.shadow_horizon",
     "name": "HorizonMap",
-    "qualname": "HorizonMap",
+    "qualname": "HeightFieldMap",
     "tier": "root"
   },
   {
@@ -2237,13 +2286,6 @@
     "module": "pythontk.net_utils.preview.deliverer",
     "name": "PreviewDeliverer",
     "qualname": "PreviewDeliverer",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.net_utils.preview.deliverer",
-    "name": "PreviewPassContext",
-    "qualname": "PreviewPassContext",
     "tier": "root"
   },
   {

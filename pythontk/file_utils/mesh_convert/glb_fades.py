@@ -74,6 +74,39 @@ def _highlight_values(base: List[float], sample: float, color: Rgb) -> List[floa
     return [min(1.0, max(0.0, base[i] + color[i] * sample)) for i in range(3)]
 
 
+def _uncover_emissive(material: Dict[str, Any]) -> Optional[str]:
+    """Drop an emissive MAP from a highlighted copy, so the highlight can show.
+
+    glTF emission is ``emissiveFactor * emissiveTexture``. A mapped material
+    arrives with the factor at white -- the map IS its emission -- so an
+    additive channel over it clamps to no change, and the map would mask the
+    colour everywhere it is black besides. Measured on a production board
+    (StingrayPBS with an emissive map, 2026-09-05): the channel was written,
+    the file said "highlighted", and nothing on screen changed.
+
+    The copy this pass isolated glows from the highlight alone: the map goes,
+    and with it the strength that scaled it and the white factor that stood
+    for it. That is the one honest reading glTF allows -- "this map, plus a
+    uniform glow over it" is not something the format can say -- and it is
+    what the reference build shows (the whole board pulses its colour). A
+    material with a uniform emissive is untouched: the additive composition
+    above is exactly right for it.
+
+    Returns:
+        The material's name when a map was dropped, ``None`` otherwise.
+    """
+    if "emissiveTexture" not in material:
+        return None
+    del material["emissiveTexture"]
+    material["emissiveFactor"] = [0.0, 0.0, 0.0]
+    extensions = material.get("extensions")
+    if isinstance(extensions, dict):
+        extensions.pop("KHR_materials_emissive_strength", None)
+        if not extensions:
+            del material["extensions"]
+    return str(material.get("name") or "<unnamed>")
+
+
 @dataclass(frozen=True)
 class PointerChannel:
     """One animatable material property and how a published ramp reaches it.
@@ -87,6 +120,10 @@ class PointerChannel:
         blend: Whether an animated clone must switch to ``alphaMode BLEND``.
         color_key: Optional sibling track key carrying a per-node RGB.
         values: ``(base, sample, color) -> components`` for one key.
+        prepare: Readies an isolated material for the channel, before its base
+            is read -- returns a note naming what it changed, or ``None``.
+            Runs once per pointer target, guarded by the same "already
+            written" check as the channel itself.
     """
 
     name: str
@@ -96,6 +133,7 @@ class PointerChannel:
     blend: bool
     color_key: Optional[str]
     values: Callable[[List[float], float, Rgb], List[float]]
+    prepare: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None
 
     @property
     def components(self) -> int:
@@ -137,6 +175,7 @@ CHANNELS: Dict[str, PointerChannel] = {
         blend=False,
         color_key="highlight_color",
         values=_highlight_values,
+        prepare=_uncover_emissive,
     ),
 }
 
@@ -453,6 +492,7 @@ class GlbFades(_GlbFadesInternal):
         by_clip: Dict[str, List[Dict[str, Any]]] = {}
         animated_nodes: Set[str] = set()
         by_channel: Dict[str, int] = {}
+        prepared: Dict[str, List[str]] = {}  # channel -> notes from ``prepare``
         for name, entries in resolved.items():
             # One isolation per node for every channel it carries; BLEND only
             # when one of those channels is alpha.
@@ -475,6 +515,10 @@ class GlbFades(_GlbFadesInternal):
                         # stack a second channel on the same property, which is
                         # undefined; the file's own channel is the statement.
                         continue
+                    if spec.prepare is not None:
+                        note = spec.prepare(gltf["materials"][material])
+                        if note:
+                            prepared.setdefault(spec.name, []).append(note)
                     base = spec.base(gltf, material)
                     for clip, (cut, samples) in per_clip.items():
                         flat = [
@@ -504,6 +548,16 @@ class GlbFades(_GlbFadesInternal):
         ]
         if not planned:
             return None
+        for channel_name, notes in prepared.items():
+            logger.info(
+                "Pointer channels: %s dropped the emissive map from %d "
+                "highlighted material(s) (%s) -- glTF emission is factor x map, "
+                "so the map would have masked the highlight; the highlighted "
+                "copy glows from the channel alone.",
+                channel_name,
+                len(notes),
+                ", ".join(sorted(notes)),
+            )
 
         added = MeshConvert._append_bin_views(edit, payloads)
         if not added:

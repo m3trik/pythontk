@@ -6965,6 +6965,254 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
         )
 
 
+class TestFbxToGlbReport(unittest.TestCase):
+    """`fbx_to_glb(report=)`: the chain reports what it did, and sweeps for itself.
+
+    The converter is stubbed (a pre-built GLB stands in for FBX2glTF's output)
+    and everything after it is real: the one edit session the preview and the
+    Scene Exporters both get through `GlbPipeline`, so what the report says is
+    what the panel summarises.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_report_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _convert(self, converted, **kwargs):
+        def _run(cmd, **kw):
+            shutil.copyfile(converted, cmd[cmd.index("-o") + 1] + ".glb")
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        src = os.path.join(self.tmp, "in.fbx")
+        with open(src, "wb") as fh:
+            fh.write(b"fbx")
+        with (
+            unittest.mock.patch.object(
+                MeshConvert, "resolve_binary", return_value="FBX2glTF"
+            ),
+            unittest.mock.patch("subprocess.run", side_effect=_run),
+        ):
+            return MeshConvert.fbx_to_glb(src, overwrite=True, prompt=False, **kwargs)
+
+    def _lit_glb(self, manifest, name="lit.glb"):
+        """A one-mesh GLB carrying *manifest* the way FBX2glTF transcribes it."""
+        carrier = {
+            "fromFBX": {
+                "userProperties": {
+                    "lightmap_metadata": {
+                        "type": "eFbxString",
+                        "value": json.dumps(manifest),
+                    }
+                }
+            }
+        }
+        gltf = {
+            "asset": {"version": "2.0"},
+            "nodes": [
+                {"name": "room", "mesh": 0},
+                {"name": "data_export", "extras": carrier},
+            ],
+            "meshes": [
+                {
+                    "primitives": [
+                        {
+                            "attributes": {
+                                "POSITION": 0,
+                                "TEXCOORD_0": 1,
+                                "TEXCOORD_1": 2,
+                            },
+                            "material": 0,
+                        }
+                    ]
+                }
+            ],
+            "materials": [{"name": "roomMat"}],
+        }
+        return _write_glb_file(os.path.join(self.tmp, name), gltf)
+
+    def _manifest(self, *names):
+        return {
+            "version": 1,
+            "dir": self.tmp,  # the hint: exists, holds no map
+            "objects": [
+                {
+                    "name": name,
+                    "map": "atlas_LightMap.exr",
+                    "uvIndex": 1,
+                    "intensity": 1.0,
+                    "scaleOffset": [1, 1, 0, 0],
+                }
+                for name in names
+            ],
+        }
+
+    def test_the_sidecar_outcome_is_the_one_recorded_in_the_file(self):
+        envelope = MeshConvert.build_scene_sidecar(
+            {"emissive": {"roomMat": {"color": [1, 0, 0]}}},
+            source={"application": "test", "version": "0"},
+            asset="in.fbx",
+        )
+        report = {}
+        out = self._convert(self._lit_glb({}), sidecar=envelope, report=report)
+        applied = MeshConvert._read_glb(out).gltf["extras"][
+            MeshConvert.SIDECAR_APPLIED_KEY
+        ]
+        self.assertEqual(report["sidecar"], applied)
+        self.assertEqual(report["sidecar"], {"emissive": "1 of 1"})
+
+    def test_a_map_found_nowhere_is_reported_unbound(self):
+        report = {}
+        self._convert(self._lit_glb(self._manifest("room")), report=report)
+        self.assertEqual(
+            report["lightmaps"],
+            {"expected": 1, "bound": 0, "unbound": ["room"], "out_of_scope": 0},
+        )
+
+    def test_the_report_counts_only_objects_this_glb_actually_carries(self):
+        """The bake manifest is a SCENE record; an export is a subset. Counting
+        the whole manifest against a selection-scoped GLB reported every object
+        the artist did not select as UNLIT -- crying wolf exactly when the file
+        is correct. An object with no node here is out of scope, not unbound."""
+        report = {}
+        self._convert(
+            self._lit_glb(self._manifest("room", "hallway", "stairwell")), report=report
+        )
+        self.assertEqual(
+            report["lightmaps"],
+            {"expected": 1, "bound": 0, "unbound": ["room"], "out_of_scope": 2},
+        )
+
+    def test_no_manifest_reports_nothing_expected(self):
+        report = {}
+        self._convert(self._lit_glb({}), report=report)
+        self.assertEqual(report["lightmaps"]["expected"], 0)
+        self.assertNotIn("sidecar", report, "no envelope offered, nothing reported")
+
+    def test_lightmap_report_counts_only_what_this_file_carries(self):
+        coverage = {
+            "present": ["room", "hall"],
+            "ambiguous": ["stair"],
+            "absent": ["prop"],
+        }
+        self.assertEqual(
+            MeshConvert.lightmap_report(coverage, [{"object": "room"}]),
+            {
+                "expected": 3,
+                "bound": 1,
+                "unbound": ["hall", "stair"],
+                "out_of_scope": 1,
+            },
+        )
+
+    def test_no_report_asked_for_means_no_coverage_walk(self):
+        with unittest.mock.patch.object(
+            MeshConvert,
+            "lightmap_manifest_coverage",
+            side_effect=AssertionError("walked"),
+        ):
+            self._convert(self._lit_glb(self._manifest("room")))
+
+    def test_images_no_material_samples_are_swept_inside_the_chain(self):
+        """Maya's IBL maps (`diffuse_cube` / `specular_cube` / `ibl_brdf_lut`)
+        ride every embedded-media export and FBX2glTF re-embeds them; glTF has
+        no slot for them. `apply_scene_sidecar` swept them at its tail, so a
+        conversion offered NO envelope shipped the dead payload and paid the
+        texture pass to compress it. The sweep is the chain's own now."""
+        pixel = "data:image/png;base64,iVBORw0KGgo="
+        images = [{"name": "Albedo", "uri": pixel}] + [
+            {"name": name, "uri": pixel}
+            for name in ("diffuse_cube", "specular_cube", "ibl_brdf_lut")
+        ]
+        gltf = {
+            "asset": {"version": "2.0"},
+            "images": images,
+            "textures": [{"source": i} for i in range(len(images))],
+            "materials": [
+                {
+                    "name": "m",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                }
+            ],
+        }
+        converted = _write_glb_file(os.path.join(self.tmp, "env.glb"), gltf)
+        out = self._convert(converted)
+        self.assertEqual(
+            [i.get("name") for i in MeshConvert._read_glb(out).gltf["images"]],
+            ["Albedo"],
+        )
+
+    def test_a_highlighted_materials_orphaned_emissive_map_is_swept(self):
+        """The highlight row drops the emissive map from the highlighted copy
+        (`glb_fades._uncover_emissive`); when that material was the map's only
+        user the image is dead payload, and the chain sweeps it after the fades
+        pass rather than paying the texture pass to compress it."""
+        pixel = "data:image/png;base64,iVBORw0KGgo="
+        props = {
+            "fbx_takes": [{"name": "Shot_1", "start": 7, "end": 100}],
+            "shot_metadata": {"version": 1, "fps": 30.0},
+            MeshConvert.VISIBILITY_TRACKS_KEY: {
+                "version": 1,
+                "fps": 30.0,
+                "clip_span": {"Shot_1": [8, 23], "*": [8, 100]},
+                "tracks": [
+                    {
+                        "node": "HL",
+                        "highlight": [[8, 0.0], [23, 1.0]],
+                        "highlight_color": [0.2, 0.5, 1.0],
+                    }
+                ],
+            },
+        }
+        gltf = {
+            "asset": {"version": "2.0"},
+            "images": [
+                {"name": "Albedo", "uri": pixel},
+                {"name": "Glow", "uri": pixel},
+            ],
+            "textures": [{"source": 0}, {"source": 1}],
+            "materials": [
+                {
+                    "name": "m",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                    "emissiveTexture": {"index": 1},
+                    "emissiveFactor": [1.0, 1.0, 1.0],
+                }
+            ],
+            "meshes": [{"primitives": [{"attributes": {}, "material": 0}]}],
+            "nodes": [
+                {"name": "HL", "mesh": 0},
+                {
+                    "name": "data_export",
+                    "extras": {
+                        "fromFBX": {
+                            "userProperties": {
+                                k: {"type": "eFbxString", "value": json.dumps(v)}
+                                for k, v in props.items()
+                            }
+                        }
+                    },
+                },
+            ],
+            "accessors": [],
+            "animations": [
+                {
+                    "name": "Shot_1",
+                    "samplers": [],
+                    "channels": [],
+                    "extras": {"zero_frame": 7},
+                }
+            ],
+            "buffers": [{"byteLength": 4}],
+        }
+        converted = _write_glb_file(
+            os.path.join(self.tmp, "hl.glb"), gltf, bin_chunk=b"\x00" * 4
+        )
+        out = self._convert(converted)
+        read = MeshConvert._read_glb(out).gltf
+        self.assertNotIn("emissiveTexture", read["materials"][0])
+        self.assertEqual([i.get("name") for i in read["images"]], ["Albedo"])
+
+
 class TestApplyGlbFades(unittest.TestCase):
     """An authored alpha ramp, written so the file fades without being told to.
 
@@ -7335,9 +7583,11 @@ class TestApplyGlbHighlight(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     # ------------------------------------------------------------------ helpers
-    def _carrier(self, tracks):
+    def _carrier(self, tracks, takes=None):
         props = {
-            "fbx_takes": [{"name": "Shot_1", "start": 7, "end": 100}],
+            "fbx_takes": (
+                [{"name": "Shot_1", "start": 7, "end": 100}] if takes is None else takes
+            ),
             "shot_metadata": {"version": 1, "fps": self.FPS},
             MeshConvert.VISIBILITY_TRACKS_KEY: {
                 "version": 1,
@@ -7358,29 +7608,47 @@ class TestApplyGlbHighlight(unittest.TestCase):
             },
         }
 
-    def _glb(self, tracks, nodes, materials, meshes, name="highlight.glb"):
+    def _glb(
+        self,
+        tracks,
+        nodes,
+        materials,
+        meshes,
+        name="highlight.glb",
+        animations=None,
+        takes=None,
+    ):
+        if animations is None:
+            animations = [
+                {
+                    "name": "Shot_1",
+                    "samplers": [],
+                    "channels": [],
+                    "extras": {"zero_frame": 7},
+                }
+            ]
         return _write_glb_file(
             os.path.join(self.tmp, name),
             {
                 "asset": {"version": "2.0"},
-                "nodes": list(nodes) + [self._carrier(tracks)],
+                "nodes": list(nodes) + [self._carrier(tracks, takes=takes)],
                 "meshes": meshes,
                 "materials": materials,
                 "accessors": [],
-                "animations": [
-                    {
-                        "name": "Shot_1",
-                        "samplers": [],
-                        "channels": [],
-                        "extras": {"zero_frame": 7},
-                    }
-                ],
+                "animations": animations,
                 "buffers": [{"byteLength": 4}],
             },
             bin_chunk=b"\x00" * 4,
         )
 
-    def _two_objects(self, hl_visibility=False, hl_emissive=None):
+    def _two_objects(
+        self,
+        hl_visibility=False,
+        hl_emissive=None,
+        hl_emissive_map=False,
+        animations=None,
+        takes=None,
+    ):
         """FADER (fades) and HL (highlights), each on its own material."""
         hl = {"node": "HL", "highlight": self.PULSE, "highlight_color": self.BLUE}
         if hl_visibility:
@@ -7388,6 +7656,13 @@ class TestApplyGlbHighlight(unittest.TestCase):
         glow = {"name": "GLOW", "pbrMetallicRoughness": {}}
         if hl_emissive is not None:
             glow["emissiveFactor"] = hl_emissive
+        if hl_emissive_map:
+            # The way a mapped emission arrives: the map at full, its
+            # authored intensity carried by the strength extension.
+            glow["emissiveTexture"] = {"index": 0}
+            glow["extensions"] = {
+                "KHR_materials_emissive_strength": {"emissiveStrength": 3.0}
+            }
         return self._glb(
             [
                 {
@@ -7411,6 +7686,8 @@ class TestApplyGlbHighlight(unittest.TestCase):
                 {"primitives": [{"attributes": {}, "material": 0}]},
                 {"primitives": [{"attributes": {}, "material": 1}]},
             ],
+            animations=animations,
+            takes=takes,
         )
 
     def _pointer_channels(self, path, clip="Shot_1"):
@@ -7450,6 +7727,49 @@ class TestApplyGlbHighlight(unittest.TestCase):
         return alpha, emissive
 
     # ------------------------------------------------------------------ tests
+    def test_a_file_with_no_animations_gets_a_clip_for_its_channels(self):
+        """The WebXR preview exports with animation OFF, so FBX2glTF writes no
+        clip at all -- and a highlight-only prop then had nothing to ride on
+        (measured 2026-09-05: no highlight in the preview). The passes must
+        synthesize the declared take's clip, and share it: the gate first, the
+        fades on the same clip, never a second one."""
+        path = self._two_objects(animations=[])
+        MeshConvert.apply_glb_visibility(path)
+        summary = MeshConvert.apply_glb_fades(path)
+
+        self.assertEqual(summary["nodes"], 2)
+        with MeshConvert.open_glb(path) as edit:
+            names = [a["name"] for a in edit.gltf["animations"]]
+        self.assertEqual(names, ["Shot_1"], "one clip, named after the take")
+        alpha, emissive = self._by_kind(self._pointer_channels(path))
+        self.assertEqual((len(alpha), len(emissive)), (1, 1))
+        # Placed the way the converter's own hollow stack is: t=0 is the
+        # take's first AUTHORED key (clip_span start, frame 8), not the take
+        # window's start (frame 7) -- animation on or off, the same instant.
+        # (The channel's very first key is the hold the writer extends back to
+        # the window start, one frame earlier.)
+        _p, times, _v = emissive[0]
+        self.assertAlmostEqual(min(t for t in times if t >= 0), 0.0, places=6)
+        self.assertAlmostEqual(times[0], -1.0 / self.FPS, places=5)
+
+    def test_a_file_with_neither_animations_nor_takes_gets_the_default_clip(self):
+        """No shots authored either: the clip spans the ramps and is named the
+        way the converter names Maya's whole-timeline stack."""
+        path = self._two_objects(animations=[], takes=[])
+        summary = MeshConvert.apply_glb_fades(path)
+
+        self.assertEqual(summary["nodes"], 2)
+        with MeshConvert.open_glb(path) as edit:
+            names = [a["name"] for a in edit.gltf["animations"]]
+        self.assertEqual(names, [MeshConvert.DEFAULT_CLIP_NAME])
+        _alpha, emissive = self._by_kind(
+            self._pointer_channels(path, clip=MeshConvert.DEFAULT_CLIP_NAME)
+        )
+        self.assertEqual(len(emissive), 1)
+        self.assertAlmostEqual(
+            emissive[0][1][0], 0.0, places=6, msg="ramps start at t=0"
+        )
+
     def test_a_highlight_ramp_becomes_an_animated_emissive_factor(self):
         path = self._two_objects()
         summary = MeshConvert.apply_glb_fades(path)
@@ -7470,6 +7790,30 @@ class TestApplyGlbHighlight(unittest.TestCase):
         _p, _t, values = emissive[0]
         self.assertEqual([round(c, 6) for c in values[1]], [0.1, 0.0, 0.0])
         self.assertEqual([round(c, 6) for c in values[-1]], [0.3, 0.5, 1.0])
+
+    def test_a_highlight_shows_through_an_emissive_map(self):
+        """glTF emission is ``emissiveFactor * emissiveTexture``. A mapped
+        material arrives with the factor at white (the map IS its emission), so
+        an additive channel over it clamps to no change -- and the map would
+        mask the colour everywhere it is black besides. Measured on a
+        production board (StingrayPBS with an emissive map, 2026-09-05): the
+        channel was written, and nothing highlighted. The highlighted copy
+        glows from the highlight alone: the map goes, and with it the strength
+        that scaled it and the white factor that stood for it."""
+        path = self._two_objects(hl_emissive=[1.0, 1.0, 1.0], hl_emissive_map=True)
+        MeshConvert.apply_glb_fades(path)
+        _alpha, emissive = self._by_kind(self._pointer_channels(path))
+        self.assertEqual(len(emissive), 1)
+        pointer, _times, values = emissive[0]
+        self.assertEqual([round(c, 6) for c in values[1]], [0.0, 0.0, 0.0])
+        self.assertEqual([round(c, 6) for c in values[-1]], self.BLUE)
+        with MeshConvert.open_glb(path) as edit:
+            clone = edit.gltf["materials"][int(pointer.split("/")[2])]
+        self.assertNotIn("emissiveTexture", clone)
+        self.assertNotIn(
+            "KHR_materials_emissive_strength", clone.get("extensions") or {}
+        )
+        self.assertEqual(clone.get("emissiveFactor"), [0.0, 0.0, 0.0])
 
     def test_a_highlight_only_node_needs_no_visibility_track(self):
         """Highlighted but never hidden is the common case, and it must ship."""

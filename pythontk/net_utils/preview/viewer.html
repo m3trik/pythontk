@@ -1267,10 +1267,23 @@ async function loadScripts(urls) {
 let seenVersion = -1;
 let failedVersion = -1;
 let failCount = 0;
+// Fingerprint of THIS page as the server published it. The poll swaps the
+// model but never the script running it, so when the server starts naming a
+// different page the one in this tab is stale and reloads itself -- a viewer
+// fix otherwise reaches a session left open only via F5.
+let viewerStamp = null;
 
 async function poll() {
   try {
     const manifest = await (await fetch('manifest.json', { cache: 'no-store' })).json();
+    if (manifest.viewer) {
+      if (viewerStamp !== null && manifest.viewer !== viewerStamp) {
+        setStatus('viewer updated - reloading…');
+        location.reload();
+        return;
+      }
+      viewerStamp = manifest.viewer;
+    }
     if (manifest.title) el.title.textContent = manifest.title;
     // Ahead of the version check: the active set is decided per push, and the
     // FIRST poll happens before anything is published at all — gated behind

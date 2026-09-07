@@ -5,7 +5,7 @@
 Kept for one release so ``from pythontk.net_utils.preview_server import X``
 keeps resolving, with a warning naming the new home. The public names have
 always been on the root (``ptk.PreviewServer`` / ``ptk.PreviewDeliverer`` /
-``ptk.PreviewBridge`` / ``ptk.PreviewPassContext``) and are unaffected.
+``ptk.PreviewBridge``) and are unaffected.
 """
 
 import importlib
@@ -16,7 +16,6 @@ _HOMES = {
     "VIEWER_CLOSED_PATH": "server",
     "SETTINGS_PATH": "server",
     "PreviewDeliverer": "deliverer",
-    "PreviewPassContext": "deliverer",
     "PreviewBridge": "bridge",
 }
 

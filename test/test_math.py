@@ -14,10 +14,11 @@ Run with:
     python -m pytest test_math.py -v
     python test_math.py
 """
+
 import math
 import unittest
 
-from pythontk import MathUtils
+from pythontk import MathUtils, IterUtils
 
 from conftest import BaseTestCase
 
@@ -853,7 +854,7 @@ class MathTest(BaseTestCase):
         knots = MathUtils.bspline_clamped_knots(stations, degree)
         self.assertEqual(len(knots), len(stations) + degree + 1)
         self.assertEqual(knots[: degree + 1], [0.0] * (degree + 1))
-        self.assertEqual(knots[-(degree + 1):], [6.0] * (degree + 1))
+        self.assertEqual(knots[-(degree + 1) :], [6.0] * (degree + 1))
         self.assertEqual(sorted(knots), knots)  # non-decreasing
 
     def test_bspline_basis_partition_of_unity_and_end_pinning(self):
@@ -960,11 +961,6 @@ class MathTest(BaseTestCase):
         self.assertAlmostEqual(
             MathUtils.point_segment_distance((3, 4, 0), (0, 0, 0), (0, 0, 0)), 5.0
         )
-
-
-
-
-
 
     # -------------------------------------------------------------------------
     # Calculator engine — eval_expression / convert_length_unit
@@ -1115,8 +1111,12 @@ class MathTest(BaseTestCase):
     def test_get_angle_from_two_vectors_identical_no_domain_error(self):
         # Regression: dot/(len*len) rounds to 1.0000000000000002 for identical
         # vectors, tripping math.acos domain error before the clamp.
-        self.assertEqual(MathUtils.get_angle_from_two_vectors((1, 1, 1), (1, 1, 1)), 0.0)
-        self.assertEqual(MathUtils.get_angle_from_two_vectors((2, 3, 4), (2, 3, 4)), 0.0)
+        self.assertEqual(
+            MathUtils.get_angle_from_two_vectors((1, 1, 1), (1, 1, 1)), 0.0
+        )
+        self.assertEqual(
+            MathUtils.get_angle_from_two_vectors((2, 3, 4), (2, 3, 4)), 0.0
+        )
         self.assertAlmostEqual(
             MathUtils.get_angle_from_two_vectors((1, 2, 3), (1, 1, -1)),
             1.5707963267948966,
@@ -1130,7 +1130,9 @@ class MathTest(BaseTestCase):
             0.0,
         )
         self.assertAlmostEqual(
-            MathUtils.get_angle_from_three_points((1, 1, 1), (-1, 2, 3), (1, 4, -3), True),
+            MathUtils.get_angle_from_three_points(
+                (1, 1, 1), (-1, 2, 3), (1, 4, -3), True
+            ),
             45.29,
             places=2,
         )
@@ -1237,12 +1239,12 @@ class MathTest(BaseTestCase):
         margin = 0.002
 
         box, forward = start, []
-        while (off := MathUtils.next_clear_offset(box, [a, b], 1, 1, margin=margin)):
+        while off := MathUtils.next_clear_offset(box, [a, b], 1, 1, margin=margin):
             forward.append(off)
             box = (box[0], box[1] + off, box[2], box[3] + off)
         self.assertEqual(len(forward), 2)
 
-        while (off := MathUtils.next_clear_offset(box, [a, b], 1, -1, margin=margin)):
+        while off := MathUtils.next_clear_offset(box, [a, b], 1, -1, margin=margin):
             box = (box[0], box[1] + off, box[2], box[3] + off)
         # Back to the first landing spot (not the start — nothing lies below it).
         self.assertAlmostEqual(box[3], a[1] - margin)
@@ -1449,6 +1451,85 @@ class MathTest(BaseTestCase):
         m_in, m_out = MathUtils.fit_hermite_slopes(times, values, [0, 1, 2])
         self.assertAlmostEqual(m_out[1], 2.0, places=6)
         self.assertAlmostEqual(m_out[0], 2.0, places=6)
+
+    def test_reduce_samples_refines_where_one_cubic_cannot_hold_the_shape(self):
+        """A monotone rise with shoulders has NO interior extremum, so extrema
+        alone hand one cubic 300 samples it cannot trace (4% of amplitude);
+        the refinement lands inside 1% with a handful of extra keys."""
+        import math
+
+        times = list(range(300))
+        values = [0.35 * t + 3.0 * math.sin(t / 10.0) for t in times]
+        amplitude = max(values) - min(values)
+        extrema = list(IterUtils.find_extrema_indices(values, 1e-5))
+        in_s, out_s = MathUtils.fit_hermite_slopes(
+            times, values, extrema, flat_tolerance=1e-5
+        )
+        raw_error = max(
+            abs(
+                MathUtils.evaluate_hermite(times, values, extrema, in_s, out_s) - values
+            )
+        )
+        self.assertGreater(
+            raw_error, 0.03 * amplitude, "fixture: extrema alone must miss"
+        )
+
+        keep, in_s, out_s = MathUtils.reduce_samples(times, values, 1e-5)
+        error = max(
+            abs(MathUtils.evaluate_hermite(times, values, keep, in_s, out_s) - values)
+        )
+        self.assertLessEqual(error, 0.01 * amplitude + 1e-9)
+        self.assertLess(len(keep), 0.15 * len(times), f"{len(keep)} keys is not sparse")
+        self.assertEqual(keep, sorted(set(keep)))
+        self.assertEqual(len(in_s), len(keep))
+        self.assertEqual(len(out_s), len(keep))
+
+    def test_reduce_samples_bound_and_disable(self):
+        import math
+
+        times = list(range(200))
+        values = [10.0 * math.sin(2 * math.pi * t / 100) for t in times]
+        extrema = list(IterUtils.find_extrema_indices(values, 1e-5))
+
+        keep, _i, _o = MathUtils.reduce_samples(times, values, 1e-5, max_error=0.0)
+        self.assertEqual(keep, extrema, "max_error=0 must keep the extrema alone")
+
+        keep, in_s, out_s = MathUtils.reduce_samples(
+            times, values, 1e-5, max_error=0.05
+        )
+        error = max(
+            abs(MathUtils.evaluate_hermite(times, values, keep, in_s, out_s) - values)
+        )
+        self.assertLessEqual(error, 0.05 + 1e-9)
+        self.assertLess(
+            len(keep), 5 * len(extrema), "a sine should need few extra keys"
+        )
+
+        flat = [3.0] * 50
+        keep, in_s, out_s = MathUtils.reduce_samples(list(range(50)), flat, 1e-5)
+        self.assertEqual(keep, [0, 49])
+        self.assertEqual(in_s, [0.0, 0.0])
+        self.assertEqual(out_s, [0.0, 0.0])
+
+        self.assertEqual(MathUtils.reduce_samples([0, 1], [1.0, 2.0], 1e-5)[0], [0, 1])
+
+    def test_evaluate_hermite_reproduces_keys_and_holds_outside_the_range(self):
+        times = [0.0, 10.0, 20.0]
+        values = [0.0, 5.0, -2.0]
+        keep = [0, 1, 2]
+        in_s, out_s = MathUtils.fit_hermite_slopes(times, values, keep)
+        at_keys = MathUtils.evaluate_hermite(times, values, keep, in_s, out_s)
+        for got, want in zip(at_keys, values):
+            self.assertAlmostEqual(got, want, places=9)
+        outside = MathUtils.evaluate_hermite(
+            times, values, keep, in_s, out_s, at=[-5.0, 25.0]
+        )
+        self.assertAlmostEqual(outside[0], 0.0, places=9)
+        self.assertAlmostEqual(outside[1], -2.0, places=9)
+        single = MathUtils.evaluate_hermite(
+            times, values, [1], [0.0], [0.0], at=[0.0, 20.0]
+        )
+        self.assertEqual(list(single), [5.0, 5.0])
 
     def test_fit_hermite_slopes_degenerate(self):
         self.assertEqual(MathUtils.fit_hermite_slopes([], [], []), ([], []))

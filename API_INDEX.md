@@ -239,6 +239,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `run_dialog(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int`
 - `main(argv=None) -> int`
 
+### `core_utils/export_profile.py` — The Scene Exporter panels' export-button contract, written once.
+- `class ExportProfile`
+  - methods: legal_name, widget_key, value_method, run_config, read_values
+
 ### `core_utils/git.py`
 - `class Git`
   - methods: execute, run, checkout, pull, push, merge, fetch, status, current_branch
@@ -403,7 +407,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, apply_glb_fades, prune_glb_animations, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+  - methods: conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, apply_glb_fades, prune_glb_animations, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
@@ -429,6 +433,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: components, accessor_type, base
 - `class GlbFades(_GlbFadesInternal)`
   - methods: apply, apply_channels
+
+### `file_utils/mesh_convert/glb_pipeline.py` — FBX -> GLB: the one build every GLB deliverable goes through.
+- `class GlbPipeline(LoggingMixin)`
+  - methods: envelope, build
 
 ### `file_utils/mesh_convert/glb_reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - `class GlbReader(_GlbReaderInternal)`
@@ -487,11 +495,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RailSurface`
   - methods: grid_points
 
-### `geo_utils/shadow_horizon.py` — Coverage-aware horizon maps: a ground shadow that follows the light at runtime.
-- `class HorizonMap(NamedTuple)`
-  - methods: encode_angle, decode_cot, layers, tiles, layout, tile_index, tile_rects, to_rgba, from_rgba, texel_positions, uv, taps, mask_bits, alpha
+### `geo_utils/shadow_horizon.py` — Height-field shadow maps: a ground shadow that follows the light at runtime.
+- `class HeightFieldMap(NamedTuple)`
+  - methods: levels, tiles, pixel, aspect, hull, pyramid, to_rgba, from_rgba, alpha
 - `class ShadowHorizon`
-  - methods: shader_source, layout, range_for, bake, measure, bake_adaptive
+  - methods: shader_source, record, bake, measure, bake_adaptive
 
 ### `geo_utils/shadow_projection.py` — Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC.
 - `class ShadowModel(NamedTuple)`
@@ -513,7 +521,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: effective_mode, dropped_channels, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_height_spans, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -541,7 +549,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `math_utils/_math_utils.py`
 - `class MathUtils(HelpMixin)`
-  - methods: eval_expression, convert_length_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, next_clear_offset, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance, fit_hermite_slopes
+  - methods: eval_expression, convert_length_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, next_clear_offset, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance, fit_hermite_slopes, evaluate_hermite, reduce_samples
 
 ### `math_utils/noise.py`
 - `class BandLimitedNoise`
@@ -568,8 +576,6 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: lightmap_search_dirs, params_defaults, url, scope_objects, push, publish_file, sidecar_summary, lightmap_summary, stop
 
 ### `net_utils/preview/deliverer.py` — FBX -> GLB -> publish: the hand-off strategy behind every live preview.
-- `class PreviewPassContext`
-  - methods: logger, sidecar, lightmap_search_dirs
 - `class PreviewDeliverer(Deliverer)`
   - methods: ensure_server, publish, deliver
 
@@ -621,7 +627,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `vid_utils/_vid_utils.py`
 - `class VidUtils(HelpMixin)`
-  - methods: get_frame_rate, resolve_ffmpeg, get_video_frame_rate, get_sequence_start_number, compress_video
+  - methods: get_frame_rate, resolve_ffmpeg, ensure_ffmpeg, get_video_frame_rate, get_sequence_start_number, compress_video
 
 ### `vid_utils/frame_extractor.py` — Extract still frames from a video file via OpenCV.
 - `class FrameExtractor`

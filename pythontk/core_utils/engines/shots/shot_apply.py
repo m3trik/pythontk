@@ -20,7 +20,7 @@ already-parked content into a second shift.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 from pythontk.core_utils.engines.shots.shot_plan import MovePlan, _INF, ShotPlanner
@@ -29,7 +29,8 @@ from pythontk.core_utils.engines.shots.shot_plan import MovePlan, _INF, ShotPlan
 # ``move_keys`` protocol:
 #     move_keys(objects, env_lo, env_hi, delta, over=False,
 #               lo_open=False, hi_closed=False) -> None
-# Shift the keys of *objects* whose time falls in the envelope
+# Shift the keys of *objects* -- the shot's own list, or whatever
+# ``objects_for`` names for it -- whose time falls in the envelope
 # ``[env_lo, env_hi)`` by *delta* frames.  ``lo_open`` / ``hi_closed`` reshape
 # the bounds for a SHARED sample between contiguous shots — the fencepost rule
 # in ``shot_plan._envelope_for``; a writer MUST honour them or two shots claim
@@ -66,6 +67,7 @@ class ShotApply:
         move_keys: Optional[MoveKeys] = None,
         shift_audio: Optional[ShiftAudio] = None,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        objects_for: Optional[Callable[[int], Iterable[str]]] = None,
     ) -> None:
         """Execute ``plan`` against ``store`` (and, via ``move_keys``, a scene).
 
@@ -85,12 +87,23 @@ class ShotApply:
                 no audio shifting.
             progress_callback: Optional ``(current, total, message)`` reporter,
                 invoked once per shot plus a final "Done".
+            objects_for: ``shot_id -> objects`` -- what ``move_keys`` moves
+                inside that shot's envelope.  ``None`` moves the shot's own
+                ``objects`` list.  A host whose envelopes partition the
+                timeline hands over its whole keyed CONTENT here, so a shot
+                carries everything keyed inside it without that having to
+                be written into its member list first: membership is a
+                label the host decides on its own terms (motion, authorship),
+                the envelope is the contract for what moves.
         """
         if not plan.sequence and not plan.parked:
             return
 
         total = len(plan.sequence) + len(plan.parked)
         shots_by_id = {s.shot_id: s for s in store.shots}
+
+        def _objects(shot):
+            return shot.objects if objects_for is None else objects_for(shot.shot_id)
 
         # ---- bounds-only path (no scene writer) ------------------------------
         if move_keys is None:
@@ -140,7 +153,7 @@ class ShotApply:
             if shot is None:
                 continue
             move_keys(
-                shot.objects,
+                _objects(shot),
                 move.env_start,
                 _capped(move.env_end),
                 park,
@@ -161,7 +174,7 @@ class ShotApply:
             # over=True: see the MoveKeys protocol note — unowned keys on a
             # shared curve are not in the plan and would clamp this move.
             move_keys(
-                shot.objects,
+                _objects(shot),
                 move.env_start,
                 _capped(move.env_end),
                 move.delta,
@@ -184,7 +197,7 @@ class ShotApply:
             if shot is None:
                 continue
             move_keys(
-                shot.objects,
+                _objects(shot),
                 move.env_start + park,
                 _capped(move.env_end) + park,
                 move.delta - park,
