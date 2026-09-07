@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from pythontk.core_utils.app_handoff import HandoffBridge, Payload
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
-from pythontk.net_utils.preview.server import _mesh_convert
 
 
 class PreviewBridge(HandoffBridge):
@@ -99,36 +98,33 @@ class PreviewBridge(HandoffBridge):
     def _attach_sidecar(
         self,
         payload: Payload,
-        sections: Dict[str, Any],
+        read_sections: Callable[[], Optional[Dict[str, Any]]],
         source: Dict[str, str],
     ) -> Payload:
-        """Attach the scene-sidecar envelope for *sections* to *payload*.
+        """Attach the scene-sidecar envelope for this push to *payload*.
 
-        The envelope itself is built by the schema owner,
-        :meth:`MeshConvert.build_scene_sidecar` -- this method adds only what
-        is bridge workflow: riding it on ``Payload.extras`` for the deliverer,
-        which embeds it in the GLB's own ``extras``. That embedded copy is the
-        handoff, and the only one: a `.scene.json` written beside the payload
-        was a second carrier of the same envelope that nothing ever read back,
-        and a copy no reader consults is a copy free to disagree.
+        The envelope is built by :meth:`GlbPipeline.envelope` -- the one path
+        every producer of a GLB (this bridge, the Scene Exporters) takes, so
+        its schema, its log line and its failure policy cannot fork -- and
+        rides on ``Payload.extras`` for the deliverer, which hands it to the
+        build. That embedded copy is the handoff, and the only one: a
+        `.scene.json` written beside the payload was a second carrier of the
+        same envelope that nothing ever read back.
 
-        Empty *sections* still attach (and write) an envelope whose
-        ``sections`` is ``{}``. The producer only calls this when the sidecar
-        param is on, so key presence in ``Payload.extras`` is the "was it
-        requested" signal :meth:`sidecar_summary` reads -- skipping the attach
-        on an empty scene collapsed *requested, nothing to carry* into
-        *switched off*, and the panel told a user whose checkbox was on that
-        the sidecar was off.
+        *read_sections* is the host's scene-state read, called here so a read
+        that raises degrades to an envelope with no sections rather than
+        failing the push. The producer only calls this when the sidecar param
+        is on, so key presence in ``Payload.extras`` is the "was it requested"
+        signal :meth:`sidecar_summary` reads -- an empty scene still attaches
+        (and writes) an envelope whose ``sections`` is ``{}``.
         """
-        envelope = _mesh_convert().build_scene_sidecar(
-            sections,
+        from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
+
+        payload.extras["scene_sidecar"] = GlbPipeline.envelope(
+            read_sections,
             source=source,
             asset=os.path.basename(payload.primary) if payload.primary else None,
-        )
-        payload.extras["scene_sidecar"] = envelope
-        self.logger.info(
-            "Scene sidecar (%s) -> the GLB's extras",
-            ", ".join(sorted(sections)) or "no sections",
+            logger=self.logger,
         )
         return payload
 

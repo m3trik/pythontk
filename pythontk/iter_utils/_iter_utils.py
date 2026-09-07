@@ -707,6 +707,16 @@ class IterUtils(HelpMixin):
         if len(values) < 3:
             return empty
 
+        # A run needs at least one ADJACENT pair inside the band, so a curve
+        # with no such pair -- every smooth per-frame bake -- is rejected by
+        # one vectorized pass. The scan below used to slice the whole tail
+        # at every index (O(n^2) numpy calls): 5.9 ms per 1134-key smooth
+        # curve, over thousands of curves per optimize pass.
+        n = len(values)
+        near = np.abs(np.diff(values)) < value_tolerance
+        if not near.any():
+            return empty
+
         # Flatness is measured against the RUN'S FIRST VALUE, exactly as
         # documented -- NOT against the previous sample. Adjacent-diff
         # flatness let values CREEP: a slow excursion that returns to its
@@ -717,20 +727,25 @@ class IterUtils(HelpMixin):
         # and compounded down joint chains into centimetre-scale drift in
         # shipped exports. Banding from the first value subsumes the old
         # endpoint-span guard (the last member is checked like any other).
+        # ``near`` only says where a run CAN start; the band test decides
+        # where it ends. Scalar work on plain floats: O(n) in total.
+        vals = values.tolist()
         seg_start_list = []
         seg_last_list = []
         i = 0
-        n = len(values)
         while i < n - 2:
-            # First index whose value leaves the band around values[i];
-            # vectorized scan, O(run length) per run.
-            out = np.abs(values[i + 1 :] - values[i]) >= value_tolerance
-            j = int(np.argmax(out)) if out.any() else n - 1 - i
-            # Run covers keys i .. i+j (all within the band of values[i]).
-            if j >= 2:
+            if not near[i]:  # values[i+1] already leaves the band: no run here
+                i += 1
+                continue
+            base = vals[i]
+            j = i + 1
+            while j < n and abs(vals[j] - base) < value_tolerance:
+                j += 1
+            # Run covers keys i .. j-1 (all within the band of values[i]).
+            if j - 1 - i >= 2:
                 seg_start_list.append(i)
-                seg_last_list.append(i + j)
-                i += j  # the run's last key may start the next run
+                seg_last_list.append(j - 1)
+                i = j - 1  # the run's last key may start the next run
             else:
                 i += 1
 

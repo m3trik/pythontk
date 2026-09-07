@@ -1,24 +1,29 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Pin the horizon map's physics once, in numpy, so the DCC rigs and the engine
-shaders only have to agree with :meth:`HorizonMap.alpha`.
+"""``ShadowHorizon`` / ``HeightFieldMap`` (``geo_utils/shadow_horizon.py``).
 
-What is pinned: the height fields register thin members; the encoding round-trips
-through 8-bit RGBA; a texel's interval matches the geometry it sees; a thin pole
-casts one shadow on the true bearing between bins (the ghosting the plain horizon
-map produces); the reference matches the exact projection within measured bounds
-on box, table and chair fixtures; Blender's Z-up bakes the same map as Maya's
-Y-up; and the bake stays within its time budget.
+The bake (depth-peeled spans, the distance field, the pyramid), the PNG
+encoding round trip, and the reference -- ``HeightFieldMap.alpha`` -- against
+the exact projection on the props that broke the map this one replaced.
 """
 
 import math
+import os
+import sys
 import time
 import unittest
 
 import numpy as np
 
-from pythontk import ImgUtils, ShadowHorizon, HorizonMap
-from pythontk.geo_utils.shadow_horizon import GROUNDED, FLOATING, SUBBINS
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from pythontk.geo_utils.shadow_horizon import (  # noqa: E402
+    DIST_FAR,
+    HeightFieldMap,
+    HorizonMap,
+    ShadowHorizon,
+)
+from pythontk.img_utils._img_utils import ImgUtils  # noqa: E402
 
 
 class HorizonCase(unittest.TestCase):
@@ -45,7 +50,7 @@ class HorizonCase(unittest.TestCase):
 
     @classmethod
     def box(cls):
-        """A 2 × 2 × 2 box on the ground, centred on the contact."""
+        """A 2 x 2 x 2 box on the ground, centred on the contact."""
         return [cls._box(-1, 1, 0, 2, -1, 1)]
 
     @classmethod
@@ -55,7 +60,7 @@ class HorizonCase(unittest.TestCase):
 
     @classmethod
     def table(cls):
-        """A 1.2 × 0.8 top, 5 cm thick at 0.7 m, on four 5 cm legs."""
+        """A 1.2 x 0.8 top, 5 cm thick at 0.7 m, on four 5 cm legs."""
         parts = [cls._box(-0.6, 0.6, 0.7, 0.75, -0.4, 0.4)]
         for x, z in ((-0.55, -0.35), (0.5, 0.3), (-0.55, 0.3), (0.5, -0.35)):
             parts.append(cls._box(x, x + 0.05, 0, 0.7, z, z + 0.05))
@@ -73,445 +78,392 @@ class HorizonCase(unittest.TestCase):
                 parts.append(cls._box(x, x + 0.05, 0.0, 0.40, z, z + 0.05))
         return parts
 
-    TABLE_KW = dict(radius=0.72, height=0.75)
-    CHAIR_KW = dict(radius=0.354, height=0.9)
+    @classmethod
+    def stool(cls):
+        """A seat at 0.45 m on four 3 cm legs tied by two stretchers at
+        0.15 m: two solid spans in one column with daylight between."""
+        parts = [cls._box(-0.2, 0.2, 0.45, 0.48, -0.2, 0.2)]
+        for x in (-0.19, 0.16):
+            for z in (-0.19, 0.16):
+                parts.append(cls._box(x, x + 0.03, 0.0, 0.45, z, z + 0.03))
+        for z in (-0.19, 0.16):
+            parts.append(cls._box(-0.16, 0.16, 0.15, 0.18, z, z + 0.03))
+        return parts
+
+    @classmethod
+    def arch(cls):
+        """Two posts and a lintel: a floating member over open ground."""
+        return [
+            cls._box(-0.65, -0.55, 0.0, 1.8, -0.05, 0.05),
+            cls._box(0.55, 0.65, 0.0, 1.8, -0.05, 0.05),
+            cls._box(-0.7, 0.7, 1.8, 1.95, -0.05, 0.05),
+        ]
+
+    @staticmethod
+    def _extent(meshes):
+        allp = np.concatenate([p for p, _ in meshes])
+        mn, mx = allp.min(0), allp.max(0)
+        return 0.5 * math.hypot(mx[0] - mn[0], mx[2] - mn[2]), float(mx[1])
 
 
-class TestHeightFields(HorizonCase):
-    """ImgUtils.rasterize_height_fields -- the bake's top and bottom surfaces."""
+class TestHeightSpans(HorizonCase):
+    """ImgUtils.rasterize_height_spans -- the bake's solid columns."""
 
     def test_box_gives_a_solid_column(self):
-        """A grounded 2 m box: every footprint pixel is a [0, 2] column."""
-        z_top, z_bot, mask, bounds = ImgUtils.rasterize_height_fields(
-            self.box(), up=1, size=32
+        lo, hi, bounds = ImgUtils.rasterize_height_spans(
+            self.box(), up=1, size=32, spans=2
         )
-        self.assertGreater(mask.sum(), 0.9 * 32 * 32)
-        self.assertAlmostEqual(float(z_top[mask].max()), 2.0, places=6)
-        self.assertAlmostEqual(float(z_bot[mask].min()), 0.0, places=6)
-        self.assertLess(bounds[0], -1.0)
-        self.assertGreater(bounds[1], 1.0)
+        self.assertTrue(np.isnan(hi[1]).all(), "one span per column")
+        self.assertAlmostEqual(float(lo[0, 16, 16]), 0.0, places=6)
+        self.assertAlmostEqual(float(hi[0, 16, 16]), 2.0, places=6)
+        a0, a1, b0, b1 = bounds
+        self.assertLess(a0, -1.0)
+        self.assertGreater(a1, 1.0)
 
-    def test_floating_slab_keeps_its_underside(self):
-        """A slab from 0.7 to 0.75 m: the bottom field is the underside."""
-        z_top, z_bot, mask, _ = ImgUtils.rasterize_height_fields(
-            [self._box(-1, 1, 0.7, 0.75, -1, 1)], up=1, size=32
+    def test_a_stretcher_under_a_seat_keeps_daylight(self):
+        """The failure the horizon map could not represent: two solid spans
+        in one column. The hull (one span) fills the gap between them."""
+        lo, hi, _ = ImgUtils.rasterize_height_spans(
+            self.stool(), up=1, size=64, spans=2
         )
-        self.assertAlmostEqual(float(np.median(z_bot[mask])), 0.7, places=5)
-        self.assertAlmostEqual(float(np.median(z_top[mask])), 0.75, places=5)
+        both = ~np.isnan(hi[1])
+        self.assertGreater(int(both.sum()), 100, "columns with two spans")
+        iy, ix = np.argwhere(both)[0]
+        self.assertAlmostEqual(float(lo[0, iy, ix]), 0.15, places=6)
+        self.assertAlmostEqual(float(hi[0, iy, ix]), 0.18, places=6)
+        self.assertAlmostEqual(float(lo[1, iy, ix]), 0.45, places=6)
+        self.assertAlmostEqual(float(hi[1, iy, ix]), 0.48, places=6)
+        z_top, z_bot, mask, _ = ImgUtils.rasterize_height_fields(
+            self.stool(), up=1, size=64
+        )
+        self.assertTrue(mask[iy, ix])
+        self.assertAlmostEqual(float(z_bot[iy, ix]), 0.15, places=6)
+        self.assertAlmostEqual(float(z_top[iy, ix]), 0.48, places=6)
+
+    def test_the_hull_is_the_union_of_the_spans(self):
+        lo, hi, _ = ImgUtils.rasterize_height_spans(
+            self.chair(), up=1, size=64, spans=3
+        )
+        z_top, z_bot, mask, _ = ImgUtils.rasterize_height_fields(
+            self.chair(), up=1, size=64
+        )
+        with np.errstate(all="ignore"):
+            union_hi = np.nanmax(hi, axis=0)
+            union_lo = np.nanmin(lo, axis=0)
+        self.assertTrue(np.array_equal(mask, ~np.isnan(union_hi)))
+        np.testing.assert_allclose(z_top[mask], union_hi[mask])
+        np.testing.assert_allclose(z_bot[mask], union_lo[mask])
+
+    def test_shared_edges_do_not_split_a_column(self):
+        """The two triangles of a quad both report a pixel centre on their
+        shared edge; paired blindly those duplicates made zero-thickness
+        spans, and the box's centre column read as two slivers."""
+        lo, hi, _ = ImgUtils.rasterize_height_spans(self.box(), up=1, size=16, spans=4)
+        present = ~np.isnan(hi)
+        self.assertEqual(int(present[1:].sum()), 0)
+        solid = present[0]
+        self.assertTrue((hi[0][solid] > 1.99).all())
 
     def test_thin_member_registers_at_pixel_resolution(self):
-        """A 1 cm rod across a 1 m footprint at 32 pixels (3 cm each) still
-        marks a line of pixels: its edges are splatted, not only area-filled."""
-        rod = self._box(-0.5, 0.5, 0, 1, -0.005, 0.005)
-        _, _, mask, _ = ImgUtils.rasterize_height_fields(
-            [rod, self._box(-0.5, -0.49, 0, 0.1, -0.5, 0.5)], up=1, size=32
-        )
-        row = mask[16]  # the rod runs along x through the middle
-        self.assertGreater(row.sum(), 24)
+        lo, hi, _ = ImgUtils.rasterize_height_spans(self.pole(), up=1, size=16, spans=1)
+        self.assertGreaterEqual(int((~np.isnan(hi[0])).sum()), 1)
+        self.assertAlmostEqual(float(np.nanmax(hi[0])), 2.0, places=6)
 
     def test_buried_geometry_blocks_nothing(self):
-        """A box wholly below the ground plane leaves the fields empty."""
-        _, _, mask, _ = ImgUtils.rasterize_height_fields(
-            [self._box(-1, 1, -3, -1, -1, 1)], up=1, size=16
+        lo, hi, _ = ImgUtils.rasterize_height_spans(
+            [self._box(-1, 1, -2, -0.5, -1, 1)], up=1, size=16
         )
-        self.assertFalse(mask.any())
+        self.assertTrue(np.isnan(hi).all())
+
+    def test_a_mesh_cut_by_the_ground_keeps_its_column_from_the_ground_up(self):
+        """A box straddling the ground plane (the DCC rigs' own fixture, a
+        cube centred on the origin) is solid from the ground to its top.
+        Dropping its buried floor face -- as the old hull did -- left only
+        the top face's crossing: a span of no thickness at the top, and a
+        ray under it passed straight through."""
+        lo, hi, _ = ImgUtils.rasterize_height_spans(
+            [self._box(-1, 1, -1, 1, -1, 1)], up=1, size=16, spans=2
+        )
+        self.assertAlmostEqual(float(lo[0, 8, 8]), 0.0, places=6)
+        self.assertAlmostEqual(float(hi[0, 8, 8]), 1.0, places=6)
+        self.assertTrue(np.isnan(hi[1, 8, 8]))
+        hmap = ShadowHorizon.bake([self._box(-1, 1, -1, 1, -1, 1)], up=1, size=32)
+        self.assertAlmostEqual(hmap.height_scale, 1.0, places=3)
+        self.assertEqual(float(hmap.alpha([[-2.0, 0.0, 0.0]], [6.0, 3.0, 0.0])[0]), 1.0)
 
 
 class TestEncoding(HorizonCase):
-    """The channel encoding and the PNG layout round-trip exactly."""
+    """The map's quantisation, its PNG image and the pyramid."""
 
-    def test_cotangent_encoding_endpoints(self):
-        """The zenith encodes as 0, the reach-cap elevation and below as 1."""
-        hmap = ShadowHorizon.bake(self.box(), up=1, bins=8, size=(16, 8), footprint=16)
-        self.assertAlmostEqual(float(hmap.encode_angle(math.pi / 2)), 0.0, places=6)
-        self.assertAlmostEqual(float(hmap.encode_angle(0.0)), 1.0, places=6)
-        self.assertAlmostEqual(
-            float(hmap.encode_angle(math.atan(1 / 6))), 1.0, places=6
+    def test_rgba_round_trip_is_exact(self):
+        hmap = ShadowHorizon.bake(self.stool(), up=1, size=64)
+        img = hmap.to_rgba()
+        self.assertEqual(img.shape, (64, 64 * hmap.tiles, 4))
+        self.assertEqual(img.dtype, np.uint8)
+        back = HeightFieldMap.from_rgba(
+            img,
+            size=hmap.size,
+            spans=hmap.spans,
+            bounds=hmap.bounds,
+            ground=hmap.ground,
+            up=hmap.up,
+            height_scale=hmap.height_scale,
         )
-        self.assertAlmostEqual(
-            float(hmap.decode_cot(hmap.encode_angle(math.radians(30)))),
-            1 / math.tan(math.radians(30)),
-            places=5,
+        for name in ("lo", "hi", "dist", "near_lo", "near_hi"):
+            a, b = getattr(hmap, name), getattr(back, name)
+            np.testing.assert_array_equal(np.isnan(a), np.isnan(b), name)
+            np.testing.assert_allclose(
+                np.nan_to_num(a), np.nan_to_num(b), rtol=0, atol=1e-6, err_msg=name
+            )
+
+    def test_the_size_rounds_up_to_a_power_of_two(self):
+        hmap = ShadowHorizon.bake(self.box(), up=1, size=100)
+        self.assertEqual(hmap.size, 128)
+        self.assertEqual(hmap.levels, 7)
+        self.assertEqual(len(hmap.pyramid()), 7)
+
+    def test_the_pyramid_bounds_every_read_the_march_makes_in_a_column_cell(self):
+        """A column cell's hull covers each pixel's own spans and the
+        nearest hull of every pixel in the cell's one-pixel ring (what the
+        bilinear penumbra read reaches); a cell without a column carries no
+        hull, and the distance flags exactly the cells that hold one."""
+        hmap = ShadowHorizon.bake(self.chair(), up=1, size=64)
+        S = hmap.size
+        hull_lo, hull_hi = hmap.hull()
+        own_lo = np.nan_to_num(hull_lo, nan=np.inf)
+        own_hi = np.nan_to_num(hull_hi, nan=-np.inf)
+        ring_lo = np.pad(hmap.near_lo, 1, constant_values=np.inf)
+        ring_hi = np.pad(hmap.near_hi, 1, constant_values=-np.inf)
+        for level, (lo, hi, dist) in enumerate(hmap.pyramid(), start=1):
+            c = 1 << level
+            n = S >> level
+            column = hmap.dist.reshape(n, c, n, c).min(axis=(1, 3)) == 0
+            np.testing.assert_array_equal(dist == 0, column, f"level {level}")
+            self.assertTrue(np.isnan(lo[~column]).all() and np.isnan(hi[~column]).all())
+            self.assertTrue(
+                np.isfinite(lo[column]).all() and np.isfinite(hi[column]).all()
+            )
+            for iy, ix in zip(*np.nonzero(column)):
+                rows, cols = slice(iy * c, (iy + 1) * c), slice(ix * c, (ix + 1) * c)
+                ring_rows = slice(iy * c, (iy + 1) * c + 2)
+                ring_cols = slice(ix * c, (ix + 1) * c + 2)
+                floor_ = min(
+                    own_lo[rows, cols].min(), ring_lo[ring_rows, ring_cols].min()
+                )
+                ceil_ = max(
+                    own_hi[rows, cols].max(), ring_hi[ring_rows, ring_cols].max()
+                )
+                self.assertLessEqual(float(lo[iy, ix]), float(floor_) + 1e-6)
+                self.assertGreaterEqual(float(hi[iy, ix]), float(ceil_) - 1e-6)
+
+    def test_the_distance_field_is_the_euclidean_distance_to_the_nearest_column(self):
+        hmap = ShadowHorizon.bake(self.pole(), up=1, size=32)
+        solid = hmap.dist == 0
+        self.assertTrue(solid.any())
+        ys, xs = np.nonzero(solid)
+        iy, ix = 3, 5
+        expected = float(np.min(np.hypot(ys - iy, xs - ix)))
+        self.assertAlmostEqual(float(hmap.dist[iy, ix]), expected, places=1)
+        self.assertAlmostEqual(float(hmap.near_hi[iy, ix]), 2.0, delta=0.01)
+
+    def test_an_elongated_footprint_measures_distance_in_the_smaller_pitch(self):
+        """A 2:1 footprint: a column step counts two units, a row step one,
+        so the penumbra's lateral clearance is the same length in frame
+        units whichever way the ray leaves the column."""
+        hmap = ShadowHorizon.bake(self.pole(), up=1, size=32, bounds=(-2, 2, -1, 1))
+        self.assertAlmostEqual(hmap.aspect, 2.0, places=6)
+        ys, xs = np.nonzero(hmap.dist == 0)
+        iy = int(ys[len(ys) // 2])
+        ix_max = int(xs[ys == iy].max())
+        ix = int(xs[len(xs) // 2])
+        iy_max = int(ys[xs == ix].max())
+        self.assertAlmostEqual(float(hmap.dist[iy, ix_max + 3]), 6.0, places=1)
+        self.assertAlmostEqual(float(hmap.dist[iy_max + 3, ix]), 3.0, places=1)
+
+    def test_an_empty_map_reports_the_far_distance(self):
+        hmap = ShadowHorizon.bake([self._box(-1, 1, -2, -0.5, -1, 1)], up=1, size=16)
+        self.assertTrue((hmap.dist == DIST_FAR).all())
+        self.assertTrue(np.isnan(hmap.hi).all())
+        pts = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.5]])
+        np.testing.assert_array_equal(hmap.alpha(pts, [5.0, 5.0, 5.0]), [0.0, 0.0])
+
+    def test_the_record_block_spells_the_schema_the_readers_expect(self):
+        block = ShadowHorizon.record(
+            texture="a_horizon.png",
+            size=128,
+            spans=2,
+            levels=7,
+            bounds=(-1.2345678, 1.2345678, -0.5, 0.5),
+            height_scale=2.0,
+            frame_a=(1, 0, 0),
+            frame_b=(0, 0, 1),
+            rect=[1.0, 1.0, 0.0, 0.0],
         )
-
-    def test_rgba_round_trip_and_layout(self):
-        """to_rgba lays 2 × bins tiles in a square-ish grid; from_rgba reads
-        the same map back within one quantisation step."""
-        hmap = ShadowHorizon.bake(self.box(), up=1, bins=8, size=(32, 16), footprint=32)
-        self.assertEqual(hmap.tiles, 16)
-        self.assertEqual(hmap.layout, (4, 4))
-        self.assertEqual(len(hmap.tile_rects()), 16)
-        image = hmap.to_rgba()
-        self.assertEqual(image.shape, (4 * 16, 4 * 32, 4))
-        back = HorizonMap.from_rgba(
-            image,
-            bins=8,
-            size=(32, 16),
-            r_min=hmap.r_min,
-            r_max=hmap.r_max,
-            up=1,
-            max_stretch=hmap.max_stretch,
+        self.assertEqual(
+            sorted(block),
+            sorted(
+                [
+                    "texture",
+                    "mapping",
+                    "encoding",
+                    "size",
+                    "spans",
+                    "levels",
+                    "bounds",
+                    "height_scale",
+                    "frame_a",
+                    "frame_b",
+                    "rect",
+                ]
+            ),
         )
-        np.testing.assert_allclose(back.data, hmap.data, atol=1.0 / 255 + 1e-6)
+        self.assertEqual(block["mapping"], ShadowHorizon.MAPPING)
+        self.assertEqual(block["encoding"], ShadowHorizon.ENCODING)
+        self.assertEqual(block["bounds"], [-1.234568, 1.234568, -0.5, 0.5])
+        self.assertEqual(block["frame_a"], [1, 0, 0])
 
-    def test_mask_bits_face_the_occluder(self):
-        """From a texel east of the box the bin facing it is fully set and
-        the bin facing away is empty."""
-        hmap = ShadowHorizon.bake(self.box(), up=1)
-        u, v, _ = hmap.uv(np.array([[3.0, 0.0]]))
-        step = 2 * math.pi / hmap.bins
-        toward = int(math.pi / step)  # bearing π: toward -x
-        away = 0
-        vals, _, nearest = hmap.taps(GROUNDED, np.array([toward]), u, v)
-        bits = HorizonMap.mask_bits(vals[0, nearest[0]])
-        self.assertEqual(int(bits.sum()), SUBBINS)
-        vals, _, nearest = hmap.taps(GROUNDED, np.array([away]), u, v)
-        self.assertEqual(int(HorizonMap.mask_bits(vals[0, nearest[0]]).sum()), 0)
-        vals, _, nearest = hmap.taps(FLOATING, np.array([toward]), u, v)
-        self.assertEqual(int(HorizonMap.mask_bits(vals[0, nearest[0]]).sum()), 0)
-
-
-class TestTapBlending(unittest.TestCase):
-    """How the four bilinear taps combine — pinned on hand-built maps, because
-    a baked fixture cannot put taps into a chosen disagreement.
-
-    Each of these was a defect the engine shaders had already worked around
-    (or tripped over) independently; the reference is the oracle, so it has to
-    be right here first.
-    """
-
-    BINS, W, H, MAX_STRETCH = 4, 4, 2, 6.0
-
-    def _map(self, rows):
-        """A map whose bin 0 (and bin 3, its ``-1`` neighbour) carries *rows*,
-        an ``(H, 4)`` sequence of ``(R, G, B_byte, A_byte)`` per texel row."""
-        data = np.zeros((2, self.BINS, self.H, self.W, 4), dtype=np.float32)
-        for y, (r, g, b, a) in enumerate(rows):
-            data[GROUNDED, 0, y, :, 0] = r
-            data[GROUNDED, 0, y, :, 1] = g
-            data[GROUNDED, 0, y, :, 2] = b / 255.0
-            data[GROUNDED, 0, y, :, 3] = a / 255.0
-        return HorizonMap(
-            self.BINS, (self.W, self.H), 0.5, 10.0, 0.0, 1, self.MAX_STRETCH, data
-        )
-
-    @staticmethod
-    def _step(hmap):
-        return np.array([2.0 * math.pi / hmap.bins])
-
-    def test_later_run_top_ignores_taps_without_a_second_run(self):
-        """G is the SECOND run's top and is written 0 on a one-run texel, so
-        blending it over every covered tap drags the top toward the zenith and
-        lengthens the shadow. Two of the four taps have a second run at
-        sub-bin 8 whose top is cot 3.0; a source at cot 2.0 is above it and
-        must not be blocked."""
-        hmap = self._map(
-            [
-                (0.8, 0.0, 1, 0),  # y=0: one run  (bit 0), G unused
-                (0.8, 0.5, 1, 1),  # y=1: two runs (bits 0, 8), G -> cot 3.0
-            ]
-        )
-        alpha = hmap._layer_alpha(
-            GROUNDED,
-            np.array([0]),
-            np.array([0.52]),  # sub-bin 8: inside the second run
-            np.array([0.25]),
-            np.array([0.55]),  # off the weight tie, so `nearest` is a 2-run tap
-            np.array([math.atan2(1.0, 2.0)]),  # cot(e) = 2.0
-            np.array([0.0]),
-            self._step(hmap),
-        )
-        self.assertEqual(float(alpha[0]), 0.0)
-
-    def test_nearest_breaks_a_weight_tie_toward_the_higher_texel(self):
-        """At a dead tie every tap weighs 0.25 and ``argmax`` takes tap 0,
-        where the shaders take tap 3. That is not a rounding difference: the
-        nearest tap alone decides the grounded run index, so a tie flips which
-        BRANCH runs."""
-        hmap = self._map([(0.8, 0.0, 1, 0), (0.8, 0.5, 1, 1)])
-        _, wts, nearest = hmap.taps(
-            GROUNDED, np.array([0]), np.array([0.25]), np.array([0.5])
-        )
-        self.assertTrue(np.allclose(wts[0], 0.25))
-        self.assertEqual(int(nearest[0]), 3)
-
-    def test_coverage_from_any_tap_counts_not_only_the_nearest(self):
-        """The doc says an all-zero mask at EVERY tap gives 0. Gating on the
-        nearest tap alone zeroes a texel that other taps cover.
-
-        ``u = 0.65`` puts the sample at ``fx = 0.1`` and ``v = 0.55`` at
-        ``fy = 0.6``, so ``nearest`` is tap 2 — one of the two emptied — while
-        the covered row carries weights ``0.9 x 0.4`` and ``0.1 x 0.4``. The
-        coverage is therefore exactly 0.40, and the elevation test is a point
-        test inside the interval, so that is the alpha.
-        """
-        hmap = self._map([(0.5, 0.0, 1, 0), (0.5, 0.0, 1, 0)])
-        hmap.data[GROUNDED, 0, 1, 2:, :] = 0.0  # empty the taps at x=2,3
-        hmap.data[GROUNDED, 3] = hmap.data[GROUNDED, 0]  # the -1 neighbour
-        alpha = hmap._layer_alpha(
-            GROUNDED,
-            np.array([0]),
-            np.array([0.02]),  # sub-bin 0
-            np.array([0.65]),  # fx = 0.6 -> nearest is an emptied tap
-            np.array([0.55]),  # fy = 0.6
-            np.array([math.atan2(1.0, 4.0)]),  # cot(e) = 4.0, inside [3, 6]
-            np.array([0.0]),
-            self._step(hmap),
-        )
-        self.assertAlmostEqual(float(alpha[0]), 0.40, places=6)
+    def test_horizon_map_is_the_old_name_for_one_release(self):
+        self.assertIs(HorizonMap, HeightFieldMap)
 
 
 class TestReference(HorizonCase):
-    """HorizonMap.alpha against the geometry it was baked from."""
-
-    def test_interval_matches_the_geometry(self):
-        """From (3, 0, 0) the 2 m box's near wall is 2 m away: hi = 45°,
-        cot = 1, encoded 1 / max_stretch."""
-        hmap = ShadowHorizon.bake(self.box(), up=1)
-        u, v, _ = hmap.uv(np.array([[3.0, 0.0]]))
-        k = int(math.pi / (2 * math.pi / hmap.bins))
-        vals, _, nearest = hmap.taps(GROUNDED, np.array([k]), u, v)
-        cot_hi = float(hmap.decode_cot(vals[0, nearest[0], 0]))
-        self.assertAlmostEqual(cot_hi, 1.0, delta=0.06)
+    """HeightFieldMap.alpha against the geometry and the exact projection."""
 
     def test_a_pole_casts_one_shadow_on_the_true_bearing(self):
-        """With the light between two bins the shadow lies on the light's
-        bearing and nowhere near the bin directions — and stays crisp with
-        distance (a 5 cm shadow at 3 m spans half a bearing texel of the
-        default tile: measured 0.81, and 0.30 with 128 columns)."""
-        hmap = ShadowHorizon.bake(self.pole(), up=1, radius=1.0, height=2.0)
-        step = 2 * math.pi / hmap.bins
-        bearing = 0.5 * step + 0.3 * step  # well inside a bin
-        light = np.array(
-            [0.7 + 4 * math.cos(bearing), 3.0, 0.7 + 4 * math.sin(bearing)]
-        )
-        for dist, floor in ((1.0, 0.95), (3.0, 0.7)):
-            on = np.array(
-                [[0.7 - dist * math.cos(bearing), 0.0, 0.7 - dist * math.sin(bearing)]]
-            )
-            off = np.array(
-                [
-                    [
-                        0.7 - dist * math.cos(bearing + 0.25),
-                        0.0,
-                        0.7 - dist * math.sin(bearing + 0.25),
-                    ]
-                ]
-            )
-            self.assertGreater(float(hmap.alpha(on, light)[0]), floor)
-            self.assertEqual(float(hmap.alpha(off, light)[0]), 0.0)
+        hmap = ShadowHorizon.bake(self.pole(), up=1, size=64)
+        light = np.array([-3.0, 4.0, 0.7])  # from -X, 4 m up
+        # the shadow runs from the pole away from the light: +X
+        on = np.array([[1.5, 0.0, 0.7], [2.5, 0.0, 0.7]])
+        off = np.array([[1.5, 0.0, 0.2], [-0.5, 0.0, 0.7], [0.7, 0.0, 1.5]])
+        np.testing.assert_array_equal(hmap.alpha(on, light), [1.0, 1.0])
+        np.testing.assert_array_equal(hmap.alpha(off, light), [0.0, 0.0, 0.0])
+        # the far end: the light through the pole's top (0.7, 2) lands at
+        # x = 0.7 + 3.7 * 2 / 2 = 4.4
+        self.assertEqual(float(hmap.alpha([[4.0, 0.0, 0.7]], light)[0]), 1.0)
+        self.assertEqual(float(hmap.alpha([[4.8, 0.0, 0.7]], light)[0]), 0.0)
 
-    def test_nothing_beyond_the_range_or_from_below_the_ground(self):
-        hmap = ShadowHorizon.bake(self.box(), up=1)
-        far = np.array([[hmap.r_max * 1.5, 0.0, 0.0]])
-        self.assertEqual(float(hmap.alpha(far, np.array([-5.0, 3.0, 0.0]))[0]), 0.0)
-        near = np.array([[3.0, 0.0, 0.0]])
-        self.assertEqual(float(hmap.alpha(near, np.array([-5.0, -1.0, 0.0]))[0]), 0.0)
-        self.assertEqual(float(hmap.alpha(near, direction=(0.0, 1.0, 0.0))[0]), 0.0)
+    def test_the_height_is_replaced_by_the_ground_plane(self):
+        hmap = ShadowHorizon.bake(self.box(), up=1, size=32)
+        light = np.array([6.0, 3.0, 0.0])
+        lifted = np.array([[-2.0, 0.5, 0.0]])  # a plane lifted above the ground
+        ground = np.array([[-2.0, 0.0, 0.0]])
+        self.assertEqual(hmap.alpha(lifted, light)[0], hmap.alpha(ground, light)[0])
+        self.assertEqual(float(hmap.alpha(ground, light)[0]), 1.0)
+
+    def test_nothing_from_below_the_ground(self):
+        hmap = ShadowHorizon.bake(self.box(), up=1, size=32)
+        pts = np.array([[-2.0, 0.0, 0.0]])
+        self.assertEqual(float(hmap.alpha(pts, [6.0, -1.0, 0.0])[0]), 0.0)
+        self.assertEqual(float(hmap.alpha(pts, direction=[-1.0, 0.2, 0.0])[0]), 0.0)
 
     def test_directional_source_matches_a_far_positional_one(self):
-        """A sun and a point source ten kilometres away agree on every texel."""
-        hmap = ShadowHorizon.bake(self.box(), up=1)
-        d = np.array([0.8, -0.5, 0.3])
-        d /= np.linalg.norm(d)
+        hmap = ShadowHorizon.bake(self.table(), up=1, size=64)
+        rng = np.random.default_rng(3)
         pts = np.column_stack(
-            [np.linspace(-6, 6, 25), np.zeros(25), np.linspace(-6, 6, 25)[::-1]]
+            [rng.uniform(-3, 3, 400), np.zeros(400), rng.uniform(-3, 3, 400)]
         )
-        a_dir = hmap.alpha(pts, direction=d)
-        a_pos = hmap.alpha(pts, light=-d * 1.0e4)
-        np.testing.assert_allclose(a_dir, a_pos, atol=1e-3)
+        d = np.array([-0.6, -0.5, -0.3])
+        d /= np.linalg.norm(d)
+        far = hmap.alpha(pts, -d * 1e4)
+        directional = hmap.alpha(pts, direction=d)
+        self.assertGreater(float(far.mean()), 0.02)
+        self.assertLess(float(np.abs(far - directional).mean()), 0.01)
 
-    def test_source_size_softens_the_edges(self):
-        """A sizeless source gives (nearly) binary alpha; a 0.5 m source
-        leaves a penumbra of intermediate values."""
-        hmap = ShadowHorizon.bake(self.box(), up=1)
-        light = np.array([6.0, 4.0, 0.0])
-        xs = np.linspace(-8, -1, 141)
+    def test_source_size_softens_the_edges_without_moving_the_umbra(self):
+        hmap = ShadowHorizon.bake(self.box(), up=1, size=64)
+        light = np.array([6.0, 4.0, 0.5])
+        # the light through the box's far top edge (-1, 2) lands at x = -8
+        xs = np.linspace(-12.0, 0.0, 600)
         pts = np.column_stack([xs, np.zeros_like(xs), np.zeros_like(xs)])
         hard = hmap.alpha(pts, light)
-        soft = hmap.alpha(pts, light, source_size=0.5)
-        mid_hard = ((hard > 0.05) & (hard < 0.95)).sum()
-        mid_soft = ((soft > 0.05) & (soft < 0.95)).sum()
-        self.assertGreater(mid_soft, mid_hard + 2)
-        self.assertGreater(float(hard.max()), 0.99)
+        soft = hmap.alpha(pts, light, source_size=1.2)
+        self.assertTrue(set(np.unique(hard)) <= {0.0, 1.0})
+        self.assertEqual(float(hard[np.argmin(np.abs(xs + 7.5))]), 1.0)
+        self.assertEqual(float(hard[np.argmin(np.abs(xs + 8.5))]), 0.0)
+        between = (soft > 0.05) & (soft < 0.95)
+        self.assertGreater(int(between.sum()), 5, "a penumbra")
+        np.testing.assert_array_equal(soft[hard == 1.0], 1.0, "the umbra is untouched")
+        self.assertTrue((soft >= hard).all())
+        # the penumbra lies beyond the umbra's far end, never under the box
+        self.assertGreater(int(between[xs < -7.0].sum()), 5)
+        self.assertEqual(int(between[xs > -3.0].sum()), 0)
 
     def test_blender_z_up_matches_maya_y_up(self):
-        """The same box in a Z-up frame bakes the same tiles."""
-        y_up = ShadowHorizon.bake(
-            self.box(), up=1, bins=8, size=(32, 16), footprint=32, threads=1
+        """The same prop baked in a Z-up frame (Blender) evaluates the same
+        way once the points and the light are expressed in that frame."""
+        y_up = ShadowHorizon.bake(self.chair(), up=1, size=64)
+        swapped = [(pts[:, [0, 2, 1]], tris) for pts, tris in self.chair()]
+        z_up = ShadowHorizon.bake(swapped, up=2, size=64)
+        rng = np.random.default_rng(1)
+        pts = np.column_stack(
+            [rng.uniform(-2, 2, 300), np.zeros(300), rng.uniform(-2, 2, 300)]
         )
-        pts, tris = self.box()[0]
-        swapped = pts[
-            :, [0, 2, 1]
-        ]  # (x, y, z) -> (x, z, y): Blender's up is the third axis
-        z_up = ShadowHorizon.bake(
-            [(swapped, tris)], up=2, bins=8, size=(32, 16), footprint=32, threads=1
-        )
-        np.testing.assert_allclose(z_up.data, y_up.data, atol=1e-6)
-
-
-class TestBakeWorkingSet(unittest.TestCase):
-    """The bake's peak memory must be bounded by construction.
-
-    ``_march`` vectorises every (texel, bin) ray against every sample at once,
-    so one call allocates about a dozen ``(chunk * bins, samples)`` arrays.
-    The chunk was a fixed 1024 TEXELS, which bounds none of that: the working
-    set is ``chunk * bins * samples``, so raising either parameter multiplied
-    memory silently, and ``ThreadPoolExecutor`` ran up to
-    ``min(32, cpu + 4)`` of them at once.
-
-    Measured at the defaults on a 20-core box: one chair bake peaked at
-    4306 MiB RSS and the full test suite died in this function with
-    ``numpy._core._exceptions._ArrayMemoryError: Unable to allocate 64.0 MiB``.
-    That is a library that runs inside Maya and Blender, beside a loaded scene.
-
-    Budgeting the working set instead measured 616-762 MiB over three runs at
-    5.52-5.81 s, against 4306 MiB at 6.01 s -- about 6x less memory and no
-    slower, the smaller arrays staying closer to cache. 8 workers were already
-    as fast as 24 (5.09 s vs 5.36 s), so the extra threads bought only
-    footprint.
-
-    These assert the SHAPE of the fix, not a megabyte number: a memory
-    assertion would be flaky, while the invariant that makes it work -- the
-    chunk shrinking as bins and samples grow -- is exact.
-    """
-
-    def test_the_chunk_shrinks_as_bins_and_samples_grow(self):
-        budget = ShadowHorizon.RAY_BUDGET
-        for bins, samples in ((32, 256), (64, 256), (32, 512), (128, 1024)):
-            with self.subTest(bins=bins, samples=samples):
-                chunk = ShadowHorizon._solve_chunk_size(bins, samples)
-                self.assertGreaterEqual(
-                    chunk, 1, "a chunk must hold at least one texel"
-                )
-                self.assertLessEqual(
-                    chunk * bins * samples,
-                    budget,
-                    "the per-march working set must stay inside the budget",
-                )
-
-    def test_doubling_either_parameter_halves_the_chunk(self):
-        base = ShadowHorizon._solve_chunk_size(32, 256)
-        self.assertEqual(ShadowHorizon._solve_chunk_size(64, 256), base // 2)
-        self.assertEqual(ShadowHorizon._solve_chunk_size(32, 512), base // 2)
-
-    def test_an_absurd_request_still_yields_a_usable_chunk(self):
-        """Never zero: a chunk of 0 texels would make the job list empty and
-        the bake silently return an unwritten map."""
-        self.assertGreaterEqual(ShadowHorizon._solve_chunk_size(4096, 4096), 1)
-        self.assertGreaterEqual(ShadowHorizon._solve_chunk_size(0, 0), 1)
-
-    def test_default_worker_count_is_capped(self):
-        """8 measured as fast as 24; above it, threads only add footprint."""
-        self.assertLessEqual(ShadowHorizon.MAX_BAKE_THREADS, 8)
-        self.assertGreaterEqual(ShadowHorizon.MAX_BAKE_THREADS, 2)
-
-    def test_an_explicit_thread_count_is_still_honoured(self):
-        """The cap is a DEFAULT. A caller who knows its machine can override,
-        and threads=1 must stay the serial path."""
-        self.assertEqual(ShadowHorizon._bake_workers(1), 1)
-        self.assertEqual(ShadowHorizon._bake_workers(16), 16)
-        self.assertLessEqual(
-            ShadowHorizon._bake_workers(None), ShadowHorizon.MAX_BAKE_THREADS
-        )
+        light = np.array([3.0, 2.0, -1.0])
+        a = y_up.alpha(pts, light)
+        b = z_up.alpha(pts[:, [0, 2, 1]], light[[0, 2, 1]])
+        self.assertGreater(float(a.mean()), 0.05)
+        np.testing.assert_allclose(a, b, atol=1e-6)
 
 
 class TestMeasure(HorizonCase):
     """The reference against the exact projection, and the bake's budget."""
 
     def test_fixtures_within_the_measured_bounds(self):
-        """One-texel-tolerant disagreement at the defaults: box, table and
-        chair stay under the bounds the design doc records.
-
-        Re-measured after the tap-blending corrections (``samples=12``,
-        ``size=192``): box 1.51 %, table 2.81 %, chair 5.28 % — down from
-        1.52 / 2.91 / 5.59 %. The chair gains most because it has the most
-        multi-run bins, which is where the later-run blend was wrong.
-        Asserted with headroom.
-        """
-        for name, meshes, kw, bound in (
-            ("box", self.box(), {}, 0.04),
-            ("table", self.table(), self.TABLE_KW, 0.07),
-            ("chair", self.chair(), self.CHAIR_KW, 0.10),
+        """One-texel-tolerant disagreement at the defaults, ``samples=6``,
+        ``size=192``, measured 2026-09-05: box 0.000, table 0.000, chair
+        0.000, stool 0.000, arch 0.002 -- the raw scores 1.1 / 2.2 / 1.8 /
+        2.3 / 4.8 % (edge registration on thin shadows). The horizon map
+        this replaced scored 1.2 / 3.0 / 4.9 / 15 / 15 % tolerant. Asserted
+        with headroom on both."""
+        for name, meshes, bound_tol, bound_raw in (
+            ("box", self.box(), 0.01, 0.03),
+            ("table", self.table(), 0.01, 0.05),
+            ("chair", self.chair(), 0.01, 0.05),
+            ("stool", self.stool(), 0.01, 0.06),
+            ("arch", self.arch(), 0.02, 0.09),
         ):
-            hmap = ShadowHorizon.bake(meshes, up=1, **kw)
-            score = ShadowHorizon.measure(hmap, meshes, samples=6, size=192, **kw)
+            radius, height = self._extent(meshes)
+            hmap = ShadowHorizon.bake(meshes, up=1)
+            score = ShadowHorizon.measure(
+                hmap, meshes, samples=6, size=192, radius=radius, height=height
+            )
             self.assertEqual(score["samples"], 6)
-            self.assertLess(score["tolerant_mean"], bound, f"{name}: {score}")
-            self.assertLessEqual(score["tolerant_mean"], score["mean"] + 1e-9)
+            self.assertLess(score["tolerant_mean"], bound_tol, f"{name}: {score}")
+            self.assertLess(score["mean"], bound_raw, f"{name}: {score}")
 
-    def test_adaptive_bins_gate_on_the_tolerant_score(self):
+    def test_adaptive_size_gates_on_the_tolerant_score(self):
         hmap, score = ShadowHorizon.bake_adaptive(
-            self.chair(), up=1, threshold=0.05, measure_samples=4, **self.CHAIR_KW
+            self.chair(), up=1, threshold=0.05, measure_samples=3
         )
-        self.assertIn(score["bins"], ShadowHorizon.ADAPTIVE_BINS)
-        self.assertEqual(hmap.bins, score["bins"])
-        if score["bins"] != ShadowHorizon.ADAPTIVE_BINS[-1]:
+        self.assertIn(score["size"], ShadowHorizon.ADAPTIVE_SIZES)
+        self.assertEqual(hmap.size, score["size"])
+        if score["size"] != ShadowHorizon.ADAPTIVE_SIZES[-1]:
             self.assertLessEqual(score["tolerant_mean"], 0.05)
 
     def test_adaptive_below_the_smallest_rung_still_returns_a_map(self):
-        """``max_bins`` under ``ADAPTIVE_BINS[0]`` broke the loop before any
-        bake, returning ``(None, {})`` against a declared
-        ``Tuple[HorizonMap, Dict]`` -- the caller's next ``hmap.data`` was an
-        AttributeError, and ``score`` had no ``bins``/``tolerant_mean``.
-
-        The ladder is the menu, so the smallest rung is the honest answer;
-        it is clamped loudly rather than silently, since a caller asking for
-        fewer bins is usually protecting a texture budget. ``warnings``, not a
-        logger -- geo_utils is logging-free across every module.
-        """
         with self.assertWarns(RuntimeWarning):
             hmap, score = ShadowHorizon.bake_adaptive(
                 self.chair(),
                 up=1,
-                max_bins=ShadowHorizon.ADAPTIVE_BINS[0] - 1,
+                max_size=ShadowHorizon.ADAPTIVE_SIZES[0] - 1,
                 measure_samples=2,
-                **self.CHAIR_KW,
             )
         self.assertIsNotNone(hmap)
-        self.assertEqual(hmap.bins, ShadowHorizon.ADAPTIVE_BINS[0])
-        self.assertEqual(score["bins"], ShadowHorizon.ADAPTIVE_BINS[0])
-        self.assertIn("tolerant_mean", score)
+        self.assertEqual(hmap.size, ShadowHorizon.ADAPTIVE_SIZES[0])
+        self.assertEqual(score["size"], ShadowHorizon.ADAPTIVE_SIZES[0])
 
-    def test_adaptive_rejects_a_fixed_bins_kwarg_by_name(self):
-        """``bins`` is a documented ``bake`` keyword, so forwarding it here
-        collided with the ladder's own value and raised an inscrutable
-        ``got multiple values for keyword argument 'bins'``. The rejection is
-        right -- an adaptive bake chooses the count -- but it has to say so.
-        """
+    def test_adaptive_rejects_a_fixed_size_kwarg_by_name(self):
         with self.assertRaises(TypeError) as caught:
-            ShadowHorizon.bake_adaptive(self.chair(), up=1, bins=8, **self.CHAIR_KW)
-        self.assertIn("max_bins", str(caught.exception))
+            ShadowHorizon.bake_adaptive(self.chair(), up=1, size=64)
+        self.assertIn("max_size", str(caught.exception))
 
     def test_bake_time_stays_within_budget(self):
-        """Guard against a pathological regression -- an O(n^2) slip or a lost
-        vectorisation -- NOT against drift.
-
-        The 12.0 s budget was set against a docstring measurement of "about
-        two seconds". Re-measured 2026-09-04 on the development machine, warm
-        and uncontended, six consecutive bakes: 6.94 / 7.31 / 8.02 / 8.28 /
-        8.30 / 8.75 s, median 8.15. That is ~1.5x headroom, not the ~6x the
-        number implies, so the test failed inside a full-suite run (17.1 s)
-        while passing alone -- a wall-clock assertion that reports machine
-        load as a code defect is one nobody can act on.
-
-        The budget is raised to 30 s, which still catches anything ~4x slower
-        than measured while surviving a loaded runner. The gap between the
-        recorded "about two" and the measured 8.15 is NOT explained here and
-        is logged in .claude/BACKLOG.md: either the bake slowed by ~4x since
-        that note, or the note was taken on different hardware, and only the
-        author of the original measurement can say which.
-        """
-        start = time.perf_counter()
-        ShadowHorizon.bake(self.chair(), up=1, **self.CHAIR_KW)
-        elapsed = time.perf_counter() - start
-        self.assertLess(
-            elapsed,
-            30.0,
-            f"chair bake took {elapsed:.1f}s; measured median 8.15s. This "
-            "budget is a pathological-regression guard, so a failure here "
-            "means several times slower, not slightly.",
-        )
+        """Guard against a pathological regression, not drift: the bake is
+        a rasterisation plus a distance transform, measured 24-37 ms at the
+        defaults on the fixtures (2026-09-05); the budget is 40x that."""
+        t0 = time.perf_counter()
+        ShadowHorizon.bake(self.chair(), up=1)
+        self.assertLess(time.perf_counter() - t0, 1.5)
 
 
 if __name__ == "__main__":

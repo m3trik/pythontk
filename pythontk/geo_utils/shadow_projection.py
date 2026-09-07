@@ -28,15 +28,19 @@ Two levels, for the two things a shadow rig needs:
 
 A texture rasterized at one light position is exact only there. Between
 rasterizations the plane follows the model via the canvas *fractions* the
-rasterizer records: the canvas's near edge is stamped in projected-footprint
-(base disk) radii from the anchor and its far edge in projected-head (top
-disk) radii from where the head lands. Ground points project onto themselves
-at any light height, so the near edge of a grounded target's shadow stays at
-its feet while only the far edge follows the top's projection — a stamp
-measured as a fraction of the whole length instead slid the texture away
-from the feet as the shadow grew (the reported gap). So the shadow's
-direction, reach and perspective growth track the light live, while the
-silhouette inside is re-rendered on demand.
+rasterizer records: the canvas's far edge is stamped in projected-head (top
+disk) radii from where the head lands, and its near edge as a fraction of
+that far edge's distance from the anchor. Ground points project onto
+themselves at any light height, so the anchor — a grounded target's feet —
+must keep its place in the texture as the shadow grows: a stamp measured as
+a fraction of the whole length slid the texture away from the feet (the
+first reported gap), and one that pinned the canvas's back edge in footprint
+radii let the drawn feet slide forward with the far edge instead (the
+second). Measured against the far edge, the feet stay under the silhouette's
+feet; the cost is the part behind them stretching with the reach, which only
+bridges the moves between two renders (the DCCs re-render as the source or
+the target moves). So the shadow's direction, reach and perspective growth
+track the light live, while the silhouette inside is re-rendered on demand.
 
 Axis convention: ``up`` is the index of the vertical axis (Maya ``1``,
 Blender ``2``); the two horizontal axes are the remaining indices in order,
@@ -108,20 +112,21 @@ class ShadowModel(NamedTuple):
         """The canvas rectangle *fractions* denote at this model, absolute in
         the ``(u, w)`` frame — the inverse of :meth:`ShadowProjection.fractions`.
 
-        ``u0`` is the near edge in base radii from the anchor (``-1`` = the
-        footprint's near side), ``u1`` the far edge in top radii from the
-        head's centre (``+1`` = its far side); ``w0`` / ``w1`` are fractions of
-        the width from the centre line. Each disk's factor scales its own
-        edge, so a grounded target's near edge (``k_base = 1``) is pinned to
-        its feet at every light height.
+        ``u1`` is the far edge in top radii from the head's centre (``+1`` =
+        its far side), so the far edge lands where the head projects at every
+        light height. ``u0`` is the near edge as a fraction of that far edge's
+        distance from the anchor (negative: behind it), so the anchor keeps
+        its place in the texture — a grounded target's feet stay under the
+        silhouette's feet however far the shadow stretches. ``w0`` / ``w1``
+        are fractions of the width from the centre line. A source at or
+        below the head has no reach and no top, so the canvas collapses to
+        the anchor (the model has no shadow there) -- a stamp cannot be
+        re-derived from that rect, which is why a refresh that does not
+        refit keeps the plane's own stamp.
         """
         u0, u1, w0, w1 = (float(f) for f in fractions)
-        return (
-            u0 * self.base,
-            self.reach + u1 * self.top,
-            w0 * self.width,
-            w1 * self.width,
-        )
+        far = max(self.reach + u1 * self.top, 0.0)
+        return (u0 * far, far, w0 * self.width, w1 * self.width)
 
     def placement(self, fractions: Sequence[float]) -> Tuple[Vec2, float, float]:
         """Where a plane carrying a canvas of *fractions* sits at this model:
@@ -348,16 +353,16 @@ class ShadowProjection:
     @staticmethod
     def fractions(rect: Rect, model: ShadowModel) -> Tuple[float, float, float, float]:
         """Express a ``(u, w)`` canvas *rect* as the stamp a plane carries so a
-        live expression re-places it at any light position — the near edge in
-        base-disk radii from the anchor, the far edge in top-disk radii from
-        the head's centre, the across-extents as fractions of the width
+        live expression re-places it at any light position — the far edge in
+        top-disk radii from the head's centre, the near edge as a fraction of
+        the far edge, the across-extents as fractions of the width
         (:meth:`ShadowModel.rect` inverts it, and explains why)."""
         u_lo, u_hi, w_lo, w_hi = (float(v) for v in rect)
-        base = max(model.base, 1e-9)
         top = max(model.top, 1e-9)
         width = max(model.width, 1e-9)
+        far = max(u_hi, 1e-9)
         return (
-            u_lo / base,
+            u_lo / far,
             (u_hi - model.reach) / top,
             w_lo / width,
             w_hi / width,

@@ -976,6 +976,7 @@ class MeshConvert(HelpMixin):
         lightmaps: bool = True,
         lightmap_dirs: Sequence[str] = (),
         shadow_dirs: Sequence[str] = (),
+        report: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Convert an FBX file to a binary glTF 2.0 (GLB) file.
 
@@ -1025,6 +1026,14 @@ class MeshConvert(HelpMixin):
                            beside it (the Maya project layout), and every
                            *lightmap_dirs* entry -- the host's live texture
                            folders, which is where a rig's maps are written.
+            report:        A dict this fills with what the chain did, for a
+                           caller that reports rather than logs: ``"sidecar"``
+                           (the per-section outcome
+                           :meth:`apply_scene_sidecar` returns) and
+                           ``"lightmaps"`` (:meth:`lightmap_report`
+                           -- what the manifest wanted of THIS file against
+                           what bound). The return value stays the path, so
+                           every existing caller is unchanged.
 
         Returns:
             Absolute path to the written GLB file.
@@ -1157,22 +1166,54 @@ class MeshConvert(HelpMixin):
                     # conversion -- the preview routes its envelope through
                     # here now, and a push must not fail on a sidecar.
                     try:
-                        cls.apply_scene_sidecar(edit, sidecar)
+                        applied = cls.apply_scene_sidecar(edit, sidecar)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("Scene sidecar skipped: %s", exc)
+                        applied = {}
+                    if report is not None:
+                        report["sidecar"] = applied
+                # Sweep images no material samples, BEFORE anything pays to
+                # re-encode them. An embedded-media export carries every wired
+                # file texture, which for a StingrayPBS scene includes
+                # Autodesk's own environment maps (``diffuse_cube``,
+                # ``specular_cube``, ``ibl_brdf_lut`` -- ~2.6 MB a file);
+                # FBX2glTF re-embeds them and glTF has no slot for them to
+                # land in. ``apply_scene_sidecar`` sweeps at its own tail, so
+                # this is the OTHER half: a conversion offered no envelope
+                # shipped that dead payload and paid the texture pass to
+                # compress it first. Ordered after the sidecar (whose
+                # ``extras.textures`` map is recorded at its tail and would go
+                # stale under a renumber) and before the lightmap and shadow
+                # passes, which add images of their own.
+                try:
+                    cls.prune_glb_unreferenced_textures(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB texture prune skipped: %s", exc)
                 if lightmaps:
+                    # What the manifest asked for OF THIS GLB, read before the
+                    # bind: a miss leaves no record, so only the manifest can
+                    # say what was wanted. Only when someone will read it.
+                    coverage = None
+                    if report is not None:
+                        try:
+                            coverage = cls.lightmap_manifest_coverage(edit)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("GLB lightmap coverage skipped: %s", exc)
                     # Guarded like the alpha repair: a lightmap failure must
                     # never cost the sidecar or the conversion.
                     try:
                         bound = cls.apply_glb_lightmaps(edit, search_dirs=lightmap_dirs)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("GLB lightmaps skipped: %s", exc)
+                        bound = []
                     else:
                         if bound:
                             logger.info(
                                 "Lightmaps wired into %d material binding(s).",
                                 len(bound),
                             )
+                    if coverage is not None:
+                        report["lightmaps"] = cls.lightmap_report(coverage, bound)
                 # After the lightmaps, whose image plumbing it shares, and
                 # before the animation passes: a plane's fade is a pointer
                 # channel the viewer reads BESIDE this manifest, so neither
@@ -1236,6 +1277,13 @@ class MeshConvert(HelpMixin):
                             faded["materials"],
                             faded["channels"],
                         )
+                        # A highlighted material gives up its emissive map
+                        # (``glb_fades._uncover_emissive``); when that material
+                        # was the map's only user the image is dead payload now.
+                        try:
+                            cls.prune_glb_unreferenced_textures(edit)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("GLB texture sweep skipped: %s", exc)
                 # LAST of the writers and BEFORE the manifest: every pass above
                 # can only ADD channels (clips, visibility, fades), so what is
                 # still hollow here is hollow for good -- and glTF forbids it.
@@ -2649,6 +2697,31 @@ class MeshConvert(HelpMixin):
                 buckets[bucket].append(str(name))
             return buckets
 
+    @staticmethod
+    def lightmap_report(
+        coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """``{"expected", "bound", "unbound", "out_of_scope"}`` for one bind.
+
+        *coverage* is :meth:`lightmap_manifest_coverage` read BEFORE the bind
+        (a miss leaves no record, so only the manifest can say what was
+        wanted), *bound* what :meth:`apply_glb_lightmaps` returned. Scoped to
+        this GLB: the bake manifest is a SCENE record every export carries
+        whole, and counting it against a selection reported every unselected
+        object as unlit. An ambiguous leaf stays in scope -- it IS in the file
+        and did not bind. ``out_of_scope`` is kept rather than dropped: "3 of 3
+        lit" over a 50-object scene is only reassuring once you can see the
+        other 47 were never in the export.
+        """
+        wanted = list(coverage.get("present", [])) + list(coverage.get("ambiguous", []))
+        bound_objects = {str(record.get("object")) for record in bound}
+        return {
+            "expected": len(wanted),
+            "bound": len([name for name in wanted if name in bound_objects]),
+            "unbound": [name for name in wanted if name not in bound_objects],
+            "out_of_scope": len(coverage.get("absent", [])),
+        }
+
     @classmethod
     def apply_glb_lightmaps(
         cls,
@@ -3191,10 +3264,10 @@ class MeshConvert(HelpMixin):
     SHADOW_METADATA_VERSION = 2
     #: Root-extras key the viewer's packaged ``shadow_rig`` script reads.
     SHADOW_WEB_KEY = "shadow_web"
-    #: Sampler a horizon DATA map is bound with: bilinear (9729 = LINEAR) with
-    #: no mipmaps -- a mip would average elevation intervals and occupancy
-    #: masks across texels -- and clamped (33071 = CLAMP_TO_EDGE): the bearing
-    #: axis wraps inside the shader, which keeps every fetch inside its tile.
+    #: Sampler a horizon DATA map is bound with: no mipmaps (9729 = LINEAR
+    #: for both filters -- a mip would average span heights, distances and
+    #: pyramid bounds across texels; the shader reads texels whole, so the
+    #: filter itself never applies) and clamped (33071 = CLAMP_TO_EDGE).
     SHADOW_DATA_SAMPLER = {
         "magFilter": 9729,
         "minFilter": 9729,
@@ -3306,8 +3379,8 @@ class MeshConvert(HelpMixin):
         """Embed the already-encoded bytes of *src*; return a texture index.
 
         The bytes go in as they are -- never decoded, never re-encoded: a
-        horizon map is DATA (elevation intervals and occupancy masks in its
-        channels) and a silhouette was sized by the rasterizer. *data* binds
+        horizon map is DATA (span heights, a distance field and a pyramid
+        packed into its channels) and a silhouette was sized by the rasterizer. *data* binds
         through :attr:`SHADOW_DATA_SAMPLER`; a colour map takes the clamp
         sampler the atlas precedent uses. A texture this call appended is
         simply retargeted (nothing else samples through it yet); a texture
@@ -4065,8 +4138,7 @@ class MeshConvert(HelpMixin):
                 for t in (channel.get("tracks") or [])
                 if isinstance(t, dict) and t.get("node") and t.get("visibility")
             ]
-            animations = gltf.get("animations") or []
-            if not tracks or not animations:
+            if not tracks:
                 return None
 
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
@@ -4110,6 +4182,12 @@ class MeshConvert(HelpMixin):
                 ]
                 union = (min(frames), max(frames)) if frames else None
 
+            animations = gltf.get("animations") or cls._synthesize_clips(
+                gltf, windows, union
+            )
+            if not animations:
+                return None
+
             by_name: Dict[str, List[int]] = {}
             for index, node in enumerate(gltf.get("nodes") or []):
                 name = node.get("name")
@@ -4132,6 +4210,49 @@ class MeshConvert(HelpMixin):
     #: converter's retained whole-timeline stack. Not a legal take name, so it
     #: cannot collide with one.
     DEFAULT_CLIP_SPAN = "*"
+
+    #: What Maya (and so FBX2glTF) names the whole-timeline AnimStack. The
+    #: clip :meth:`_synthesize_clips` makes for a file that carries none is
+    #: named the same, so a consumer sees the clip it would have seen had the
+    #: exporter armed animation.
+    DEFAULT_CLIP_NAME = "Take 001"
+
+    @classmethod
+    def _synthesize_clips(
+        cls,
+        gltf: Dict[str, Any],
+        windows: Dict[str, Tuple[float, float]],
+        union: Optional[Tuple[float, float]],
+    ) -> List[Dict[str, Any]]:
+        """Give a clip-less file the clips its authored tracks need to ride on.
+
+        A GLB converted from an FBX exported with animation OFF carries no
+        animation at all (Blender always; Maya when the hollow ``Take 001``
+        stack is absent), yet its ``data_export`` carrier still declares
+        visibility, opacity and highlight tracks -- the WebXR preview's default
+        export is exactly this file, and a highlight-only prop previewed with
+        no highlight (2026-09-05). One empty clip per declared take, else one
+        default clip over the tracks' own extent. No origin is declared: the
+        passes infer it through :meth:`_clip_zero` from the published
+        ``clip_span``, exactly as they do for the converter's own hollow
+        ``Take 001`` -- so the same scene places its keys identically whether
+        or not the exporter armed animation. Empty when there is nothing to
+        span. :meth:`prune_glb_animations` drops any clip that stays hollow.
+        """
+        if windows:
+            spans = list(windows.items())
+        elif union is not None:
+            spans = [(cls.DEFAULT_CLIP_NAME, union)]
+        else:
+            return []
+        clips = [{"name": name, "samplers": [], "channels": []} for name, _ in spans]
+        gltf["animations"] = clips
+        logger.info(
+            "No clip in the file: %d synthesized for its authored tracks (%s).",
+            len(clips),
+            ", ".join(c["name"] for c in clips),
+        )
+        return clips
 
     @classmethod
     def clip_spans(
@@ -4804,7 +4925,10 @@ class MeshConvert(HelpMixin):
             # the object appears.
             clip_windows: Dict[str, Tuple[float, float]] = {}
             zeros: Dict[str, float] = {}
-            for animation in gltf.get("animations") or []:
+            animations = gltf.get("animations") or cls._synthesize_clips(
+                gltf, windows, union
+            )
+            for animation in animations:
                 name = str(animation.get("name") or "")
                 window = windows.get(name) or union
                 if window is None:
@@ -5989,11 +6113,11 @@ class MeshConvert(HelpMixin):
                     if src is not None:
                         exempt_indices.add(src)
             # Shadow-rig maps are KEPT AS FOUND -- neither resized nor
-            # re-encoded, in any mode. The horizon map is data (elevation
-            # intervals and occupancy masks in its channels): a lossy encode
+            # re-encoded, in any mode. The horizon map is data (span heights,
+            # a distance field and a pyramid in its channels): a lossy encode
             # corrupts it outright, and even a lossless one is free to rewrite
-            # the RGB of alpha-0 texels, which is precisely an empty bin's
-            # signature. The silhouettes and their atlas were sized by the
+            # the RGB of alpha-0 texels -- which here carry a 16-bit distance
+            # or a span's bottom. The silhouettes and their atlas were sized by the
             # rasterizer, and the viewer's shim samples them by rect.
             kept: Set[int] = set()
             shadow_manifest = (gltf.get("extras") or {}).get(cls.SHADOW_WEB_KEY)

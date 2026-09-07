@@ -29,6 +29,8 @@ DEFAULT_INCLUDE = {
     "file_utils.mesh_convert.fbx_file": ["FbxFile"],
     "file_utils.mesh_convert.fbx_media": ["FbxMedia"],
     "file_utils.mesh_convert.export_verify": ["ExportVerifier"],
+    # FBX -> GLB: the one build the Scene Exporters and the WebXR preview share
+    "file_utils.mesh_convert.glb_pipeline": ["GlbPipeline"],
     "file_utils.uv_unwrap._uv_unwrap": "UvUnwrap",
     # Zero-dep USD primitives: sniffing, spec-compliant USDZ packaging, and a
     # usda mesh author + OBJ converters (the no-DCC publish path). DCC-native
@@ -64,10 +66,13 @@ DEFAULT_INCLUDE = {
     "geo_utils.rail_surface": "RailSurface",
     "geo_utils.plate_emitter": "PlateEmitter",
     "geo_utils.shadow_projection": ["ShadowProjection", "ShadowModel", "ShadowRaster"],
-    "geo_utils.shadow_horizon": ["ShadowHorizon", "HorizonMap"],
+    "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
     "img_utils.shadow_atlas": "ShadowAtlas",
     "geo_utils.uv_pack": ["UvPack", "PackIslandsResult"],
     "geo_utils.uv_transfer": ["UvTransfer", "TransferTable"],
+    # Declarative widget definitions -> run configuration (the two Scene
+    # Exporter panels' export button, once).
+    "core_utils.export_profile": ["ExportProfile"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
         "ShotStore",
@@ -260,9 +265,8 @@ DEFAULT_INCLUDE = {
     # Loopback static server + live manifest behind the WebXR/browser preview
     # loop. Localhost is a secure context, so this is all `navigator.xr` needs.
     "net_utils.preview.server": "PreviewServer",
-    # What a post-conversion pass is handed; a consumer registering one
-    # against `PreviewDeliverer.EDIT_PASSES` / `FILE_PASSES` annotates it.
-    "net_utils.preview.deliverer": ["PreviewDeliverer", "PreviewPassContext"],
+    # Builds the GLB through the shared GlbPipeline and publishes it.
+    "net_utils.preview.deliverer": "PreviewDeliverer",
     "net_utils.preview.bridge": "PreviewBridge",
     "net_utils.rpc.installer": [
         "PluginInstaller",

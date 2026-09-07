@@ -250,59 +250,68 @@ def _plane_material(name: str, texture: int = 0, alpha: float = 1.0) -> dict:
     }
 
 
-def _pole_horizon_png(
-    bins, tile, r_min, r_max, pole_xz, pole_radius, pole_height, max_stretch
-) -> bytes:
-    """An analytic horizon map of one grounded pole, in the contract's encoding.
+def _box(x0, x1, y0, y1, z0, z1):
+    pts = np.array(
+        [[x, y, z] for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)],
+        dtype=float,
+    )
+    quads = [
+        (0, 1, 3, 2),
+        (4, 6, 7, 5),
+        (0, 4, 5, 1),
+        (2, 3, 7, 6),
+        (0, 2, 6, 4),
+        (1, 5, 7, 3),
+    ]
+    tris = []
+    for a, b, c, d in quads:
+        tris += [(a, b, c), (a, c, d)]
+    return pts, np.array(tris, dtype=np.int64)
 
-    For every texel (theta, r) of the grounded tile of bin k -- the ground
-    point ``P = r (cos theta, sin theta)`` in the contact frame -- the pole's
-    azimuth interval from P is written as the 16-sub-bin occupancy mask of the
-    bins it crosses (B = sub-bins 0..7, A = 8..15), and the top of the pole as
-    R = cot(elevation) / max_stretch -- the pole is the grounded layer's first
-    (and only) run, so G, the later runs' channel, stays 0. The floating tiles
-    stay empty.
-    """
-    width, height = tile
-    tiles = 2 * bins
-    cols = math.ceil(math.sqrt(tiles))
-    rows = math.ceil(tiles / cols)
-    img = np.zeros((rows * height, cols * width, 4), np.uint8)
-    theta = (np.arange(width) + 0.5) / width * TWO_PI
-    v = (np.arange(height) + 0.5) / height
-    radius = r_min * (r_max / r_min) ** v
-    rr, tt = np.meshgrid(radius, theta, indexing="ij")
-    px, pz = rr * np.cos(tt), rr * np.sin(tt)
-    dx, dz = pole_xz[0] - px, pole_xz[1] - pz
-    dist = np.maximum(np.hypot(dx, dz), 1e-6)
-    phi = np.mod(np.arctan2(dz, dx), TWO_PI)
-    half = np.arcsin(np.minimum(1.0, pole_radius / dist))
-    cot_hi = np.clip(dist / pole_height / max_stretch, 0.0, 1.0)
-    step = TWO_PI / bins
-    sub = step / 16.0
-    lo_abs, hi_abs = phi - half, phi + half
-    for k in range(bins):
-        mask = np.zeros((height, width), np.int32)
-        for j in range(16):
-            s0 = k * step + j * sub
-            s1 = s0 + sub
-            hit = np.zeros((height, width), bool)
-            for shift in (-TWO_PI, 0.0, TWO_PI):
-                hit |= (lo_abs + shift < s1) & (hi_abs + shift > s0)
-            mask |= hit.astype(np.int32) << j
-        col, row = k % cols, k // cols
-        view = img[row * height : (row + 1) * height, col * width : (col + 1) * width]
-        occupied = mask > 0
-        view[..., 0] = np.where(occupied, np.round(cot_hi * 255.0), 0).astype(np.uint8)
-        view[..., 2] = (mask & 0xFF).astype(np.uint8)
-        view[..., 3] = ((mask >> 8) & 0xFF).astype(np.uint8)
-    return _png_bytes(img)
+
+def _pole_map(pole_xz, pole_radius, pole_height, *, reach=None):
+    """One grounded pole -- a square post of half-width *pole_radius* -- baked
+    by pythontk's own bake into the height-field map the contract ships, over
+    a footprint reaching *reach* (``POLE_REACH``) past the post on every side
+    so a penumbra has room to fall inside it. Returns ``(png_bytes, hmap)``:
+    the bytes the page will sample, and the map decoding them."""
+    reach = POLE_REACH if reach is None else reach
+    px, pz = pole_xz
+    r = pole_radius
+    hmap = ptk.ShadowHorizon.bake(
+        [_box(px - r, px + r, 0.0, pole_height, pz - r, pz + r)],
+        up=1,
+        size=POLE_SIZE,
+        spans=POLE_SPANS,
+        bounds=(px - reach, px + reach, pz - reach, pz + reach),
+    )
+    return _png_bytes(hmap.to_rgba()), hmap
+
+
+def _horizon_block(hmap, frame_b=(0, 0, 1), **extra):
+    """The record's ``horizon`` block for *hmap*, the contract's shape."""
+    block = {
+        "texture": "Box_horizon.png",
+        "mapping": "heightfield",
+        "encoding": 2,
+        "size": hmap.size,
+        "spans": hmap.spans,
+        "levels": hmap.levels,
+        "bounds": [float(v) for v in hmap.bounds],
+        "height_scale": float(hmap.height_scale),
+        "frame_a": [1, 0, 0],
+        "frame_b": list(frame_b),
+        "rect": [1, 1, 0, 0],
+    }
+    block.update(extra)
+    return block
 
 
 def _pole_geometry(point_xz, source, pole_xz, pole_radius, pole_height):
-    """The source and the pole as seen from a ground point: the source's
-    cotangent of elevation and azimuth, the pole's azimuth, half-width and
-    cot(top)."""
+    """The source and the post as seen from a ground point: the source's
+    cotangent of elevation and azimuth, the post's azimuth, its angular
+    half-extent (the widest of its four corners) and cot(top) at its near
+    face -- where a ray toward the source is lowest over it."""
     px, pz = point_xz
     lx, ly, lz = source[0] - px, source[1], source[2] - pz
     horizontal = math.hypot(lx, lz)
@@ -310,62 +319,67 @@ def _pole_geometry(point_xz, source, pole_xz, pole_radius, pole_height):
     phi = math.atan2(lz, lx) % TWO_PI
     dx, dz = pole_xz[0] - px, pole_xz[1] - pz
     dist = math.hypot(dx, dz)
+    centre = math.atan2(dz, dx)
+    half = max(
+        abs(
+            (
+                math.atan2(dz + sz * pole_radius, dx + sx * pole_radius)
+                - centre
+                + math.pi
+            )
+            % TWO_PI
+            - math.pi
+        )
+        for sx in (-1.0, 1.0)
+        for sz in (-1.0, 1.0)
+    )
     return {
         "cot_source": cot_source,
         "phi": phi,
-        "delta": abs((phi - math.atan2(dz, dx) + math.pi) % TWO_PI - math.pi),
-        "half": math.asin(min(1.0, pole_radius / dist)),
-        "cot_top": dist / pole_height,
+        "delta": abs((phi - centre + math.pi) % TWO_PI - math.pi),
+        "half": half,
+        "cot_top": max(dist - pole_radius, 1e-6) / pole_height,
     }
 
 
-def _pole_alpha(
-    point_xz, source, pole_xz, pole_radius, pole_height, r_max, max_stretch
-):
-    """The analytic answer at a ground point: is the source, seen from there,
-    behind the pole -- within its azimuth extent, under its top and above the
-    reach cap (the contract tests elevation in cotangent space:
-    ``cot(top) <= cot(source) <= max_stretch``)?"""
-    if math.hypot(*point_xz) > r_max:
-        return 0.0
+def _pole_alpha(point_xz, source, pole_xz, pole_radius, pole_height):
+    """The closed-form answer at a ground point for a sizeless source: is the
+    source, seen from there, behind the post -- within its azimuth extent and
+    under its top?"""
     g = _pole_geometry(point_xz, source, pole_xz, pole_radius, pole_height)
-    blocked = g["delta"] <= g["half"] and g["cot_top"] <= g["cot_source"] <= max_stretch
+    blocked = g["delta"] <= g["half"] and g["cot_top"] <= g["cot_source"]
     return 1.0 if blocked else 0.0
 
 
-def _pole_margins(
-    point_xz, source, pole_xz, pole_radius, pole_height, bins, max_stretch
-):
-    """How far the point sits from every decision boundary -- azimuth in
-    radians, elevation and the cap in cotangent units (the space the map is
-    quantised in, max_stretch / 255 per level), the bearing in bins -- so a
-    fixture point cannot pass by sitting on an edge the bilinear blur would
-    smear either way."""
+def _pole_margins(point_xz, source, pole_xz, pole_radius, pole_height):
+    """How far the point sits from each decision boundary -- azimuth in
+    radians, elevation in cotangent units -- so a fixture point cannot pass
+    by sitting on an edge a texel could round either way."""
     g = _pole_geometry(point_xz, source, pole_xz, pole_radius, pole_height)
-    fk = g["phi"] / (TWO_PI / bins)
     return {
         "azimuth": abs(g["delta"] - g["half"]),
         "elevation": abs(g["cot_source"] - g["cot_top"]),
-        "cap": abs(max_stretch - g["cot_source"]),
-        "bin": abs(fk - round(fk)),
     }
 
 
-#: The pole fixture's geometry, shared by every horizon test below: the DCC's
-#: defaults, and a pole whose azimuth extent from the shadowed point spans
-#: three bins. The source's bearing is the middle of bin 18, so no sample sits
-#: on a bin edge the bilinear blur could smear either way.
-POLE_BINS, POLE_TILE = 32, (128, 64)
-POLE_RMIN, POLE_RMAX = 0.05, 4.0
+#: The pole fixture's geometry, shared by every horizon test below: a square
+#: post baked into a footprint with room for its penumbra, and the record's
+#: live placement cap (nothing of the map's -- the map has no scale to
+#: retune).
+POLE_SIZE, POLE_SPANS = 64, 1
+POLE_REACH = 0.6
 POLE_RADIUS, POLE_HEIGHT = 0.15, 1.0
 POLE_MAX_STRETCH = 6.0
+#: The finite sources the scatter pins run with: a positional diameter and a
+#: directional angular diameter (radians).
+POLE_SOURCE_SIZE = 0.3
+POLE_SOURCE_ANGLE = 0.06
 
 
 def _pole_geometry_frame():
     """``(azimuth, away, perp, pole)`` -- the bearing the light sits on, the
     unit vectors along and across the shadow, and the pole's base."""
-    step = TWO_PI / POLE_BINS
-    azimuth = (POLE_BINS // 2 + 2 + 0.5) * step
+    azimuth = 18.5 / 32.0 * TWO_PI  # the bearing the fixture has always used
     away = (math.cos(azimuth - math.pi), math.sin(azimuth - math.pi))
     perp = (-away[1], away[0])
     return azimuth, away, perp, (0.5 * away[0], 0.5 * away[1])
@@ -432,16 +446,15 @@ class TestApplyGlbShadows(unittest.TestCase):
     #: treats it as opaque bytes).
     HORIZON = {
         "texture": "Box_horizon.png",
-        "bins": POLE_BINS,
-        "tile": list(POLE_TILE),
-        "layout": [8, 8],
-        "layers": 2,
-        "mapping": "logpolar",
-        "r_min": POLE_RMIN,
-        "r_max": POLE_RMAX,
+        "mapping": "heightfield",
+        "encoding": 2,
+        "size": POLE_SIZE,
+        "spans": POLE_SPANS,
+        "levels": 6,
+        "bounds": [-0.14, 1.06, -0.41, 0.79],
+        "height_scale": POLE_HEIGHT,
         "frame_a": [1, 0, 0],
         "frame_b": [0, 0, 1],
-        "encoding": 1,
         "rect": [0.5, 0.5, 0.25, 0.25],
     }
     ATLAS_RECT = [0.5, 0.5, 0.0, 0.5]
@@ -450,16 +463,7 @@ class TestApplyGlbShadows(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = ptk.TempArtifacts("shadow_web_pass", policy="scoped")
         cls.maps = cls.temp.dir_path()
-        cls.horizon_png = _pole_horizon_png(
-            POLE_BINS,
-            POLE_TILE,
-            POLE_RMIN,
-            POLE_RMAX,
-            (0.46, 0.19),
-            POLE_RADIUS,
-            POLE_HEIGHT,
-            POLE_MAX_STRETCH,
-        )
+        cls.horizon_png, _ = _pole_map((0.46, 0.19), POLE_RADIUS, POLE_HEIGHT)
         with open(os.path.join(cls.maps, "Box_horizon.png"), "wb") as fh:
             fh.write(cls.horizon_png)
 
@@ -553,7 +557,8 @@ class TestApplyGlbShadows(unittest.TestCase):
         )
         # The atlas texture the material samples keeps ITS sampler.
         self.assertEqual(gltf["textures"][0]["sampler"], 0)
-        self.assertEqual(horizon["horizon"]["layers"], 2)
+        self.assertEqual(horizon["horizon"]["spans"], POLE_SPANS)
+        self.assertEqual(horizon["horizon"]["encoding"], 2)
 
     def test_the_horizon_png_is_embedded_byte_for_byte(self):
         """Never decoded: the map is data, and the session relocates it into
@@ -982,7 +987,7 @@ export default function probe(viewer) {
         hidden: !plane.mesh.visible,
         isShader: !!material.isShaderMaterial,
         uMode: u.uMode ? u.uMode.value : null,
-        uMaxStretch: u.uMaxStretch ? u.uMaxStretch.value : null,
+        uHorizonScale: u.uHorizonScale ? u.uHorizonScale.value : null,
         uRect: plane.batch
           ? [0, 1, 2, 3].map((i) => plane.batch.iRect.array[plane.instance * 4 + i])
           : (u.uRect ? u.uRect.value.toArray() : null),
@@ -1243,66 +1248,33 @@ class TestShadowRigLive(unittest.TestCase):
 
     # -------------------------------------------------------- pole fixture
     def _pole_fixture(
-        self, source_node, *, live_cap=None, baked_at=None, stamp_bake_scale=True
+        self, source_node, *, mirror=False, source_size=0.0, source_angle=0.0
     ):
-        """``(hmap, glb)`` -- the analytic pole map on disk, the reference that
-        decodes the very bytes the page will sample, and a GLB whose one
-        horizon plane samples them.
+        """``(hmap, glb)`` -- the post's map on disk (baked: the very bytes the
+        page will sample), the map decoding them, and a GLB whose one horizon
+        plane samples them.
 
         *source_node* is the light's glTF node: a ``translation`` for a
-        positional source, a ``rotation`` for a directional one. *live_cap* is
-        the record's top-level ``max_stretch`` (the artist's placement cap) and
-        *baked_at* the scale the map was baked with -- they differ, and with
-        *stamp_bake_scale* false the block carries none and the decode must
-        fall back to the record's, which is what such a map was baked with.
+        positional source, a ``rotation`` for a directional one. *mirror*
+        bakes the post at ``(x, -z)``: a Blender frame, whose ``b`` arrives as
+        -Z. The source's size (a diameter) or angle (radians) goes into the
+        record as the shim reads it.
         """
-        baked_at = POLE_MAX_STRETCH if baked_at is None else baked_at
-        live_cap = baked_at if live_cap is None else live_cap
         _, _, _, pole = _pole_geometry_frame()
-        png = _pole_horizon_png(
-            POLE_BINS,
-            POLE_TILE,
-            POLE_RMIN,
-            POLE_RMAX,
-            pole,
-            POLE_RADIUS,
-            POLE_HEIGHT,
-            baked_at,
-        )
+        pole = (pole[0], -pole[1]) if mirror else pole
+        png, hmap = _pole_map(pole, POLE_RADIUS, POLE_HEIGHT)
         maps = self.temp.dir_path()
         with open(os.path.join(maps, "Box_horizon.png"), "wb") as fh:
             fh.write(png)
-        hmap = ptk.HorizonMap.from_rgba(
-            np.asarray(Image.open(io.BytesIO(png)).convert("RGBA")),
-            bins=POLE_BINS,
-            size=POLE_TILE,
-            r_min=POLE_RMIN,
-            r_max=POLE_RMAX,
-            max_stretch=baked_at,
-        )
-        block = {
-            "texture": "Box_horizon.png",
-            "bins": POLE_BINS,
-            "tile": list(POLE_TILE),
-            "layout": [8, 8],
-            "layers": 2,
-            "mapping": "logpolar",
-            "r_min": POLE_RMIN,
-            "r_max": POLE_RMAX,
-            "frame_a": [1, 0, 0],
-            "frame_b": [0, 0, 1],
-            "encoding": 1,
-            "rect": [1, 1, 0, 0],
-        }
-        if stamp_bake_scale:
-            block["max_stretch"] = baked_at
         record = _record(
             "Box_horizon_plane",
             type="horizon",
             follow_source=False,
-            max_stretch=live_cap,
+            max_stretch=POLE_MAX_STRETCH,
             source_type="directional" if "rotation" in source_node else "point",
-            horizon=block,
+            source_size=source_size,
+            source_angle=source_angle,
+            horizon=_horizon_block(hmap, frame_b=(0, 0, -1) if mirror else (0, 0, 1)),
         )
         glb = self._glb(
             None,
@@ -1435,49 +1407,6 @@ class TestShadowRigLive(unittest.TestCase):
         for name in ("A_shadow", "B_shadow"):
             self.assertEqual(after[name]["uOpacity"], 1.0, after[name])
 
-    def test_the_horizon_decode_uses_the_BAKE_scale_not_the_live_cap(self):
-        """The map's R/G are cot(elevation) / max_stretch AS BAKED, while the
-        record's top-level max_stretch is the live placement cap -- a keyable
-        attribute an artist retunes after the bake. Decoding with the live one
-        scales every shadow length by the ratio: here the cap is halved (3 vs
-        the bake's 6), which doubles every decoded reach, and the point past
-        the pole's tip falls inside the shadow when it must not.
-        """
-        baked_at, live_cap = POLE_MAX_STRETCH, 3.0
-        azimuth, away, _, pole = _pole_geometry_frame()
-        source = [2.0 * math.cos(azimuth), 3.0, 2.0 * math.sin(azimuth)]
-        points = {
-            "in the shadow": (pole[0] + 0.5 * away[0], pole[1] + 0.5 * away[1]),
-            "past the tip": (pole[0] + 2.5 * away[0], pole[1] + 2.5 * away[1]),
-        }
-        expected = {
-            label: _pole_alpha(
-                point, source, pole, POLE_RADIUS, POLE_HEIGHT, POLE_RMAX, baked_at
-            )
-            for label, point in points.items()
-        }
-        self.assertEqual(expected["in the shadow"], 1.0)
-        self.assertEqual(expected["past the tip"], 0.0)
-
-        _, glb = self._pole_fixture(
-            {"name": "shadow_source", "translation": source},
-            live_cap=live_cap,
-            baked_at=baked_at,
-        )
-        found = self._load(glb, action=HORIZON_SAMPLES_JS, points=list(points.values()))
-
-        (plane,) = found["before"]
-        self.assertEqual(
-            plane["uMaxStretch"],
-            baked_at,
-            "the decode took the live cap instead of the bake's scale",
-        )
-        samples = dict(zip(points, found["samples"]))
-        for label, want in expected.items():
-            self.assertAlmostEqual(
-                samples[label], want, delta=0.1, msg=(label, samples)
-            )
-
     def test_the_real_export_shape_batches_three_planes_onto_one_atlas(self):
         """The production case, reproduced from the measured export: three
         projected rigs, one shared atlas, and materials that lost their
@@ -1539,16 +1468,15 @@ class TestShadowRigLive(unittest.TestCase):
         self.assertEqual(by_name[names[0]]["mapImage"], [16, 16])
 
     def test_the_page_renders_the_reference_alpha_of_a_pole_map(self):
-        """The pin: the rendered pixels ARE `HorizonMap.alpha`.
+        """The pin: the rendered pixels ARE `HeightFieldMap.alpha`.
 
         The contract names that method the oracle both engine shaders answer
         to, so this test asks the real page, through the real WebGL2 shader
         built from the shared body, for the alpha at a set of ground points and
         compares each against the reference decoding the SAME map.
 
-        The fixture is still the analytic pole -- a map whose right answer is
-        known in closed form -- so the reference is checked against physics in
-        the same pass. Pinning the shader to the reference alone would pass on
+        The fixture is a post whose right answer is known in closed form, so
+        the reference is checked against physics in the same pass. Pinning the shader to the reference alone would pass on
         a wrong reference; pinning it to the analytic answer alone (which is
         what this test used to do) never showed the two implementations agreeing
         at all. Both, together, are what the doc of record has always claimed.
@@ -1562,52 +1490,29 @@ class TestShadowRigLive(unittest.TestCase):
                 pole[0] + 0.5 * away[0] + 0.35 * perp[0],
                 pole[1] + 0.5 * away[1] + 0.35 * perp[1],
             ),
-            "past r_max": (pole[0] + 4.5 * away[0], pole[1] + 4.5 * away[1]),
+            "far away": (pole[0] + 4.5 * away[0], pole[1] + 4.5 * away[1]),
         }
-        # What decides each point, and by how much: the bilinear fetch blurs a
-        # boundary over a texel, so a point must sit clear of the boundary that
-        # decides it. The shadowed point has to be clear of ALL of them.
+        # What decides each point, and by how much: the map is a texel grid,
+        # so a point must sit clear of the boundary that decides it. The
+        # shadowed point has to be clear of ALL of them.
         deciders = {
-            "in the shadow": ("azimuth", "elevation", "cap", "bin"),
+            "in the shadow": ("azimuth", "elevation"),
             "past the tip": ("elevation",),
             "off bearing": ("azimuth",),
-            "past r_max": ("radius",),
+            "far away": ("elevation",),
         }
         analytic = {}
         for label, point in points.items():
-            analytic[label] = _pole_alpha(
-                point,
-                source,
-                pole,
-                POLE_RADIUS,
-                POLE_HEIGHT,
-                POLE_RMAX,
-                POLE_MAX_STRETCH,
-            )
-            margins = _pole_margins(
-                point,
-                source,
-                pole,
-                POLE_RADIUS,
-                POLE_HEIGHT,
-                POLE_BINS,
-                POLE_MAX_STRETCH,
-            )
-            margins["radius"] = abs(math.hypot(*point) - POLE_RMAX)
+            analytic[label] = _pole_alpha(point, source, pole, POLE_RADIUS, POLE_HEIGHT)
+            margins = _pole_margins(point, source, pole, POLE_RADIUS, POLE_HEIGHT)
             for decider in deciders[label]:
                 self.assertGreater(margins[decider], 0.08, (label, decider, margins))
         self.assertEqual(analytic["in the shadow"], 1.0)
         self.assertEqual(analytic["past the tip"], 0.0)
         self.assertEqual(analytic["off bearing"], 0.0)
-        self.assertEqual(analytic["past r_max"], 0.0)
+        self.assertEqual(analytic["far away"], 0.0)
 
-        # This record carries no `horizon.max_stretch` (a map baked before the
-        # field existed), so the decode falls back to the record's top-level
-        # value -- which is what such a map was baked with.
-        hmap, glb = self._pole_fixture(
-            {"name": "shadow_source", "translation": source},
-            stamp_bake_scale=False,
-        )
+        hmap, glb = self._pole_fixture({"name": "shadow_source", "translation": source})
         # The oracle, decoding the very bytes the page will sample. Its frame
         # is the contact's, whose origin is the world origin here, so a ground
         # point is (x, ground, z) -- and the reference REPLACES that height
@@ -1630,7 +1535,7 @@ class TestShadowRigLive(unittest.TestCase):
 
         (plane,) = found["before"]
         self.assertEqual(plane["uMode"], 1)
-        self.assertEqual(plane["uMaxStretch"], POLE_MAX_STRETCH)
+        self.assertAlmostEqual(plane["uHorizonScale"], hmap.height_scale, places=5)
         self.assertTrue(plane["horizonBound"])
         self.assertEqual(plane["horizonColorSpace"], "")
         self.assertFalse(plane["horizonMipmaps"])
@@ -1646,38 +1551,20 @@ class TestShadowRigLive(unittest.TestCase):
             )
 
     # -- the scatter, shared by the positional and directional pins --------
-    #: Where the pole's penumbra edge actually sits, measured per source kind.
-    #: A near point source throws a shadow that WIDENS with range; a
-    #: directional one throws a constant-width strip that reaches much further.
-    #: One offset list cannot find both edges, so each caller brings its own --
-    #: and `_assert_tracks_reference` fails the run if the points it was given
-    #: turn out to miss the penumbra entirely.
-    POSITIONAL_EDGES = (
-        (0.25, (0.15, 0.17, 0.19)),
-        (0.6, (0.17, 0.21, 0.23)),
-        (1.2, (0.23, 0.25, 0.28)),
-    )
-    DIRECTIONAL_EDGES = (
-        (0.3, (0.13, 0.14, 0.15)),
-        (0.9, (0.13, 0.15, 0.17)),
-        (1.8, (0.08, 0.11, 0.14)),
-        (2.4, (0.09, 0.12, 0.15)),
-    )
-
     @staticmethod
-    def _scatter_points(edges, along_axis=None):
-        """Ground points down the pole's shadow and across it, plus *edges* --
-        points measured to sit ON the penumbra.
-
-        The edge is where the shader has to reproduce the bilinear tap blend,
-        the coverage integral and the interval lerp all at once; without it a
-        binary in/out grid would pass on a shader that gets none of the three
-        right.
+    def _scatter_points(evaluate, along_axis=None):
+        """Ground points down the post's shadow and across it, plus points
+        measured to sit ON the penumbra -- found on the reference itself, per
+        fixture: across the shadow at five ranges, where the alpha falls from
+        0.9 to 0.1, four points along that fall on both sides. The
+        penumbra is where the shader has to reproduce the march's clearance
+        term and not just its hit test; ``evaluate(points)`` is the
+        reference's alpha at ``(x, z)`` points, and ``_assert_tracks_reference``
+        fails the run if no point lands there.
 
         *along_axis* is the direction the shadow actually runs, defaulting to
         the positional fixture's. A directional source on a different bearing
-        throws its shadow along a different line, and offsets measured across
-        the wrong axis land in the umbra instead of on its edge.
+        throws its shadow along a different line.
         """
         _, away, perp, pole = _pole_geometry_frame()
         away = tuple(away if along_axis is None else along_axis)
@@ -1689,16 +1576,23 @@ class TestShadowRigLive(unittest.TestCase):
                 pole[1] + along * away[1] + across * perp[1],
             )
 
-        return [
+        grid = [
             at(along, across)
             for along in (0.1, 0.35, 0.7, 1.1, 1.7, 2.4)
             for across in (-0.3, -0.11, 0.0, 0.11, 0.3)
-        ] + [
-            at(along, sign * across)
-            for along, edge in edges
-            for across in edge
-            for sign in (-1.0, 1.0)
         ]
+        edges = []
+        for along in (0.5, 0.9, 1.3, 1.7, 2.1):
+            across = [0.005 * i for i in range(0, 161)]
+            alpha = evaluate([at(along, a) for a in across])
+            a0 = next((a for a, v in zip(across, alpha) if v < 0.9), None)
+            a1 = next((a for a, v in zip(across, alpha) if v < 0.1), None)
+            if a0 is None or a1 is None or a1 <= a0:
+                continue
+            for f in (0.2, 0.4, 0.6, 0.8):
+                for sign in (-1.0, 1.0):
+                    edges.append(at(along, sign * (a0 + f * (a1 - a0))))
+        return grid + edges
 
     def _assert_tracks_reference(self, found, expected, points):
         """Every rendered sample within 0.05 of the reference, with the sample
@@ -1729,14 +1623,25 @@ class TestShadowRigLive(unittest.TestCase):
         Four points can be satisfied by a shader that is right about the
         bearing and wrong about everything else. This walks the pole's shadow
         lengthways and across it -- inside, along the penumbra edge, past the
-        tip -- and requires the page to agree with `HorizonMap.alpha` at every
+        tip -- and requires the page to agree with `HeightFieldMap.alpha` at every
         one.
         """
         azimuth, _, _, _ = _pole_geometry_frame()
         source = [2.0 * math.cos(azimuth), 3.0, 2.0 * math.sin(azimuth)]
-        points = self._scatter_points(self.POSITIONAL_EDGES)
-        hmap, glb = self._pole_fixture({"name": "shadow_source", "translation": source})
-        expected = hmap.alpha([[x, 0.0, z] for x, z in points], light=source)
+        hmap, glb = self._pole_fixture(
+            {"name": "shadow_source", "translation": source},
+            source_size=POLE_SOURCE_SIZE,
+        )
+
+        def evaluate(pts):
+            return hmap.alpha(
+                [[x, 0.0, z] for x, z in pts],
+                light=source,
+                source_size=POLE_SOURCE_SIZE,
+            )
+
+        points = self._scatter_points(evaluate)
+        expected = evaluate(points)
         found = self._load(glb, action=HORIZON_SAMPLES_JS, points=points)
         self._assert_tracks_reference(found, expected, points)
 
@@ -1761,16 +1666,10 @@ class TestShadowRigLive(unittest.TestCase):
         # height / tan(e) = 2.75 units, which spans the whole scatter (a steep
         # source throws a shadow too short for most points to decide anything).
         #
-        # And 0.3 of a bin OFF the bearing the positional fixture uses. That
-        # one is the middle of bin 18, which for a POSITIONAL source is only
-        # the bearing at the CONTACT -- every fragment sees the light on its
-        # own bearing. A directional source has one bearing for the whole
-        # plane, so a bin centre would put s at exactly 0.5 for every fragment
-        # at once: a dead tie in side, and a boundary in floor(s * 16), decided
-        # by whether the GPU's float32 atan2 lands a hair above or below
-        # numpy's float64. Off-centre, s = 0.8 and nothing sits on an edge.
-        step = TWO_PI / POLE_BINS
-        bearing = azimuth + 0.3 * step
+        # And a little off the bearing the positional fixture uses, so no
+        # sample sits on a texel edge the GPU's float32 and numpy's float64
+        # could round either way.
+        bearing = azimuth + 0.3 * (TWO_PI / 32.0)
         elevation = math.radians(20.0)
         shine = [
             -math.cos(bearing) * math.cos(elevation),
@@ -1779,10 +1678,7 @@ class TestShadowRigLive(unittest.TestCase):
         ]
         self.assertLess(shine[1], 0.0, "the fixture must shine downward")
 
-        points = self._scatter_points(
-            self.DIRECTIONAL_EDGES,
-            along_axis=(math.cos(bearing - math.pi), math.sin(bearing - math.pi)),
-        )
+        along = (math.cos(bearing - math.pi), math.sin(bearing - math.pi))
         hmap, glb = self._pole_fixture(
             {
                 "name": "shadow_source",
@@ -1792,9 +1688,19 @@ class TestShadowRigLive(unittest.TestCase):
                     9.0,
                 ],  # a directional source's position is inert
                 "rotation": _quat_from_minus_y(shine),
-            }
+            },
+            source_angle=POLE_SOURCE_ANGLE,
         )
-        expected = hmap.alpha([[x, 0.0, z] for x, z in points], direction=shine)
+
+        def evaluate(pts):
+            return hmap.alpha(
+                [[x, 0.0, z] for x, z in pts],
+                direction=shine,
+                source_angle=POLE_SOURCE_ANGLE,
+            )
+
+        points = self._scatter_points(evaluate, along_axis=along)
+        expected = evaluate(points)
         found = self._load(glb, action=HORIZON_SAMPLES_JS, points=points)
         (plane,) = found["before"]
         self.assertEqual(plane["uMode"], 1)
@@ -1809,7 +1715,7 @@ class TestShadowRigLive(unittest.TestCase):
         the other, which put every Blender-exported source below the horizon
         and drew nothing. Measured before the fix: alpha 0 at every point.
 
-        The map is baked in that mirrored sense (the pole at map coords
+        The map is baked in that mirrored sense (the post at map coords
         ``(x, -z)``) and the reference is fed frame-mapped points, exactly
         as the shader maps world points through A and B.
         """
@@ -1817,67 +1723,24 @@ class TestShadowRigLive(unittest.TestCase):
         # World bearing of the light, and the pole's WORLD position; in the
         # (X, -Z) frame the map coords are (x, -z) for both.
         source = [2.0 * math.cos(azimuth), 3.0, 2.0 * math.sin(azimuth)]
-        points = self._scatter_points(self.POSITIONAL_EDGES)
         to_frame = lambda x, z: (x, -z)  # noqa: E731 -- dot(P, A), dot(P, B)
-        _, _, _, pole_world = _pole_geometry_frame()
-        png = _pole_horizon_png(
-            POLE_BINS,
-            POLE_TILE,
-            POLE_RMIN,
-            POLE_RMAX,
-            to_frame(*pole_world),
-            POLE_RADIUS,
-            POLE_HEIGHT,
-            POLE_MAX_STRETCH,
+        hmap, glb = self._pole_fixture(
+            {"name": "shadow_source", "translation": source},
+            mirror=True,
+            source_size=POLE_SOURCE_SIZE,
         )
-        maps = self.temp.dir_path()
-        with open(os.path.join(maps, "Box_horizon.png"), "wb") as fh:
-            fh.write(png)
-        hmap = ptk.HorizonMap.from_rgba(
-            np.asarray(Image.open(io.BytesIO(png)).convert("RGBA")),
-            bins=POLE_BINS,
-            size=POLE_TILE,
-            r_min=POLE_RMIN,
-            r_max=POLE_RMAX,
-            max_stretch=POLE_MAX_STRETCH,
-        )
-        frame_pts = [[fx, 0.0, fz] for fx, fz in (to_frame(x, z) for x, z in points)]
         frame_light = [source[0], source[1], -source[2]]
-        expected = hmap.alpha(frame_pts, light=frame_light)
-        self.assertGreater(int((expected > 0.5).sum()), 4)
 
-        record = _record(
-            "Box_horizon_plane",
-            type="horizon",
-            follow_source=False,
-            max_stretch=POLE_MAX_STRETCH,
-            horizon={
-                "texture": "Box_horizon.png",
-                "bins": POLE_BINS,
-                "tile": list(POLE_TILE),
-                "layout": [8, 8],
-                "layers": 2,
-                "mapping": "logpolar",
-                "r_min": POLE_RMIN,
-                "r_max": POLE_RMAX,
-                "frame_a": [1, 0, 0],
-                "frame_b": [0, 0, -1],
-                "encoding": 1,
-                "rect": [1, 1, 0, 0],
-                "max_stretch": POLE_MAX_STRETCH,
-            },
-        )
-        glb = self._glb(
-            None,
-            nodes=[
-                {"name": "Box_horizon_plane", "mesh": 0, "scale": [14.0, 1.0, 14.0]},
-                {"name": "shadow_source", "translation": source},
-                {"name": "Box_contact_loc"},
-                _data_export_node(_payload([record])),
-            ],
-            materials=[_plane_material("Box_horizon_MAT")],
-            search_dirs=[maps],
-        )
+        def evaluate(pts):
+            return hmap.alpha(
+                [[fx, 0.0, fz] for fx, fz in (to_frame(x, z) for x, z in pts)],
+                light=frame_light,
+                source_size=POLE_SOURCE_SIZE,
+            )
+
+        points = self._scatter_points(evaluate)
+        expected = evaluate(points)
+        self.assertGreater(int((expected > 0.5).sum()), 4)
         found = self._load(glb, action=HORIZON_SAMPLES_JS, points=points)
         self._assert_tracks_reference(found, expected, points)
 

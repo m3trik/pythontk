@@ -1254,6 +1254,80 @@ class ResolveFfmpegTest(unittest.TestCase):
                 "C:/ff/ffmpeg.exe",
             )
 
+    def test_a_declined_download_raises_without_installing(self):
+        """``prompt`` is the consent seam: a refusal must neither install nor
+        be reported as "not on PATH"."""
+        from unittest.mock import patch
+        from pythontk import VidUtils
+
+        self._no_ffmpeg_anywhere()
+        asked = []
+        with patch.object(self._installer().AppInstaller, "ensure") as ensure:
+            with self.assertRaises(FileNotFoundError) as caught:
+                VidUtils.resolve_ffmpeg(
+                    required=True,
+                    auto_install=True,
+                    prompt=lambda question: asked.append(question) or False,
+                )
+        ensure.assert_not_called()
+        self.assertEqual(len(asked), 1, "the caller's dialog is asked exactly once")
+        self.assertIn("declined", str(caught.exception))
+
+    def test_a_consented_download_installs(self):
+        from unittest.mock import patch
+        from pythontk import VidUtils
+
+        self._no_ffmpeg_anywhere()
+        with patch.object(
+            self._installer().AppInstaller, "ensure", return_value="C:/ff/ffmpeg.exe"
+        ) as ensure:
+            self.assertEqual(
+                VidUtils.resolve_ffmpeg(
+                    required=True, auto_install=True, prompt=lambda q: True
+                ),
+                "C:/ff/ffmpeg.exe",
+            )
+        ensure.assert_called_once()
+
+    def test_the_silent_default_still_installs_without_asking(self):
+        """Contract: ``auto_install=True`` alone installs -- the existing
+        callers never passed a prompt and must not start asking a console."""
+        from unittest.mock import patch
+        from pythontk import VidUtils
+
+        self._no_ffmpeg_anywhere()
+        with patch.object(
+            self._installer().AppInstaller, "ensure", return_value="C:/ff/ffmpeg.exe"
+        ):
+            self.assertEqual(
+                VidUtils.resolve_ffmpeg(required=False, auto_install=True),
+                "C:/ff/ffmpeg.exe",
+            )
+
+    def test_ensure_ffmpeg_returns_none_when_already_available(self):
+        from unittest.mock import patch
+
+        import pythontk.vid_utils._vid_utils as vid
+        from pythontk import VidUtils
+
+        with patch.object(vid.shutil, "which", return_value="C:/on/path/ffmpeg.exe"):
+            self.assertIsNone(VidUtils.ensure_ffmpeg(prompt=lambda q: False))
+
+    def test_ensure_ffmpeg_offers_the_install_and_reports_what_it_installed(self):
+        from unittest.mock import patch
+        from pythontk import VidUtils
+
+        self._no_ffmpeg_anywhere()
+        with patch.object(
+            self._installer().AppInstaller, "ensure", return_value="C:/ff/ffmpeg.exe"
+        ):
+            self.assertEqual(
+                VidUtils.ensure_ffmpeg(prompt=lambda q: True), "C:/ff/ffmpeg.exe"
+            )
+        with self.assertRaises(FileNotFoundError) as caught:
+            VidUtils.ensure_ffmpeg(prompt=lambda q: False)
+        self.assertIn("declined", str(caught.exception))
+
     def test_without_auto_install_the_message_is_unchanged_in_substance(self):
         from pythontk import VidUtils
 

@@ -350,12 +350,15 @@ class TestPreviewViewerLive(unittest.TestCase):
         return out
 
     # ------------------------------------------------------------------ driver
-    def _load(self, glb, then_publish=None, probe=None):
+    def _load(self, glb, then_publish=None, probe=None, then=None):
         """Serve *glb*, open it in the real page, return the probe's findings.
 
         *then_publish* publishes a SECOND version once the page is up and waits
         for the swap -- the only way to reach `disposeModel`, which frees the
         outgoing model's textures between pushes.
+
+        *then* is the general form: ``then(server, page)`` runs once the page
+        is up and may return a dict merged into the findings.
 
         *probe* overrides the class-wide script for tests that need to measure
         something else (the fade suite drives the playhead); it reports through
@@ -401,7 +404,10 @@ class TestPreviewViewerLive(unittest.TestCase):
                     page.wait_for_function(
                         "() => window.__probe.loads >= 2", timeout=180_000
                     )
+                extra = then(server, page) if then is not None else None
                 found = page.evaluate("() => window.__probe")
+                if extra:
+                    found.update(extra)
                 browser.close()
         finally:
             server.stop()
@@ -409,6 +415,32 @@ class TestPreviewViewerLive(unittest.TestCase):
         return found
 
     # ------------------------------------------------------------------- tests
+    def test_a_superseded_page_reloads_itself(self):
+        """The poll swaps the model but never the script running it, so a
+        viewer fix reached an open tab only via F5 (2026-09-05: a highlight
+        the GLB carried, a page from before the binding existed). The manifest
+        now fingerprints the page; when the fingerprint changes under an open
+        tab, the tab reloads and comes back ready."""
+
+        def bump(server, page):
+            stamp = page.evaluate(
+                "() => performance.getEntriesByType('navigation')[0].type"
+            )
+            with server._lock:
+                server._viewer_stamp = "0123456789ab"
+            page.wait_for_function(
+                "() => performance.getEntriesByType('navigation')[0].type === 'reload'"
+                " && window.__probe && window.__probe.ready === true",
+                timeout=120_000,
+            )
+            return {"navigation_before": stamp}
+
+        found = self._load(self._animated_glb(), then=bump)
+
+        self.assertEqual(found["navigation_before"], "navigate")
+        self.assertEqual(found["errors"], [])
+        self.assertEqual(found["meshes"], 1, "the reloaded page loads the model again")
+
     def test_the_page_loads_a_model_and_mounts_its_clips(self):
         """The whole load path, executed: container, loader, scene, mixer."""
         found = self._load(self._animated_glb())

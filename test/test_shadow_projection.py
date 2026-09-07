@@ -302,13 +302,14 @@ class TestRasterizeShadow(unittest.TestCase):
 
 
 class TestCanvasAttachment(unittest.TestCase):
-    """The reported gap: a grounded target's shadow drifted away from its feet
-    as the light lowered, while an overhead light drew it attached. A canvas
-    stamped as fractions of the model's LENGTH slides with that length; the
-    physics pins the near edge to the footprint (ground points project onto
-    themselves at any light height) and only the far edge follows the top's
-    projection, so the stamp must be measured against the base disk and the
-    top disk separately."""
+    """The reported gap, twice: a grounded target's shadow drifted away from
+    its feet as the light lowered. A canvas stamped as fractions of the
+    model's LENGTH slid with that length; one stamped in footprint radii
+    pinned the canvas's back edge but let the drawn feet slide forward as
+    the far edge grew. Ground points project onto themselves at any light
+    height, so the anchor -- the feet -- must keep its place in the texture:
+    the near edge is stamped against the far edge, and the far edge in
+    top-disk radii from where the head lands."""
 
     R = math.hypot(2.0, 2.0) / 2.0  # a 2 x 2 x 2 box's footprint radius
     H = 2.0
@@ -325,29 +326,48 @@ class TestCanvasAttachment(unittest.TestCase):
         uw = ShadowProjection.to_frame(ground, model)
         return (uw[:, 0].min(), uw[:, 0].max(), uw[:, 1].min(), uw[:, 1].max()), model
 
-    def test_grounded_canvas_stays_attached_to_the_footprint(self):
+    @staticmethod
+    def _feet(rect):
+        """Where the anchor (u = 0) sits along the canvas, as a fraction."""
+        return (0.0 - rect[0]) / (rect[1] - rect[0])
+
+    def test_grounded_feet_keep_their_place_as_the_light_lowers(self):
         """Rasterized under a high light at +X, then re-placed under a low one:
-        the canvas's near edge stays at the box's near face (u = -1) and its far
-        edge lands where the top's far corner projects (reach + 1 x k_top)."""
+        the far edge lands where the top's far corner projects (reach + 1 x
+        k_top) and the anchor sits at the same fraction of the canvas as it
+        did in the texture -- the drawn feet stay under the box's feet. The
+        part behind the feet stretches with the reach (the accepted cost: it
+        only bridges the moves between two renders)."""
         rect_high, high = self._rect((6.0, 20.0, 0.0))
         stamp = ShadowProjection.fractions(rect_high, high)
         rect_low, low = self._rect((6.0, 4.0, 0.0))
         self.assertAlmostEqual(low.k_top, 2.0, places=6)  # no cap in play
         placed = low.rect(stamp)
-        self.assertAlmostEqual(rect_low[0], -1.0, places=6)  # the near face, exact
-        self.assertAlmostEqual(placed[0], rect_low[0], places=6)
         self.assertAlmostEqual(placed[1], rect_low[1], places=6)
-        # The overhead-ish rect it was stamped from was much shorter.
+        self.assertAlmostEqual(self._feet(placed), self._feet(rect_high), places=9)
+        # The overhead-ish rect it was stamped from was much shorter, and
+        # the canvas's back edge (not the feet) is what moved to keep them.
         self.assertLess(rect_high[1] - rect_high[0], 0.5 * (rect_low[1] - rect_low[0]))
+        self.assertLess(placed[0], rect_low[0])
+        # The near-edge stamp of old (the near face pinned, the far edge on
+        # the head) would have put the feet 0.36 of the canvas -- 2.2 units
+        # -- ahead of the box's feet here.
+        drifted = (rect_low[0], placed[1])
+        self.assertGreater(
+            self._feet(rect_high) * (drifted[1] - drifted[0]) + drifted[0], 2.0
+        )
 
-    def test_floating_canvas_scales_with_the_base_disk(self):
+    def test_floating_feet_keep_their_place_too(self):
         """A target 1 up: its footprint projects at k_base = 4/3 under a light
-        at height 4 — the canvas's near edge follows the projected footprint."""
+        at height 4 and the anchor slides away from the light -- the canvas
+        keeps the anchor at its stamped fraction, whatever the base factor."""
         model = ShadowProjection.model((0, 1, 0), (6, 4, 0), radius=self.R, height=1.0)
         self.assertAlmostEqual(model.k_base, 4.0 / 3.0, places=6)
-        stamp = (-1.0 / self.R, 1.0 / self.R, -0.5, 0.5)  # the box's own extents
-        rect = model.rect(stamp)
-        self.assertAlmostEqual(rect[0], -1.0 * model.k_base, places=6)
+        drawn = (-1.0, 3.0, -1.0, 1.0)  # a canvas with the feet a quarter in
+        stamp = ShadowProjection.fractions(drawn, model)
+        np.testing.assert_allclose(model.rect(stamp), drawn, atol=1e-9)
+        higher = ShadowProjection.model((0, 1, 0), (6, 9, 0), radius=self.R, height=1.0)
+        self.assertAlmostEqual(self._feet(higher.rect(stamp)), 0.25, places=9)
 
 
 if __name__ == "__main__":
