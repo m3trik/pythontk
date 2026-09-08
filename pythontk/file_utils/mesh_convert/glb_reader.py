@@ -24,27 +24,6 @@ from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 class _GlbReaderInternal:
     """Decode tables and matrix math for :class:`GlbReader`."""
 
-    #: glTF componentType -> (struct format char, byte size).
-    _COMPONENT_TYPES: Dict[int, Tuple[str, int]] = {
-        5120: ("b", 1),
-        5121: ("B", 1),
-        5122: ("h", 2),
-        5123: ("H", 2),
-        5125: ("I", 4),
-        5126: ("f", 4),
-    }
-
-    #: glTF accessor type -> component count.
-    _TYPE_WIDTHS: Dict[str, int] = {
-        "SCALAR": 1,
-        "VEC2": 2,
-        "VEC3": 3,
-        "VEC4": 4,
-        "MAT2": 4,
-        "MAT3": 9,
-        "MAT4": 16,
-    }
-
     # ---- animation sampler decode -----------------------------------------
 
     @staticmethod
@@ -269,8 +248,8 @@ class GlbReader(_GlbReaderInternal):
         acc = accessors[index] or {}
         if "sparse" in acc:
             return None
-        spec = self._COMPONENT_TYPES.get(acc.get("componentType"))
-        width = self._TYPE_WIDTHS.get(acc.get("type"))
+        spec = MeshConvert.ACCESSOR_COMPONENT_TYPES.get(acc.get("componentType"))
+        width = MeshConvert.ACCESSOR_TYPE_COUNT.get(acc.get("type"))
         view_index = acc.get("bufferView")
         if spec is None or width is None or not isinstance(view_index, int):
             return None

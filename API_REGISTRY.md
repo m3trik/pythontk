@@ -957,8 +957,8 @@ Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
 
 The Scene Exporter panels' export-button contract, written once.
 
-- **[`class ExportProfile`](pythontk/pythontk/core_utils/export_profile.py#L21)** — Pure helpers over Scene Exporter task / check definitions.
-  - `ExportProfile.legal_name(name: str) -> str` *(static)* — The switchboard's objectName rule: non-alphanumerics become ``_``.
+- **[`class ExportProfile`](pythontk/pythontk/core_utils/export_profile.py#L22)** — Pure helpers over Scene Exporter task / check definitions.
+  - `ExportProfile.legal_name(name: str) -> str` *(static)* — The switchboard's objectName rule, from its owner.
   - `ExportProfile.widget_key(cls, name: str, spec: Mapping[str, Any]) -> str` *(class)* — The objectName the panel gives *name*'s widget (and the preset stores).
   - `ExportProfile.value_method(cls, spec: Mapping[str, Any]) -> str` *(class)* — The read the export button performs on the widget (``b000``'s rule).
   - `ExportProfile.run_config(cls, values: Mapping[str, Any], task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]], override_checks: bool = False, ignore_groups_case_sensitive: bool = False, default_export_mode: str = 'visible') -> Dict[str, Any]` *(class)* — The export button's contract: widget values -> ``perform_export`` inputs.
@@ -1503,7 +1503,7 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
-  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* — Drop the FBX's handoff block from a converted glTF's node extras.
   - `MeshConvert.build_fbx_handoff(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to publish.
@@ -1518,13 +1518,15 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.lightmap_report(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]` *(static)* — ``{"expected", "bound", "unbound", "out_of_scope"}`` for one bind.
   - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
   - `MeshConvert.apply_glb_shadows(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]` *(class)* — Bind a scene's shadow-rig maps into a GLB;
-  - `MeshConvert.apply_glb_clips(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Rebuild the declared shot clips as exact slices of the whole timeline.
+  - `MeshConvert.apply_glb_clips(cls, glb: GlbTarget, *, mode: str = 'both') -> Optional[Dict[str, Any]]` *(class)* — Rebuild the declared shot clips as exact slices of the whole timeline.
   - `MeshConvert.apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize keyed visibility as STEP ``scale`` channels the file can play.
   - `MeshConvert.clip_spans(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]` *(class)* — Per take, the first and last authored frame inside its window.
   - `MeshConvert.build_visibility_tracks(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]` *(class)* — Wrap *tracks* in the versioned ``visibility_tracks`` envelope.
   - `MeshConvert.strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]` *(class)* — Remove every curve-proxy node (and its channels) from a GLB.
   - `MeshConvert.apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize authored opacity ramps as animated material alpha.
   - `MeshConvert.prune_glb_animations(cls, glb: GlbTarget) -> List[str]` *(class)* — Drop every animation that carries no channels or no samplers.
+  - `MeshConvert.compact_glb_animations(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Collapse every animation channel that never moves to two keys.
+  - `MeshConvert.drop_glb_texture_fallbacks(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop the PNG/JPEG twin of every texture that also ships KTX2.
   - `MeshConvert.apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish the GLB's clips as ``extras.animation_web``, joined to the shots.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
@@ -1552,7 +1554,7 @@ Deliverable verification for exported FBX / GLB pairs.
   - `VerificationReport.counts(self) -> Dict[str, int]`
   - `VerificationReport.summary(self) -> str` — Human-readable table plus a one-line verdict.
   - `VerificationReport.to_json(self) -> str`
-- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L104)** — Run file-level gates over an exported GLB and/or FBX.
+- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L143)** — Run file-level gates over an exported GLB and/or FBX.
   - `ExportVerifier.reader(self) -> Optional[GlbReader]` *(property)*
   - `ExportVerifier.fbx(self) -> Optional[FbxFile]` *(property)*
   - `ExportVerifier.gate_names(self) -> List[str]` — Every registered gate, in run order.
@@ -1564,6 +1566,7 @@ Deliverable verification for exported FBX / GLB pairs.
   - `ExportVerifier.check_glb_animation_integrity(self) -> List[Finding]` — Channels resolve to real nodes/samplers;
   - `ExportVerifier.check_glb_envelope(self) -> List[Finding]` — Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides.
   - `ExportVerifier.check_clips_vs_takes(self) -> List[Finding]` — Each GLB clip's length matches its declared take (±1 frame).
+  - `ExportVerifier.check_clip_origin(self) -> List[Finding]` — The stack is as long as the span its clips were cut against.
   - `ExportVerifier.check_fbx_container(self) -> List[Finding]` — The FBX parses;
   - `ExportVerifier.check_fbx_takes(self) -> List[Finding]` — Declared sidecar takes all exist as AnimationStacks.
   - `ExportVerifier.check_cross_clips(self) -> List[Finding]` — GLB clip names exist as FBX stacks (the conversion kept them).
@@ -1600,7 +1603,7 @@ Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
 Rebuild a GLB's shot clips from its one whole-timeline animation.
 
 - **[`class GlbClips(_GlbClipsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_clips.py#L279)** — Build a GLB's declared shot clips from its whole-timeline animation.
-  - `GlbClips.rebuild(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0) -> Optional[Dict[str, Any]]` *(class)* — Replace the declared clips with exact slices of the source stack.
+  - `GlbClips.rebuild(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0, *, cut_shots: bool = True, keep_sequence: bool = True) -> Optional[Dict[str, Any]]` *(class)* — Replace the declared clips with exact slices of the source stack.
 
 <a id="file_utils--mesh_convert--glb_fades"></a>
 ### `file_utils/mesh_convert/glb_fades.py`
@@ -1622,14 +1625,14 @@ FBX -> GLB: the one build every GLB deliverable goes through.
 
 - **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L49)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
   - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
-  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
+  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
 
 <a id="file_utils--mesh_convert--glb_reader"></a>
 ### `file_utils/mesh_convert/glb_reader.py`
 
 Read-only structured access to a GLB: accessors, animation sampling, worlds.
 
-- **[`class GlbReader(_GlbReaderInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_reader.py#L167)** — Read-only GLB inspector: accessors, animation evaluation, node worlds.
+- **[`class GlbReader(_GlbReaderInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_reader.py#L146)** — Read-only GLB inspector: accessors, animation evaluation, node worlds.
   - `GlbReader.load(cls, path: str) -> 'GlbReader'` *(class)* — Open *path* read-only and return a reader.
   - `GlbReader.counts(self) -> Dict[str, int]` — Section lengths for the usual census keys (missing -> 0).
   - `GlbReader.image_mimes(self) -> Dict[str, int]` — ``{mimeType: count}`` over ``images`` (missing type -> "?").
@@ -2274,6 +2277,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
 ### `str_utils/_str_utils.py`
 
 - **[`class StrUtils(CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L17)**
+  - `StrUtils.to_legal_name(name: str) -> str` *(static)* — Every non-alphanumeric becomes ``_``: the objectName rule.
   - `StrUtils.strip_ansi(string: str) -> str` *(static)* — Remove ANSI escape sequences (color/cursor codes) from a string.
   - `StrUtils.sanitize(text: Union[str, List[str]], replacement_char: str = '_', char_map: Optional[Dict[str, str]] = None, preserve_trailing: bool = False, preserve_case: bool = False, allow_consecutive: bool = False, return_original: bool = False) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]` *(static)* — Sanitizes a string or a list of strings by replacing invalid characters.
   - `StrUtils.replace_placeholders(text: str, **kwargs) -> str` *(static)* — Replace placeholders in a string with provided values.

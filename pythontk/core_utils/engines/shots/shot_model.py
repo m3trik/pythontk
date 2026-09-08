@@ -401,8 +401,8 @@ class ShotStore(_ShotStoreInternal):
         self._boundary_redo.clear()
 
     def _restore_point(self) -> dict:
-        """Everything a restore has to put back: the shot records AND the
-        edit ledger.
+        """Everything a restore has to put back: the shot records, the edit
+        ledger AND the gap locks.
 
         The ledger is a set of ``(curve, frame)`` claims on samples the shot
         system wrote.  An edit moves those claims with the keys; the DCC's
@@ -412,7 +412,14 @@ class ShotStore(_ShotStoreInternal):
         cuts them.  Measured on a production assembly: one key drag, undone,
         and the following drag cut 7 of 22 keys off a curve.
         """
-        return {"shots": self.snapshot_bounds(), "ledger": self.edit_ledger.to_dict()}
+        return {
+            "shots": self.snapshot_bounds(),
+            "ledger": self.edit_ledger.to_dict(),
+            # A lock names its gap by the flanking shot ids, so undoing a
+            # delete (which re-creates the shot) or an insert has to put the
+            # locks of that moment back with it; see _rekey_gap_locks.
+            "locked_gaps": sorted(self.locked_gaps),
+        }
 
     # ---- pairing with the DCC's own undo queue ---------------------------
     #
@@ -505,6 +512,7 @@ class ShotStore(_ShotStoreInternal):
     def _apply_boundary_snapshot(self, state: dict) -> None:
         """Put back a :meth:`_restore_point`: the ledger, then the shots."""
         self.edit_ledger = ShotEditLedger.from_dict(state.get("ledger"))
+        locks = state.get("locked_gaps")
         state = state["shots"]
         snap_ids = {rec["shot_id"] for rec in state}
         with self.batch_update():
@@ -539,6 +547,11 @@ class ShotStore(_ShotStoreInternal):
                         locked=rec["locked"],
                         metadata=rec["metadata"],
                     )
+            if locks is not None:
+                restored = {tuple(pair) for pair in locks}
+                if restored != self.locked_gaps:
+                    self.locked_gaps = restored
+                    self.mark_dirty()
 
     # ---- scene hooks (overridable; pure defaults) ------------------------
 
@@ -1027,6 +1040,7 @@ class ShotStore(_ShotStoreInternal):
             description=description,
         )
         self.shots.append(block)
+        self._rekey_gap_locks()
         self._notify(ShotDefined(shot=block))
         self.mark_dirty()
         return block
@@ -1079,10 +1093,57 @@ class ShotStore(_ShotStoreInternal):
         for i, s in enumerate(self.shots):
             if s.shot_id == shot_id:
                 self.shots.pop(i)
+                self._rekey_gap_locks()
                 self._notify(ShotRemoved(shot_id=shot_id))
                 self.mark_dirty()
                 return True
         return False
+
+    def _rekey_gap_locks(self) -> None:
+        """Re-key the gap locks onto the current adjacency after a shot is
+        added or removed.
+
+        A lock names its gap by the two shot ids flanking it, and the pair
+        went stale the moment the shots around it changed: a shot inserted
+        into a locked gap left both gaps that replaced it unlocked, and a
+        shot deleted from between two locked gaps took both pairs with it
+        while the gap that took their place opened unlocked -- with nothing
+        said either time (2026-09-07: "I locked all gaps and they
+        automatically became unlocked a few operations later").
+
+        The lock is on the GAP, and the gap is wherever the two shots'
+        content now meets.  A locked pair that is still adjacent stands.
+        One whose shots both exist but are no longer adjacent becomes every
+        adjacent pair between them, so an inserted or split-off shot inherits
+        the lock on both sides.  One that lost a shot becomes the gap its
+        survivor now flanks on that side -- the gap after a surviving left
+        shot, before a surviving right one -- and one that lost both is
+        dropped.
+        """
+        if not self.locked_gaps:
+            return
+        ordered = self.sorted_shots()
+        pos = {shot.shot_id: i for i, shot in enumerate(ordered)}
+        adjacent = {(a.shot_id, b.shot_id) for a, b in zip(ordered, ordered[1:])}
+        rekeyed: set = set()
+        for left, right in self.locked_gaps:
+            if (left, right) in adjacent:
+                rekeyed.add((left, right))
+                continue
+            i, j = pos.get(left), pos.get(right)
+            if i is not None and j is not None:
+                span = range(min(i, j), max(i, j))
+            elif i is not None:
+                span = range(i, min(i + 1, len(ordered) - 1))
+            elif j is not None:
+                span = range(max(j - 1, 0), j)
+            else:
+                continue
+            for k in span:
+                rekeyed.add((ordered[k].shot_id, ordered[k + 1].shot_id))
+        if rekeyed != self.locked_gaps:
+            self.locked_gaps = rekeyed
+            self.mark_dirty()
 
     def append_shot(
         self,

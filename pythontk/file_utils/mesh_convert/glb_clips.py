@@ -300,6 +300,9 @@ class GlbClips(_GlbClipsInternal):
         takes: Sequence[Dict[str, Any]],
         fps: float,
         source_zero: float = 0.0,
+        *,
+        cut_shots: bool = True,
+        keep_sequence: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """Replace the declared clips with exact slices of the source stack.
 
@@ -310,6 +313,16 @@ class GlbClips(_GlbClipsInternal):
             fps: The rate those frame numbers are quoted in.
             source_zero: The authoring frame the source stack places at its own
                 ``t=0``.  Zero for a stack the converter did not rebase.
+            cut_shots: Cut the declared shots out of the stack.  False ships
+                the stack alone -- still renamed and stamped with its origin,
+                because that is what makes the file self-describing whether or
+                not anything was cut from it.
+            keep_sequence: Keep the stack the shots were cut FROM.  False drops
+                it and releases its payload, which is the whole point: it holds
+                the same performance the shots do, so a consumer that plays
+                clips never reads it (measured on a production assembly at
+                66.52 MB of a 158.69 MB file).  Ignored when *cut_shots* is
+                False -- dropping both would leave no animation at all.
 
         Returns:
             ``{"clips": n, "channels": n, "source": name, "bytes": n}``, or
@@ -341,6 +354,36 @@ class GlbClips(_GlbClipsInternal):
             return None
         source = animations[index]
         source_name = str(source.get("name") or "")
+
+        if not cut_shots:
+            # Ship the stack alone. It is still renamed and stamped: the origin
+            # is what every later pass reads to place a gate or a clip in time,
+            # and it does not become unknowable just because nothing was cut.
+            from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+            name = cls._stamp_sequence(source, source_name, windows, source_zero)
+            dropped = [a for a in animations if a is not source]
+            gltf["animations"] = [source]
+            edit.dirty = True
+            # Symmetric with the drop below: any clip this pass removes takes
+            # its payload with it. Nothing to release on a FRESH conversion
+            # (the shots were never cut), but re-running over a file that
+            # already carries them is exactly how a mode is changed.
+            released = MeshConvert._release_animation_payload(edit, dropped)
+            logger.info(
+                "Clips: shipping the whole-timeline stack alone as %r; the %d "
+                "declared shot(s) were not cut%s.",
+                name,
+                len(windows),
+                f", releasing {released / 1e6:.2f} MB" if released else "",
+            )
+            return {
+                "clips": 0,
+                "channels": len(source.get("channels") or []),
+                "source": source_name,
+                "bytes": 0,
+                "released": released,
+            }
 
         # Decode the whole source once. A channel this pass cannot read is a
         # reason to decline the REBUILD, not to emit a clip missing it: a clip
@@ -483,32 +526,73 @@ class GlbClips(_GlbClipsInternal):
         # The sequence last: a consumer that ignores the manifest and opens
         # ``animations[0]`` then lands on the first SHOT, which is what the
         # clip list looks like it promises.
-        declared_names = {name for name, _s, _e in windows}
-        source["name"] = (
-            cls.SEQUENCE_CLIP
-            if cls.SEQUENCE_CLIP not in declared_names
-            else source_name
-        )
-        source.setdefault("extras", {})[cls.ZERO_FRAME_KEY] = source_zero
-        gltf["animations"] = rebuilt + [source]
-        edit.dirty = True
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
+        name = cls._stamp_sequence(source, source_name, windows, source_zero)
         total = sum(len(raw) for raw in payloads)
+        # Everything this pass SUPERSEDES, which is every animation that came
+        # in except the stack the shots were just cut from -- Maya's own split
+        # takes among them. The rebuild has always discarded those; leaving
+        # them BOUND left their payload in the file with nothing able to read
+        # it, and re-running the pass grew the deliverable by the size of one
+        # more set of shots each time.
+        superseded = [a for a in animations if a is not source]
+        if keep_sequence:
+            gltf["animations"] = rebuilt + [source]
+        else:
+            # After the cut, never before: the shots are sliced OUT of this
+            # stack, so its payload has to be live until they exist.
+            gltf["animations"] = rebuilt
+            superseded.append(source)
+        edit.dirty = True
+        released = MeshConvert._release_animation_payload(edit, superseded)
         logger.info(
-            "Clips: rebuilt %d shot clip(s) with %d channel(s) from %r "
-            "(+%.2f MB); the whole-timeline stack ships as %r.",
+            "Clips: rebuilt %d shot clip(s) with %d channel(s) from %r (+%.2f MB)%s%s.",
             len(rebuilt),
             written,
             source_name,
             total / 1e6,
-            source["name"],
+            (
+                f"; the whole-timeline stack ships as {name!r}"
+                if keep_sequence
+                else " and dropped the whole-timeline stack -- it holds the "
+                "same performance the shots do"
+            ),
+            f", releasing {released / 1e6:.2f} MB" if released else "",
         )
         return {
             "clips": len(rebuilt),
             "channels": written,
             "source": source_name,
             "bytes": total,
+            "released": released,
         }
+
+    @classmethod
+    def _stamp_sequence(
+        cls,
+        source: Dict[str, Any],
+        source_name: str,
+        windows: Sequence[Tuple[str, float, float]],
+        source_zero: float,
+    ) -> str:
+        """Name the whole-timeline stack and record the frame it puts at t=0.
+
+        Shared by both paths, because a file has to describe its own origin
+        whether the shots were cut from this stack or it is the only clip
+        shipping -- ``MeshConvert._clip_zero`` and every gate that places a
+        clip in time read it back from here.
+
+        Keeps the stack's own name when a declared shot already claims
+        :attr:`SEQUENCE_CLIP`: two clips with one name is worse than an
+        unhelpful one.
+        """
+        declared = {name for name, _s, _e in windows}
+        source["name"] = (
+            cls.SEQUENCE_CLIP if cls.SEQUENCE_CLIP not in declared else source_name
+        )
+        source.setdefault("extras", {})[cls.ZERO_FRAME_KEY] = source_zero
+        return str(source["name"])
 
     @staticmethod
     def _append(edit: Any, payloads: Sequence[bytes]) -> Optional[List[int]]:

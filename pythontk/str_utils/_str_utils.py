@@ -18,6 +18,36 @@ class StrUtils(CoreUtils):
     """ """
 
     @staticmethod
+    def to_legal_name(name: str) -> str:
+        """Every non-alphanumeric becomes ``_``: the objectName rule.
+
+        Deliberately NOT :meth:`sanitize`, which is the other, lossier rule in
+        this class: that one lowercases, collapses runs of the replacement
+        char and strips trailing ones, so ``"a  b"`` comes back ``"a_b"``.
+        This one is positional -- one character in, one out -- because the
+        result is an IDENTITY two sides derive independently and must agree
+        on: the widget uitk's switchboard builds from a definition
+        (``SwitchboardNameMixin.convert_to_legal_name``) and the key a
+        headless reader looks that widget up by (``ExportProfile.widget_key``).
+        Collapsing would make ``"a  b"`` and ``"a b"`` the same objectName.
+
+        It lives here, on the generic string class, rather than on either
+        caller: uitk cannot own it (pythontk is downstream of nothing and
+        cannot import it) and a Scene-Exporter class is the wrong owner for a
+        rule the whole switchboard depends on.
+
+        Parameters:
+            name (str): The text to convert.
+
+        Returns:
+            (str) The name with every non-alphanumeric replaced by ``_``.
+
+        Example:
+            to_legal_name("Convert Textures (2K)") --> 'Convert_Textures__2K_'
+        """
+        return re.sub(r"[^0-9a-zA-Z]", "_", name)
+
+    @staticmethod
     def strip_ansi(string: str) -> str:
         """Remove ANSI escape sequences (color/cursor codes) from a string.
 

@@ -235,13 +235,22 @@ def build_fbx(path: str, takes=("Shot_1",)) -> str:
     return path
 
 
-def build_sidecar(path: str, takes) -> str:
+def build_sidecar(path: str, takes, span=None, fps=30.0) -> str:
+    """*span* publishes ``clip_span["*"]`` -- the origin clips are cut against."""
+    data_export = {"fbx_takes": list(takes)}
+    if span is not None:
+        data_export["visibility_tracks"] = {
+            "fps": fps,
+            "version": 1,
+            "tracks": [],
+            "clip_span": {"*": list(span)},
+        }
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(
             {
                 "format": 3,
                 "hierarchy": {"paths": ["root", "root|arm"]},
-                "data_export": {"fbx_takes": list(takes)},
+                "data_export": data_export,
             },
             handle,
         )
@@ -542,6 +551,79 @@ class TestExportVerifier(_FixtureCase):
         self.assertEqual(statuses["clips_vs_takes"], PASS)
         self.assertEqual(statuses["fbx_takes"], PASS)
 
+    # ---- clip origin ------------------------------------------------------
+    #
+    # The defect these cover shipped a production assembly: the exporter
+    # published the BAKE RANGE as the exported stack's span, but the FBX
+    # plug-in does not trim authored curves to that range (measured on Maya
+    # 2025 / FBX 2020.3.6: a curve keyed 0-100 exports as 0-100 under a 20-80
+    # range). The stack carried frames 80-4281 while 161-4275 was published, so
+    # all 18 shots were cut 81 frames early and played the end of the previous
+    # shot -- with every other gate green, because the clip LENGTHS still
+    # matched their takes and no shot was missing.
+
+    def test_clip_origin_fails_when_the_stack_outruns_its_published_span(self):
+        glb = build_glb(self.path("asset.glb"), clip_end=0.5)  # 15 frames carried
+        build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 108])
+        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
+        self.assertFalse(report.ok, report.summary())
+        row = report.rows[0]
+        self.assertEqual(row.status, FAIL)
+        # Names both numbers and the drift between them, so the reader can see
+        # which end is wrong without opening the file.
+        self.assertIn("carries 15f", row.detail)
+        self.assertIn("8f span (100-108)", row.detail)
+        self.assertIn("+7f", row.detail)
+
+    def test_clip_origin_passes_when_the_span_describes_the_stack(self):
+        glb = build_glb(self.path("asset.glb"), clip_end=0.5)  # 15 frames carried
+        build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 115])
+        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
+        self.assertTrue(report.ok, report.summary())
+        self.assertEqual(report.rows[0].status, PASS)
+
+    def test_fps_comes_from_the_sidecar_not_a_hardcoded_30(self):
+        """Every frame a gate quotes is scaled by the rate it assumes.
+
+        ``TaskManager.verify_deliverables`` passes only paths, so a 24 or 60
+        fps scene was measured at 30 and every frame count came out wrong by
+        the ratio.
+        """
+        glb = build_glb(self.path("asset.glb"), clip_end=1.0)  # 1 second
+        build_sidecar(self.path(".asset.scene_data.json"), [], span=[0, 24], fps=24.0)
+        verifier = ExportVerifier(glb=glb)
+        self.assertEqual(verifier.fps, 24.0)
+        # 1s at 24 fps is 24 frames, which is the span the sidecar publishes.
+        report = verifier.run(["check_clip_origin"])
+        self.assertTrue(report.ok, report.summary())
+
+    def test_explicit_fps_overrides_the_sidecar(self):
+        glb = build_glb(self.path("asset.glb"))
+        build_sidecar(self.path(".asset.scene_data.json"), [], span=[0, 24], fps=24.0)
+        self.assertEqual(ExportVerifier(glb=glb, fps=60.0).fps, 60.0)
+
+    def test_fps_falls_back_to_30_without_a_sidecar(self):
+        glb = build_glb(self.path("asset.glb"))
+        self.assertEqual(ExportVerifier(glb=glb, sidecar=None).fps, 30.0)
+
+    def test_clip_origin_skips_without_a_published_span(self):
+        """An older sidecar publishes no span; there is nothing to check against."""
+        glb = build_glb(self.path("asset.glb"))
+        build_sidecar(self.path(".asset.scene_data.json"), [])
+        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
+        self.assertEqual(report.rows[0].status, SKIP)
+
+    def test_clip_origin_skips_when_no_clip_is_the_whole_timeline(self):
+        """Every clip declared: none of them is the stack, so none can show drift."""
+        glb = build_glb(self.path("asset.glb"), clip_name="Shot_1", clip_end=0.5)
+        build_sidecar(
+            self.path(".asset.scene_data.json"),
+            [{"name": "Shot_1", "start": 0, "end": 15}],
+            span=[100, 108],
+        )
+        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
+        self.assertEqual(report.rows[0].status, SKIP)
+
     def test_nan_fails_animation_gate(self):
         glb = build_glb(self.path("asset.glb"), nan_output=True)
         report = ExportVerifier(glb=glb, sidecar=None).run()
@@ -572,6 +654,43 @@ class TestExportVerifier(_FixtureCase):
         glb = build_glb(self.path("asset.glb"), undeclared_basisu=True)
         report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_images"])
         self.assertFalse(report.ok)
+
+    def _drop_png_fallback(self, glb: str, *, require: bool) -> str:
+        """Strip the texture's PNG twin, as drop_glb_texture_fallbacks does.
+
+        *require* decides whether the file then DECLARES that a reader without
+        the extension cannot open it -- the one fact that tells a deliberate
+        delivery mode apart from a broken one.
+        """
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        with MeshConvert.open_glb(glb) as edit:
+            del edit.gltf["textures"][0]["source"]
+            if require:
+                edit.gltf["extensionsRequired"] = ["KHR_texture_basisu"]
+            edit.dirty = True
+        return glb
+
+    def test_a_missing_fallback_warns_while_basisu_is_optional(self):
+        """Optional means a stock reader is promised a picture, and there is
+        none: that is a real defect, and the gate must keep saying so."""
+        glb = self._drop_png_fallback(build_glb(self.path("asset.glb")), require=False)
+        report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_images"])
+        self.assertIn(WARN, [row.status for row in report.rows], report.summary())
+
+    def test_a_missing_fallback_passes_once_basisu_is_REQUIRED(self):
+        """The shape ``drop_glb_texture_fallbacks`` produces on purpose.
+
+        Shipping one encoding instead of two is the whole saving; once the
+        file declares the extension REQUIRED it has stopped promising anything
+        it cannot deliver. Warning on it every run is how a reader learns to
+        scroll past the gate that would name a real one.
+        """
+        glb = self._drop_png_fallback(build_glb(self.path("asset.glb")), require=True)
+        report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_images"])
+        self.assertTrue(report.ok, report.summary())
+        self.assertNotIn(WARN, [row.status for row in report.rows], report.summary())
+        self.assertIn(PASS, [row.status for row in report.rows])
 
     def test_take_length_mismatch_fails(self):
         glb = build_glb(self.path("asset.glb"), clip_end=1.0)  # 30 frames

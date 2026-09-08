@@ -976,6 +976,7 @@ class MeshConvert(HelpMixin):
         lightmaps: bool = True,
         lightmap_dirs: Sequence[str] = (),
         shadow_dirs: Sequence[str] = (),
+        clip_mode: str = "both",
         report: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Convert an FBX file to a binary glTF 2.0 (GLB) file.
@@ -1026,6 +1027,17 @@ class MeshConvert(HelpMixin):
                            beside it (the Maya project layout), and every
                            *lightmap_dirs* entry -- the host's live texture
                            folders, which is where a rig's maps are written.
+            clip_mode:     Which animation clips the GLB ships, from
+                           :attr:`ANIMATION_CLIP_MODES` -- ``both`` (the
+                           declared shots AND the whole-timeline stack they
+                           were cut from), ``shots``, or ``full``. The two
+                           halves hold the SAME performance, so a consumer that
+                           plays one never reads the other; on a production
+                           assembly the stack alone was 66.5 MB. Validated
+                           HERE, before the conversion: the rebuild itself runs
+                           under a warn-and-continue guard, so a typo caught
+                           only there would downgrade to shipping Maya's lossy
+                           split takes with nothing but a log line.
             report:        A dict this fills with what the chain did, for a
                            caller that reports rather than logs: ``"sidecar"``
                            (the per-section outcome
@@ -1038,6 +1050,11 @@ class MeshConvert(HelpMixin):
         Returns:
             Absolute path to the written GLB file.
         """
+        if clip_mode not in cls.ANIMATION_CLIP_MODES:
+            raise ValueError(
+                f"Unknown animation clip mode {clip_mode!r}; expected one of "
+                f"{', '.join(cls.ANIMATION_CLIP_MODES)}."
+            )
         src_abs = os.path.abspath(src)
         if not os.path.isfile(src_abs):
             raise FileNotFoundError(f"FBX source not found: {src_abs}")
@@ -1250,7 +1267,7 @@ class MeshConvert(HelpMixin):
                 # clips, so a gate or a manifest entry written before it would
                 # describe clips that no longer exist.
                 try:
-                    cls.apply_glb_clips(edit)
+                    cls.apply_glb_clips(edit, mode=clip_mode)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB clip rebuild skipped: %s", exc)
                 # BEFORE the animation manifest, which reports what each clip
@@ -1291,6 +1308,22 @@ class MeshConvert(HelpMixin):
                     cls.prune_glb_animations(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB animation prune skipped: %s", exc)
+                # After the prune, for the same reason the prune is where it is:
+                # every pass above can only ADD channels, so the ones that never
+                # move are all present and final here. A clip PINS the pose of
+                # what it does not animate, which two keys say as well as
+                # thousands -- and a baked export writes one key per frame per
+                # node per clip (measured on a production assembly: 13,187 of
+                # 22,654 channels constant, 16.6 MB spent saying nodes stood
+                # still). Unconditional and self-feeding like the passes around
+                # it: byte-exact by construction (it collapses only a channel
+                # whose every element has the same bit pattern, keeps the clip's
+                # own end times so no duration moves, and refuses a layout it
+                # cannot prove), so there is no flag for a caller to forget.
+                try:
+                    cls.compact_glb_animations(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB animation compaction skipped: %s", exc)
                 # Unconditional and self-feeding, like the lightmap pass: it
                 # reads the take list out of the file and no-ops on a GLB with
                 # no animation, so there is no flag for a caller to forget.
@@ -3968,8 +4001,153 @@ class MeshConvert(HelpMixin):
                 runs.append((time, value))
         return runs
 
+    #: What a deliverable ships as its animation clips. ``both`` is the
+    #: historical shape (the shots AND the whole-timeline stack they were cut
+    #: from); the other two drop the half a given consumer never plays, which
+    #: is the same performance either way -- measured on a production assembly,
+    #: the whole-timeline stack alone was 66.52 MB of a 158.69 MB file.
+    ANIMATION_CLIP_MODES = ("both", "shots", "full")
+
+    #: Extensions that hold accessor indices the core walk cannot see. Dropping
+    #: an animation's payload renumbers nothing, but it does decide which
+    #: accessors are unreferenced, and one of these could still be reading a
+    #: buffer this pass is about to release. Same "bail whole rather than
+    #: guess" contract as :attr:`_IMAGE_REFERRING_EXTENSIONS`.
+    _ACCESSOR_REFERRING_EXTENSIONS = frozenset(
+        {
+            "EXT_mesh_gpu_instancing",
+            "EXT_mesh_features",
+            "EXT_instance_features",
+            "EXT_structural_metadata",
+        }
+    )
+
     @classmethod
-    def apply_glb_clips(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+    def _map_accessor_refs(cls, gltf: Dict[str, Any], visit) -> None:
+        """Apply *visit* to every CORE accessor reference in *gltf*.
+
+        ``visit(index)`` returns a replacement index, or ``None`` to leave it.
+        One definition of "where accessors are named", shared by the collector
+        and the renumberer so the two cannot disagree about a site -- the bug
+        that shape prevents is dropping an accessor something still reads.
+
+        Accessors are named by a dozen different keys rather than one (an
+        ``indices`` here, an ``inverseBindMatrices`` there, a whole
+        ``attributes`` map per primitive), which is why they cannot be swept
+        generically the way ``bufferView`` can, and why the caller pairs this
+        with a refusal on extensions that add sites of their own.
+        """
+
+        def at(container, key):
+            value = container.get(key)
+            if isinstance(value, int):
+                replacement = visit(value)
+                if replacement is not None:
+                    container[key] = replacement
+
+        for mesh in gltf.get("meshes") or []:
+            for prim in (mesh or {}).get("primitives") or []:
+                at(prim, "indices")
+                maps = [prim.get("attributes") or {}]
+                maps.extend(t or {} for t in prim.get("targets") or [])
+                for attributes in maps:
+                    for name in list(attributes):
+                        at(attributes, name)
+        for skin in gltf.get("skins") or []:
+            at(skin or {}, "inverseBindMatrices")
+        for animation in gltf.get("animations") or []:
+            for sampler in (animation or {}).get("samplers") or []:
+                at(sampler or {}, "input")
+                at(sampler or {}, "output")
+
+    @classmethod
+    def _referenced_accessors(cls, gltf: Dict[str, Any]) -> set:
+        """Every accessor index the file still reads, from the core sites."""
+        live: set = set()
+
+        def collect(index):
+            live.add(index)
+            return None  # collect only; never rewrite
+
+        cls._map_accessor_refs(gltf, collect)
+        return live
+
+    @classmethod
+    def _release_animation_payload(
+        cls,
+        edit: "MeshConvert.GlbEdit",
+        animations: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+    ) -> int:
+        """Free what animations REMOVED from the file were reading.
+
+        Dropping a clip from ``animations`` frees nothing on its own: its
+        accessors stay in the array, and an accessor keeps its bufferView alive
+        whether or not anything still reads the accessor. This drops the ones
+        no surviving mesh, skin or clip references, renumbers what survives,
+        and :meth:`_compact_bin` then collects the payload.
+
+        Takes them all at once so the collector runs ONCE: it rebuilds the
+        whole BIN, so calling it per clip would copy a hundreds-of-megabyte
+        buffer once per clip to reclaim one clip's worth each time.
+
+        Parameters:
+            edit: An open session; the caller must ALREADY have removed the
+                animations from ``gltf["animations"]``, since what is still
+                referenced is read off the file rather than passed in.
+            animations: The removed clip, or clips.
+
+        Returns:
+            Bytes of BIN payload reclaimed; 0 when the file uses an extension
+            that may hold accessor indices of its own, where the pass declines
+            rather than guess -- renumbering under one of those would silently
+            re-point it at the wrong data.
+        """
+        gltf = edit.gltf
+        if isinstance(animations, dict):
+            animations = [animations]
+        foreign = cls._ACCESSOR_REFERRING_EXTENSIONS & set(
+            gltf.get("extensionsUsed") or []
+        )
+        if foreign:
+            logger.info(
+                "Clips: kept the dropped clips' payload -- %s may hold "
+                "accessor indices this pass cannot see.",
+                ", ".join(sorted(foreign)),
+            )
+            return 0
+
+        mine = set()
+        for animation in animations:
+            for sampler in (animation or {}).get("samplers") or []:
+                for key in ("input", "output"):
+                    index = (sampler or {}).get(key)
+                    if isinstance(index, int):
+                        mine.add(index)
+        if not mine:
+            return 0
+
+        accessors = gltf.get("accessors") or []
+        orphaned = mine - cls._referenced_accessors(gltf)
+        if not orphaned:
+            return 0
+
+        # Deleted, not merely unbound. An unbound accessor is valid glTF and
+        # costs only its JSON, but this pass runs again every time the clips
+        # are rebuilt -- and a file that accumulates a dead accessor per
+        # channel per run grows on every pass, which is the leak this method
+        # exists to close (measured on the fixture: +272 bytes a run, and the
+        # numbering drifts further from the file a reader sees each time).
+        keep = [i for i in range(len(accessors)) if i not in orphaned]
+        remap = {old: new for new, old in enumerate(keep)}
+        gltf["accessors"] = [accessors[i] for i in keep]
+        cls._map_accessor_refs(gltf, lambda index: remap.get(index))
+        edit.dirty = True
+        return cls._compact_bin(edit)
+
+    @classmethod
+    def apply_glb_clips(
+        cls, glb: GlbTarget, *, mode: str = "both"
+    ) -> Optional[Dict[str, Any]]:
         """Rebuild the declared shot clips as exact slices of the whole timeline.
 
         Maya's take split is lossy in a way that does not announce itself: it
@@ -3999,11 +4177,28 @@ class MeshConvert(HelpMixin):
         shot by the same wrong amount, which is worse than the split this
         replaces, so the clips are left as exported.
 
+        Parameters:
+            glb: Path to a ``.glb``, modified in place, or an open session.
+            mode: Which clips the deliverable ships, from
+                :attr:`ANIMATION_CLIP_MODES`. ``both`` cuts the shots and keeps
+                the stack they came from. ``shots`` cuts them and drops it,
+                releasing its payload. ``full`` cuts nothing and ships only the
+                stack -- still renamed and stamped, so the file describes its
+                own origin either way. The two halves hold the same
+                performance, so a consumer that plays one never reads the
+                other; which one is dead weight is the caller's to say.
+
         Returns:
             ``{"clips", "channels", "source", "bytes"}``, or ``None`` when
             there was nothing to rebuild.
         """
         from pythontk.file_utils.mesh_convert.glb_clips import GlbClips
+
+        if mode not in cls.ANIMATION_CLIP_MODES:
+            raise ValueError(
+                f"Unknown animation clip mode {mode!r}; expected one of "
+                f"{', '.join(cls.ANIMATION_CLIP_MODES)}."
+            )
 
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
@@ -4067,7 +4262,14 @@ class MeshConvert(HelpMixin):
                     return None
                 zero = float(span[0][0])
 
-            return GlbClips.rebuild(edit, takes, float(fps), float(zero))
+            return GlbClips.rebuild(
+                edit,
+                takes,
+                float(fps),
+                float(zero),
+                cut_shots=mode != "full",
+                keep_sequence=mode != "shots",
+            )
 
     @classmethod
     def apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
@@ -5022,6 +5224,374 @@ class MeshConvert(HelpMixin):
                 )
             return dropped
 
+    #: glTF ``componentType`` -> (struct format char, byte size). The one
+    #: table, shared with :class:`GlbReader` -- which imports this module, so
+    #: the layout facts live on this side of that edge rather than in a second
+    #: copy that can drift.
+    ACCESSOR_COMPONENT_TYPES: Dict[int, Tuple[str, int]] = {
+        5120: ("b", 1),
+        5121: ("B", 1),
+        5122: ("h", 2),
+        5123: ("H", 2),
+        5125: ("I", 4),
+        5126: ("f", 4),
+    }
+
+    #: glTF accessor ``type`` -> component count.
+    ACCESSOR_TYPE_COUNT: Dict[str, int] = {
+        "SCALAR": 1,
+        "VEC2": 2,
+        "VEC3": 3,
+        "VEC4": 4,
+        "MAT2": 4,
+        "MAT3": 9,
+        "MAT4": 16,
+    }
+
+    @classmethod
+    def _accessor_elements(
+        cls, edit: "MeshConvert.GlbEdit", index: int
+    ) -> Optional[List[bytes]]:
+        """One accessor's elements as raw byte strings, or None if unreadable.
+
+        Bytes, not decoded numbers: the question every caller here asks is
+        whether the elements are IDENTICAL, and comparing the payload answers
+        it exactly, without a float round-trip that could call two different
+        bit patterns equal (or two equal ones different).
+
+        None whenever the layout is anything but tightly packed and
+        self-contained -- sparse, interleaved (``byteStride``), or no
+        bufferView at all. Those are legal glTF that this pass has no business
+        rewriting, and refusing them is what keeps it safe to run on any file.
+        """
+        accessors = edit.gltf.get("accessors") or []
+        if not 0 <= index < len(accessors):
+            return None
+        accessor = accessors[index] or {}
+        if accessor.get("sparse"):
+            return None
+        view_index = accessor.get("bufferView")
+        if not isinstance(view_index, int):
+            return None
+        views = edit.gltf.get("bufferViews") or []
+        if not 0 <= view_index < len(views):
+            return None
+        view = views[view_index] or {}
+        if view.get("byteStride"):
+            return None
+        spec = cls.ACCESSOR_COMPONENT_TYPES.get(accessor.get("componentType"))
+        count = cls.ACCESSOR_TYPE_COUNT.get(accessor.get("type"))
+        if not spec or not count:
+            return None
+        size = spec[1]
+        stride = size * count
+        n = int(accessor.get("count") or 0)
+        blob = edit.bin_data
+        if blob is None or n <= 0:
+            return None
+        start = int(view.get("byteOffset") or 0) + int(accessor.get("byteOffset") or 0)
+        end = start + n * stride
+        if end > int(view.get("byteOffset") or 0) + int(view.get("byteLength") or 0):
+            return None
+        raw = bytes(blob[start:end])
+        if len(raw) != n * stride:  # truncated BIN: slicing would pad silently
+            return None
+        return [raw[i : i + stride] for i in range(0, len(raw), stride)]
+
+    @classmethod
+    def compact_glb_animations(cls, glb: GlbTarget) -> Dict[str, int]:
+        """Collapse every animation channel that never moves to two keys.
+
+        A baked export writes a key on every frame for every node in every
+        clip, because a clip must PIN the pose of everything it does not
+        animate: a viewer playing clip B after clip A leaves any node B omits
+        wherever A left it. That pinning is the reason the channels exist, and
+        it needs exactly two keys -- one at each end of the clip -- not one per
+        frame. Measured on the VDATS assembly: 13,187 of 22,654 channels (58%)
+        carry a value that never changes, costing 16.6 MB of a 215 MB
+        deliverable to say a node stood still.
+
+        Byte-exact, so the file plays identically: a channel is collapsed only
+        when every one of its elements has the same bit pattern, and the two
+        keys it keeps span the clip's own first and last time, so no clip
+        changes duration. Channels that move are not touched, and neither is a
+        sampler whose output is shared with one that moves.
+
+        Wired into :meth:`fbx_to_glb`'s session after every pass that ADDS
+        channels (clips, visibility, fades) and after
+        :meth:`prune_glb_animations` -- it can only shrink what is already
+        there -- and the orphaned payload is reclaimed by :meth:`_compact_bin`.
+        Also safe to run standalone on any finished GLB.
+
+        Parameters:
+            glb: Path to a ``.glb``, modified in place, or an open session.
+
+        Returns:
+            ``{"channels": n, "accessors": n, "bytes": n}`` -- channels
+            collapsed, accessors rewritten, and BIN payload reclaimed. A file
+            with nothing to collapse is not rewritten.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            animations = gltf.get("animations") or []
+            accessors = gltf.get("accessors") or []
+            if not animations or not accessors:
+                return {"channels": 0, "accessors": 0, "bytes": 0}
+
+            # Pass 1 -- classify. An output accessor is collapsible only when
+            # EVERY channel reading it is constant: samplers are shared, and
+            # shrinking one that something still animates through would freeze
+            # that motion.
+            constant: Dict[int, bytes] = {}
+            refused: set = set()
+            per_animation: List[List[tuple]] = []
+            for animation in animations:
+                samplers = animation.get("samplers") or []
+                rows = []
+                for channel in animation.get("channels") or []:
+                    index = channel.get("sampler")
+                    if not isinstance(index, int) or not 0 <= index < len(samplers):
+                        continue
+                    sampler = samplers[index] or {}
+                    output = sampler.get("output")
+                    if not isinstance(output, int):
+                        continue
+                    if (sampler.get("interpolation") or "LINEAR") == "CUBICSPLINE":
+                        # Three elements per key -- in-tangent, value,
+                        # out-tangent -- so two keys is SIX elements, not two.
+                        # Collapsing one would write a sampler whose output
+                        # count no longer matches its input, which is a
+                        # malformed file rather than a smaller one.
+                        refused.add(output)
+                        continue
+                    if output in refused:
+                        continue
+                    if output not in constant:
+                        elements = cls._accessor_elements(edit, output)
+                        if not elements or len(elements) < 3:
+                            # Nothing to win on a channel already at two keys,
+                            # and an unreadable layout is left alone.
+                            refused.add(output)
+                            continue
+                        first = elements[0]
+                        if any(e != first for e in elements):
+                            refused.add(output)
+                            continue
+                        constant[output] = first
+                    rows.append((index, output))
+                per_animation.append(rows)
+
+            # Constancy is a property of the ACCESSOR, so every channel reading
+            # one agrees about it -- but a refusal is a property of the SAMPLER
+            # (interpolation), so one clip can refuse an output another clip
+            # already accepted. The survivors are what both agree on.
+            collapsible = {k: v for k, v in constant.items() if k not in refused}
+            if not collapsible:
+                return {"channels": 0, "accessors": 0, "bytes": 0}
+
+            # Pass 2 -- one shared two-key time input per animation, spanning
+            # the clip's own range so its duration is unchanged, plus one
+            # two-key value block per collapsible output.
+            payloads: List[bytes] = []
+            input_slot: Dict[int, int] = {}
+            for position, animation in enumerate(animations):
+                # Against `collapsible`, not against the rows: an output one
+                # clip accepted can still be refused by a LATER clip's
+                # interpolation, and a clip left with nothing to collapse must
+                # not mint a time input no sampler will read -- an accessor
+                # keeps its bufferView alive, so that orphan survives the
+                # collector and the next run mints another.
+                if not any(out in collapsible for _s, out in per_animation[position]):
+                    continue
+                lo, hi = cls._animation_time_span(edit, animation)
+                if lo is None:
+                    continue
+                input_slot[position] = len(payloads)
+                payloads.append(struct.pack("<2f", lo, hi))
+            output_slot: Dict[int, int] = {}
+            for output, element in collapsible.items():
+                output_slot[output] = len(payloads)
+                payloads.append(element + element)
+
+            added_views = cls._append_bin_views(edit, payloads)
+            if not added_views:  # external buffer: nothing this pass can do
+                return {"channels": 0, "accessors": 0, "bytes": 0}
+
+            # Pass 3 -- mint the accessors and rewire the samplers.
+            new_input: Dict[int, int] = {}
+            for position, slot in input_slot.items():
+                # Read back OUT of the packed bytes, not from the float64 the
+                # span was measured as: `min` must not exceed the value the
+                # file actually stores, and packing to float32 can round it up.
+                lo, hi = struct.unpack("<2f", payloads[slot])
+                accessors.append(
+                    {
+                        "bufferView": added_views[slot],
+                        "componentType": 5126,
+                        "count": 2,
+                        "type": "SCALAR",
+                        # Required on an animation input by the spec, and the
+                        # only place a reader learns the clip's length.
+                        "min": [lo],
+                        "max": [hi],
+                    }
+                )
+                new_input[position] = len(accessors) - 1
+            # The outputs are re-pointed IN PLACE rather than appended beside
+            # the originals. An accessor keeps its bufferView alive whether or
+            # not anything still reads the accessor, so minting replacements
+            # and abandoning the old ones collects nothing -- measured: 13,187
+            # channels rewired, 0.00 MB reclaimed. Editing them is also the
+            # truthful shape: this is the same channel, shorter. Safe because
+            # `collapsible` already excludes every output any channel refused,
+            # and a mesh never reads an animation accessor.
+            for output, slot in output_slot.items():
+                accessor = accessors[output]
+                accessor["bufferView"] = added_views[slot]
+                accessor["count"] = 2
+                accessor.pop("min", None)
+                accessor.pop("max", None)
+
+            channels = 0
+            for position, animation in enumerate(animations):
+                if position not in new_input:
+                    continue
+                samplers = animation.get("samplers") or []
+                for sampler_index, output in per_animation[position]:
+                    if output not in output_slot:
+                        continue
+                    sampler = samplers[sampler_index]
+                    sampler["input"] = new_input[position]
+                    channels += 1
+
+            edit.dirty = True
+            reclaimed = cls._compact_bin(edit)
+            logger.info(
+                "Animation: collapsed %d constant channel(s) across %d clip(s) "
+                "to two keys, reclaiming %.2f MB -- a clip PINS the pose of "
+                "what it does not animate, which two keys say as well as "
+                "thousands.",
+                channels,
+                len(animations),
+                reclaimed / 1048576.0,
+            )
+            return {
+                "channels": channels,
+                "accessors": len(output_slot),
+                "bytes": reclaimed,
+            }
+
+    @classmethod
+    def _animation_time_span(
+        cls, edit: "MeshConvert.GlbEdit", animation: Dict[str, Any]
+    ) -> tuple:
+        """``(first, last)`` input time over every sampler, or ``(None, None)``.
+
+        Read from each input accessor's ``min``/``max``, which the spec
+        requires an animation input to carry, and decoded only when a writer
+        left them off.
+        """
+        lo = hi = None
+        accessors = edit.gltf.get("accessors") or []
+        for sampler in animation.get("samplers") or []:
+            index = (sampler or {}).get("input")
+            if not isinstance(index, int) or not 0 <= index < len(accessors):
+                continue
+            accessor = accessors[index] or {}
+            low, high = accessor.get("min"), accessor.get("max")
+            if isinstance(low, list) and low and isinstance(high, list) and high:
+                start, end = float(low[0]), float(high[0])
+            else:
+                elements = cls._accessor_elements(edit, index)
+                if not elements:
+                    continue
+                start = struct.unpack("<f", elements[0])[0]
+                end = struct.unpack("<f", elements[-1])[0]
+            lo = start if lo is None else min(lo, start)
+            hi = end if hi is None else max(hi, end)
+        return lo, hi
+
+    @classmethod
+    def drop_glb_texture_fallbacks(cls, glb: GlbTarget) -> Dict[str, int]:
+        """Drop the PNG/JPEG twin of every texture that also ships KTX2.
+
+        ``KHR_texture_basisu`` is written as an OPTIONAL extension: the texture
+        names a supercompressed image through the extension and an ordinary one
+        through ``source``, so a reader without the extension still has a
+        picture. The cost is that the deliverable carries both encodings of
+        every map -- on the VDATS assembly, 40.66 MB of PNG beside 34.71 MB of
+        KTX2, so the KTX2 pass more than doubled the texture budget it was
+        meant to cut.
+
+        This drops the fallbacks and moves ``KHR_texture_basisu`` into
+        ``extensionsRequired``, which is what the spec asks of a file that can
+        no longer be read without it. That is a DELIVERY decision, not a
+        cleanup: the result needs a reader with the extension (in three.js, a
+        registered ``KTX2Loader``). Callers that cannot promise one must not
+        run this pass.
+
+        Deliberately NOT wired into :meth:`fbx_to_glb` -- unlike
+        :meth:`compact_glb_animations`, which is byte-exact and therefore
+        unconditional. The pipeline already owns this decision one step
+        earlier: ``optimize_glb_textures(ktx2_fallback=False)`` never writes the
+        twin in the first place, and :meth:`web_delivery_texture_params` spells
+        out why it is left to the caller ("a property of the CONSUMER rather
+        than of the delivery" -- the preview page wires a ``KTX2Loader`` and
+        says ``False``, an exporter handing over an asset that must also open in
+        Blender or Unreal says ``True``). This is the RETROFIT: the same
+        decision made after the fact, for a finished deliverable whose consumer
+        turned out to be known. A pipeline that can choose up front should.
+
+        Only a texture that HAS a KTX2 twin loses its fallback -- a texture
+        shipping a lone PNG keeps it -- and the orphaned images are collected
+        by :meth:`prune_glb_unreferenced_textures`, which owns image
+        renumbering and BIN repacking.
+
+        Parameters:
+            glb: Path to a ``.glb``, modified in place, or an open session.
+
+        Returns:
+            ``{"textures": n, "images": n, "bytes": n}``.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            textures = gltf.get("textures") or []
+            if not textures:
+                return {"textures": 0, "images": 0, "bytes": 0}
+            touched = 0
+            for texture in textures:
+                extension = (texture.get("extensions") or {}).get("KHR_texture_basisu")
+                if not isinstance(extension, dict):
+                    continue
+                if not isinstance(extension.get("source"), int):
+                    continue
+                if isinstance(texture.get("source"), int):
+                    del texture["source"]
+                    touched += 1
+            if not touched:
+                return {"textures": 0, "images": 0, "bytes": 0}
+
+            required = gltf.setdefault("extensionsRequired", [])
+            if "KHR_texture_basisu" not in required:
+                required.append("KHR_texture_basisu")
+            used = gltf.setdefault("extensionsUsed", [])
+            if "KHR_texture_basisu" not in used:
+                used.append("KHR_texture_basisu")
+            edit.dirty = True
+
+            before = len(gltf.get("images") or [])
+            result = cls.prune_glb_unreferenced_textures(edit)
+            dropped = before - len(gltf.get("images") or [])
+            reclaimed = int((result or {}).get("bytes") or 0)
+            logger.info(
+                "Textures: dropped %d PNG/JPEG fallback(s) beside their KTX2 "
+                "twin, reclaiming %.2f MB -- KHR_texture_basisu is now "
+                "REQUIRED, so the reader must support it.",
+                dropped,
+                reclaimed / 1048576.0,
+            )
+            return {"textures": touched, "images": dropped, "bytes": reclaimed}
+
     @classmethod
     def apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
         """Publish the GLB's clips as ``extras.animation_web``, joined to the shots.
@@ -5663,6 +6233,135 @@ class MeshConvert(HelpMixin):
         buffers[0]["byteLength"] = len(new_bin)
         edit.replace_rest(new_bin)
         return added
+
+    @staticmethod
+    def _compact_bin(edit: "MeshConvert.GlbEdit") -> int:
+        """Reclaim every bufferView nothing references, and repack the BIN.
+
+        The garbage collector behind any pass that ORPHANS payload. It does not
+        decide what is dead -- it collects what no longer has a reader -- so a
+        pass only has to rewire, and whatever it stopped pointing at is
+        reclaimed here. Membership is read off the file itself: every
+        ``bufferView`` key anywhere in the JSON, which is the only sweep that
+        is correct for both kinds of reference. An accessor-only sweep is the
+        trap this exists to avoid -- images name their view DIRECTLY rather
+        than through an accessor, so counting accessor references alone reads
+        every image in the file as garbage (measured while sizing this pass on
+        a production assembly: 75.78 MB of phantom saving).
+
+        Survivors keep their order and their dicts; only ``byteOffset`` moves,
+        each view padded to the 4-byte boundary an accessor requires, and every
+        ``bufferView`` reference in the JSON is renumbered to match.
+
+        Returns:
+            Bytes of BIN payload reclaimed. 0 -- and no rewrite -- when nothing
+            is orphaned, when buffer 0 is EXTERNAL (declares a ``uri``), where
+            there is no BIN here to repack, or when a surviving view reaches
+            past the end of the BIN, where repacking would turn a file that
+            arrived truncated into one that merely lies about its offsets.
+        """
+        gltf = edit.gltf
+        views = gltf.get("bufferViews") or []
+        if not views:
+            return 0
+        buffers = gltf.get("buffers") or []
+        if buffers and buffers[0].get("uri"):
+            return 0
+        if edit.bin_data is None:
+            # Views but no BIN to read them from: the file is already
+            # inconsistent, and repacking would write a zero-length buffer
+            # under views that still declare a length. Leave it as found.
+            return 0
+
+        def _walk(node, out):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key == "bufferView" and isinstance(value, int):
+                        out.add(value)
+                    else:
+                        _walk(value, out)
+            elif isinstance(node, list):
+                for item in node:
+                    _walk(item, out)
+            return out
+
+        # Everything BUT the view array itself: a view names a buffer, never
+        # another view, and walking it would re-add every index.
+        live = _walk({k: v for k, v in gltf.items() if k != "bufferViews"}, set())
+        if all(index in live for index in range(len(views))):
+            return 0
+
+        blob = edit.bin_data
+        # Every surviving view must be fully backed BEFORE anything is written.
+        # Slicing past the end of the BIN yields a short string silently, and
+        # the view keeps the `byteLength` it declared -- so a file that arrived
+        # truncated would be rewritten into one whose views point at bytes that
+        # are not there, which no longer reads as damaged, just wrong. This pass
+        # runs on every conversion (see `fbx_to_glb`), so declining is the only
+        # safe answer: leave the file exactly as found and reclaim nothing.
+        for index in sorted(live):
+            if not 0 <= index < len(views):
+                continue
+            view = views[index] or {}
+            end = int(view.get("byteOffset") or 0) + int(view.get("byteLength") or 0)
+            if end > len(blob):
+                logger.warning(
+                    "BIN compaction declined: bufferView %d ends at %d but the "
+                    "buffer is %d bytes. Repacking would silently shorten it.",
+                    index,
+                    end,
+                    len(blob),
+                )
+                return 0
+
+        chunks: List[bytes] = []
+        kept: List[Dict[str, Any]] = []
+        view_map: Dict[int, int] = {}
+        offset = 0
+        reclaimed = 0
+        for old, view in enumerate(views):
+            length = int(view.get("byteLength") or 0)
+            if old not in live:
+                reclaimed += length
+                continue
+            start = int(view.get("byteOffset") or 0)
+            # Fully backed: the sweep above proved it, and `bin_data is None`
+            # returned early.
+            data = bytes(blob[start : start + length])
+            view = dict(view)
+            view["byteOffset"] = offset
+            chunks.append(data)
+            offset += len(data)
+            pad = (4 - (len(data) % 4)) % 4
+            if pad:
+                chunks.append(b"\x00" * pad)
+                offset += pad
+            view_map[old] = len(kept)
+            kept.append(view)
+
+        gltf["bufferViews"] = kept
+
+        def _remap(node):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key == "bufferView" and isinstance(value, int):
+                        node[key] = view_map.get(value, value)
+                    else:
+                        _remap(value)
+            elif isinstance(node, list):
+                for item in node:
+                    _remap(item)
+
+        # The comprehension is a new dict over the SAME value objects, so the
+        # renumbering lands on the file's own nodes.
+        _remap({k: v for k, v in gltf.items() if k != "bufferViews"})
+
+        new_bin = b"".join(chunks)
+        if not buffers:
+            gltf["buffers"] = buffers = [{}]
+        buffers[0]["byteLength"] = len(new_bin)
+        edit.replace_rest(new_bin)
+        return reclaimed
 
     @classmethod
     def _relocate_embedded_images(cls, edit: "MeshConvert.GlbEdit") -> int:
@@ -7282,86 +7981,14 @@ class MeshConvert(HelpMixin):
             if not dropped_textures and not dropped_images:
                 return {"textures": 0, "images": 0, "bytes": 0}
 
-            # --- views only the dropped images read --------------------------
-            views = gltf.get("bufferViews") or []
-            dead_views = {
-                img.get("bufferView")
-                for old, img in enumerate(images)
-                if old not in image_map and isinstance(img.get("bufferView"), int)
-            }
-
-            def _view_refs(node, out, skip):
-                """Every ``bufferView`` index referenced outside *skip*."""
-                if node is skip:
-                    return out
-                if isinstance(node, dict):
-                    for key, value in node.items():
-                        if key == "bufferView" and isinstance(value, int):
-                            out.add(value)
-                        else:
-                            _view_refs(value, out, skip)
-                elif isinstance(node, list):
-                    for item in node:
-                        _view_refs(item, out, skip)
-                return out
-
-            still_read = set()
-            for old, img in enumerate(images):
-                if old in image_map:
-                    _view_refs(img, still_read, None)
-            _view_refs(gltf, still_read, images)  # everything but the images
-            dead_views -= still_read
-            dead_views = {v for v in dead_views if 0 <= v < len(views)}
-
-            reclaimed = 0
-            if dead_views:
-                blob = edit.bin_data
-                view_map = {}
-                chunks: List[bytes] = []
-                offset = 0
-                kept_views = []
-                for old, view in enumerate(views):
-                    if old in dead_views:
-                        reclaimed += view.get("byteLength", 0)
-                        continue
-                    start = view.get("byteOffset", 0)
-                    data = (
-                        bytes(blob[start : start + view["byteLength"]]) if blob else b""
-                    )
-                    view = dict(view)
-                    view["byteOffset"] = offset
-                    padded = data + b"\x00" * ((4 - (len(data) % 4)) % 4)
-                    chunks.append(padded)
-                    offset += len(padded)
-                    view_map[old] = len(kept_views)
-                    kept_views.append(view)
-
-                def _remap_views(node):
-                    if isinstance(node, dict):
-                        for key, value in list(node.items()):
-                            if key == "bufferView" and isinstance(value, int):
-                                if value in view_map:
-                                    node[key] = view_map[value]
-                            else:
-                                _remap_views(value)
-                    elif isinstance(node, list):
-                        for item in node:
-                            _remap_views(item)
-
-                gltf["bufferViews"] = kept_views
-                # Images are rebuilt below from the survivors; remap those now
-                # so the dropped ones (which name dead views) are never walked.
-                surviving_images = [images[old] for old in image_map]
-                _remap_views(surviving_images)
-                gltf["images"] = surviving_images
-                images = surviving_images
-                _remap_views({k: v for k, v in gltf.items() if k != "images"})
-                new_bin = b"".join(chunks)
-                buffers = gltf.setdefault("buffers", [{}])
-                buffers[0]["byteLength"] = len(new_bin)
-                edit.replace_rest(new_bin)
-            else:
-                gltf["images"] = [images[old] for old in image_map]
+            # --- drop the images, then collect what they were reading --------
+            # Dropping them from the array first removes their bufferView
+            # references, and the collector finds the orphans for itself: it
+            # reads liveness off the whole file, so nothing here has to compute
+            # a dead set, walk the survivors separately, or remap indices.
+            gltf["images"] = [images[old] for old in image_map]
+            images = gltf["images"]
+            reclaimed = cls._compact_bin(edit)
 
             # --- renumber what survives ---------------------------------------
             kept_textures = []

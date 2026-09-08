@@ -407,14 +407,14 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - `class MeshConvert(HelpMixin)`
-  - methods: conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, apply_glb_fades, prune_glb_animations, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+  - methods: conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, apply_glb_fades, prune_glb_animations, compact_glb_animations, drop_glb_texture_fallbacks, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
 - `class VerificationReport`
   - methods: ok, counts, summary, to_json
 - `class ExportVerifier(_ExportVerifierInternal)`
-  - methods: reader, fbx, gate_names, run, check_glb_container, check_glb_extensions, check_glb_images, check_glb_skins, check_glb_animation_integrity, check_glb_envelope, check_clips_vs_takes, check_fbx_container, check_fbx_takes, check_cross_clips, check_baseline_diff
+  - methods: reader, fbx, gate_names, run, check_glb_container, check_glb_extensions, check_glb_images, check_glb_skins, check_glb_animation_integrity, check_glb_envelope, check_clips_vs_takes, check_clip_origin, check_fbx_container, check_fbx_takes, check_cross_clips, check_baseline_diff
 
 ### `file_utils/mesh_convert/fbx_file.py` — Zero-dependency binary-FBX reader: header, node records, objects, takes.
 - `class FbxFile(_FbxFileInternal)`
@@ -615,7 +615,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `str_utils/_str_utils.py`
 - `class StrUtils(CoreUtils)`
-  - methods: strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: to_legal_name, strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`
