@@ -114,7 +114,13 @@ jobs:
         # mayatk is installed because uitk's test_color_swatch imports it.
         run: |
           python -m pip install --upgrade pip
-          pip install pytest qtpy PySide6 mayatk
+          # Pin PySide6 <6.11 and add pytest-timeout to match
+          # uitk/.github/workflows/tests.yml, which this job mirrors:
+          # 6.11 segfaults MID-TEST on the offscreen QPA (chip buttons
+          # deleteLater()'d during processEvents()), which arrives here
+          # as a crash with no summary line -- i.e. as a red check with
+          # no stated reason. 6.10.x is the last stable headless line.
+          pip install pytest pytest-timeout qtpy 'PySide6<6.11' mayatk
           pip install -e ./pythontk
           pip install -e ./uitk --no-deps
 
@@ -127,18 +133,32 @@ jobs:
         run: |
           cd uitk
           set +e
-          OUTPUT=$(pytest --tb=short -v test/ \
-            --ignore=test/test_marking_menu_integration.py 2>&1)
-          RC=$?
-          echo "$OUTPUT"
+          # Stream via tee, never $(...) capture: a process killed by a
+          # signal loses its buffered tail, so the log stopped at an
+          # arbitrary earlier test and named the wrong crash site
+          # (observed: a run that reported '28%' died far later). With
+          # -v the last streamed line is the real one.
+          pytest --tb=short -v --timeout=300 --timeout-method=thread test/ \
+            --ignore=test/test_marking_menu_integration.py 2>&1 | tee pytest_out.txt
+          RC=${PIPESTATUS[0]}
+          OUTPUT=$(cat pytest_out.txt)
           FAILED=$(echo "$OUTPUT" | grep -oP '\d+(?= failed)' | head -1 || echo "0")
           PASSED=$(echo "$OUTPUT" | grep -oP '\d+(?= passed)' | head -1 || echo "0")
           FAILED=${FAILED:-0}
           PASSED=${PASSED:-0}
-          if [ "$FAILED" -gt 0 ]; then exit 1; fi
-          if [ "$PASSED" -eq 0 ]; then exit 1; fi
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED uitk test(s) failed against this pythontk"
+            exit 1
+          fi
+          # No summary line at all means pytest DIED mid-run rather than
+          # reporting failures. They are not the same finding, and
+          # conflating them is what left this check red with no reason.
+          if [ "$PASSED" -eq 0 ]; then
+            echo "::error::pytest produced no summary (exit $RC): it died mid-run or failed collection, so this run says nothing about the change. The last streamed test above is the site."
+            exit 1
+          fi
           if [ "$RC" -ne 0 ]; then
-            echo "::warning::pytest exited with code $RC after $PASSED passing tests (PySide6+pytest cleanup SIGSEGV)"
+            echo "::warning::pytest exited with code $RC after $PASSED passing tests (PySide6+pytest cleanup SIGSEGV - known, not a test failure)"
           fi
           exit 0
 
@@ -243,7 +263,13 @@ jobs:
       - name: Install (pythontk+uitk from PR source, mayatk from PyPI)
         run: |
           python -m pip install --upgrade pip
-          pip install pytest qtpy PySide6 mayatk
+          # Pin PySide6 <6.11 and add pytest-timeout to match
+          # uitk/.github/workflows/tests.yml, which this job mirrors:
+          # 6.11 segfaults MID-TEST on the offscreen QPA (chip buttons
+          # deleteLater()'d during processEvents()), which arrives here
+          # as a crash with no summary line -- i.e. as a red check with
+          # no stated reason. 6.10.x is the last stable headless line.
+          pip install pytest pytest-timeout qtpy 'PySide6<6.11' mayatk
           pip install -e ./pythontk
           pip install -e ./uitk --no-deps
           pip install -e ./tentacle --no-deps
@@ -266,17 +292,29 @@ jobs:
         run: |
           cd tentacle
           set +e
-          OUTPUT=$(pytest --tb=short -v test/ 2>&1)
-          RC=$?
-          echo "$OUTPUT"
+          # tee, not $(...): see the uitk job -- a signal-killed pytest
+          # loses its buffered tail and mis-names the crash site.
+          pytest --tb=short -v --timeout=300 --timeout-method=thread test/ \
+            2>&1 | tee pytest_out.txt
+          RC=${PIPESTATUS[0]}
+          OUTPUT=$(cat pytest_out.txt)
           FAILED=$(echo "$OUTPUT" | grep -oP '\d+(?= failed)' | head -1 || echo "0")
           PASSED=$(echo "$OUTPUT" | grep -oP '\d+(?= passed)' | head -1 || echo "0")
           FAILED=${FAILED:-0}
           PASSED=${PASSED:-0}
-          if [ "$FAILED" -gt 0 ]; then exit 1; fi
-          if [ "$PASSED" -eq 0 ]; then exit 1; fi
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED tentacle test(s) failed against this chain"
+            exit 1
+          fi
+          # No summary line at all means pytest DIED mid-run rather than
+          # reporting failures. They are not the same finding, and
+          # conflating them is what left this check red with no reason.
+          if [ "$PASSED" -eq 0 ]; then
+            echo "::error::pytest produced no summary (exit $RC): it died mid-run or failed collection, so this run says nothing about the change. The last streamed test above is the site."
+            exit 1
+          fi
           if [ "$RC" -ne 0 ]; then
-            echo "::warning::pytest exited with code $RC after $PASSED passing tests"
+            echo "::warning::pytest exited with code $RC after $PASSED passing tests (PySide6+pytest cleanup SIGSEGV - known, not a test failure)"
           fi
           exit 0
 

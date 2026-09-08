@@ -1472,6 +1472,13 @@
   {
     "kind": "function",
     "module": "pythontk.str_utils._str_utils",
+    "name": "to_legal_name",
+    "qualname": "StrUtils.to_legal_name",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
     "name": "truncate",
     "qualname": "StrUtils.truncate",
     "tier": "bare"

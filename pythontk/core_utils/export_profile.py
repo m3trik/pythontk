@@ -14,8 +14,9 @@ one copy of it.
 
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, Mapping
+
+from pythontk.str_utils._str_utils import StrUtils
 
 
 class ExportProfile:
@@ -26,14 +27,15 @@ class ExportProfile:
     # ------------------------------------------------------------------ naming
     @staticmethod
     def legal_name(name: str) -> str:
-        """The switchboard's objectName rule: non-alphanumerics become ``_``.
+        """The switchboard's objectName rule, from its owner.
 
-        The one place the rule lives; ``uitk.SwitchboardNameMixin.
-        convert_to_legal_name`` delegates here so the widget the panel builds
-        from a definition and the key :meth:`read_values` looks it up by agree
-        by construction.
+        Thin pass-through to :meth:`StrUtils.to_legal_name`, which is where a
+        generic string rule belongs: this class is the export button's
+        contract, not the home of the naming convention the whole switchboard
+        derives objectNames with. Kept as a name because :meth:`widget_key`
+        and the panels read it here.
         """
-        return re.sub(r"[^0-9a-zA-Z]", "_", name)
+        return StrUtils.to_legal_name(name)
 
     @classmethod
     def widget_key(cls, name: str, spec: Mapping[str, Any]) -> str:

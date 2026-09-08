@@ -863,6 +863,51 @@ class TestShotStoreGapLock(_ShotTest):
         s.unlock_all_gaps()
         self.assertEqual(s.locked_gaps, set())
 
+    def test_a_lock_survives_the_shots_around_its_gap_changing(self):
+        """A lock names its gap by the flanking ids, and those went stale on
+        every insert or delete beside it -- the gaps that replaced the locked
+        one opened unlocked, silently (2026-09-07: "I locked all gaps and
+        they automatically became unlocked a few operations later")."""
+        s = ShotStore()
+        a = s.define_shot("A", 0, 10)
+        b = s.define_shot("B", 20, 30)
+        c = s.define_shot("C", 40, 50)
+        s.lock_all_gaps()
+        ab, bc = (a.shot_id, b.shot_id), (b.shot_id, c.shot_id)
+
+        n = s.define_shot("N", 12, 18)  # inserted into the locked gap A-B
+        self.assertEqual(
+            s.locked_gaps,
+            {(a.shot_id, n.shot_id), (n.shot_id, b.shot_id), bc},
+            "both gaps that replaced A-B inherit its lock",
+        )
+        s.remove_shot(n.shot_id)
+        self.assertEqual(
+            s.locked_gaps, {ab, bc}, "the gap that replaced two locked ones is locked"
+        )
+        s.remove_shot(b.shot_id)
+        self.assertEqual(s.locked_gaps, {(a.shot_id, c.shot_id)})
+        s.remove_shot(a.shot_id)
+        self.assertEqual(s.locked_gaps, set(), "no shot before C: nothing to lock")
+
+    def test_undo_and_redo_put_the_locks_of_their_moment_back(self):
+        s = ShotStore()
+        a = s.define_shot("A", 0, 10)
+        b = s.define_shot("B", 20, 30)
+        c = s.define_shot("C", 40, 50)
+        s.lock_all_gaps()
+        s.push_boundary_snapshot()
+        s.remove_shot(b.shot_id)
+        self.assertEqual(s.locked_gaps, {(a.shot_id, c.shot_id)})
+        self.assertTrue(s.restore_boundary_snapshot())
+        self.assertEqual(
+            s.locked_gaps,
+            {(a.shot_id, b.shot_id), (b.shot_id, c.shot_id)},
+            "undoing the delete brings B back with its two locks",
+        )
+        self.assertTrue(s.redo_boundary_snapshot())
+        self.assertEqual(s.locked_gaps, {(a.shot_id, c.shot_id)})
+
 
 class TestShotStoreDerived(_ShotTest):
     def test_snap_rounds_when_enabled(self):

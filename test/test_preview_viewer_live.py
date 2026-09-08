@@ -111,6 +111,45 @@ export default function probe(viewer) {
 """
 
 
+#: Drives the SEQUENCE transport: selects the synthetic whole-timeline entry a
+#: shots-only deliverable grows, then scrubs it and reads the pose back off the
+#: model. The scrub is dispatched on the real slider rather than by calling an
+#: internal, so what is measured is the control a reviewer drags.
+SEQUENCE_PROBE = """
+export default function probe(viewer) {
+  const report = { ready: false, errors: [] };
+  window.__probe = report;
+  viewer.on('load', (detail) => {
+    try {
+      const select = document.getElementById('clipSelect');
+      report.labels = [...select.options].map((o) => o.textContent);
+      report.selected = viewer.playClip('FULL SEQUENCE');
+      report.openedOn = (select.options[select.selectedIndex] || {}).textContent;
+
+      const cube = detail.model.getObjectByName('cube');
+      const scrub = document.getElementById('scrub');
+      const at = (fraction) => {
+        scrub.value = String(Math.round(fraction * 1000));
+        scrub.dispatchEvent(new Event('input'));
+        return {
+          y: Number(cube.position.y.toFixed(4)),
+          readout: document.getElementById('clipTime').textContent,
+        };
+      };
+      report.start = at(0);
+      report.gap = at(2.5 / 5.0);    // between the shots
+      report.inShotB = at(4.0 / 5.0);  // one second into the second shot
+      report.end = at(1);
+      report.ready = true;
+    } catch (error) {
+      report.errors.push(String(error));
+      report.ready = true;
+    }
+  });
+}
+"""
+
+
 def _runtime_available():
     """Playwright installed AND an Edge/Chrome channel it can drive."""
     try:
@@ -191,6 +230,192 @@ class TestPreviewViewerLive(unittest.TestCase):
         # the block the viewer has only the file's raw animation ORDER to go on,
         # which is the very thing the block exists to make answerable.
         ptk.MeshConvert.apply_glb_animations(path)
+        return path
+
+    def _shots_only_glb(self, empty_tail=False, with_sequence=False, half_take=False):
+        """A deliverable that ships ONLY shots, with a GAP between them.
+
+        *empty_tail* adds a third declared shot that bakes no curve -- the
+        production shape for a range in which nothing moves.
+
+        What ``Animation Clips: Shots Only`` writes. The two shots sit 30
+        frames apart, so a sequence that concatenated them would run 4s where
+        the timeline is 5s and put the second shot a second early -- the gap is
+        the thing that makes placement testable.
+        """
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": [0]}],
+            "scene": 0,
+            "nodes": [{"name": "cube", "mesh": 0}, {"name": "data_export"}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 1}}]}],
+            "accessors": [{"type": "SCALAR", "min": [0.0], "max": [2.0]}],
+            "animations": [
+                {
+                    "name": name,
+                    "samplers": [{"input": 0, "output": 2}],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "translation"}}
+                    ],
+                }
+                for name in ("SHOT_A", "SHOT_B")
+            ],
+        }
+        takes = [
+            {"name": "SHOT_A", "start": 0, "end": 60},
+            {"name": "SHOT_B", "start": 90, "end": 150},
+        ]
+        if empty_tail:
+            gltf["animations"].append(
+                {"name": "SHOT_C", "samplers": [], "channels": []}
+            )
+            takes.append({"name": "SHOT_C", "start": 180, "end": 300})
+        if half_take:
+            # A take the carrier declares with no "end". The manifest builds
+            # its clip rows with `take.get("start")` / `take.get("end")`, so
+            # this reaches the page as start_frame=210, end_frame=null -- the
+            # shape a DCC writing a partial take produces.
+            gltf["animations"].append(
+                {
+                    "name": "SHOT_D",
+                    "samplers": [{"input": 0, "output": 2}],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "translation"}}
+                    ],
+                }
+            )
+            takes.append({"name": "SHOT_D", "start": 210})
+        if with_sequence:
+            # An UNDECLARED clip: the whole-timeline stack "Shots + Full
+            # Sequence" keeps beside the shots.
+            gltf["animations"].append(
+                {
+                    "name": "FULL_SEQUENCE",
+                    "samplers": [{"input": 0, "output": 2}],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "translation"}}
+                    ],
+                }
+            )
+        gltf["nodes"][1]["extras"] = {
+            "fromFBX": {
+                "userProperties": {
+                    "fbx_takes": {"type": "eFbxString", "value": json.dumps(takes)},
+                    "shot_metadata": {
+                        "type": "eFbxString",
+                        "value": json.dumps({"version": 1, "fps": self.FPS}),
+                    },
+                }
+            }
+        }
+        path = self._write(gltf)
+        ptk.MeshConvert.apply_glb_animations(path)
+        return path
+
+    # ------------------------------------------- shots played as a sequence
+    # A shots-only deliverable drops the whole-timeline clip its shots were cut
+    # from -- that clip holds the same performance twice over (66.5 MB of the
+    # production assembly). The page rebuilds the sequence from the shots so a
+    # reviewer can still watch and scrub the whole thing.
+
+    def test_a_shots_only_file_offers_a_whole_sequence_first(self):
+        found = self._load(self._shots_only_glb(), probe=self._sequence_probe())
+
+        self.assertEqual(found["errors"], [])
+        self.assertIs(found["selected"], True, "playClip must reach the sequence")
+        self.assertIn("FULL SEQUENCE", found["labels"][0])
+        self.assertIn("2 shots", found["labels"][0])
+        self.assertIn("FULL SEQUENCE", found["openedOn"])
+
+    def test_the_sequence_spans_the_whole_authored_range(self):
+        """0-150 at 30fps is 5s -- the gap included, not 4s of shot content."""
+        found = self._load(self._shots_only_glb(), probe=self._sequence_probe())
+
+        self.assertIn("/ 5.00s", found["end"]["readout"])
+        self.assertIn("f150", found["end"]["readout"])
+        self.assertIn("f0", found["start"]["readout"])
+
+    def test_a_shot_the_carrier_never_finished_is_not_placed(self):
+        """The manifest reads both bounds with `.get`, so a take written
+        without an "end" arrives as ``end_frame: null``.
+
+        Placed anyway, such a shot becomes a segment at its own start offset
+        inside a span that never accounted for it -- here at 7.0s of a 5.00s
+        sequence, which the scrubber cannot reach and the picker counts as a
+        shot you can watch. `Math.max` coerces the null to 0, so the SPAN
+        stays right and nothing else gives the miscount away. A shot the page
+        was not told the end of is one it cannot place, so it is left out.
+        """
+        found = self._load(
+            self._shots_only_glb(half_take=True), probe=self._sequence_probe()
+        )
+
+        self.assertIn("0–150, 2 shots", found["labels"][0], found["labels"][0])
+        # The span is unchanged either way -- which is exactly why the
+        # miscount is invisible without this assertion.
+        self.assertIn("/ 5.00s", found["end"]["readout"])
+
+    def test_scrubbing_lands_in_the_right_shot(self):
+        """The whole point: one slider, and it addresses both shots.
+
+        At 4.0s the playhead is one second into a shot that starts at 3.0s, so
+        the model must be posed at that shot's OWN one-second mark (y=1) --
+        not at 4 seconds of a clip that is only two long.
+        """
+        found = self._load(self._shots_only_glb(), probe=self._sequence_probe())
+
+        self.assertEqual(found["start"]["y"], 0.0)
+        self.assertEqual(found["inShotB"]["y"], 1.0)
+
+    def test_a_gap_holds_the_previous_shot(self):
+        """2.5s is past SHOT_A's end and before SHOT_B's start.
+
+        The whole-timeline clip held the last pose across a gap; a sequence
+        that left the model wherever the previous frame drew it, or snapped it
+        to the next shot's first frame, would not be showing the same thing.
+        """
+        found = self._load(self._shots_only_glb(), probe=self._sequence_probe())
+
+        self.assertEqual(found["gap"]["y"], 2.0, "the gap must hold SHOT_A's last pose")
+
+    def test_an_empty_trailing_shot_still_lengthens_the_timeline(self):
+        """A shot that holds still bakes no curve, but its frames are real.
+
+        The whole-timeline clip played through them holding the last pose. A
+        sequence that ended at the last MOVING shot would run 150 frames short
+        of the range the file declares.
+        """
+        found = self._load(
+            self._shots_only_glb(empty_tail=True), probe=self._sequence_probe()
+        )
+
+        self.assertEqual(found["errors"], [])
+        # 0-300 at 30fps, not 0-150: the empty shot extends the span.
+        self.assertIn("/ 10.00s", found["end"]["readout"])
+        self.assertIn("f300", found["end"]["readout"])
+        # ... and it holds the last MOVING pose out there, as the gap does.
+        self.assertEqual(found["end"]["y"], 2.0)
+
+    def test_a_file_that_ships_its_own_sequence_is_left_alone(self):
+        """No synthetic entry when a real whole-timeline clip is present.
+
+        Two ways to watch the same thing, one of them a reconstruction, is a
+        worse picker than one.
+        """
+        found = self._load(
+            self._shots_only_glb(with_sequence=True), probe=self._sequence_probe()
+        )
+
+        self.assertIs(found["selected"], False)
+        self.assertFalse(
+            [label for label in found["labels"] if "FULL SEQUENCE" in label],
+            found["labels"],
+        )
+
+    def _sequence_probe(self):
+        path = self.temp.path(extension=".js")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(SEQUENCE_PROBE)
         return path
 
     #: The HDR divisor `apply_glb_lightmaps` records as `intensity`, chosen so

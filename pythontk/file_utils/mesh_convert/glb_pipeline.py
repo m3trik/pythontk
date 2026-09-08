@@ -109,6 +109,7 @@ class GlbPipeline(LoggingMixin):
         sidecar: Optional[Dict[str, Any]] = None,
         lightmap_dirs: Sequence[str] = (),
         texture_params: Optional[Dict[str, Any]] = None,
+        clip_mode: str = "both",
         downsize: bool = True,
         scratch_path: Optional[Callable[[str], str]] = None,
         release_source: Optional[Callable[[str], Any]] = None,
@@ -122,6 +123,11 @@ class GlbPipeline(LoggingMixin):
             dst: Where the GLB goes; ``None`` writes it beside *src*.
             sidecar: A scene-sidecar envelope (:meth:`envelope`) applied inside
                 the conversion and embedded in the file.
+            clip_mode: Which animation clips the GLB ships -- ``both`` (the
+                declared shots AND the whole-timeline stack they were cut
+                from), ``shots``, or ``full``. The two halves hold the same
+                performance, so a consumer that plays one never reads the
+                other; on a production assembly the stack alone was 66.5 MB.
             lightmap_dirs: Where the host keeps its maps NOW, forwarded to the
                 lightmap and shadow appliers as their search directories.
             texture_params: ``optimize_glb_textures`` kwargs (``image_format``,
@@ -195,6 +201,7 @@ class GlbPipeline(LoggingMixin):
                 prompt=False,
                 sidecar=sidecar,
                 lightmap_dirs=lightmap_dirs,
+                clip_mode=clip_mode,
                 report=conversion,
             )
             report["glb"] = glb

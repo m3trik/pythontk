@@ -8201,6 +8201,84 @@ class TestApplyGlbClips(unittest.TestCase):
             )
 
     # ------------------------------------------------------------------ tests
+    def test_both_ships_the_shots_and_the_sequence(self):
+        """The historical shape, and the default."""
+        path = self._glb(self._shots())
+
+        MeshConvert.apply_glb_clips(path, mode="both")
+
+        names = [a["name"] for a in MeshConvert._read_glb(path).gltf["animations"]]
+        self.assertIn("FULL_SEQUENCE", names)
+        self.assertEqual(len(names), 3, names)  # 2 shots + the sequence
+
+    def test_shots_only_drops_the_sequence_and_releases_it(self):
+        """The stack holds the same performance the shots do."""
+        path = self._glb(self._shots())
+
+        result = MeshConvert.apply_glb_clips(path, mode="shots")
+
+        names = [a["name"] for a in MeshConvert._read_glb(path).gltf["animations"]]
+        self.assertNotIn("FULL_SEQUENCE", names)
+        self.assertEqual(len(names), 2, names)
+        self.assertGreater(
+            result["released"], 0, "dropping a clip must free what it was reading"
+        )
+
+    def test_full_only_ships_one_clip_and_still_stamps_its_origin(self):
+        """Nothing is cut, but the file must still say what frame it starts on.
+
+        Every later pass -- a visibility gate, a verifier placing a clip in
+        time -- reads ``zero_frame`` back off the stack, and that does not
+        become unknowable just because no shot was cut from it.
+        """
+        path = self._glb(self._shots())
+
+        result = MeshConvert.apply_glb_clips(path, mode="full")
+
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual([a["name"] for a in gltf["animations"]], ["FULL_SEQUENCE"])
+        self.assertEqual(result["clips"], 0)
+        self.assertIn("zero_frame", gltf["animations"][0].get("extras") or {})
+
+    def test_an_unknown_mode_raises(self):
+        with self.assertRaises(ValueError):
+            MeshConvert.apply_glb_clips(self._glb(self._shots()), mode="everything")
+
+    def test_fbx_to_glb_rejects_an_unknown_clip_mode_before_converting(self):
+        """Not just at the rebuild, where the refusal would be swallowed.
+
+        ``fbx_to_glb`` runs every post-process pass under a warn-and-continue
+        guard, so a typo caught only inside ``apply_glb_clips`` would skip the
+        rebuild and ship Maya's LOSSY split takes with a log line for it --
+        the exact failure the rebuild exists to repair, reached by asking for
+        it wrong. Raised up front instead, before any conversion work.
+        """
+        with self.assertRaises(ValueError) as caught:
+            MeshConvert.fbx_to_glb("does_not_matter.fbx", clip_mode="everything")
+        self.assertIn("everything", str(caught.exception))
+        # Before the source check, so it cannot be mistaken for a path problem.
+        self.assertNotIsInstance(caught.exception, FileNotFoundError)
+
+    def test_rebuilding_twice_does_not_grow_the_file(self):
+        """The pass REPLACES clips; what it replaces must not stay bound.
+
+        Maya's own split takes arrive as animations and are discarded on every
+        conversion. Left bound, their payload stayed in the deliverable with
+        nothing able to read it, and a second run added another set of shots on
+        top -- measured on a production assembly at +38.8 MB per run.
+        """
+        path = self._glb(self._shots())
+        MeshConvert.apply_glb_clips(path)
+        once = os.path.getsize(path)
+
+        MeshConvert.apply_glb_clips(path)
+
+        self.assertLessEqual(
+            os.path.getsize(path),
+            once,
+            "re-cutting the shots must release the clips it supersedes",
+        )
+
     def test_a_shot_with_no_key_of_its_own_still_moves(self):
         """The reported bug: the split gave such a shot no channel at all."""
         path = self._glb(self._shots())
@@ -8710,6 +8788,497 @@ class TestPruneGlbAnimations(unittest.TestCase):
         # wants a scene-sidecar envelope, which this fixture never had.
         self.assertFalse(
             [p for p in report["problems"] if "channels" in p], report["problems"]
+        )
+
+
+class TestCompactGlbAnimations(unittest.TestCase):
+    """A clip pins the pose of what it does not animate; two keys say it."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="compact_anim_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    # ------------------------------------------------------------------ fixture
+    def _scene(self, *, share_output=False, image=True):
+        """One clip: a moving VEC3, a constant VEC3, and (optionally) an image.
+
+        The two channels SHARE their time input, as a converter writes them,
+        so collapsing one must not disturb the other.
+        """
+        times = struct.pack("<4f", 0.0, 1.0, 2.0, 3.0)
+        moving = struct.pack("<12f", *[float(i) for i in range(12)])
+        constant = struct.pack("<12f", *([1.0, 2.0, 3.0] * 4))
+        blob = b"fakepng-payload!"
+        chunks, views, offset = [], [], 0
+        for payload in (times, moving, constant, blob):
+            padded = payload + b"\x00" * ((4 - (len(payload) % 4)) % 4)
+            views.append(
+                {"buffer": 0, "byteOffset": offset, "byteLength": len(payload)}
+            )
+            chunks.append(padded)
+            offset += len(padded)
+        gltf = {
+            "asset": {"version": "2.0"},
+            "buffers": [{"byteLength": offset}],
+            "bufferViews": views,
+            "accessors": [
+                {
+                    "bufferView": 0,
+                    "componentType": 5126,
+                    "count": 4,
+                    "type": "SCALAR",
+                    "min": [0.0],
+                    "max": [3.0],
+                },
+                {"bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3"},
+                {"bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC3"},
+            ],
+            "animations": [
+                {
+                    "name": "Clip",
+                    "samplers": [
+                        {"input": 0, "output": 1, "interpolation": "LINEAR"},
+                        {
+                            "input": 0,
+                            "output": 2 if not share_output else 1,
+                            "interpolation": "LINEAR",
+                        },
+                        {"input": 0, "output": 2, "interpolation": "LINEAR"},
+                    ],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "translation"}},
+                        {"sampler": 1, "target": {"node": 1, "path": "translation"}},
+                        {"sampler": 2, "target": {"node": 2, "path": "scale"}},
+                    ],
+                }
+            ],
+            "nodes": [{"name": "a"}, {"name": "b"}, {"name": "c"}],
+        }
+        if image:
+            gltf["images"] = [{"mimeType": "image/png", "bufferView": 3}]
+            gltf["textures"] = [{"source": 0}]
+        path = os.path.join(self.tmp, "scene.glb")
+        return _write_glb_file(path, gltf, b"".join(chunks)), blob
+
+    @staticmethod
+    def _open(path):
+        return MeshConvert._read_glb(path)
+
+    # ------------------------------------------------------------------- tests
+    def test_a_channel_that_never_moves_collapses_to_two_keys(self):
+        path, _ = self._scene()
+
+        result = MeshConvert.compact_glb_animations(path)
+
+        self.assertEqual(result["channels"], 2)  # the constant one, in 2 channels
+        edit = self._open(path)
+        sampler = edit.gltf["animations"][0]["samplers"][1]
+        values = MeshConvert._accessor_elements(edit, sampler["output"])
+        self.assertEqual(len(values), 2, "a constant channel needs two keys")
+        self.assertEqual(values[0], values[1])
+        self.assertEqual(
+            struct.unpack("<3f", values[0]),
+            (1.0, 2.0, 3.0),
+            "the value the original held on every frame must survive",
+        )
+        # Payload reclaimed, not file size: at fixture scale the JSON chunk
+        # grows by more than a 48-byte curve is worth. The saving is a BIN
+        # property, and that is what the pass reports.
+        self.assertGreater(result["bytes"], 0)
+
+    def test_a_moving_channel_is_left_byte_identical(self):
+        path, _ = self._scene()
+        original = MeshConvert._accessor_elements(self._open(path), 1)
+
+        MeshConvert.compact_glb_animations(path)
+
+        edit = self._open(path)
+        sampler = edit.gltf["animations"][0]["samplers"][0]
+        self.assertEqual(
+            MeshConvert._accessor_elements(edit, sampler["output"]),
+            original,
+            "a channel that moves must not be touched at all",
+        )
+
+    def test_the_clip_keeps_its_duration(self):
+        """Two keys at the clip's OWN ends, or the clip gets shorter."""
+        path, _ = self._scene()
+
+        MeshConvert.compact_glb_animations(path)
+
+        edit = self._open(path)
+        low, high = MeshConvert._animation_time_span(edit, edit.gltf["animations"][0])
+        self.assertAlmostEqual(low, 0.0)
+        self.assertAlmostEqual(high, 3.0)
+
+    def test_an_output_a_moving_channel_shares_is_never_collapsed(self):
+        """Samplers are shared; shrinking one would freeze the other's motion."""
+        path, _ = self._scene(share_output=True)
+        original = MeshConvert._accessor_elements(self._open(path), 1)
+
+        MeshConvert.compact_glb_animations(path)
+
+        edit = self._open(path)
+        for index in (0, 1):
+            sampler = edit.gltf["animations"][0]["samplers"][index]
+            self.assertEqual(
+                MeshConvert._accessor_elements(edit, sampler["output"]),
+                original,
+                "an output any moving channel reads must survive whole",
+            )
+
+    def test_image_payload_survives_the_repack(self):
+        """Images name a bufferView DIRECTLY, not through an accessor.
+
+        Sweeping only accessor references reads every image in the file as
+        garbage -- 75.78 MB of it on the assembly this pass was sized against.
+        """
+        path, blob = self._scene()
+
+        MeshConvert.compact_glb_animations(path)
+
+        edit = self._open(path)
+        view = edit.gltf["bufferViews"][edit.gltf["images"][0]["bufferView"]]
+        start = view["byteOffset"]
+        self.assertEqual(
+            bytes(edit.bin_data[start : start + view["byteLength"]]),
+            blob,
+            "the image payload must survive, and at its new offset",
+        )
+
+    def test_a_file_with_nothing_to_collapse_is_left_alone(self):
+        path, _ = self._scene()
+        MeshConvert.compact_glb_animations(path)
+        settled = os.path.getsize(path)
+
+        result = MeshConvert.compact_glb_animations(path)
+
+        self.assertEqual(result, {"channels": 0, "accessors": 0, "bytes": 0})
+        self.assertEqual(os.path.getsize(path), settled, "idempotent")
+
+    def test_a_cubicspline_channel_is_refused(self):
+        """CUBICSPLINE stores in-tangent, value and out-tangent per key.
+
+        Two keys is SIX elements there, not two, so collapsing one writes a
+        sampler whose output no longer matches its input -- a malformed file
+        rather than a smaller one. This fixture's tangents and values are all
+        identical, so the constancy test alone WOULD accept it.
+        """
+        times = struct.pack("<4f", 0.0, 1.0, 2.0, 3.0)
+        # 4 keys x 3 elements (in-tangent, value, out-tangent) x VEC3
+        spline = struct.pack("<36f", *([1.0, 2.0, 3.0] * 12))
+        chunks, views, offset = [], [], 0
+        for payload in (times, spline):
+            padded = payload + b"\x00" * ((4 - (len(payload) % 4)) % 4)
+            views.append(
+                {"buffer": 0, "byteOffset": offset, "byteLength": len(payload)}
+            )
+            chunks.append(padded)
+            offset += len(padded)
+        gltf = {
+            "asset": {"version": "2.0"},
+            "buffers": [{"byteLength": offset}],
+            "bufferViews": views,
+            "accessors": [
+                {
+                    "bufferView": 0,
+                    "componentType": 5126,
+                    "count": 4,
+                    "type": "SCALAR",
+                    "min": [0.0],
+                    "max": [3.0],
+                },
+                {"bufferView": 1, "componentType": 5126, "count": 12, "type": "VEC3"},
+            ],
+            "animations": [
+                {
+                    "name": "Clip",
+                    "samplers": [
+                        {"input": 0, "output": 1, "interpolation": "CUBICSPLINE"}
+                    ],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "translation"}}
+                    ],
+                }
+            ],
+            "nodes": [{"name": "a"}],
+        }
+        path = _write_glb_file(
+            os.path.join(self.tmp, "spline.glb"), gltf, b"".join(chunks)
+        )
+
+        result = MeshConvert.compact_glb_animations(path)
+
+        self.assertEqual(result["channels"], 0)
+        edit = self._open(path)
+        self.assertEqual(
+            edit.gltf["accessors"][1]["count"], 12, "the spline must be left whole"
+        )
+
+    def test_it_runs_inside_an_ALREADY_OPEN_session(self):
+        """The form the conversion uses, and the one nothing else covered.
+
+        `fbx_to_glb` calls this with its open `GlbEdit`, not a path -- so the
+        pass appends views and REPACKS the BIN while other passes still hold
+        that session. Two things have to survive it: the session stays usable
+        afterwards, and payload no accessor names (an image reads its
+        bufferView DIRECTLY) is still there -- an accessor-only liveness sweep
+        would collect every image in the file, which is the trap `_compact_bin`
+        was written around.
+        """
+        path, blob = self._scene(image=True)
+
+        with MeshConvert.open_glb(path) as edit:
+            result = MeshConvert.compact_glb_animations(edit)
+            self.assertEqual(result["channels"], 2)
+            # Usable after the repack: the session must not be left holding a
+            # stale buffer or a view table the JSON no longer agrees with.
+            self.assertEqual(len(edit.gltf["accessors"]), 4)
+
+        edit = self._open(path)
+        sampler = edit.gltf["animations"][0]["samplers"][1]
+        self.assertEqual(
+            len(MeshConvert._accessor_elements(edit, sampler["output"])), 2
+        )
+        image = edit.gltf["images"][0]
+        view = edit.gltf["bufferViews"][image["bufferView"]]
+        start = view["byteOffset"]
+        self.assertEqual(
+            bytes(edit.bin_data[start : start + view["byteLength"]]),
+            b"fakepng-payload!",
+            "the image payload must survive a repack no accessor references it through",
+        )
+
+    def test_a_view_reaching_past_the_bin_declines_the_whole_repack(self):
+        """Slicing past the end of the BIN yields a short string in silence.
+
+        The kept view would carry the `byteLength` it declared while holding
+        fewer bytes, so a repack turns a file that arrived truncated into one
+        that merely lies about its offsets -- no longer detectable as damaged.
+        The fixture is that exact shape: an ORPHANED view (so the pass has
+        real work and gets past its no-op check) beside a LIVE one whose
+        declared extent runs past the buffer.
+        """
+        payload = struct.pack("<3f", 1.0, 2.0, 3.0)
+        gltf = {
+            "asset": {"version": "2.0"},
+            "buffers": [{"byteLength": len(payload)}],
+            "bufferViews": [
+                # Live, but declares 64 bytes over a 12-byte buffer.
+                {"buffer": 0, "byteOffset": 0, "byteLength": 64},
+                # Orphaned: nothing names it, so the collector wants to run.
+                {"buffer": 0, "byteOffset": 0, "byteLength": 4},
+            ],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 1, "type": "VEC3"}
+            ],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+            "nodes": [{"name": "a", "mesh": 0}],
+        }
+        path = _write_glb_file(os.path.join(self.tmp, "short.glb"), gltf, payload)
+        before = os.path.getsize(path)
+
+        edit = self._open(path)
+        self.assertEqual(
+            MeshConvert._compact_bin(edit), 0, "a short buffer must reclaim nothing"
+        )
+
+        self.assertEqual(
+            len(edit.gltf["bufferViews"]), 2, "the view table must be left as found"
+        )
+        self.assertEqual(os.path.getsize(path), before, "and nothing may be rewritten")
+
+    def test_a_file_with_no_animations_is_a_no_op(self):
+        path = _write_glb_file(
+            os.path.join(self.tmp, "static.glb"),
+            {"asset": {"version": "2.0"}, "nodes": [{"name": "a"}]},
+        )
+        self.assertEqual(
+            MeshConvert.compact_glb_animations(path),
+            {"channels": 0, "accessors": 0, "bytes": 0},
+        )
+
+    def test_a_clip_left_with_nothing_to_collapse_mints_no_time_input(self):
+        """A refusal is a property of the SAMPLER, so it can arrive late.
+
+        Clip A reads a constant output through a LINEAR sampler, so the
+        classifier accepts it; clip B then reads the SAME output through a
+        CUBICSPLINE one and refuses it for both. Clip C keeps a collapsible
+        output of its own, so the pass still runs. Clip A must not mint a
+        two-key time input no sampler will read: an accessor keeps its
+        bufferView alive, so the collector cannot reclaim it and every re-run
+        adds another -- the leak `_release_animation_payload` exists to close,
+        reopened one accessor at a time.
+        """
+        times = struct.pack("<4f", 0.0, 1.0, 2.0, 3.0)
+        shared = struct.pack("<12f", *([1.0, 2.0, 3.0] * 4))  # constant, shared
+        own = struct.pack("<12f", *([9.0, 9.0, 9.0] * 4))  # constant, clip C only
+        chunks, views, offset = [], [], 0
+        for payload in (times, shared, own):
+            padded = payload + b"\x00" * ((4 - (len(payload) % 4)) % 4)
+            views.append(
+                {"buffer": 0, "byteOffset": offset, "byteLength": len(payload)}
+            )
+            chunks.append(padded)
+            offset += len(padded)
+        accessors = [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 4,
+                "type": "SCALAR",
+                "min": [0.0],
+                "max": [3.0],
+            },
+            {"bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3"},
+            {"bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC3"},
+        ]
+
+        def clip(name, output, interpolation):
+            return {
+                "name": name,
+                "samplers": [
+                    {"input": 0, "output": output, "interpolation": interpolation}
+                ],
+                "channels": [
+                    {"sampler": 0, "target": {"node": 0, "path": "translation"}}
+                ],
+            }
+
+        gltf = {
+            "asset": {"version": "2.0"},
+            "buffers": [{"byteLength": offset}],
+            "bufferViews": views,
+            "accessors": accessors,
+            "animations": [
+                clip("A", 1, "LINEAR"),
+                clip("B", 1, "CUBICSPLINE"),
+                clip("C", 2, "LINEAR"),
+            ],
+            "nodes": [{"name": "a"}],
+        }
+        path = _write_glb_file(
+            os.path.join(self.tmp, "late_refusal.glb"), gltf, b"".join(chunks)
+        )
+        before = len(accessors)
+
+        result = MeshConvert.compact_glb_animations(path)
+
+        self.assertEqual(result["channels"], 1, "only clip C's channel collapses")
+        edit = self._open(path)
+        # One new accessor: clip C's time input. Clip A gets none -- its only
+        # output was refused, so it has nothing to rewire.
+        self.assertEqual(
+            len(edit.gltf["accessors"]),
+            before + 1,
+            "a clip with nothing to collapse must mint no accessor",
+        )
+        self.assertEqual(
+            edit.gltf["animations"][0]["samplers"][0]["input"],
+            0,
+            "clip A keeps the input it came in with",
+        )
+        self.assertEqual(
+            edit.gltf["accessors"][1]["count"], 4, "the refused output stays whole"
+        )
+        # And every accessor still has a reader, which is what makes the pass
+        # idempotent: a second run finds nothing to add.
+        live = MeshConvert._referenced_accessors(edit.gltf)
+        self.assertEqual(
+            sorted(live),
+            list(range(len(edit.gltf["accessors"]))),
+            "no accessor may be left unreferenced",
+        )
+
+
+class TestDropGlbTextureFallbacks(unittest.TestCase):
+    """KTX2 beside PNG doubles the texture budget the KTX2 pass exists to cut."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drop_fallback_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _scene(self):
+        ktx, png, lone = b"ktx2-payload!!!!", b"png-payload!!!!!", b"lone-png-bytes!!"
+        chunks, views, offset = [], [], 0
+        for payload in (ktx, png, lone):
+            padded = payload + b"\x00" * ((4 - (len(payload) % 4)) % 4)
+            views.append(
+                {"buffer": 0, "byteOffset": offset, "byteLength": len(payload)}
+            )
+            chunks.append(padded)
+            offset += len(padded)
+        gltf = {
+            "asset": {"version": "2.0"},
+            "extensionsUsed": ["KHR_texture_basisu"],
+            "buffers": [{"byteLength": offset}],
+            "bufferViews": views,
+            "images": [
+                {"mimeType": "image/ktx2", "bufferView": 0},
+                {"mimeType": "image/png", "bufferView": 1},
+                {"mimeType": "image/png", "bufferView": 2},
+            ],
+            "textures": [
+                {
+                    "source": 1,
+                    "extensions": {"KHR_texture_basisu": {"source": 0}},
+                },
+                {"source": 2},
+            ],
+            "materials": [
+                {
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                    "emissiveTexture": {"index": 1},
+                },
+            ],
+        }
+        return _write_glb_file(os.path.join(self.tmp, "t.glb"), gltf, b"".join(chunks))
+
+    def test_the_fallback_beside_a_ktx2_twin_is_dropped(self):
+        path = self._scene()
+
+        result = MeshConvert.drop_glb_texture_fallbacks(path)
+
+        self.assertEqual(result["textures"], 1)
+        edit = MeshConvert._read_glb(path)
+        self.assertNotIn("source", edit.gltf["textures"][0])
+        self.assertEqual(
+            edit.gltf["textures"][0]["extensions"]["KHR_texture_basisu"]["source"], 0
+        )
+
+    def test_a_texture_with_no_ktx2_twin_keeps_its_only_image(self):
+        path = self._scene()
+
+        MeshConvert.drop_glb_texture_fallbacks(path)
+
+        edit = MeshConvert._read_glb(path)
+        self.assertIn(
+            "source",
+            edit.gltf["textures"][1],
+            "a lone PNG is the picture, not a fallback",
+        )
+
+    def test_basisu_becomes_required(self):
+        """Without a fallback the file cannot be read without the extension."""
+        path = self._scene()
+
+        MeshConvert.drop_glb_texture_fallbacks(path)
+
+        edit = MeshConvert._read_glb(path)
+        self.assertIn("KHR_texture_basisu", edit.gltf.get("extensionsRequired") or [])
+
+    def test_a_file_with_no_ktx2_is_left_alone(self):
+        path = _write_glb_file(
+            os.path.join(self.tmp, "plain.glb"),
+            {
+                "asset": {"version": "2.0"},
+                "images": [{"uri": "a.png"}],
+                "textures": [{"source": 0}],
+            },
+        )
+        self.assertEqual(
+            MeshConvert.drop_glb_texture_fallbacks(path),
+            {"textures": 0, "images": 0, "bytes": 0},
         )
 
 

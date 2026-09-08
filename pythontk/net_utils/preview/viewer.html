@@ -111,7 +111,7 @@
 </div>
 
 <div id="anim" hidden>
-  <select class="ui" id="clipSelect" title="Which animation clip to play. Shots declared in the DCC are listed first; a clip marked (full range) is the whole timeline the exporter kept alongside them."></select>
+  <select class="ui" id="clipSelect" title="Which animation clip to play. Shots declared in the DCC are listed first; a clip marked (full range) is the whole timeline the exporter kept alongside them. On a deliverable that ships only shots, FULL SEQUENCE plays them all in order on the timeline they were cut from."></select>
   <button class="ui" id="playToggle" title="Play / pause (space)">Pause</button>
   <input id="scrub" type="range" min="0" max="1000" value="0" step="1"
          title="Scrub the current clip">
@@ -810,6 +810,14 @@ let clipIndex = -1;
 let playing = true;
 let scrubbing = false;
 let lastTick = -1;   // last playhead position written to the DOM (0-1000)
+// The synthetic whole-timeline entry, built from the shots when the file ships
+// no continuous clip of its own (Animation Clips: "Shots Only"). Null while a
+// real clip is selected — `activeSequence` is what the transport branches on,
+// so a file that HAS a whole-timeline clip keeps the plain single-action path.
+let sequence = null;
+let activeSequence = null;
+let sequenceTime = 0;      // playhead in seconds along the authoring span
+let sequenceSegment = null;
 
 // The frame range is what makes two clips that both start at t=0 tellable
 // apart. "(full range)" is only said when something else IS a shot — with no
@@ -820,6 +828,10 @@ let lastTick = -1;   // last playhead position written to the DOM (0-1000)
 // it plays 0.00s, which reads as broken animation unless the label admits the
 // clip itself is empty.
 function clipLabel(entry, anyDeclared) {
+  if (entry.sequence) {
+    const s = entry.sequence;
+    return `${s.name}  (${s.startFrame}–${s.endFrame}, ${s.segments.length} shots)`;
+  }
   const meta = entry.meta;
   const empty = meta?.empty ? ', empty' : '';
   if (meta?.declared && typeof meta.start_frame === 'number') {
@@ -987,6 +999,96 @@ async function wirePointerTracks(gltf) {
   return wired;
 }
 
+// Shots laid back onto the timeline they were cut from. The clips carry their
+// own frame range, so the sequence is reconstructible without the stack they
+// came from -- which is the whole point: shipping both halves costs the file
+// the same performance twice (66.5 MB on the production assembly), and the
+// half a shot-switching player never reads is the continuous one.
+//
+// Placed at their AUTHORED frames rather than end to end. The shots on that
+// assembly sit 15 frames apart, and concatenating them would run the sequence
+// short and put every shot at the wrong time -- a different thing from what
+// the whole-timeline clip played. A gap holds the previous shot's last pose,
+// which is what the continuous clip did there too.
+function buildSequence(entries, manifest) {
+  const fps = Number(manifest?.fps) || 0;
+  if (!fps) return null;   // frames cannot be placed in time without it
+  // Only when the file ships no continuous clip of its own: with one present
+  // the picker would offer two ways to watch the same thing, and the real one
+  // is exact where this is a reconstruction.
+  if (entries.some((entry) => !entry.meta?.declared)) return null;
+  // The TIMELINE is every declared shot; the SEGMENTS are the ones that carry
+  // a curve. A shot whose range holds still bakes nothing and arrives empty,
+  // and dropping it from the span as well would end the sequence early -- the
+  // whole-timeline clip played through those frames, holding the last pose,
+  // which is what the gap rule below already does for them.
+  // BOTH bounds, not just the start: the span is measured across every
+  // declared shot, so one entry missing an end_frame makes `last` NaN and the
+  // whole sequence NaN-long -- a transport that divides by it draws nothing and
+  // never recovers. A shot the manifest describes only half of is not a shot
+  // this can place.
+  const declared = entries.filter((e) => (
+    typeof e.meta?.start_frame === 'number' && typeof e.meta?.end_frame === 'number'
+  ));
+  if (declared.length < 2) return null;
+  const shots = declared
+    .filter((e) => e.clip.duration > 0)
+    .sort((a, b) => a.meta.start_frame - b.meta.start_frame);
+  if (!shots.length) return null;
+
+  const first = Math.min(...declared.map((e) => e.meta.start_frame));
+  const last = Math.max(...declared.map((e) => e.meta.end_frame));
+  const segments = shots.map((entry) => ({
+    entry,
+    offset: (entry.meta.start_frame - first) / fps,
+    duration: entry.clip.duration,
+  }));
+  return {
+    segments,
+    fps,
+    startFrame: first,
+    endFrame: last,
+    duration: (last - first) / fps,
+    name: 'FULL SEQUENCE',
+  };
+}
+
+// The segment a global time lands in: the LAST one that has started. A time
+// inside a gap therefore resolves to the shot before it, whose pose is then
+// held -- rather than to nothing, which would leave the model at whatever the
+// previous frame drew.
+function segmentAt(seconds) {
+  if (!sequence) return null;
+  let found = sequence.segments[0];
+  for (const segment of sequence.segments) {
+    if (segment.offset <= seconds) found = segment; else break;
+  }
+  return found;
+}
+
+// Pose the model at `seconds` along the sequence. The segment's action is
+// driven by ASSIGNING its time, never by letting the mixer advance it: two
+// actions must never accumulate time at once, and the gap hold depends on the
+// clamp below rather than on where the mixer happened to get to.
+function applySequence(seconds) {
+  if (!sequence || !mixer) return;
+  const segment = segmentAt(seconds);
+  if (!segment) return;
+  if (segment !== sequenceSegment) {
+    if (action) action.stop();
+    sequenceSegment = segment;
+    action = mixer.clipAction(segment.entry.clip);
+    action.reset();
+    action.play();
+    // Paused throughout: `mixer.update(0)` still poses the model at the
+    // action's current time (the same property `seek` relies on), so the
+    // sequence owns the clock and the mixer only evaluates.
+    action.paused = true;
+  }
+  action.time = THREE.MathUtils.clamp(seconds - segment.offset, 0, segment.duration);
+  mixer.update(0);
+}
+
 function setupAnimation(gltf) {
   // Reset FIRST: a model swap must not leave the previous model's mixer driving
   // the frame loop, nor its clip names in the picker.
@@ -995,6 +1097,13 @@ function setupAnimation(gltf) {
   action = null;
   clips = [];
   clipIndex = -1;
+  // The sequence is the previous model's too: `sequenceSegment` holds one of
+  // its clips, and a swap to a file that builds no sequence would otherwise
+  // leave `activeSequence` pointing at it -- the frame loop branches on that.
+  sequence = null;
+  activeSequence = null;
+  sequenceSegment = null;
+  sequenceTime = 0;
 
   const animations = gltf.animations || [];
   if (!animations.length) {
@@ -1017,6 +1126,11 @@ function setupAnimation(gltf) {
     ? [...entries.filter((e) => e.meta?.declared), ...entries.filter((e) => !e.meta?.declared)]
     : entries;
 
+  // FIRST in the picker when it exists: a deliverable that ships only shots is
+  // still a sequence, and "watch the whole thing" is what a reviewer opens.
+  sequence = buildSequence(entries, manifest);
+  if (sequence) clips = [{ clip: null, meta: null, sequence }, ...clips];
+
   mixer = new THREE.AnimationMixer(gltf.scene);
   el.clipSelect.replaceChildren(...clips.map((entry, index) => {
     const option = document.createElement('option');
@@ -1034,7 +1148,11 @@ function setupAnimation(gltf) {
   const named = (manifest?.clips || []).find((entry) => entry.name === manifest.default_clip);
   const wanted = named ? clips.findIndex((entry) => entry.meta === named) : -1;
   selectClip(wanted >= 0 ? wanted : 0);
-  return clips.length;
+  // The FILE's clip count, not the picker's row count: a script reading this
+  // off the 'load' event is asking what the deliverable carries, and the
+  // synthetic whole-timeline entry is the page's reconstruction rather than
+  // something the file ships.
+  return animations.length;
 }
 
 function selectClip(index) {
@@ -1042,6 +1160,18 @@ function selectClip(index) {
   if (action) action.stop();
   clipIndex = index;
   el.clipSelect.value = String(index);
+  if (clips[index].sequence) {
+    activeSequence = clips[index].sequence;
+    sequenceTime = 0;
+    sequenceSegment = null;  // force the first segment to bind
+    action = null;
+    applySequence(0);
+    lastTick = -1;
+    updateTransport();
+    return;
+  }
+  activeSequence = null;
+  sequenceSegment = null;
   action = mixer.clipAction(clips[index].clip);
   action.reset();
   action.play();
@@ -1061,11 +1191,21 @@ function stepClip(delta) {
 
 function togglePlay() {
   playing = !playing;
-  if (action) action.paused = !playing;
+  // The sequence's segment action stays paused whatever the transport says --
+  // it is posed by assignment, and un-pausing it would let the mixer advance
+  // it alongside the sequence clock.
+  if (action && !activeSequence) action.paused = !playing;
   el.playToggle.textContent = playing ? 'Pause' : 'Play';
 }
 
 function seek(fraction) {
+  if (activeSequence) {
+    sequenceTime = THREE.MathUtils.clamp(
+      fraction * activeSequence.duration, 0, activeSequence.duration);
+    applySequence(sequenceTime);
+    updateTransport();
+    return;
+  }
   if (!action) return;
   const duration = action.getClip().duration;
   action.time = THREE.MathUtils.clamp(fraction * duration, 0, duration);
@@ -1074,9 +1214,15 @@ function seek(fraction) {
 }
 
 function updateTransport() {
-  if (!action) return;
-  const duration = action.getClip().duration || 0;
-  const tick = duration ? Math.round((action.time / duration) * 1000) : 0;
+  // The sequence reports its OWN clock, not the segment's: the playhead spans
+  // the whole timeline, and the segment's local time would send it jumping
+  // back to zero at every shot boundary.
+  if (!activeSequence && !action) return;
+  const duration = activeSequence
+    ? activeSequence.duration
+    : action.getClip().duration || 0;
+  const at = activeSequence ? sequenceTime : action.time;
+  const tick = duration ? Math.round((at / duration) * 1000) : 0;
   // This runs once per rendered frame — 120 times a second in a headset — and
   // the playhead only moves a VISIBLE amount 1000 times per clip. Writing the
   // same two DOM values on every other frame is pure cost on the device least
@@ -1087,7 +1233,13 @@ function updateTransport() {
   // Not while the user owns the slider: writing the playhead back into the
   // control being dragged fights the drag.
   if (!scrubbing) el.scrub.value = String(tick);
-  el.clipTime.textContent = `${action.time.toFixed(2)} / ${duration.toFixed(2)}s`;
+  // The authoring frame beside the seconds, for the sequence only: it is the
+  // number a reviewer reads back to the animator, and the shot ranges in the
+  // picker are quoted in it.
+  const frame = activeSequence
+    ? `  f${Math.round(activeSequence.startFrame + at * activeSequence.fps)}`
+    : '';
+  el.clipTime.textContent = `${at.toFixed(2)} / ${duration.toFixed(2)}s${frame}`;
 }
 
 // Loads can outlive the poll interval — a multi-megabyte GLB takes seconds to
@@ -1208,7 +1360,13 @@ const viewer = {
    * DCC's shot names on a shot-split deliverable). Returns whether it matched.
    */
   playClip(name) {
-    const index = clips.findIndex((entry) => entry.clip.name === name);
+    // `entry.clip` is null on the synthetic whole-timeline entry, which is a
+    // set of shots rather than one clip -- reading `.name` off it threw on
+    // every shots-only deliverable. Addressable by its own name too, so a
+    // consumer can ask for the sequence the way it asks for a shot.
+    const index = clips.findIndex((entry) => (
+      entry.clip ? entry.clip.name === name : entry.sequence?.name === name
+    ));
     if (index >= 0) selectClip(index);
     return index >= 0;
   },
@@ -1392,7 +1550,18 @@ renderer.setAnimationLoop((time) => {
   // Before the hook, so a script's 'frame' callback sees the model posed for
   // THIS frame rather than the previous one.
   if (mixer) {
-    mixer.update(delta);
+    if (activeSequence) {
+      // The sequence advances its own clock and POSES through applySequence;
+      // handing the same delta to the mixer as well would advance the segment
+      // action a second time and run it ahead of the playhead.
+      if (playing) {
+        sequenceTime += delta;
+        if (sequenceTime >= activeSequence.duration) sequenceTime = 0;  // loop
+      }
+      applySequence(sequenceTime);
+    } else {
+      mixer.update(delta);
+    }
     updateTransport();
   }
   emit('frame', { delta, time });

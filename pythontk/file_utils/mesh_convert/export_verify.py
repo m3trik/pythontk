@@ -100,6 +100,45 @@ class _ExportVerifierInternal:
     def _declared_takes(sidecar: Optional[dict]) -> List[dict]:
         return list(((sidecar or {}).get("data_export") or {}).get("fbx_takes") or [])
 
+    @classmethod
+    def _undeclared_clips(cls, spans, sidecar: Optional[dict]) -> List[str]:
+        """Clip names no declared take claims, in file order.
+
+        Exactly one of these is the converter's own whole-timeline stack --
+        the clip whose length IS the stack's, and the only one that can show
+        a wrong origin (a declared take is cut to its own window). Shared so
+        ``clips_vs_takes`` and ``clip_origin`` cannot disagree about which
+        clip that is.
+        """
+        declared = {t.get("name") for t in cls._declared_takes(sidecar)}
+        return [name for name in spans if name not in declared]
+
+    @staticmethod
+    def _published_fps(sidecar: Optional[dict]) -> Optional[float]:
+        """The scene's frame rate, as the exporter recorded it."""
+        export = (sidecar or {}).get("data_export") or {}
+        for channel in ("shot_metadata", "visibility_tracks"):
+            rate = (export.get(channel) or {}).get("fps")
+            try:
+                if rate and float(rate) > 0:
+                    return float(rate)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    @staticmethod
+    def _published_span(sidecar: Optional[dict]) -> Optional[List[float]]:
+        """The whole-timeline ``clip_span`` entry every clip was cut against."""
+        tracks = ((sidecar or {}).get("data_export") or {}).get("visibility_tracks")
+        spans = (tracks or {}).get("clip_span")
+        pair = (spans or {}).get(MeshConvert.DEFAULT_CLIP_SPAN)
+        if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            try:
+                return [float(pair[0]), float(pair[1])]
+            except (TypeError, ValueError):
+                return None
+        return None
+
 
 class ExportVerifier(_ExportVerifierInternal):
     """Run file-level gates over an exported GLB and/or FBX.
@@ -112,7 +151,12 @@ class ExportVerifier(_ExportVerifierInternal):
             sidecar-dependent gates (they SKIP).
         baseline_glb: A previous known-good GLB to diff structure against
             (counts, image mimes, clip names). ``None`` -> that gate SKIPs.
-        fps: Frame rate for converting clip seconds to frames (default 30).
+        fps: Frame rate for converting clip seconds to frames. ``None``
+            (default) takes the rate the sidecar publishes, falling back to
+            30 -- every frame the gates quote is an AUTHORING frame, and a
+            24 or 60 fps scene compared at 30 makes each of them wrong by the
+            ratio. Pass a number only to override a sidecar that is itself
+            suspect.
         huge: World-unit bound for the NaN/garbage scan.
 
     Example:
@@ -128,7 +172,7 @@ class ExportVerifier(_ExportVerifierInternal):
         fbx: Optional[str] = None,
         sidecar: Union[str, None] = "auto",
         baseline_glb: Optional[str] = None,
-        fps: float = 30.0,
+        fps: Optional[float] = None,
         huge: float = 1e7,
     ):
         if not glb and not fbx:
@@ -136,7 +180,6 @@ class ExportVerifier(_ExportVerifierInternal):
         self.glb_path = glb
         self.fbx_path = fbx
         self.baseline_glb = baseline_glb
-        self.fps = fps
         self.huge = huge
 
         if sidecar == "auto":
@@ -153,6 +196,13 @@ class ExportVerifier(_ExportVerifierInternal):
                     self.sidecar = json.load(handle)
             except (OSError, ValueError) as e:
                 self.sidecar_error = f"sidecar unreadable: {e}"
+
+        # After the sidecar, because that is where the scene's rate is
+        # published. Every frame these gates quote is an authoring frame
+        # converted from clip SECONDS, so assuming 30 on a 24 or 60 fps scene
+        # scales every one of them -- and the caller that matters here
+        # (TaskManager.verify_deliverables) passes only paths.
+        self.fps = float(fps) if fps else (self._published_fps(self.sidecar) or 30.0)
 
         self._reader: Optional[GlbReader] = None
         self._reader_error: Optional[str] = None
@@ -240,7 +290,8 @@ class ExportVerifier(_ExportVerifierInternal):
         return [Finding(PASS, "glb_extensions", f"used={used or 'none'}")]
 
     def check_glb_images(self) -> List[Finding]:
-        """Texture sources resolve; basisu usage is declared and falls back."""
+        """Texture sources resolve; basisu usage is declared, and falls back
+        unless the file declares the extension REQUIRED."""
         if self.reader is None:
             return [Finding(SKIP, "glb_images", "no readable GLB")]
         gltf = self.reader.gltf
@@ -266,17 +317,32 @@ class ExportVerifier(_ExportVerifierInternal):
                 broken.append(f"texture {i} source {source!r}")
         if broken:
             rows.append(Finding(FAIL, "glb_images", f"unresolvable: {broken[:5]}"))
-        used, _ = self.reader.extensions()
+        used, required = self.reader.extensions()
         if basisu_used and "KHR_texture_basisu" not in used:
             rows.append(
                 Finding(FAIL, "glb_images", "basisu textures but extension undeclared")
             )
         if fallbackless:
+            # Missing a fallback is only a defect while the file still claims a
+            # reader without the extension can open it. Once basisu is
+            # REQUIRED, shipping no PNG twin is the declared contract --
+            # ``MeshConvert.drop_glb_texture_fallbacks`` produces exactly this
+            # shape on purpose, and it is what makes the KTX2 pass a saving
+            # rather than a second copy. Warning on a deliberate delivery mode
+            # every run trains the reader past the gate that would name a real
+            # one; the declaration is what tells the two apart.
+            deliberate = "KHR_texture_basisu" in (required or [])
             rows.append(
                 Finding(
-                    WARN,
+                    PASS if deliberate else WARN,
                     "glb_images",
-                    f"{fallbackless} basisu texture(s) carry no PNG/JPEG fallback",
+                    f"{fallbackless} basisu texture(s) carry no PNG/JPEG fallback"
+                    + (
+                        " -- KHR_texture_basisu is REQUIRED, so that is the "
+                        f"declared contract; mimes={self.reader.image_mimes()}"
+                        if deliberate
+                        else ""
+                    ),
                 )
             )
         if not rows:
@@ -422,11 +488,10 @@ class ExportVerifier(_ExportVerifierInternal):
         spans = self.reader.clip_spans(self.fps)
         by_name = {t.get("name"): t for t in takes}
         rows: List[Finding] = []
-        unmatched: List[str] = []
+        unmatched = self._undeclared_clips(spans, self.sidecar)
         for clip, (_low, _high, end_frame) in spans.items():
             take = by_name.get(clip)
             if take is None:
-                unmatched.append(clip)
                 continue
             want = int(take["end"]) - int(take["start"])
             if abs(end_frame - want) > 1:
@@ -518,6 +583,72 @@ class ExportVerifier(_ExportVerifierInternal):
                 )
             )
         return rows
+
+    def check_clip_origin(self) -> List[Finding]:
+        """The stack is as long as the span its clips were cut against.
+
+        ``clip_span["*"]`` is the authoring window the exporter publishes as
+        the frame the whole-timeline stack puts at ``t=0``; every clip is cut
+        from that stack by offsetting against it
+        (``MeshConvert._clip_zero``). The exporter cannot see the written file,
+        so it publishes a MEASUREMENT of the curves it is about to serialize --
+        and when that measurement is taken from the wrong thing (a bake range
+        bounds what the plugin re-bakes, not what an authored curve carries)
+        the number describes a file that was never written.
+
+        Nothing else here catches that. Every clip keeps the LENGTH its take
+        declares and every declared shot is present, so ``clips_vs_takes`` and
+        ``cross_clips`` pass; the clips are simply cut from the wrong PLACE,
+        each landing earlier than its window by the difference and playing the
+        tail of the shot before it. Measured on a production assembly: a stack
+        carrying frames 80-4281 published as 161-4275, so all 18 shots played
+        81 frames early while their visibility gates -- written against the
+        published span, and therefore correct -- switched on time.
+
+        Compared on the whole-timeline clip, whose length IS the stack's: a
+        declared take is cut to its own window and cannot show the drift.
+        """
+        if self.reader is None:
+            return [Finding(SKIP, "clip_origin", "no readable GLB")]
+        span = self._published_span(self.sidecar)
+        if span is None:
+            detail = self.sidecar_error or "no published clip_span"
+            return [Finding(SKIP, "clip_origin", detail)]
+        spans = self.reader.clip_spans(self.fps)
+        if not spans:
+            return [Finding(SKIP, "clip_origin", "no clips")]
+        loose = self._undeclared_clips(spans, self.sidecar)
+        if len(loose) != 1:
+            return [
+                Finding(
+                    SKIP,
+                    "clip_origin",
+                    f"no single whole-timeline clip ({len(loose)} undeclared)",
+                )
+            ]
+        clip = loose[0]
+        carried = spans[clip][2] - round(spans[clip][0] * self.fps)
+        published = span[1] - span[0]
+        drift = carried - published
+        if abs(drift) > 1:
+            return [
+                Finding(
+                    FAIL,
+                    "clip_origin",
+                    f"{clip}: stack carries {carried:.0f}f but clips were cut "
+                    f"against a {published:.0f}f span ({span[0]:g}-{span[1]:g}), "
+                    f"{drift:+.0f}f out -- the published origin is not this "
+                    "stack's, so every clip is cut from the wrong frame",
+                )
+            ]
+        return [
+            Finding(
+                PASS,
+                "clip_origin",
+                f"{clip}: {carried:.0f}f matches the published span "
+                f"{span[0]:g}-{span[1]:g}",
+            )
+        ]
 
     # ---- FBX gates --------------------------------------------------------
 
@@ -618,7 +749,12 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--sidecar", default="auto", help="path | auto | none")
     parser.add_argument("--baseline", help="previous known-good GLB to diff against")
-    parser.add_argument("--fps", type=float, default=30.0)
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=None,
+        help="override the rate; default reads it from the sidecar (else 30)",
+    )
     parser.add_argument("--json", action="store_true", help="machine output")
     parser.add_argument("--checks", help="comma-separated subset of gates")
     parser.add_argument(

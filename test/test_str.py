@@ -19,6 +19,7 @@ Run with:
     python -m pytest test_str.py -v
     python test_str.py
 """
+
 import unittest
 
 from pythontk import StrUtils
@@ -444,9 +445,7 @@ class StrTest(BaseTestCase):
 
     def test_collapse_delimiter_runs_leading_preserved(self):
         """Test a leading delimiter (legality prefix) survives."""
-        self.assertEqual(
-            StrUtils.collapse_delimiter_runs("_Lead__x"), "_Lead_x"
-        )
+        self.assertEqual(StrUtils.collapse_delimiter_runs("_Lead__x"), "_Lead_x")
 
     def test_collapse_delimiter_runs_noop_and_edge(self):
         """Test clean names and non-string input pass through."""
@@ -1065,9 +1064,7 @@ class StrTest(BaseTestCase):
 
     def test_find_str_and_format_single_asterisk_truncates_at_match(self):
         """'*' is replace-suffix with an empty payload."""
-        self.assertEqual(
-            StrUtils.find_str_and_format(["pCube1"], "*", "*Cube*"), ["p"]
-        )
+        self.assertEqual(StrUtils.find_str_and_format(["pCube1"], "*", "*Cube*"), ["p"])
 
     # -------------------------------------------------------------------------
     # strip_suffix Tests
@@ -1314,14 +1311,18 @@ class StrTest(BaseTestCase):
 
     def test_sequential_suffixes_lowercase(self):
         """``lowercase=True`` returns lowercase letters in the letter scheme."""
-        self.assertEqual(StrUtils.sequential_suffixes(3, lowercase=True), ["a", "b", "c"])
+        self.assertEqual(
+            StrUtils.sequential_suffixes(3, lowercase=True), ["a", "b", "c"]
+        )
         # Lowercase is irrelevant once we're in numeric mode.
         out = StrUtils.sequential_suffixes(40, lowercase=True)
         self.assertTrue(all(s.isdigit() for s in out))
 
     def test_sequential_suffixes_custom_switch_at(self):
         """``switch_at`` lets callers force the numeric branch earlier."""
-        self.assertEqual(StrUtils.sequential_suffixes(5, switch_at=3)[:3], ["01", "02", "03"])
+        self.assertEqual(
+            StrUtils.sequential_suffixes(5, switch_at=3)[:3], ["01", "02", "03"]
+        )
 
     # -------------------------------------------------------------------------
     # resolve_name_collisions Tests
@@ -1374,9 +1375,7 @@ class StrTest(BaseTestCase):
             strip_trailing_ints=True,
             collision_suffix="numeric",
         )
-        self.assertEqual(
-            result, {"mat": "mat_01", "mat1": "mat_02", "mat2": "mat_03"}
-        )
+        self.assertEqual(result, {"mat": "mat_01", "mat1": "mat_02", "mat2": "mat_03"})
 
     def test_resolve_collisions_numeric_pads_for_large_groups(self):
         """100+ members -> 3-digit padding."""
@@ -1403,9 +1402,7 @@ class StrTest(BaseTestCase):
             strip_trailing_ints=True,
             collision_suffix="alpha",
         )
-        self.assertEqual(
-            result, {"mat2": "mat_A", "mat": "mat_B", "mat1": "mat_C"}
-        )
+        self.assertEqual(result, {"mat2": "mat_A", "mat": "mat_B", "mat1": "mat_C"})
 
     def test_resolve_collisions_empty_base_skipped(self):
         """Names that strip to empty are omitted from grouping."""
@@ -1442,19 +1439,13 @@ class StrTest(BaseTestCase):
     # -------------------------------------------------------------------------
 
     def test_replace_placeholders_basic(self):
-        self.assertEqual(
-            StrUtils.replace_placeholders("{a}_{b}", a="x", b="y"), "x_y"
-        )
+        self.assertEqual(StrUtils.replace_placeholders("{a}_{b}", a="x", b="y"), "x_y")
 
     def test_replace_placeholders_format_spec(self):
-        self.assertEqual(
-            StrUtils.replace_placeholders("v{n:03d}", n=5), "v005"
-        )
+        self.assertEqual(StrUtils.replace_placeholders("v{n:03d}", n=5), "v005")
 
     def test_replace_placeholders_missing_preserves_placeholder(self):
-        self.assertEqual(
-            StrUtils.replace_placeholders("{a}_{b}", a="x"), "x_{b}"
-        )
+        self.assertEqual(StrUtils.replace_placeholders("{a}_{b}", a="x"), "x_{b}")
 
     def test_replace_placeholders_missing_preserves_format_spec(self):
         # The bug fixed in SafeFormatter.format_field: unresolved {n:03d}
@@ -1474,12 +1465,8 @@ class StrTest(BaseTestCase):
         self.assertEqual(stage1.format(stem="shot", n=7), "m_shot_v007")
 
     def test_replace_placeholders_other_format_specs_preserved(self):
-        self.assertEqual(
-            StrUtils.replace_placeholders("{key:>10}"), "{key:>10}"
-        )
-        self.assertEqual(
-            StrUtils.replace_placeholders("{key:.4f}"), "{key:.4f}"
-        )
+        self.assertEqual(StrUtils.replace_placeholders("{key:>10}"), "{key:>10}")
+        self.assertEqual(StrUtils.replace_placeholders("{key:.4f}"), "{key:.4f}")
 
     # -------------------------------------------------------------------------
     # resolve_placeholders Tests
@@ -1536,9 +1523,13 @@ class StrTest(BaseTestCase):
         right and insert there. Previously it replaced the delimiter with spaces
         (a no-op only when the delimiter itself was a space) so any non-space
         delimiter silently no-oped."""
-        self.assertEqual(StrUtils.insert("a.b.c.d", "X", ".", occurrence=-1), "a.b.c.Xd")
+        self.assertEqual(
+            StrUtils.insert("a.b.c.d", "X", ".", occurrence=-1), "a.b.c.Xd"
+        )
         # -2 -> second-from-last dot (position 3), insert after it.
-        self.assertEqual(StrUtils.insert("a.b.c.d", "X", ".", occurrence=-2), "a.b.Xc.d")
+        self.assertEqual(
+            StrUtils.insert("a.b.c.d", "X", ".", occurrence=-2), "a.b.Xc.d"
+        )
         # before=True places the insert ahead of the matched delimiter.
         self.assertEqual(
             StrUtils.insert("a.b.c.d", "X", ".", occurrence=-1, before=True),
@@ -1556,7 +1547,9 @@ class StrTest(BaseTestCase):
         """set_case(case=None) is the documented 'no transform': the string comes
         back unchanged instead of raising TypeError from getattr(string, None)."""
         self.assertEqual(StrUtils.set_case("fooBar", case=None), "fooBar")
-        self.assertEqual(StrUtils.set_case(["fooBar", "baz"], case=None), ["fooBar", "baz"])
+        self.assertEqual(
+            StrUtils.set_case(["fooBar", "baz"], case=None), ["fooBar", "baz"]
+        )
 
     def test_find_str_and_format_replace_prefix_drops_matched_prefix(self):
         """Case-sensitive replace_prefix must drop the matched prefix, matching the
@@ -1591,6 +1584,47 @@ class StrTest(BaseTestCase):
             ),
             ["a.b.c"],
         )
+
+    # ------------------------------------------------------------ to_legal_name
+    def test_to_legal_name_replaces_every_non_alphanumeric(self):
+        """One character in, one out -- the switchboard's objectName rule."""
+        self.assertEqual(
+            StrUtils.to_legal_name("Convert Textures (2K)"), "Convert_Textures__2K_"
+        )
+        self.assertEqual(StrUtils.to_legal_name("plain"), "plain")
+        self.assertEqual(StrUtils.to_legal_name(""), "")
+
+    def test_to_legal_name_is_positional_where_sanitize_collapses(self):
+        """The distinction that makes it a separate rule, not a `sanitize` call.
+
+        `sanitize` lowercases, collapses runs of the replacement char and
+        strips trailing ones. Reusing it here would map two DIFFERENT
+        definition names onto one objectName, and the objectName is the key a
+        headless reader (`ExportProfile.widget_key`) looks the widget up by --
+        so the collision would silently hand one widget's value to the other.
+        """
+        self.assertNotEqual(
+            StrUtils.to_legal_name("a  b"), StrUtils.to_legal_name("a b")
+        )
+        self.assertEqual(StrUtils.to_legal_name("a  b"), "a__b")
+        self.assertEqual(StrUtils.sanitize("a  b"), StrUtils.sanitize("a b"))
+        # Case and trailing separators survive here and do not in sanitize.
+        self.assertEqual(StrUtils.to_legal_name("Name "), "Name_")
+        self.assertEqual(StrUtils.to_legal_name("MiXeD"), "MiXeD")
+
+    def test_export_profile_reads_the_rule_from_here(self):
+        """`ExportProfile.legal_name` is a pass-through, not a second copy.
+
+        uitk's `SwitchboardNameMixin.convert_to_legal_name` calls this too, so
+        the widget the switchboard builds and the key the reader derives agree
+        by construction rather than by two implementations staying in step.
+        """
+        from pythontk import ExportProfile
+
+        for name in ("Convert Textures (2K)", "a  b", "MiXeD", "", "x-y.z"):
+            self.assertEqual(
+                ExportProfile.legal_name(name), StrUtils.to_legal_name(name)
+            )
 
 
 if __name__ == "__main__":
