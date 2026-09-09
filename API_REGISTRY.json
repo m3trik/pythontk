@@ -14017,6 +14017,86 @@
       ]
     },
     {
+      "relpath": "net_utils/preview/playblast.py",
+      "summary": "Record a clip playing in the preview page to a movie file.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PreviewPlayblast",
+          "summary": "Frames pushed in by the viewer page, encoded by the shared core.",
+          "line": 70,
+          "bases": [
+            "SequenceEncoder"
+          ],
+          "members": [
+            {
+              "name": "begin",
+              "qualname": "PreviewPlayblast.begin",
+              "kind": "method",
+              "signature": "(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png') -> Dict[str, Any]",
+              "summary": "Open a recording and return ``{\"token\", \"name\", \"frames\"}``.",
+              "line": 126,
+              "deprecated": false
+            },
+            {
+              "name": "add_frame",
+              "qualname": "PreviewPlayblast.add_frame",
+              "kind": "method",
+              "signature": "(self, token: str, index: int, data: bytes) -> Dict[str, Any]",
+              "summary": "Store one rendered frame;",
+              "line": 199,
+              "deprecated": false
+            },
+            {
+              "name": "finish",
+              "qualname": "PreviewPlayblast.finish",
+              "kind": "method",
+              "signature": "(self, token: str, output_dir: str, target: Optional[str] = None, stem: Optional[str] = None) -> Dict[str, Any]",
+              "summary": "Encode the recording and drop its scratch frames.",
+              "line": 252,
+              "deprecated": false
+            },
+            {
+              "name": "cancel",
+              "qualname": "PreviewPlayblast.cancel",
+              "kind": "method",
+              "signature": "(self, token: str) -> bool",
+              "summary": "Drop a recording and its frames;",
+              "line": 313,
+              "deprecated": false
+            },
+            {
+              "name": "clip_name",
+              "qualname": "PreviewPlayblast.clip_name",
+              "kind": "method",
+              "signature": "(self, token: str) -> str",
+              "summary": "The sanitized clip name a recording was opened under.",
+              "line": 327,
+              "deprecated": false
+            },
+            {
+              "name": "active",
+              "qualname": "PreviewPlayblast.active",
+              "kind": "method",
+              "signature": "(self) -> List[Dict[str, Any]]",
+              "summary": "One entry per in-flight recording — for diagnostics and tests.",
+              "line": 339,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_output_dir",
+              "qualname": "PreviewPlayblast.resolve_output_dir",
+              "kind": "staticmethod",
+              "signature": "(source: Optional[Path], fallback: Path) -> Path",
+              "summary": "Where a recording of *source* should land.",
+              "line": 434,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
       "relpath": "net_utils/preview/server.py",
       "summary": "Localhost static-file server for live browser / WebXR previews.",
       "functions": [],
@@ -14024,7 +14104,7 @@
         {
           "name": "PreviewServer",
           "summary": "Serve a directory of preview assets on loopback, with a live manifest.",
-          "line": 339,
+          "line": 487,
           "bases": [
             "LoggingMixin",
             "_PreviewServerInternal"
@@ -14036,7 +14116,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[int]",
               "summary": "The bound port, or ``None`` before :meth:`start`.",
-              "line": 459,
+              "line": 624,
               "deprecated": false
             },
             {
@@ -14045,7 +14125,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The viewer URL, or ``None`` before :meth:`start`.",
-              "line": 464,
+              "line": 629,
               "deprecated": false
             },
             {
@@ -14054,7 +14134,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "Number of published revisions;",
-              "line": 469,
+              "line": 634,
               "deprecated": false
             },
             {
@@ -14063,7 +14143,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 474,
+              "line": 639,
               "deprecated": false
             },
             {
@@ -14072,7 +14152,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Whether a page is currently watching this server.",
-              "line": 477,
+              "line": 642,
               "deprecated": false
             },
             {
@@ -14081,7 +14161,7 @@
               "kind": "property",
               "signature": "(self) -> tuple",
               "summary": "Registered names of the viewer scripts currently active, in load order.",
-              "line": 505,
+              "line": 670,
               "deprecated": false
             },
             {
@@ -14090,7 +14170,7 @@
               "kind": "method",
               "signature": "(self, name: str, path: Optional[Union[str, Path]] = None) -> 'PreviewServer'",
               "summary": "Activate a viewer script, on disk and in the manifest at once.",
-              "line": 510,
+              "line": 675,
               "deprecated": false
             },
             {
@@ -14099,7 +14179,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> 'PreviewServer'",
               "summary": "Deactivate a viewer script (unknown names are ignored), and sweep it.",
-              "line": 540,
+              "line": 705,
               "deprecated": false
             },
             {
@@ -14108,7 +14188,7 @@
               "kind": "method",
               "signature": "(self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]) -> 'PreviewServer'",
               "summary": "Replace the whole active set (``None`` or empty clears it).",
-              "line": 550,
+              "line": 715,
               "deprecated": false
             },
             {
@@ -14117,7 +14197,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "The payload served at ``/manifest.json``.",
-              "line": 665,
+              "line": 830,
               "deprecated": false
             },
             {
@@ -14126,7 +14206,7 @@
               "kind": "method",
               "signature": "(self) -> 'PreviewServer'",
               "summary": "Bind the port and serve on a daemon thread.",
-              "line": 682,
+              "line": 847,
               "deprecated": false
             },
             {
@@ -14135,7 +14215,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Stop serving and release the port.",
-              "line": 712,
+              "line": 877,
               "deprecated": false
             },
             {
@@ -14144,7 +14224,7 @@
               "kind": "method",
               "signature": "(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int",
               "summary": "Place an asset in the serve root and bump the manifest version.",
-              "line": 729,
+              "line": 894,
               "deprecated": false
             },
             {
@@ -14153,7 +14233,43 @@
               "kind": "method",
               "signature": "(self, settings: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "Write delivery dials into the published GLB, and remember them.",
-              "line": 797,
+              "line": 962,
+              "deprecated": false
+            },
+            {
+              "name": "playblast",
+              "qualname": "PreviewServer.playblast",
+              "kind": "property",
+              "signature": "(self) -> 'PreviewPlayblast'",
+              "summary": "The page's recorder, created on first use.",
+              "line": 1017,
+              "deprecated": false
+            },
+            {
+              "name": "begin_playblast",
+              "qualname": "PreviewServer.begin_playblast",
+              "kind": "method",
+              "signature": "(self, **kwargs: Any) -> Dict[str, Any]",
+              "summary": "Open a recording (see :meth:`PreviewPlayblast.begin`).",
+              "line": 1044,
+              "deprecated": false
+            },
+            {
+              "name": "finish_playblast",
+              "qualname": "PreviewServer.finish_playblast",
+              "kind": "method",
+              "signature": "(self, token: str, target: Optional[str] = None) -> Dict[str, Any]",
+              "summary": "Encode a recording and report where it went.",
+              "line": 1048,
+              "deprecated": false
+            },
+            {
+              "name": "recording_path",
+              "qualname": "PreviewServer.recording_path",
+              "kind": "method",
+              "signature": "(self, token: str) -> Optional[Path]",
+              "summary": "The file a finished recording produced, or None.",
+              "line": 1101,
               "deprecated": false
             },
             {
@@ -14162,7 +14278,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Open the viewer in the default browser.",
-              "line": 876,
+              "line": 1135,
               "deprecated": false
             }
           ]
@@ -15182,6 +15298,146 @@
               "signature": "(self, video_path: str) -> dict",
               "summary": "Return metadata for ``video_path`` (filename, frame count, fps,",
               "line": 223,
+              "deprecated": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "relpath": "vid_utils/sequence_exporter.py",
+      "summary": "Image-sequence capture planning and encoding, with no idea what drew the frames.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ExportTarget",
+          "summary": "One entry in an exporter's target registry.",
+          "line": 47,
+          "bases": [],
+          "members": []
+        },
+        {
+          "name": "CaptureResult",
+          "summary": "A captured image sequence on disk.",
+          "line": 75,
+          "bases": [],
+          "members": [
+            {
+              "name": "pattern",
+              "qualname": "CaptureResult.pattern",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "printf-style pattern for the sequence (ffmpeg input).",
+              "line": 88,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ExportResult",
+          "summary": "Outcome of one export target.",
+          "line": 99,
+          "bases": [],
+          "members": [
+            {
+              "name": "ok",
+              "qualname": "ExportResult.ok",
+              "kind": "property",
+              "signature": "(self) -> bool",
+              "summary": "",
+              "line": 108,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "SequenceEncoder",
+          "summary": "Encode a numbered image sequence to a movie, and clean up after it.",
+          "line": 112,
+          "bases": [
+            "LoggingMixin"
+          ],
+          "members": [
+            {
+              "name": "sequence_fps",
+              "qualname": "SequenceEncoder.sequence_fps",
+              "kind": "method",
+              "signature": "(self) -> float",
+              "summary": "Frame rate of the frames this producer captures.",
+              "line": 167,
+              "deprecated": false
+            },
+            {
+              "name": "sequence_name",
+              "qualname": "SequenceEncoder.sequence_name",
+              "kind": "method",
+              "signature": "(self) -> str",
+              "summary": "Default basename for an output this producer writes.",
+              "line": 171,
+              "deprecated": false
+            },
+            {
+              "name": "encode_sequence",
+              "qualname": "SequenceEncoder.encode_sequence",
+              "kind": "method",
+              "signature": "(self, capture: Union[CaptureResult, str], output_filepath: str, fps: Optional[float] = None, audio: Optional[Union[bool, str]] = None, quality: Optional[int] = None, **ffmpeg_options: Any) -> str",
+              "summary": "Encode a captured image sequence to a movie via ffmpeg.",
+              "line": 195,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "SequenceExporter",
+          "summary": "Plan and run several outputs off ONE capture of a producer's frames.",
+          "line": 394,
+          "bases": [
+            "SequenceEncoder"
+          ],
+          "members": [
+            {
+              "name": "available_targets",
+              "qualname": "SequenceExporter.available_targets",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[Tuple[str, str]]",
+              "summary": "(name, label) pairs in registry order — for building UI pickers.",
+              "line": 510,
+              "deprecated": false
+            },
+            {
+              "name": "resolve_frame_range",
+              "qualname": "SequenceExporter.resolve_frame_range",
+              "kind": "classmethod",
+              "signature": "(cls, mode: str = 'custom', start: Optional[int] = None, end: Optional[int] = None) -> Tuple[int, int]",
+              "summary": "Resolve a frame range from a mode, with explicit overrides.",
+              "line": 515,
+              "deprecated": false
+            },
+            {
+              "name": "capture_sequence",
+              "qualname": "SequenceExporter.capture_sequence",
+              "kind": "method",
+              "signature": "(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> CaptureResult",
+              "summary": "Capture the frame range as a numbered image sequence.",
+              "line": 563,
+              "deprecated": false
+            },
+            {
+              "name": "capture_still",
+              "qualname": "SequenceExporter.capture_still",
+              "kind": "method",
+              "signature": "(self, filepath: str, frame: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> str",
+              "summary": "Capture a single frame to an exact filepath.",
+              "line": 581,
+              "deprecated": false
+            },
+            {
+              "name": "export",
+              "qualname": "SequenceExporter.export",
+              "kind": "method",
+              "signature": "(self, output_dir: str, name: Optional[str] = None, targets: Union[str, Sequence[str]] = ('mp4',), range_mode: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, keep_frames: bool = False, progress_callback: Optional[Callable[[int, int, str], None]] = None, **overrides: Any) -> List[ExportResult]",
+              "summary": "Produce one or more registered targets from a single plan.",
+              "line": 619,
               "deprecated": false
             }
           ]

@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.37"
+__version__ = "0.9.38"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -19,6 +19,17 @@ DEFAULT_INCLUDE = {
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
     "vid_utils.frame_extractor": ["FrameExtractor"],
+    # Image sequence -> movie, with the producer of the frames left open:
+    # the Maya playblast exporter and the WebXR preview's page recorder are
+    # both hosts of this, so the target registry and the encode are written
+    # once (see ``vid_utils/sequence_exporter.py``).
+    "vid_utils.sequence_exporter": [
+        "ExportTarget",
+        "CaptureResult",
+        "ExportResult",
+        "SequenceEncoder",
+        "SequenceExporter",
+    ],
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",
     "file_utils.mesh_convert._mesh_convert": "MeshConvert",

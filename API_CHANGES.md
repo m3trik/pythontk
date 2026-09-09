@@ -1,25 +1,33 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 95d4939)._
+_Diff vs the last release (origin/main @ dcd93fe)._
 
-## Added (4)
+## Added (27)
 
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.compact_glb_animations(cls, glb: GlbTarget) -> Dict[str, int]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.drop_glb_texture_fallbacks(cls, glb: GlbTarget) -> Dict[str, int]`
-- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_clip_origin(self) -> List[Finding]`
-- `str_utils/_str_utils.py::StrUtils.to_legal_name(name: str) -> str`
-
-## Signature changed (4)
-
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_clips`
-  - was: `(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]`
-  - now: `(cls, glb: GlbTarget, *, mode: str = 'both') -> Optional[Dict[str, Any]]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_to_glb`
-  - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), report: Optional[Dict[str, Any]] = None) -> str`
-  - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str`
-- `file_utils/mesh_convert/glb_clips.py::GlbClips.rebuild`
-  - was: `(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0) -> Optional[Dict[str, Any]]`
-  - now: `(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0, *, cut_shots: bool = True, keep_sequence: bool = True) -> Optional[Dict[str, Any]]`
-- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.build`
-  - was: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
-  - now: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+- `net_utils/preview/playblast.py::PreviewPlayblast(class)`
+- `net_utils/preview/playblast.py::PreviewPlayblast.active(self) -> List[Dict[str, Any]]`
+- `net_utils/preview/playblast.py::PreviewPlayblast.add_frame(self, token: str, index: int, data: bytes) -> Dict[str, Any]`
+- `net_utils/preview/playblast.py::PreviewPlayblast.begin(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png') -> Dict[str, Any]`
+- `net_utils/preview/playblast.py::PreviewPlayblast.cancel(self, token: str) -> bool`
+- `net_utils/preview/playblast.py::PreviewPlayblast.clip_name(self, token: str) -> str`
+- `net_utils/preview/playblast.py::PreviewPlayblast.finish(self, token: str, output_dir: str, target: Optional[str] = None, stem: Optional[str] = None) -> Dict[str, Any]`
+- `net_utils/preview/playblast.py::PreviewPlayblast.resolve_output_dir(source: Optional[Path], fallback: Path) -> Path`
+- `net_utils/preview/server.py::PreviewServer.begin_playblast(self, **kwargs: Any) -> Dict[str, Any]`
+- `net_utils/preview/server.py::PreviewServer.finish_playblast(self, token: str, target: Optional[str] = None) -> Dict[str, Any]`
+- `net_utils/preview/server.py::PreviewServer.playblast(self) -> 'PreviewPlayblast'`
+- `net_utils/preview/server.py::PreviewServer.recording_path(self, token: str) -> Optional[Path]`
+- `vid_utils/sequence_exporter.py::CaptureResult(class)`
+- `vid_utils/sequence_exporter.py::CaptureResult.pattern(self) -> str`
+- `vid_utils/sequence_exporter.py::ExportResult(class)`
+- `vid_utils/sequence_exporter.py::ExportResult.ok(self) -> bool`
+- `vid_utils/sequence_exporter.py::ExportTarget(class)`
+- `vid_utils/sequence_exporter.py::SequenceEncoder(class)`
+- `vid_utils/sequence_exporter.py::SequenceEncoder.encode_sequence(self, capture: Union[CaptureResult, str], output_filepath: str, fps: Optional[float] = None, audio: Optional[Union[bool, str]] = None, quality: Optional[int] = None, **ffmpeg_options: Any) -> str`
+- `vid_utils/sequence_exporter.py::SequenceEncoder.sequence_fps(self) -> float`
+- `vid_utils/sequence_exporter.py::SequenceEncoder.sequence_name(self) -> str`
+- `vid_utils/sequence_exporter.py::SequenceExporter(class)`
+- `vid_utils/sequence_exporter.py::SequenceExporter.available_targets(cls) -> List[Tuple[str, str]]`
+- `vid_utils/sequence_exporter.py::SequenceExporter.capture_sequence(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> CaptureResult`
+- `vid_utils/sequence_exporter.py::SequenceExporter.capture_still(self, filepath: str, frame: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> str`
+- `vid_utils/sequence_exporter.py::SequenceExporter.export(self, output_dir: str, name: Optional[str] = None, targets: Union[str, Sequence[str]] = ('mp4',), range_mode: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, keep_frames: bool = False, progress_callback: Optional[Callable[[int, int, str], None]] = None, **overrides: Any) -> List[ExportResult]`
+- `vid_utils/sequence_exporter.py::SequenceExporter.resolve_frame_range(cls, mode: str = 'custom', start: Optional[int] = None, end: Optional[int] = None) -> Tuple[int, int]`

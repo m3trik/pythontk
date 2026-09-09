@@ -579,9 +579,13 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class PreviewDeliverer(Deliverer)`
   - methods: ensure_server, publish, deliver
 
+### `net_utils/preview/playblast.py` — Record a clip playing in the preview page to a movie file.
+- `class PreviewPlayblast(SequenceEncoder)`
+  - methods: begin, add_frame, finish, cancel, clip_name, active, resolve_output_dir
+
 ### `net_utils/preview/server.py` — Localhost static-file server for live browser / WebXR previews.
 - `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
-  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, apply_settings, open_in_browser
+  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, apply_settings, playblast, begin_playblast, finish_playblast, recording_path, open_in_browser
 
 ### `net_utils/remote_file.py` — Read a file by ``http(s)`` URL with the same surface as a local read.
 - `class RemoteFile(_RemoteFileInternal)`
@@ -632,3 +636,14 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `vid_utils/frame_extractor.py` — Extract still frames from a video file via OpenCV.
 - `class FrameExtractor`
   - methods: score_sharpness, extract_frames, extract_frames_sharpest, get_video_info
+
+### `vid_utils/sequence_exporter.py` — Image-sequence capture planning and encoding, with no idea what drew the frames.
+- `class ExportTarget`
+- `class CaptureResult`
+  - methods: pattern
+- `class ExportResult`
+  - methods: ok
+- `class SequenceEncoder(LoggingMixin)`
+  - methods: sequence_fps, sequence_name, encode_sequence
+- `class SequenceExporter(SequenceEncoder)`
+  - methods: available_targets, resolve_frame_range, capture_sequence, capture_still, export
