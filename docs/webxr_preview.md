@@ -208,11 +208,15 @@ next push that simply says nothing about scripts. An explicit `[]` is still an i
 
 A module's default export receives the viewer API: `THREE`, `scene`, `renderer`, `camera`,
 `controls`, `pivot`, `model`, `bounds`, `policy`, `setStatus`, `addButton(label, onClick)`, and
-`on(event, fn)` for `'load'` / `'frame'` / `'key'`. A script that throws is logged and contained —
+`on(event, fn)` for `'load'` / `'frame'` / `'key'`. The transport is on it too: `mixer`,
+`playClip(name)`, `playing` / `setPlaying(state)`, `poseAt(seconds)` and `clip` — the selection as
+`{name, duration, fps, startFrame, endFrame, sequence}`, which is what lets a script address a clip
+in the AUTHORING frames the DCC and the picker quote rather than in seconds. A script that throws is
+logged and contained —
 an optional module must never make a good preview *look* broken, because the one place this is read
 is a headset where the console is not visible.
 
-Three ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push),
+Four ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push),
 **`inspect`** (draw calls, materials and *decoded* texture memory read off the renderer — the two
 numbers a GLB's size does not tell you) and **`shadow_rig`** (the runtime half of the DCC shadow
 rigs: reads the `extras.shadow_web` manifest `MeshConvert.apply_glb_shadows` writes during the
@@ -222,10 +226,12 @@ program — batches the projected planes that share an atlas and carry no fade i
 of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md`). The first two
 are checkboxes on the WebXR Preview option box, which passes an explicit list every push: the panel
 is authoritative, so a script registered on the server by other code is cleared by the next push
-from there. `shadow_rig` is **on by itself**: `PreviewServer.AUTO_SCRIPTS` maps it to the extras key
-it reads, and `publish()` activates it — appended to whatever the push named — for any GLB whose
-root extras carry `shadow_web` (the JSON chunk is probed, never the geometry). Opt out by removing
-the registry entry or with `remove_script("shadow_rig")` after the push. One caveat of the page's
+from there. **`playblast`** records the clip the transport is on to a movie file (see *Recording a clip*
+below). `shadow_rig` and `playblast` are **on by themselves**: `PreviewServer.AUTO_SCRIPTS` maps it to the extras key
+each reads, and `publish()` activates it — appended to whatever the push named — for any GLB whose
+root extras carry that key (`shadow_web` and `animation_web` respectively; the JSON chunk is probed,
+never the geometry). Opt out by removing the registry entry or with `remove_script(name)` after the
+push. One caveat of the page's
 loading order: scripts and the asset load concurrently and the first `load` is not held for the
 imports, so a deliverable small enough to parse before a 40 KB module arrives shows still planes
 until the next push (the script says so in the console); a production GLB is never that small.
@@ -561,6 +567,113 @@ The other axis to check on a handoff is the **take split**. A scene that declare
 them realized into FBX AnimStacks before conversion, or the deliverable carries one continuous clip
 where the preview showed twelve. `apply_glb_animations` warns with both counts when the `fbx_takes`
 channel names takes the file has no clips for — that warning is the one to read.
+
+## Watching shots
+
+A deliverable that ships clips grows a picker and a transport. Shots the DCC declared are listed
+first, each with its authoring range; a clip marked *(full range)* is the whole timeline the
+exporter kept beside them. On a deliverable that ships **only** shots the page rebuilds
+`FULL SEQUENCE` from them — every shot placed at its authored frame, not concatenated, so the gaps
+between them are real and hold the previous shot's last pose exactly as the whole-timeline clip did.
+It is offered first, because "watch the whole thing" is what a reviewer opens.
+
+The readout beside the playhead names **which shot the playhead is standing in** while the sequence
+plays, followed by the time and the authoring frame:
+
+```
+  SHOT_B · 3.40 / 5.00s  f102          inside a shot
+  SHOT_A (hold) · 2.50 / 5.00s  f75    in the gap after it
+```
+
+The picker cannot answer that question — it is sitting on `FULL SEQUENCE` the whole way through —
+and scrubbing a five-second sequence without it says only how far in you are. A gap is labelled as
+a **hold** rather than named outright: the pose on screen is the previous shot's last frame, and
+naming that shot plainly would claim it plays through frames it does not cover, which is a bug
+report waiting to be filed against a shot that is behaving correctly. A single clip is not labelled
+at all, since the picker already names it.
+
+## Recording a clip
+
+**Export Playblast** writes the clip the transport is on to a movie file — one declared shot, the
+whole-timeline clip, or `FULL SEQUENCE` (every shot laid back onto the timeline it was cut from),
+which records as one continuous movie exactly as it plays. The button appears whenever the
+deliverable ships clips, because that is when the clip picker does: `playblast` is an
+`AUTO_SCRIPTS` entry keyed on `animation_web`, so there is no checkbox to have forgotten on the push
+a reviewer just watched.
+
+**It is a playblast, not a screen recording.** The page *steps* the clip: pose frame N, render,
+hand the pixels over, then ask for N+1. A throttled tab, a headset and a desktop therefore all
+produce the same file, at the deliverable's own authoring frame rate — which is what makes the
+result comparable with a viewport playblast of the same shot rather than merely similar to it.
+Sampling the display instead would drop and duplicate frames wherever the device was busy, and the
+busiest moment is always the one worth reviewing.
+
+```
+  page          poseAt(i / fps) -> render -> snapshot          (main thread, one per frame)
+  workers       snapshot -> PNG -> POST /playblast/frame       (several frames at once)
+  server        each frame straight to a scratch sequence, numbered from the clip's START frame
+  encode        pythontk.SequenceEncoder -> ffmpeg -> <deliverable>_<clip>.mp4
+```
+
+The encode is **the same code Maya's playblast exporter runs**: `pythontk.SequenceEncoder` owns the
+target registry, the CRF mapping, the even-dimension rule H.264 needs and the audio mux, and
+`mayatk.PlayblastExporter` is a `pythontk.SequenceExporter` — the same core plus the capture plan —
+that supplies a viewport and a timeline. So "MP4 (H.264)" means one thing in this toolkit, and a fix
+to the encode lands in both tools at once.
+
+Where the movie goes:
+
+| The push was | Lands |
+|---|---|
+| an exporter's GLB, or one chosen with **External GLB** | beside that file, as `<glb stem>_<clip>.mp4` |
+| a scene push | in the serve root, and the page downloads it — a scene push's GLB is the bridge's own scratch and is released the moment it is published, so there is nothing to sit beside |
+
+Either way the finished file is fetchable from the page at `/playblast/<token>` as an attachment,
+which is the half that matters in a headset: there is no containing folder to open there.
+
+Details worth knowing:
+
+- The report names the clip's **authoring frame range** — the numbers the DCC's timeline and the
+  picker's shot ranges quote. The scratch frames themselves are numbered from zero: they are deleted
+  the moment the movie exists, and numbering them the timeline's way breaks on a scene with pre-roll,
+  where a shot's start frame is negative (`shot.-010.png` matches no printf pattern, and ffmpeg will
+  not take a negative `-start_number` either).
+- Contiguity is checked before the encode. ffmpeg reads a printf pattern straight through and stops
+  at the first gap, so a dropped frame would otherwise encode silently as a short movie.
+- **Frames compress on worker threads.** Compressing a frame to PNG is essentially the entire cost of
+  a recording — measured per frame, everything else together (pose, render, readback, POST, the
+  server's disk write) is under 5% of it — so the page hands each snapshot to a pool of workers and
+  gets on with rendering the next one. Measured interleaved on a 151-frame recording from a
+  5120x2880 buffer: **~5x** on the capture itself, **2.7x** on the whole button press (39.4s → 14.7s;
+  the rest is the server's ffmpeg pass, which did not change). A *single* worker is already 2.7x,
+  so most of the win is simply not blocking the render loop. The pool is half the machine's cores,
+  clamped to 2–8; past 4 the curve is flat (2 workers 4.4x, 4 workers 5.2x, 8 workers 5.8x).
+  A browser without `Worker` or `OffscreenCanvas` falls back to compressing on the main thread.
+- **It records at preview resolution, not delivery resolution**: the canvas's drawing buffer capped
+  to a **1280** long edge. This *used* to be the wall-clock dial — one frame at a time on the main
+  thread, the cost tracked pixel count almost exactly, and 1920 → 1280 measured 2.1x faster for
+  2.25x fewer pixels. With the pool it no longer is: **1920 and 1280 now cost the same** (46.7ms and
+  45.1ms per frame), because the compression happens behind the render instead of in front of it.
+  What the cap still buys is file size and wire time — which is what a reviewer on a headset over
+  Wi-Fi actually waits for — so raising it is now a question about bytes, not minutes. A canvas
+  smaller than the cap is captured as it is; the cap never upscales. `MAX_EDGE` in
+  `scripts/playblast.js` is the knob.
+- **Burn-in** (`Burn-in: off/on`, beside the record button) draws the **shot name, the DCC frame
+  number and the clip time** into the recorded frames — the shot the playhead is inside on the
+  whole-timeline clip, `'<name> (hold)'` through a gap, and the clip's own name on a single shot, so
+  the movie says the same thing the transport readout did. The frame number is the **authoring**
+  one — the clip's start frame plus the offset — so a note about "frame 112" names the frame an
+  animator will open. Opt-in and off by default: it is drawn into the pixels and cannot be taken
+  out again, so a recording is what the reviewer saw unless someone asked for the annotation. It
+  cannot be toggled mid-recording, which would annotate half the frames.
+- A push landing mid-recording **drops** it. Every frame after the swap would be of a different
+  scene, and the file would silently be a cut between two versions.
+- The frame size is fixed when the recording starts, so resizing the window part way through cannot
+  change the movie's dimensions (ffmpeg answers a mixed-size sequence with a garbled encode rather
+  than an error). Recording from **inside** an immersive session is refused: `render` targets the XR
+  framebuffer there, so a canvas readback would capture the mirror.
+- The button doubles as the progress readout (`Recording 42/151 ✕`) and cancels on a second click;
+  the status line is left saying what the page is showing.
 
 ## Cost and budget
 

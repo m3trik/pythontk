@@ -57,6 +57,11 @@
   #anim {
     position: fixed; bottom: 56px; left: 12px; display: flex; gap: 8px;
     align-items: center; max-width: calc(100vw - 24px);
+    /* Wraps for the same reason the button row does, and now needs to: the
+       readout carries the current shot's name, so a narrow viewport (a phone
+       holding a headset preview) would otherwise squeeze the scrubber to
+       nothing to fit it. */
+    flex-wrap: wrap;
   }
   #anim[hidden] { display: none; }
   button.ui, select.ui {
@@ -67,7 +72,10 @@
   button.ui:hover, select.ui:hover { border-color: rgba(255, 255, 255, .34); }
   select.ui { max-width: 30ch; }
   #scrub { width: 220px; accent-color: #6fb3ff; cursor: pointer; }
-  #clipTime { color: #9aa0a6; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #clipTime {
+    color: #9aa0a6; font-size: 12px; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
   /* Lookdev -- the area for dials that tune how the model READS and write the
      result back into the GLB (see LOOKDEV_ENABLED). A transparent row rather
      than one chrome box: each dial wears its own, so the second and third land
@@ -114,7 +122,7 @@
   <select class="ui" id="clipSelect" title="Which animation clip to play. Shots declared in the DCC are listed first; a clip marked (full range) is the whole timeline the exporter kept alongside them. On a deliverable that ships only shots, FULL SEQUENCE plays them all in order on the timeline they were cut from."></select>
   <button class="ui" id="playToggle" title="Play / pause (space)">Pause</button>
   <input id="scrub" type="range" min="0" max="1000" value="0" step="1"
-         title="Scrub the current clip">
+         title="Scrub the current clip. On FULL SEQUENCE the readout beside it names the shot the playhead is standing in, and marks a gap between shots as a hold.">
   <span id="clipTime"></span>
 </div>
 
@@ -801,6 +809,11 @@ async function saveNormalScale() {
 // the clips are listed in file order under their own names — it just cannot say
 // which of them are shots.
 let mixer = null;
+// The deliverable's `animation_web` block, kept past setupAnimation: a script
+// recording a clip needs the AUTHORING frame rate and frame numbers, and those
+// live in the manifest rather than on the three.js clip (which knows only
+// seconds). Null on a file that ships no manifest.
+let animationManifest = null;
 let clips = [];        // [{clip, meta}] in PICKER order — declared shots first
 let action = null;
 let clipIndex = -1;
@@ -810,6 +823,11 @@ let clipIndex = -1;
 let playing = true;
 let scrubbing = false;
 let lastTick = -1;   // last playhead position written to the DOM (0-1000)
+// Last shot label written beside the playhead, so a segment change redraws the
+// readout even when the playhead has not moved a visible amount — scrubbing
+// slowly across a shot boundary is exactly when the label matters most, and it
+// is the one case where the tick can repeat while the answer changes.
+let lastShot = null;
 // The synthetic whole-timeline entry, built from the shots when the file ships
 // no continuous clip of its own (Animation Clips: "Shots Only"). Null while a
 // real clip is selected — `activeSequence` is what the transport branches on,
@@ -1105,6 +1123,8 @@ function setupAnimation(gltf) {
   sequenceSegment = null;
   sequenceTime = 0;
 
+  animationManifest = null;
+
   const animations = gltf.animations || [];
   if (!animations.length) {
     el.anim.hidden = true;
@@ -1112,6 +1132,7 @@ function setupAnimation(gltf) {
   }
 
   const manifest = readExtras(gltf, 'animation_web');
+  animationManifest = manifest;
   // Joined on the glTF animation INDEX, which is what the block carries it by —
   // names are what a user reads, not a key: nothing stops two AnimStacks from
   // sharing one, and a name join would then hand one clip the other's frame
@@ -1155,6 +1176,48 @@ function setupAnimation(gltf) {
   return animations.length;
 }
 
+// What is selected, in the terms a recorder needs: seconds for the transport,
+// frames and a rate for the FILE it writes. The two must agree — a movie of a
+// shot is compared against a viewport playblast of the same frames, so its
+// length and its numbering are not the page's to round.
+//
+// The frame rate is the deliverable's, never the display's: the page renders at
+// whatever the device manages, and a recording sampled at that rate would be a
+// screen capture rather than a playblast.
+function clipInfo() {
+  const entry = clips[clipIndex];
+  if (!entry) return null;
+  const fps = Number(animationManifest?.fps) || 0;
+  if (entry.sequence) {
+    return {
+      name: entry.sequence.name,
+      duration: entry.sequence.duration,
+      fps: entry.sequence.fps,
+      startFrame: entry.sequence.startFrame,
+      endFrame: entry.sequence.endFrame,
+      sequence: true,
+    };
+  }
+  const duration = entry.clip?.duration || 0;
+  const start = typeof entry.meta?.start_frame === 'number' ? entry.meta.start_frame : 0;
+  // The clip's OWN length decides the end, not the manifest's end_frame: a
+  // whole-timeline clip carries no declared range, and a declared one whose
+  // curve is shorter than its range would otherwise ask for frames that do not
+  // exist. A duration is the span BETWEEN the outer frames, so the last frame
+  // is start + duration*fps and the count that spans them is one more than
+  // that -- the same arithmetic the sequence's own startFrame/endFrame satisfy,
+  // which is what lets a recorder count frames one way for both.
+  const spans = fps ? Math.round(duration * fps) : 0;
+  return {
+    name: entry.clip?.name || 'clip',
+    duration,
+    fps,
+    startFrame: start,
+    endFrame: start + spans,
+    sequence: false,
+  };
+}
+
 function selectClip(index) {
   if (!mixer || !clips[index]) return;
   if (action) action.stop();
@@ -1181,6 +1244,7 @@ function selectClip(index) {
   action.paused = !playing;
   mixer.update(0);
   lastTick = -1; // the readout beside the playhead changed with the clip
+  lastShot = null;
   updateTransport();
 }
 
@@ -1223,13 +1287,15 @@ function updateTransport() {
     : action.getClip().duration || 0;
   const at = activeSequence ? sequenceTime : action.time;
   const tick = duration ? Math.round((at / duration) * 1000) : 0;
+  const shot = shotLabel(at);
   // This runs once per rendered frame — 120 times a second in a headset — and
   // the playhead only moves a VISIBLE amount 1000 times per clip. Writing the
   // same two DOM values on every other frame is pure cost on the device least
   // able to afford it. `lastTick` is reset by selectClip, so a clip swap that
   // lands on the same tick still redraws (the duration beside it changed).
-  if (tick === lastTick) return;
+  if (tick === lastTick && shot === lastShot) return;
   lastTick = tick;
+  lastShot = shot;
   // Not while the user owns the slider: writing the playhead back into the
   // control being dragged fights the drag.
   if (!scrubbing) el.scrub.value = String(tick);
@@ -1239,7 +1305,25 @@ function updateTransport() {
   const frame = activeSequence
     ? `  f${Math.round(activeSequence.startFrame + at * activeSequence.fps)}`
     : '';
-  el.clipTime.textContent = `${at.toFixed(2)} / ${duration.toFixed(2)}s${frame}`;
+  el.clipTime.textContent =
+    `${shot ? `${shot} · ` : ''}${at.toFixed(2)} / ${duration.toFixed(2)}s${frame}`;
+}
+
+// Which shot the sequence playhead is standing in, for the readout. Only the
+// sequence has one: on a single clip the picker already names what is playing,
+// and repeating it beside the playhead would be noise.
+//
+// A time inside a GAP resolves to the shot before it — that is the pose on
+// screen, held, exactly as the whole-timeline clip played it — so it is labelled
+// as a hold rather than named outright. Without that the readout claims a shot
+// is playing through frames it does not cover, which is the one reading of this
+// label that could send someone looking for a bug in the shot.
+function shotLabel(seconds) {
+  if (!activeSequence || !sequenceSegment) return null;
+  const entry = sequenceSegment.entry;
+  const name = entry.meta?.name || entry.clip?.name || 'shot';
+  const held = seconds > sequenceSegment.offset + sequenceSegment.duration + 1e-6;
+  return held ? `${name} (hold)` : name;
 }
 
 // Loads can outlive the poll interval — a multi-megabyte GLB takes seconds to
@@ -1355,6 +1439,42 @@ const viewer = {
   get policy() { return policy; },
   /** The AnimationMixer driving the current model's clips, or null. */
   get mixer() { return mixer; },
+  /**
+   * The clip the transport is on, or null when the model has none:
+   * `{name, duration, fps, startFrame, endFrame, sequence}`. `sequence` marks
+   * the synthetic whole-timeline entry — every declared shot laid back onto
+   * the timeline it was cut from — which is a set of clips rather than one,
+   * and is exactly as recordable as a single shot.
+   */
+  get clip() { return clipInfo(); },
+  /** Whether the transport is playing. */
+  get playing() { return playing; },
+  /** Play or pause the transport; returns the state it ended in. */
+  setPlaying(state) {
+    if (playing !== !!state) togglePlay();
+    return playing;
+  },
+  /**
+   * Pose the model at `seconds` into the current clip, without advancing it.
+   * Clamped to the clip. This is what makes a recording a playblast rather
+   * than a screen capture: the caller owns the clock.
+   */
+  poseAt(seconds) {
+    const info = clipInfo();
+    if (!info) return false;
+    seek(info.duration ? seconds / info.duration : 0);
+    return true;
+  },
+  /**
+   * The shot covering `seconds` of the whole-timeline clip — the same name the
+   * transport readout shows, `'<name> (hold)'` inside a gap — or null when the
+   * current clip is a single shot rather than the sequence.
+   *
+   * Reads the segment the last pose resolved to, so it answers for wherever the
+   * model is NOW: call it after `poseAt(seconds)` with the same `seconds`, not
+   * before, or it describes the previous frame.
+   */
+  shotAt(seconds) { return shotLabel(seconds); },
   /**
    * Play a clip by name (the names `extras.animation_web` lists, which are the
    * DCC's shot names on a shot-split deliverable). Returns whether it matched.

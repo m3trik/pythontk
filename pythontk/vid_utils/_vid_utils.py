@@ -392,21 +392,23 @@ class VidUtils(HelpMixin):
             if os.name == "nt":
                 creation_flags = subprocess.CREATE_NO_WINDOW
 
-            process = subprocess.Popen(
+            # Context-managed so the output pipe is closed and the child reaped
+            # even when the encode raises part way through -- a bare Popen here
+            # leaked the pipe (a ResourceWarning per encode, and a handle held
+            # for as long as the interpreter kept the object, which in a DCC is
+            # the whole session). Reading to EOF and letting __exit__ wait()
+            # also settles returncode, which the poll() loop could miss.
+            with subprocess.Popen(
                 ffmpeg_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,  # Merge stderr into stdout
                 text=True,
                 creationflags=creation_flags,
-            )
-
-            # Stream output
-            while True:
-                line = process.stdout.readline()
-                if not line and process.poll() is not None:
-                    break
-                if line:
-                    logger.info(line.strip())
+            ) as process:
+                for line in process.stdout:
+                    line = line.strip()
+                    if line:
+                        logger.info(line)
 
             if process.returncode != 0:
                 logger.error(

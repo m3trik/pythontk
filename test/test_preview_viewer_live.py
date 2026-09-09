@@ -26,7 +26,9 @@ fakes. The lighting policy wants a baked fixture and is left to follow.
 
 import json
 import os
+import pathlib
 import struct
+import subprocess
 import sys
 import unittest
 
@@ -148,6 +150,42 @@ export default function probe(viewer) {
   });
 }
 """
+
+
+#: Selects a clip by name and reports what the page then says is selected, for
+#: the recording tests: the movie's length is asserted against the clip's own
+#: frame range, so the range has to be read from the page rather than assumed.
+RECORD_PROBE = """
+export default function probe(viewer) {
+  const report = { ready: false, errors: [] };
+  window.__probe = report;
+  window.__select = (name) => {
+    const ok = viewer.playClip(name);
+    return { ok, clip: viewer.clip };
+  };
+  viewer.on('load', () => {
+    report.buttons = [...document.querySelectorAll('#controls button')]
+      .map((b) => b.textContent);
+    report.ready = true;
+  });
+}
+"""
+
+
+#: Same probe, with Worker taken away: the playblast script reads its
+#: capabilities when a recording STARTS, so removing it here -- at page init,
+#: long before the button is pressed -- is what a browser without workers looks
+#: like from the script's point of view.
+NO_WORKER_PROBE = RECORD_PROBE.replace(
+    "export default function probe(viewer) {",
+    "export default function probe(viewer) {\n  window.Worker = undefined;",
+).replace(
+    "report.ready = true;",
+    # Reported so the test can tell the fallback actually ran. Without it, an
+    # assignment that silently failed would leave the pool in play and the test
+    # would pass while proving nothing.
+    "report.workerType = typeof Worker;\n    report.ready = true;",
+)
 
 
 def _runtime_available():
@@ -411,6 +449,265 @@ class TestPreviewViewerLive(unittest.TestCase):
             [label for label in found["labels"] if "FULL SEQUENCE" in label],
             found["labels"],
         )
+
+    # ------------------------------------------ which shot is on screen
+    # Scrubbing a five-second sequence, the readout said only how far in the
+    # playhead was. Which of the shots that was is the question a reviewer is
+    # actually asking, and the picker cannot answer it: it is sitting on FULL
+    # SEQUENCE the whole way through.
+
+    def test_the_readout_names_the_shot_the_playhead_is_standing_in(self):
+        found = self._load(self._shots_only_glb(), probe=self._sequence_probe())
+
+        self.assertEqual(found["errors"], [])
+        self.assertIn("SHOT_A", found["start"]["readout"])
+        self.assertIn("SHOT_B", found["inShotB"]["readout"])
+
+    def test_a_gap_is_labelled_as_a_hold_of_the_shot_before_it(self):
+        """The pose on screen in a gap is the previous shot's last frame, held.
+
+        Naming that shot outright would claim it plays through frames it does
+        not cover -- which is a bug report waiting to be filed against a shot
+        that is behaving exactly as the whole-timeline clip did.
+        """
+        found = self._load(self._shots_only_glb(), probe=self._sequence_probe())
+
+        self.assertIn("SHOT_A (hold)", found["gap"]["readout"])
+        self.assertNotIn("SHOT_B", found["gap"]["readout"])
+
+    def test_a_single_clip_readout_is_not_labelled(self):
+        """The picker already names it; repeating it beside the playhead is
+        noise on the only clip where the picker is unambiguous."""
+        # A file that ships its OWN whole-timeline clip builds no synthetic
+        # sequence, so the transport is on a single clip throughout.
+        found = self._load(
+            self._shots_only_glb(with_sequence=True), probe=self._sequence_probe()
+        )
+
+        self.assertEqual(found["errors"], [])
+        self.assertIs(found["selected"], False, "this fixture ships no sequence")
+        self.assertNotIn("·", found["start"]["readout"])
+
+    # ------------------------------------------------- recording a clip
+    # The page's transport can play one shot or the whole sequence; these are
+    # the tests that it can also WRITE what it plays, at the deliverable's own
+    # frame rate rather than at whatever rate the device managed.
+
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_recording_the_selected_shot_writes_that_shots_frames(self):
+        found, movie = self._record("SHOT_B")
+
+        # SHOT_B is frames 90-150 at 30fps: 61 frames, 2.00s. Not the
+        # sequence's five seconds, and not the two seconds' worth of frames a
+        # count that forgot its far bound would produce.
+        self.assertEqual(found["clip"]["startFrame"], 90)
+        self.assertEqual(found["clip"]["endFrame"], 150)
+        self.assertTrue(movie.is_file() and movie.stat().st_size > 0)
+        self._assert_not_blank(movie)
+        self.assertIn("SHOT_B", movie.name)
+        self.assertIn("61 frames", found["status"])
+
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_recording_the_full_sequence_writes_the_whole_timeline(self):
+        """Including the gap: the movie is as long as the timeline the shots
+        were cut from, not as long as the shots add up to."""
+        found, movie = self._record("FULL SEQUENCE")
+
+        self.assertEqual(found["clip"]["startFrame"], 0)
+        self.assertEqual(found["clip"]["endFrame"], 150)
+        self.assertTrue(movie.is_file() and movie.stat().st_size > 0)
+        self._assert_not_blank(movie)
+        self.assertIn("151 frames", found["status"])
+        self.assertIn("5.0s", found["status"])
+
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_recording_falls_back_when_the_browser_has_no_workers(self):
+        """Frames compress on worker threads, and a browser without them still
+        records -- more slowly, and to the same movie.
+
+        The fallback is a second encoder implementation that never runs on any
+        browser this suite otherwise drives, so without this it would be code
+        nothing executes until it is someone's only path.
+        """
+        found, movie = self._record("SHOT_B", probe=self._no_worker_probe())
+
+        # Frames arrived with no Worker in the page, so the main-thread encoder
+        # is the only thing that can have produced them.
+        self.assertEqual(found["workerType"], "undefined")
+        self.assertIn("61 frames", found["status"])
+        self.assertTrue(movie.is_file() and movie.stat().st_size > 0)
+        self._assert_not_blank(movie)
+
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_burn_in_draws_the_shot_name_and_time_into_the_movie(self):
+        """Opt-in scene data lands in the PIXELS, not merely in the filename.
+
+        Recorded twice, and the bottom of the frame is compared: everything
+        else about the two runs is identical, so a difference there is the
+        burn-in and nothing else.
+        """
+        _, plain = self._record("SHOT_B")
+        _, stamped = self._record("SHOT_B", burn_in=True)
+
+        before = self._bottom_strips(plain, 2)
+        after = self._bottom_strips(stamped, 2)
+        self.assertEqual(len(before[0]), len(after[0]), "frames differ in size")
+        changed = sum(1 for a, b in zip(before[0], after[0]) if abs(a - b) > 40)
+        self.assertGreater(
+            changed,
+            200,
+            "the burn-in run is indistinguishable from the plain one at the "
+            "foot of the frame -- nothing was drawn into the movie",
+        )
+
+        # ADJACENT frames, which is the pair that matters. The capture loop
+        # issues as many frames per tick as the encoder has room for, so several
+        # frames are annotated between one animation frame and the next; if the
+        # canvas they are drawn on were reused before its snapshot was taken,
+        # they would all carry the LAST one's stamp. Comparing distant frames
+        # cannot see that -- they land in different ticks and differ either way.
+        moved = sum(1 for a, b in zip(after[0], after[1]) if abs(a - b) > 40)
+        self.assertGreater(
+            moved,
+            80,
+            "consecutive frames carry the same burn-in -- the counter is not "
+            "advancing per frame, so frames share a stale annotation",
+        )
+
+    def _bottom_strips(self, movie, count):
+        """The bottom 15% of the first *count* frames, as 8-bit luminance.
+
+        Decoded in ONE pass and split, rather than seeking per frame: adjacent
+        frames are the interesting pair here, and `-ss` cannot address them
+        reliably at that spacing.
+        """
+        ffmpeg = ptk.VidUtils.resolve_ffmpeg(required=True)
+        raw = pathlib.Path(self.temp.path(extension=".gray"))
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(movie),
+                "-frames:v",
+                str(count),
+                "-vf",
+                "crop=iw:trunc(ih*0.15):0:ih-trunc(ih*0.15)",
+                "-pix_fmt",
+                "gray",
+                "-f",
+                "rawvideo",
+                str(raw),
+            ],
+            check=True,
+        )
+        data = raw.read_bytes()
+        self.assertEqual(len(data) % count, 0, "raw frames are not equal-sized")
+        size = len(data) // count
+        return [data[i * size : (i + 1) * size] for i in range(count)]
+
+    def _record(self, clip_name, probe=None, burn_in=False):
+        """Select *clip_name* in the real page, press Export Playblast, and
+        return the page's findings plus the movie it wrote."""
+        glb = self._shots_only_glb()
+        # The movie lands beside the file that was published; the test looks for
+        # it the way its user would, rather than being handed the path.
+        beside = os.path.dirname(glb)
+        before = set(os.listdir(beside))
+
+        def drive(server, page):
+            selection = page.evaluate("(name) => window.__select(name)", clip_name)
+            if burn_in:
+                page.click("#controls button:has-text('Burn-in')")
+            page.click("#controls button:has-text('Export Playblast')")
+            # The status line is the page's own completion signal, and waiting
+            # on it rather than on a file appearing is what makes a failure read
+            # as "the page said why" instead of as a timeout.
+            page.wait_for_function(
+                "() => /playblast (saved|failed)/.test("
+                "document.getElementById('status').textContent)",
+                timeout=300_000,
+            )
+            return {
+                "clip": selection["clip"],
+                "selected": selection["ok"],
+                "status": page.eval_on_selector("#status", "el => el.textContent"),
+            }
+
+        found = self._load(glb, probe=probe or self._record_probe(), then=drive)
+        self.assertEqual(found["errors"], [])
+        self.assertTrue(found["selected"], f"{clip_name} was not selectable")
+        self.assertIn("saved", found["status"], found["status"])
+        new = [n for n in set(os.listdir(beside)) - before if n.endswith(".mp4")]
+        self.assertEqual(len(new), 1, f"expected one movie, got {new}")
+        return found, pathlib.Path(beside, new[0])
+
+    def _assert_not_blank(self, movie):
+        """The recorded movie must contain the SCENE, not an empty canvas.
+
+        A capture that snapshots the WebGL canvas one task too late reads a
+        drawing buffer the browser has already composited away: every frame
+        comes back blank, the recording succeeds, the file is written, and
+        nothing about its size or duration says anything is wrong. This is the
+        assertion that fails instead -- it decodes a frame and looks at it.
+        """
+        # required=True: every caller is already gated on ffmpeg being present,
+        # so an absent one is a broken test rather than a skip -- and it says so
+        # here instead of putting None into an argv.
+        ffmpeg = ptk.VidUtils.resolve_ffmpeg(required=True)
+        raw = pathlib.Path(self.temp.path(extension=".gray"))
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(movie),
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                "gray",
+                "-f",
+                "rawvideo",
+                str(raw),
+            ],
+            check=True,
+        )
+        pixels = raw.read_bytes()
+        self.assertTrue(pixels, f"no frame could be decoded from {movie.name}")
+        # A blank frame is one value everywhere. The fixture is a lit model on a
+        # dark background, so a real one covers a wide range.
+        self.assertGreater(
+            max(pixels) - min(pixels),
+            8,
+            f"{movie.name} decodes to a near-uniform frame -- the capture "
+            "recorded an empty canvas, not the scene",
+        )
+
+    def _no_worker_probe(self):
+        path = self.temp.path(extension=".js")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(NO_WORKER_PROBE)
+        return path
+
+    def _record_probe(self):
+        path = self.temp.path(extension=".js")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(RECORD_PROBE)
+        return path
 
     def _sequence_probe(self):
         path = self.temp.path(extension=".js")

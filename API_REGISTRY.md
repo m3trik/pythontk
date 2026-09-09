@@ -108,6 +108,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`net_utils/credentials.py`](#net_utils--credentials)
 - [`net_utils/preview/bridge.py`](#net_utils--preview--bridge) — The hand-off bridge whose target is a live preview page.
 - [`net_utils/preview/deliverer.py`](#net_utils--preview--deliverer) — FBX -> GLB -> publish: the hand-off strategy behind every live preview.
+- [`net_utils/preview/playblast.py`](#net_utils--preview--playblast) — Record a clip playing in the preview page to a movie file.
 - [`net_utils/preview/server.py`](#net_utils--preview--server) — Localhost static-file server for live browser / WebXR previews.
 - [`net_utils/remote_file.py`](#net_utils--remote_file) — Read a file by ``http(s)`` URL with the same surface as a local read.
 - [`net_utils/rpc/client.py`](#net_utils--rpc--client) — Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
@@ -120,6 +121,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`str_utils/hotkey_utils.py`](#str_utils--hotkey_utils) — Portable hotkey-token helpers shared by the ecosystem's macro managers.
 - [`vid_utils/_vid_utils.py`](#vid_utils--_vid_utils)
 - [`vid_utils/frame_extractor.py`](#vid_utils--frame_extractor) — Extract still frames from a video file via OpenCV.
+- [`vid_utils/sequence_exporter.py`](#vid_utils--sequence_exporter) — Image-sequence capture planning and encoding, with no idea what drew the frames.
 
 ---
 
@@ -2170,12 +2172,26 @@ FBX -> GLB -> publish: the hand-off strategy behind every live preview.
   - `PreviewDeliverer.publish(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Put *glb* on the server and report what the viewer now sees.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
 
+<a id="net_utils--preview--playblast"></a>
+### `net_utils/preview/playblast.py`
+
+Record a clip playing in the preview page to a movie file.
+
+- **[`class PreviewPlayblast(SequenceEncoder)`](pythontk/pythontk/net_utils/preview/playblast.py#L70)** — Frames pushed in by the viewer page, encoded by the shared core.
+  - `PreviewPlayblast.begin(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png') -> Dict[str, Any]` — Open a recording and return ``{"token", "name", "frames"}``.
+  - `PreviewPlayblast.add_frame(self, token: str, index: int, data: bytes) -> Dict[str, Any]` — Store one rendered frame;
+  - `PreviewPlayblast.finish(self, token: str, output_dir: str, target: Optional[str] = None, stem: Optional[str] = None) -> Dict[str, Any]` — Encode the recording and drop its scratch frames.
+  - `PreviewPlayblast.cancel(self, token: str) -> bool` — Drop a recording and its frames;
+  - `PreviewPlayblast.clip_name(self, token: str) -> str` — The sanitized clip name a recording was opened under.
+  - `PreviewPlayblast.active(self) -> List[Dict[str, Any]]` — One entry per in-flight recording — for diagnostics and tests.
+  - `PreviewPlayblast.resolve_output_dir(source: Optional[Path], fallback: Path) -> Path` *(static)* — Where a recording of *source* should land.
+
 <a id="net_utils--preview--server"></a>
 ### `net_utils/preview/server.py`
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L339)** — Serve a directory of preview assets on loopback, with a live manifest.
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L487)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -2190,6 +2206,10 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.stop(self) -> None` — Stop serving and release the port.
   - `PreviewServer.publish(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int` — Place an asset in the serve root and bump the manifest version.
   - `PreviewServer.apply_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]` — Write delivery dials into the published GLB, and remember them.
+  - `PreviewServer.playblast(self) -> 'PreviewPlayblast'` *(property)* — The page's recorder, created on first use.
+  - `PreviewServer.begin_playblast(self, **kwargs: Any) -> Dict[str, Any]` — Open a recording (see :meth:`PreviewPlayblast.begin`).
+  - `PreviewServer.finish_playblast(self, token: str, target: Optional[str] = None) -> Dict[str, Any]` — Encode a recording and report where it went.
+  - `PreviewServer.recording_path(self, token: str) -> Optional[Path]` — The file a finished recording produced, or None.
   - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer in the default browser.
 
 <a id="net_utils--remote_file"></a>
@@ -2354,3 +2374,24 @@ Extract still frames from a video file via OpenCV.
   - `FrameExtractor.extract_frames(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]` — Save every ``step``-th frame from ``video_path`` to ``output_folder``.
   - `FrameExtractor.extract_frames_sharpest(self, video_path: str, output_folder: str, window_sec: float = 1.0, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None, min_sharpness: float = 0.0) -> List[str]` — Bucket frames by time window;
   - `FrameExtractor.get_video_info(self, video_path: str) -> dict` — Return metadata for ``video_path`` (filename, frame count, fps,
+
+<a id="vid_utils--sequence_exporter"></a>
+### `vid_utils/sequence_exporter.py`
+
+Image-sequence capture planning and encoding, with no idea what drew the frames.
+
+- **[`class ExportTarget`](pythontk/pythontk/vid_utils/sequence_exporter.py#L47)** — One entry in an exporter's target registry.
+- **[`class CaptureResult`](pythontk/pythontk/vid_utils/sequence_exporter.py#L75)** — A captured image sequence on disk.
+  - `CaptureResult.pattern(self) -> str` *(property)* — printf-style pattern for the sequence (ffmpeg input).
+- **[`class ExportResult`](pythontk/pythontk/vid_utils/sequence_exporter.py#L99)** — Outcome of one export target.
+  - `ExportResult.ok(self) -> bool` *(property)*
+- **[`class SequenceEncoder(LoggingMixin)`](pythontk/pythontk/vid_utils/sequence_exporter.py#L112)** — Encode a numbered image sequence to a movie, and clean up after it.
+  - `SequenceEncoder.sequence_fps(self) -> float` — Frame rate of the frames this producer captures.
+  - `SequenceEncoder.sequence_name(self) -> str` — Default basename for an output this producer writes.
+  - `SequenceEncoder.encode_sequence(self, capture: Union[CaptureResult, str], output_filepath: str, fps: Optional[float] = None, audio: Optional[Union[bool, str]] = None, quality: Optional[int] = None, **ffmpeg_options: Any) -> str` — Encode a captured image sequence to a movie via ffmpeg.
+- **[`class SequenceExporter(SequenceEncoder)`](pythontk/pythontk/vid_utils/sequence_exporter.py#L394)** — Plan and run several outputs off ONE capture of a producer's frames.
+  - `SequenceExporter.available_targets(cls) -> List[Tuple[str, str]]` *(class)* — (name, label) pairs in registry order — for building UI pickers.
+  - `SequenceExporter.resolve_frame_range(cls, mode: str = 'custom', start: Optional[int] = None, end: Optional[int] = None) -> Tuple[int, int]` *(class)* — Resolve a frame range from a mode, with explicit overrides.
+  - `SequenceExporter.capture_sequence(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> CaptureResult` — Capture the frame range as a numbered image sequence.
+  - `SequenceExporter.capture_still(self, filepath: str, frame: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> str` — Capture a single frame to an exact filepath.
+  - `SequenceExporter.export(self, output_dir: str, name: Optional[str] = None, targets: Union[str, Sequence[str]] = ('mp4',), range_mode: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, keep_frames: bool = False, progress_callback: Optional[Callable[[int, int, str], None]] = None, **overrides: Any) -> List[ExportResult]` — Produce one or more registered targets from a single plan.

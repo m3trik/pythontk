@@ -36,6 +36,10 @@ Served surface:
     ``GET /<name>``          -> any published asset, by name
     ``POST /viewer-closed``  -> the viewer's unload beacon, so a closed tab is
                                 known at once rather than after a timeout
+    ``POST /settings``       -> a delivery dial the page writes into the GLB
+    ``POST /playblast/*``    -> ``begin`` / ``frame`` / ``finish`` / ``cancel``:
+                                the page recording a clip to a movie file
+                                (see :mod:`pythontk.net_utils.preview.playblast`)
 """
 
 from __future__ import annotations
@@ -50,11 +54,25 @@ import webbrowser
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+)
+from urllib.parse import parse_qs, urlparse
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 from pythontk.net_utils._net_utils import NetUtils
+
+if TYPE_CHECKING:  # the recorder is imported on use -- see PreviewServer.playblast
+    from pythontk.net_utils.preview.playblast import PreviewPlayblast
 
 
 #: Path the viewer beacons on unload, so a closed tab is known immediately
@@ -66,6 +84,17 @@ VIEWER_CLOSED_PATH = "viewer-closed"
 #: itself. Only :attr:`PreviewServer.WRITABLE_SETTINGS` may be posted, and each
 #: one names the ``MeshConvert`` writer that applies it.
 SETTINGS_PATH = "settings"
+
+#: Route prefix the viewer records a clip through: ``<prefix>/begin``,
+#: ``/frame``, ``/finish``, ``/cancel``. One recording is many requests -- a
+#: canvas readback is a Blob and holding a clip's worth of them in page memory
+#: is how a headset tab dies -- so the page streams frames as it steps them.
+PLAYBLAST_PATH = "playblast"
+
+#: Sub-routes under :data:`PLAYBLAST_PATH`. An allow-list for the same reason
+#: the settings dials are one: these are the routes by which a page reaches a
+#: file on disk.
+PLAYBLAST_ACTIONS = ("begin", "frame", "finish", "cancel")
 
 
 def _mesh_convert():
@@ -95,6 +124,15 @@ class _PreviewHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = os.name != "nt"
 
+    #: Pending connections the kernel will hold while the accept loop is busy.
+    #: ``socketserver`` defaults this to 5, which is a burst of five requests --
+    #: and the page recording a clip sends one request per FRAME. Measured on a
+    #: 151-frame recording: the browser intermittently got
+    #: ``ERR_CONNECTION_TIMED_OUT`` part way through (a SYN the full queue
+    #: dropped, not a refusal), failing the recording after most of it had been
+    #: captured. Cheap to raise: an entry is a pending socket, not a thread.
+    request_queue_size = 128
+
 
 class _PreviewHandler(SimpleHTTPRequestHandler):
     """Static handler with a live ``/manifest.json`` and caching disabled.
@@ -112,11 +150,36 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
 
     server_version = "pythontk-preview"
 
+    #: Keep-alive, which needs an accurate ``Content-Length`` on every response
+    #: -- every path here sends one, and the 204s have no body by definition.
+    #:
+    #: ``SimpleHTTPRequestHandler`` defaults to HTTP/1.0, i.e. a NEW TCP
+    #: connection per request. That is invisible for a page that polls a
+    #: manifest once a second, and it is the difference between working and not
+    #: for a page that posts one request per frame of a recording: 151 frames
+    #: became 151 connections, which is what overran the accept queue above.
+    #: Reusing one connection also removes 151 handshakes from the wire, and the
+    #: whole point of the loopback bind is that this stays fast.
+    protocol_version = "HTTP/1.1"
+
+    #: Reap an idle kept-alive connection rather than holding its thread for the
+    #: life of the server -- the cost keep-alive brings with it.
+    timeout = 30
+
     def __init__(self, *args, owner: "PreviewServer" = None, **kwargs):
         self._owner = owner
         super().__init__(*args, **kwargs)
 
     def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler API)
+        route = self.path.split("?", 1)[0].lstrip("/")
+        if route.startswith(f"{PLAYBLAST_PATH}/"):
+            # A finished recording, by token. It exists so the download works
+            # wherever the movie landed: a recording of a real deliverable is
+            # written BESIDE that file, which is off the serve root and so
+            # unreachable by the static handler -- and the one viewer that
+            # cannot simply open the containing folder is the headset.
+            self._send_recording(route.split("/", 1)[1])
+            return
         if self.path.split("?", 1)[0] == "/manifest.json":
             # Only the manifest counts as proof of life: it is fetched on a
             # timer for as long as a page is open, whereas an asset GET happens
@@ -130,12 +193,24 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
     def do_POST(self):  # noqa: N802 (BaseHTTPRequestHandler API)
         """Accept the viewer's close notice and its setting writes; 404 else."""
         route = self.path.split("?", 1)[0].lstrip("/")
-        if route not in (VIEWER_CLOSED_PATH, SETTINGS_PATH):
+        # Drained BEFORE the route is judged, not after: sendBeacon always sends
+        # a body, so does a rejected recording request, and a body left in the
+        # socket desynchronises the next request on a keep-alive connection --
+        # which surfaces as the connection dropping on the request AFTER the one
+        # that was refused, rather than as the refusal itself.
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        playblast_action = (
+            route.split("/", 1)[1] if route.startswith(f"{PLAYBLAST_PATH}/") else None
+        )
+        if playblast_action is not None and playblast_action not in PLAYBLAST_ACTIONS:
             self.send_error(404)
             return
-        # Drain the body: sendBeacon always sends one, and leaving it in the
-        # socket desynchronises the next request on a keep-alive connection.
-        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if playblast_action is None and route not in (
+            VIEWER_CLOSED_PATH,
+            SETTINGS_PATH,
+        ):
+            self.send_error(404)
+            return
         # This is the one request that *changes* server state, and a beacon is
         # a CORS-simple request -- no preflight -- so without this any page the
         # user happens to be browsing could tell us the viewer had closed and
@@ -167,6 +242,9 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
             return
+        if playblast_action is not None:
+            self._do_playblast(playblast_action, body)
+            return
         try:
             payload = json.loads(body or b"{}")
             if not isinstance(payload, dict):
@@ -178,6 +256,76 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
             self.send_error(400, f"Settings rejected: {error}")
         except OSError as error:
             self.send_error(500, f"Settings write failed: {error}")
+
+    def _send_recording(self, token: str) -> None:
+        """Stream a finished recording as an attachment, by token."""
+        path = self._owner.recording_path(token) if self._owner else None
+        if path is None:
+            self.send_error(404, "No such recording")
+            return
+        try:
+            size = path.stat().st_size
+            handle = path.open("rb")
+        except OSError as error:
+            self.send_error(500, f"Recording unreadable: {error}")
+            return
+        with handle:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            # The page opens this in a hidden anchor; without the disposition a
+            # browser plays the mp4 in place instead of saving it, which on a
+            # headset means the preview is replaced by a video player.
+            self.send_header(
+                "Content-Disposition", f'attachment; filename="{path.name}"'
+            )
+            self.end_headers()
+            shutil.copyfileobj(handle, self.wfile)
+
+    def _do_playblast(self, action: str, body: bytes) -> None:
+        """Answer one recording request. Errors are the page's to display.
+
+        ``frame`` carries raw image bytes and its parameters in the query
+        string; the other three carry JSON. Splitting on the body type rather
+        than base64-ing every frame into JSON is worth the asymmetry: a
+        1920x1080 PNG grows by a third in base64, on the link least able to
+        afford it.
+        """
+        query = parse_qs(urlparse(self.path).query)
+        first = lambda key, default=None: (query.get(key) or [default])[0]  # noqa: E731
+        try:
+            if action == "frame":
+                result = self._owner.playblast.add_frame(
+                    token=first("token", ""),
+                    index=int(first("index", -1)),
+                    data=body,
+                )
+            else:
+                payload = json.loads(body or b"{}")
+                if not isinstance(payload, dict):
+                    raise ValueError("expected a JSON object")
+                if action == "begin":
+                    result = self._owner.begin_playblast(**payload)
+                elif action == "finish":
+                    result = self._owner.finish_playblast(**payload)
+                else:  # cancel
+                    result = {
+                        "cancelled": self._owner.playblast.cancel(
+                            payload.get("token", "")
+                        )
+                    }
+        except KeyError as error:
+            # A recording this server has no record of: finished, cancelled, or
+            # a page that outlived a server restart. 409 rather than 404 -- the
+            # ROUTE exists, the recording does not, and the page's remedy is to
+            # start a new one rather than to retry this request.
+            self.send_error(409, f"No such recording: {error}")
+        except (TypeError, ValueError) as error:
+            self.send_error(400, f"Recording rejected: {error}")
+        except (OSError, RuntimeError) as error:
+            self.send_error(500, f"Recording failed: {error}")
+        else:
+            self._send_json(result)
 
     def _send_json(self, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -371,6 +519,7 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         "turntable": "turntable.js",
         "inspect": "inspect.js",
         "shadow_rig": "shadow_rig.js",
+        "playblast": "playblast.js",
     }
 
     #: Packaged scripts a deliverable turns on by itself: registered name ->
@@ -385,6 +534,13 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
     #: out by removing the entry, or with :meth:`remove_script` after the push.
     AUTO_SCRIPTS: Dict[str, str] = {
         "shadow_rig": "shadow_web",
+        # A deliverable that ships clips grows a picker and a transport in the
+        # page; recording what that transport plays is the same kind of "not
+        # optional in any useful sense" as the shadow rigs. There is no
+        # checkbox for it because the alternative is worse: the button would be
+        # missing on exactly the push a reviewer just watched and wants to
+        # send on, and getting it would mean re-exporting the animation.
+        "playblast": "animation_web",
     }
 
     #: Delivery dials the served page may write into the published GLB:
@@ -393,6 +549,9 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
     WRITABLE_SETTINGS: Dict[str, Tuple[str, Callable]] = {
         "normal_scale": ("set_glb_normal_scale", float),
     }
+
+    #: Finished recordings kept addressable for download at once.
+    MAX_RECORDINGS: int = 8
 
     #: Seconds a manifest poll counts as proof that a viewer is still open.
     #:
@@ -443,6 +602,12 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         #: Active viewer scripts, registered name -> source file. Ordered, and
         #: the page imports them in this order.
         self._scripts: Dict[str, Path] = {}
+        #: The page's clip recorder, allocated on first use, and a lock of its
+        #: own for that one allocation -- see :meth:`playblast`.
+        self._playblast: Optional["PreviewPlayblast"] = None
+        self._playblast_lock = threading.Lock()
+        #: Finished recordings, token -> file, so a download can follow.
+        self._recordings: Dict[str, Path] = {}
 
         if root is None:
             # "session": a detached consumer (the browser) reads these while
@@ -844,6 +1009,100 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
             ", ".join(t.name for t in targets) or "nothing (no asset published)",
         )
         return {"applied": resolved, "materials": counts}
+
+    # ------------------------------------------------------------------
+    # Page recordings
+    # ------------------------------------------------------------------
+    @property
+    def playblast(self) -> "PreviewPlayblast":
+        """The page's recorder, created on first use.
+
+        Deferred rather than built in ``__init__`` because it allocates a
+        scratch store, and the overwhelming majority of preview servers never
+        record anything.
+        """
+        # Under the lock: this server answers each request on its OWN thread, so
+        # two frame POSTs racing the first access would each build a recorder --
+        # and a frame would then be filed against one the `begin` never reached.
+        # Double-checked, on a lock of its OWN. The race being closed is two
+        # first-accesses building two recorders (this server answers each
+        # request on its own thread), which lasts exactly as long as the first
+        # request -- but this property is read once per FRAME, and taking the
+        # server's lock here put every frame POST of a recording behind the same
+        # lock the manifest poll uses. Measured: a 151-frame recording went from
+        # 5s to 22s and then died with the accept queue full
+        # (ERR_CONNECTION_TIMED_OUT part way through). The common path must not
+        # lock at all; the attribute read and write are each atomic.
+        if self._playblast is None:
+            with self._playblast_lock:
+                if self._playblast is None:
+                    from pythontk.net_utils.preview.playblast import PreviewPlayblast
+
+                    self._playblast = PreviewPlayblast()
+        return self._playblast
+
+    def begin_playblast(self, **kwargs: Any) -> Dict[str, Any]:
+        """Open a recording (see :meth:`PreviewPlayblast.begin`)."""
+        return self.playblast.begin(**kwargs)
+
+    def finish_playblast(
+        self, token: str, target: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Encode a recording and report where it went.
+
+        The movie lands beside the file that was published, when that file is
+        still on disk -- an exporter's GLB, or one chosen with External GLB.
+        A scene push has no such file (its GLB is the bridge's own scratch,
+        released the moment it is published), so the movie goes to the serve
+        root instead and the page's ``url`` is how it is collected.
+
+        Returns:
+            :meth:`PreviewPlayblast.finish`'s report plus ``"url"`` -- always
+            present, and always the way to fetch the file from the page.
+        """
+        from pythontk.net_utils.preview.playblast import PreviewPlayblast
+
+        with self._lock:
+            source = self._source
+            asset = self._asset
+        output_dir = PreviewPlayblast.resolve_output_dir(source, self.root)
+        # Named for the deliverable rather than for the clip alone: a folder of
+        # shot movies from three different pushes is otherwise unreadable.
+        #
+        # The SOURCE's name, not the served asset's: the asset is republished
+        # under a stable ``scene.glb`` so a page can keep one URL across pushes,
+        # which is exactly the property that makes it useless as a label -- every
+        # recording of every deliverable would be called ``scene_<shot>``.
+        #
+        # Composed here and NOT accepted from the caller: this method's caller
+        # is the served page, and a name it chose would reach ``os.path.join``.
+        # (``finish`` sanitizes a stem as well -- this is the half that keeps
+        # the page from naming the file at all.)
+        base = (
+            source.stem if source is not None else (Path(asset).stem if asset else "")
+        )
+        name = self.playblast.clip_name(token)
+        stem = f"{base}_{name}" if base and base not in name else name
+        report = self.playblast.finish(
+            token, output_dir=str(output_dir), target=target, stem=stem
+        )
+        path = Path(report["output"])
+        with self._lock:
+            self._recordings[token] = path
+            # Bounded: the map only exists so a download can follow a finish,
+            # and a preview server lives for a whole DCC session.
+            for stale in list(self._recordings)[: -self.MAX_RECORDINGS]:
+                self._recordings.pop(stale, None)
+        report["url"] = f"{self.url}{PLAYBLAST_PATH}/{token}"
+        report["in_serve_root"] = path.parent == self.root
+        self.logger.info("Recording written to %s", path)
+        return report
+
+    def recording_path(self, token: str) -> Optional[Path]:
+        """The file a finished recording produced, or None."""
+        with self._lock:
+            path = self._recordings.get(str(token))
+        return path if path is not None and path.is_file() else None
 
     def _setting_targets(self) -> List[Path]:
         """Files a setting write lands in: the served copy, then its source."""
