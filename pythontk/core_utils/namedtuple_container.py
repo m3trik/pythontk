@@ -342,9 +342,7 @@ class NamedTupleContainer(LoggingMixin):
                 coerced.append(existing_class(*nt))
         return coerced
 
-    def extend(
-        self, objects: Union[List[tuple], Any], **metadata
-    ) -> None:
+    def extend(self, objects: Union[List[tuple], Any], **metadata) -> None:
         """
         Extend the container with new objects while handling duplicates.
 
@@ -393,9 +391,7 @@ class NamedTupleContainer(LoggingMixin):
         # Case 3: Other objects — use the extender function
         else:
             if self.extender_func is None:
-                raise ValueError(
-                    "No extender function provided for processing objects"
-                )
+                raise ValueError("No extender function provided for processing objects")
             if self._tuple_class is None:
                 raise ValueError(
                     "No tuple class available for extender function results"

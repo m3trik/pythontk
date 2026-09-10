@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_help_mixin.py -v
     python test_help_mixin.py
 """
+
 import json
 import unittest
 from io import StringIO
@@ -112,8 +113,7 @@ class InheritedDescriptorKindTest(BaseTestCase):
 
     def _kinds(self, cls):
         return {
-            r.name: r.kind
-            for r in cls._collect_records(inherited=True, private=False)
+            r.name: r.kind for r in cls._collect_records(inherited=True, private=False)
         }
 
     def test_inherited_descriptors_keep_their_kind(self):

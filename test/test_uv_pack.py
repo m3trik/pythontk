@@ -5,6 +5,7 @@
 The engine is an optional dependency, so the packing tests skip cleanly when
 xatlas is absent; the resolve/availability contract is testable either way.
 """
+
 import unittest
 
 import pythontk as ptk
@@ -25,7 +26,9 @@ class TestResolveContract(unittest.TestCase):
         self.assertTrue(result is None or hasattr(result, "Atlas"))
 
     def test_available_matches_resolve(self):
-        self.assertEqual(ptk.UvPack.available(), ptk.UvPack.resolve(required=False) is not None)
+        self.assertEqual(
+            ptk.UvPack.available(), ptk.UvPack.resolve(required=False) is not None
+        )
 
     @unittest.skipIf(_XATLAS, "xatlas installed — missing-engine path untestable")
     def test_resolve_required_raises_with_install_note(self):
@@ -49,7 +52,7 @@ class TestPackIslands(unittest.TestCase):
         result = ptk.UvPack.pack_islands([self._quad(), self._quad()], rotate=False)
         self.assertEqual(len(result.uvs), 2)
         boxes = [(u.min(0), u.max(0)) for u in result.uvs]
-        for (lo, hi) in boxes:
+        for lo, hi in boxes:
             self.assertTrue((lo >= -1e-6).all() and (hi <= 1 + 1e-6).all())
         (lo_a, hi_a), (lo_b, hi_b) = boxes
         disjoint_u = hi_a[0] <= lo_b[0] + 1e-6 or hi_b[0] <= lo_a[0] + 1e-6
@@ -76,8 +79,12 @@ class TestPackIslands(unittest.TestCase):
             # input order: vertex 0 is the island's min corner in the input;
             # with rotation off it must still be a bbox corner after packing.
             corner = uv[0]
-            on_edge_u = min(abs(corner[0] - uv[:, 0].min()), abs(corner[0] - uv[:, 0].max()))
-            on_edge_v = min(abs(corner[1] - uv[:, 1].min()), abs(corner[1] - uv[:, 1].max()))
+            on_edge_u = min(
+                abs(corner[0] - uv[:, 0].min()), abs(corner[0] - uv[:, 0].max())
+            )
+            on_edge_v = min(
+                abs(corner[1] - uv[:, 1].min()), abs(corner[1] - uv[:, 1].max())
+            )
             self.assertLess(float(on_edge_u + on_edge_v), 1e-3)
 
     def test_written_covers_every_row_including_unreferenced(self):
@@ -107,7 +114,9 @@ class TestPackIslands(unittest.TestCase):
         """resolution>0: scale-searched square pages. The whole point is fill —
         the content must reach well past what content-driven aspect-fitting
         gave (measured 0.50 for comparable content)."""
-        rect = np.array([[0, 0], [1.333, 0], [1.333, 1], [0, 1]], dtype=np.float64) * 0.33
+        rect = (
+            np.array([[0, 0], [1.333, 0], [1.333, 1], [0, 1]], dtype=np.float64) * 0.33
+        )
         tris = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
         meshes = [(rect.copy(), tris) for _ in range(6)]
 
@@ -124,7 +133,9 @@ class TestPackIslands(unittest.TestCase):
     def test_fixed_page_mode_two_pages_balance_and_report(self):
         """pages=2: per-UV page indices come back and both pages are used at
         the searched (maximal) scale; every page's UVs are 0-1 normalized."""
-        rect = np.array([[0, 0], [1.333, 0], [1.333, 1], [0, 1]], dtype=np.float64) * 0.33
+        rect = (
+            np.array([[0, 0], [1.333, 0], [1.333, 1], [0, 1]], dtype=np.float64) * 0.33
+        )
         tris = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
         meshes = [(rect.copy(), tris) for _ in range(6)]
 
@@ -231,9 +242,7 @@ class TestPackOptionContract(unittest.TestCase):
             texels_per_unit=100.0,
         )
         unset = [
-            n
-            for n in names
-            if getattr(stub.options, n) is _RecordingXatlas.SENTINEL
+            n for n in names if getattr(stub.options, n) is _RecordingXatlas.SENTINEL
         ]
         self.assertEqual(unset, [], f"PackOptions left at engine defaults: {unset}")
 

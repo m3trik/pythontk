@@ -53,9 +53,7 @@ class _UvUnwrapInternal:
         return "TRUE" if value else "FALSE"
 
     @staticmethod
-    def _build_mof_args(
-        obj_in: str, obj_out: str, params: Dict[str, Any]
-    ) -> List[str]:
+    def _build_mof_args(obj_in: str, obj_out: str, params: Dict[str, Any]) -> List[str]:
         """Ministry of Flat argv: ``<in.obj> <out.obj> [-FLAG <VALUE>]...``.
 
         Only the documented non-debug settings are exposed. Ministry of Flat's own
@@ -81,9 +79,7 @@ class _UvUnwrapInternal:
         return args
 
     @staticmethod
-    def _build_bff_args(
-        obj_in: str, obj_out: str, params: Dict[str, Any]
-    ) -> List[str]:
+    def _build_bff_args(obj_in: str, obj_out: str, params: Dict[str, Any]) -> List[str]:
         """BFF argv: ``<in.obj> <out.obj> [--nCones=N] [--normalizeUVs]``."""
         args = [obj_in, obj_out]
         if "n_cones" in params:
@@ -442,8 +438,7 @@ class UvUnwrap(HelpMixin, _UvUnwrapInternal):
             return cls.ENGINES[engine]
         except KeyError:
             raise ValueError(
-                f"Unknown unwrap engine {engine!r}. "
-                f"Available: {sorted(cls.ENGINES)}"
+                f"Unknown unwrap engine {engine!r}. Available: {sorted(cls.ENGINES)}"
             ) from None
 
     @staticmethod
@@ -537,8 +532,9 @@ class UvUnwrap(HelpMixin, _UvUnwrapInternal):
             f"  exit code: {getattr(result, 'returncode', '?')}",
             f"  output:    {dst}",
         ]
-        out, err = cls._tail(getattr(result, "stdout", "")), cls._tail(
-            getattr(result, "stderr", "")
+        out, err = (
+            cls._tail(getattr(result, "stdout", "")),
+            cls._tail(getattr(result, "stderr", "")),
         )
         if out:
             detail.append(f"  stdout: {out}")

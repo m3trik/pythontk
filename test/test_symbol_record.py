@@ -6,6 +6,7 @@ Run with:
     python -m pytest test_symbol_record.py -v
     python test_symbol_record.py
 """
+
 import json
 import unittest
 
@@ -16,7 +17,15 @@ from conftest import BaseTestCase
 # The field order is a hard contract: the static registry sidecar
 # (API_REGISTRY.json) is json.dumps(asdict(...)), so a reordering would churn
 # every committed registry. Freeze it here.
-EXPECTED_FIELDS = ["name", "qualname", "kind", "signature", "summary", "line", "deprecated"]
+EXPECTED_FIELDS = [
+    "name",
+    "qualname",
+    "kind",
+    "signature",
+    "summary",
+    "line",
+    "deprecated",
+]
 
 
 class SymbolRecordTest(BaseTestCase):

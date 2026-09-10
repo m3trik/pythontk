@@ -24,6 +24,7 @@ while file *placement* (built-in read-only vs. user-writable) and *naming* are
 handled by the underlying store, so "extend it with your own file" just means
 dropping one in :attr:`user_dir` (or clicking *New from template*).
 """
+
 from __future__ import annotations
 
 import logging

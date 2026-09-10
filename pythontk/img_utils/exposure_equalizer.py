@@ -12,6 +12,7 @@ Uses cv2 (already an optional dep for ``FrameExtractor``); no
 matching per channel in LAB space — cheap, robust, and orientation-
 independent.
 """
+
 import logging
 import os
 import shutil
@@ -177,8 +178,14 @@ class ExposureEqualizer:
                 if src_stats[0] is None:
                     src_stats = None  # unreadable dir → per-image fallback
             count = self._equalize_dir(
-                src, out_dir, ref_mean, ref_std, strength, quality,
-                preserve_exif, src_stats=src_stats,
+                src,
+                out_dir,
+                ref_mean,
+                ref_std,
+                strength,
+                quality,
+                preserve_exif,
+                src_stats=src_stats,
             )
             out_dirs.append(out_dir)
             logger.info(f"Equalized {count} images from {src} → {out_dir}")
@@ -259,8 +266,15 @@ class ExposureEqualizer:
         return np.mean(means, axis=0), np.mean(stds, axis=0)
 
     def _equalize_dir(
-        self, src_dir: str, out_dir: str, ref_mean, ref_std, strength: float = 1.0,
-        quality: int = 100, preserve_exif: bool = True, src_stats=None,
+        self,
+        src_dir: str,
+        out_dir: str,
+        ref_mean,
+        ref_std,
+        strength: float = 1.0,
+        quality: int = 100,
+        preserve_exif: bool = True,
+        src_stats=None,
     ) -> int:
         """Equalize one directory. With ``src_stats`` (the capture's sampled
         ``(mean, std)``) a single affine map is applied to every frame
@@ -304,7 +318,9 @@ class ExposureEqualizer:
                 count += 1
         return count
 
-    def _save_image(self, out_path, bgr, src_path, quality: int, preserve_exif: bool) -> bool:
+    def _save_image(
+        self, out_path, bgr, src_path, quality: int, preserve_exif: bool
+    ) -> bool:
         """Write *bgr* to *out_path* with minimal re-encode loss.
 
         JPEG: a single high-``quality`` encode at 4:4:4 chroma, carrying the
@@ -365,8 +381,10 @@ class ExposureEqualizer:
                 if sf is not None and sf444 is not None:
                     params += [int(sf), int(sf444)]
                 return bool(cv2.imwrite(out_path, bgr, params))
-        if ext in (".tif", ".tiff") and preserve_exif and not getattr(
-            self, "_tiff_warned", False
+        if (
+            ext in (".tif", ".tiff")
+            and preserve_exif
+            and not getattr(self, "_tiff_warned", False)
         ):
             self._tiff_warned = True
             logger.warning(

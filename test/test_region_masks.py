@@ -116,7 +116,10 @@ class RegionGroupTest(unittest.TestCase):
 class RegionMaskManifestTest(unittest.TestCase):
     def test_vertex_color_round_trip(self):
         m = RegionMaskManifest.vertex_color(
-            [{"name": "headlights", "slot": 0}, {"name": "leds", "slot": 1, "default": 0.0}]
+            [
+                {"name": "headlights", "slot": 0},
+                {"name": "leds", "slot": 1, "default": 0.0},
+            ]
         )
         data = json.loads(m.to_json())
         self.assertEqual(data["schema"], RegionMaskManifest.SCHEMA_VERSION)
@@ -124,7 +127,9 @@ class RegionMaskManifestTest(unittest.TestCase):
         self.assertEqual(data["color_set"], "emissiveGroups")
         self.assertNotIn("mask", data)  # channels-only fields omitted
         back = RegionMaskManifest.from_json(m.to_json())
-        self.assertEqual([g.to_dict() for g in back.groups], [g.to_dict() for g in m.groups])
+        self.assertEqual(
+            [g.to_dict() for g in back.groups], [g.to_dict() for g in m.groups]
+        )
 
     def test_channels_round_trip(self):
         m = RegionMaskManifest.channels(

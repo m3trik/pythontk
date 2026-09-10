@@ -22,6 +22,7 @@ generic process/log plumbing, so it lives here at the bottom of the stack;
 the app-specific connection shells (Painter, Toolbag, ...) that compose it
 live with their consumers (mayatk / blendertk / extapps).
 """
+
 import os
 import time
 import queue
@@ -321,9 +322,7 @@ class LogTailer(threading.Thread):
         if self._tail_from_start:
             position = 0
         else:
-            position = (
-                os.path.getsize(self._path) if os.path.exists(self._path) else 0
-            )
+            position = os.path.getsize(self._path) if os.path.exists(self._path) else 0
         last_id = self._file_id(self._path)
         while not self._stop_event.is_set():
             try:

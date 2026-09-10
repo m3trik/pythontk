@@ -1,6 +1,7 @@
 #!/usr/bin/python
 # coding=utf-8
 """Regression tests for pythontk.file_utils.metadata (Metadata / MetadataInternal)."""
+
 import os
 import sys
 import types

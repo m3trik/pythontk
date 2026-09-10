@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_class_property.py -v
     python test_class_property.py
 """
+
 import unittest
 
 from pythontk.core_utils.class_property import ClassProperty

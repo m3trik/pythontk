@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_step_toggle.py -v
     python test_step_toggle.py
 """
+
 import unittest
 
 from pythontk.core_utils.step_toggle import StepToggle
@@ -243,7 +244,10 @@ class StepToggleTest(BaseTestCase):
         self.assertGreater(three[-1], two[-1])  # a longer cycle steps in further
 
     def test_scales_spread_opts_into_a_softened_start(self):
-        two, three = StepToggle.scales(2, spread=0.15), StepToggle.scales(3, spread=0.15)
+        two, three = (
+            StepToggle.scales(2, spread=0.15),
+            StepToggle.scales(3, spread=0.15),
+        )
         self.assertLess(two[0], 1.0)
         self.assertLess(three[0], two[0])  # longer cycle -> gentler first step
 

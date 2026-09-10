@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Tests for pythontk.CancelScope — cooperative cancellation primitive."""
+
 import os
 import sys
 import time

@@ -23,6 +23,7 @@ Part-feature contract — each part is a dict with:
 
 Extra keys (e.g. a DCC node handle) are carried through untouched.
 """
+
 from __future__ import annotations
 
 import logging
@@ -266,9 +267,7 @@ class AssemblySorter:
                 if count < 2 or len(topos) < 2:
                     continue
 
-                class_members = [
-                    idx for idx in indices if parts[idx]["topo"] in topos
-                ]
+                class_members = [idx for idx in indices if parts[idx]["topo"] in topos]
                 anchor_topo = max(
                     topos,
                     key=lambda t: max(
@@ -277,12 +276,8 @@ class AssemblySorter:
                         if parts[i]["topo"] == t
                     ),
                 )
-                anchors = [
-                    i for i in class_members if parts[i]["topo"] == anchor_topo
-                ]
-                others = [
-                    i for i in class_members if parts[i]["topo"] != anchor_topo
-                ]
+                anchors = [i for i in class_members if parts[i]["topo"] == anchor_topo]
+                others = [i for i in class_members if parts[i]["topo"] != anchor_topo]
 
                 clusters: Dict[int, List[int]] = {a: [a] for a in anchors}
                 cluster_topo_counts: Dict[int, Dict[Tuple[int, int], int]] = {
@@ -609,9 +604,7 @@ class AssemblySorter:
                 # clasp pair grouped with the small copy's) and the split is
                 # nonsense; fall through to the coarse model instead.
                 if adjacency is None or all(
-                    self._cluster_connected(g, adjacency)
-                    for g in split
-                    if len(g) > 1
+                    self._cluster_connected(g, adjacency) for g in split if len(g) > 1
                 ):
                     return split
 
@@ -627,9 +620,7 @@ class AssemblySorter:
         return [indices]
 
     @staticmethod
-    def _cluster_connected(
-        indices: List[int], adjacency: Dict[int, List[int]]
-    ) -> bool:
+    def _cluster_connected(indices: List[int], adjacency: Dict[int, List[int]]) -> bool:
         """True when *indices* form one touch-connected component."""
         if len(indices) <= 1:
             return True

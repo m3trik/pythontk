@@ -20,7 +20,14 @@ def part(idx, center, size, topo, area, material="matA", volume=None):
     """Build a part-feature dict from center + size (axis-aligned box)."""
     cx, cy, cz = center
     sx, sy, sz = size
-    bbox = [cx - sx / 2, cy - sy / 2, cz - sz / 2, cx + sx / 2, cy + sy / 2, cz + sz / 2]
+    bbox = [
+        cx - sx / 2,
+        cy - sy / 2,
+        cz - sz / 2,
+        cx + sx / 2,
+        cy + sy / 2,
+        cz + sz / 2,
+    ]
     return {
         "idx": idx,
         "bbox": bbox,
@@ -33,9 +40,7 @@ def part(idx, center, size, topo, area, material="matA", volume=None):
 
 
 def groups_as_sets(groups):
-    return sorted(
-        (sorted(g) for g in groups), key=lambda g: (len(g), g)
-    )
+    return sorted((sorted(g) for g in groups), key=lambda g: (len(g), g))
 
 
 @unittest.skipIf(np is None, "numpy not available")

@@ -317,7 +317,9 @@ class AppLauncher:
             r"M:\tools",  # legacy site location; last resort
         ):
             if d:
-                candidates += [os.path.join(d, n) for n in ("PsExec64.exe", "PsExec.exe")]
+                candidates += [
+                    os.path.join(d, n) for n in ("PsExec64.exe", "PsExec.exe")
+                ]
         for c in candidates:
             if c and os.path.isfile(c):
                 return c
@@ -773,8 +775,12 @@ class AppLauncher:
                 # List args (no shell=True): immune to quoting/injection issues
                 # if process_name ever contains shell metacharacters.
                 cmd = [
-                    "tasklist", "/FO", "CSV", "/NH",
-                    "/FI", f"IMAGENAME eq {process_name}",
+                    "tasklist",
+                    "/FO",
+                    "CSV",
+                    "/NH",
+                    "/FI",
+                    f"IMAGENAME eq {process_name}",
                 ]
                 output = subprocess.check_output(cmd).decode(errors="ignore")
 

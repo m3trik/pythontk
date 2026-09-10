@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Tests for the module reloader helper."""
+
 from __future__ import annotations
 
 import importlib
@@ -385,9 +386,7 @@ class ModuleReloaderTests(BaseTestCase):
         )
 
         order: list[str] = []
-        reloader = ModuleReloader(
-            before_reload=lambda mod: order.append(mod.__name__)
-        )
+        reloader = ModuleReloader(before_reload=lambda mod: order.append(mod.__name__))
         reloader.reload("reloader_pkg_topo")
 
         self.assertLess(

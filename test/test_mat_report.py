@@ -2,6 +2,7 @@
 # coding=utf-8
 """Tests for pythontk.MatReport — the DCC-agnostic material/texture report formatters
 (shared SSoT for mayatk + blendertk get_mat_info / get_texture_info)."""
+
 import unittest
 
 from pythontk import MatReport
@@ -26,10 +27,12 @@ class TestPathLink(unittest.TestCase):
     def test_special_chars_escaped_and_encoded(self):
         link = MatReport._path_as_link(r"C:\Dropbox (M+F)\a & b.png")
         self.assertIn("file:///", link)
-        self.assertIn("a &amp; b.png", link)  # display escaped (keeps the original path text)
-        self.assertIn("%20", link)            # space url-encoded in href
+        self.assertIn(
+            "a &amp; b.png", link
+        )  # display escaped (keeps the original path text)
+        self.assertIn("%20", link)  # space url-encoded in href
         href = link.split("href='", 1)[1].split("'", 1)[0]
-        self.assertNotIn("\\", href)          # backslashes normalized in the href only
+        self.assertNotIn("\\", href)  # backslashes normalized in the href only
 
 
 class TestMatInfoFormatters(unittest.TestCase):
@@ -48,7 +51,10 @@ class TestMatInfoFormatters(unittest.TestCase):
                     "mode": "RGBA",
                     "format": "PNG",
                     "bit_depth": "32bit (8x4)",
-                    "optimization": {"recommended": True, "reasons": ["resize to 1024"]},
+                    "optimization": {
+                        "recommended": True,
+                        "reasons": ["resize to 1024"],
+                    },
                 }
             ],
         },
@@ -59,10 +65,10 @@ class TestMatInfoFormatters(unittest.TestCase):
         html = MatReport.format_mat_info_html(self.RECORDS)
         self.assertIn("Material Info", html)
         self.assertIn("<b>2</b> material(s)", html)
-        self.assertIn("wood &amp; oak", html)        # escaped name
-        self.assertIn("file:///", html)              # path link
+        self.assertIn("wood &amp; oak", html)  # escaped name
+        self.assertIn("file:///", html)  # path link
         self.assertIn("Optimize:  YES", html)
-        self.assertIn("(no textures)", html)         # second record
+        self.assertIn("(no textures)", html)  # second record
 
     def test_text(self):
         txt = MatReport.format_mat_info_text(self.RECORDS)
@@ -72,25 +78,43 @@ class TestMatInfoFormatters(unittest.TestCase):
         self.assertIn("(no textures)", txt)
 
     def test_optimization_error_branch(self):
-        recs = [{
-            "material": "m", "type": "t",
-            "textures": [{"name": "x.png", "path": "/x.png", "size": 1,
-                          "optimization": {"error": "boom"}}],
-        }]
+        recs = [
+            {
+                "material": "m",
+                "type": "t",
+                "textures": [
+                    {
+                        "name": "x.png",
+                        "path": "/x.png",
+                        "size": 1,
+                        "optimization": {"error": "boom"},
+                    }
+                ],
+            }
+        ]
         self.assertIn("error: boom", MatReport.format_mat_info_text(recs))
         self.assertIn("error: boom", MatReport.format_mat_info_html(recs))
 
     def _budget_records(self, recommended):
         """A texture carrying an advisory budget warning from ``assess``."""
-        return [{
-            "material": "m", "type": "t",
-            "textures": [{"name": "x.png", "path": "/x.png", "size": 1,
-                          "optimization": {
-                              "recommended": recommended,
-                              "reasons": ["resize to 1024"] if recommended else [],
-                              "warnings": ["Over delivery budget: 4096x4096 & more"],
-                          }}],
-        }]
+        return [
+            {
+                "material": "m",
+                "type": "t",
+                "textures": [
+                    {
+                        "name": "x.png",
+                        "path": "/x.png",
+                        "size": 1,
+                        "optimization": {
+                            "recommended": recommended,
+                            "reasons": ["resize to 1024"] if recommended else [],
+                            "warnings": ["Over delivery budget: 4096x4096 & more"],
+                        },
+                    }
+                ],
+            }
+        ]
 
     def test_budget_warning_renders_without_a_recommendation(self):
         """The case that matters most: over budget, but no op to perform. Gating
@@ -100,7 +124,10 @@ class TestMatInfoFormatters(unittest.TestCase):
         text = MatReport.format_mat_info_text(recs)
         self.assertIn("no change recommended", text)
         self.assertIn("Budget:    Over delivery budget: 4096x4096", text)
-        self.assertIn("Budget:    Over delivery budget: 4096x4096", MatReport.format_mat_info_html(recs))
+        self.assertIn(
+            "Budget:    Over delivery budget: 4096x4096",
+            MatReport.format_mat_info_html(recs),
+        )
 
     def test_budget_warning_renders_alongside_reasons(self):
         recs = self._budget_records(recommended=True)
@@ -122,12 +149,23 @@ class TestMatInfoFormatters(unittest.TestCase):
 
 
 class TestTextureInfoFormatters(unittest.TestCase):
-    INFO = [{"name": "a.png", "path": "/t/a.png", "size": 1024,
-             "width": 16, "height": 16, "mode": "RGB", "format": "PNG"}]
+    INFO = [
+        {
+            "name": "a.png",
+            "path": "/t/a.png",
+            "size": 1024,
+            "width": 16,
+            "height": 16,
+            "mode": "RGB",
+            "format": "PNG",
+        }
+    ]
 
     def test_html_and_text(self):
         self.assertIn("Texture Info", MatReport.format_texture_info_html(self.INFO))
-        self.assertIn("Found 1 valid texture(s)", MatReport.format_texture_info_text(self.INFO))
+        self.assertIn(
+            "Found 1 valid texture(s)", MatReport.format_texture_info_text(self.INFO)
+        )
 
 
 if __name__ == "__main__":

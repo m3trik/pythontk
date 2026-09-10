@@ -104,8 +104,10 @@ class TestConnectionDefaultResolution(unittest.TestCase):
         }
         with patch.dict(os.environ, env, clear=False):
             args = self._parse()
-        self.assertEqual((args.host, args.user, args.cred_target),
-                         ("env-host", "env-user", "env-target"))
+        self.assertEqual(
+            (args.host, args.user, args.cred_target),
+            ("env-host", "env-user", "env-target"),
+        )
 
     def test_explicit_argument_beats_environment(self):
         with patch.dict(os.environ, {"PYTHONTK_SSH_HOST": "env-host"}, clear=False):

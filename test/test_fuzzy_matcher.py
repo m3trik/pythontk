@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_fuzzy_matcher.py -v
     python test_fuzzy_matcher.py
 """
+
 import unittest
 
 from pythontk.str_utils.fuzzy_matcher import FuzzyMatcher
@@ -150,9 +151,7 @@ class FuzzyMatcherTest(BaseTestCase):
 
     def test_find_unique_match_exact(self):
         """Exact target presence returns ('unique', 1.0)."""
-        name, score, status = FuzzyMatcher.find_unique_match(
-            "wood", ["wood", "stone"]
-        )
+        name, score, status = FuzzyMatcher.find_unique_match("wood", ["wood", "stone"])
         self.assertEqual((name, score, status), ("wood", 1.0, "unique"))
 
     def test_find_unique_match_no_match(self):
@@ -315,7 +314,9 @@ class FuzzyMatcherTest(BaseTestCase):
             ["demo_x_ao", "demo_x_diff"],
             strategies=[texture_aware, "substring"],
         )
-        self.assertEqual((name, status, strat), ("demo_x_ao", "unique", "texture_aware"))
+        self.assertEqual(
+            (name, status, strat), ("demo_x_ao", "unique", "texture_aware")
+        )
 
     def test_find_with_fallbacks_unknown_strategy_name(self):
         """Unknown built-in strategy name raises ValueError when reached."""

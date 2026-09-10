@@ -22,6 +22,7 @@ Run with::
     python -m pytest test_py39_compat.py -v
     python test_py39_compat.py
 """
+
 import ast
 import os
 import unittest
@@ -100,9 +101,7 @@ class Py39CompatTest(unittest.TestCase):
     def test_no_match_statements(self):
         offenders = []
         for path, tree in self._trees():
-            if MATCH_NODE and any(
-                isinstance(n, MATCH_NODE) for n in ast.walk(tree)
-            ):
+            if MATCH_NODE and any(isinstance(n, MATCH_NODE) for n in ast.walk(tree)):
                 offenders.append(os.path.relpath(path, PKG_ROOT))
         self.assertFalse(
             offenders,

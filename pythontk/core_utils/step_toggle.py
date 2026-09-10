@@ -21,6 +21,7 @@ teleports you back to a view you left minutes ago — so home stays reachable
 only by running the whole cycle within the timeout. Zero-dep and
 DCC-agnostic; the clock is injected so the timing is testable without sleeping.
 """
+
 from __future__ import annotations
 
 import time

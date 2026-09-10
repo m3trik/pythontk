@@ -27,6 +27,7 @@ Filter names and parameter types below were verified against
 pymeshlab 2025.7 (``PureValue`` = absolute distance; ``PercentageValue``
 = percent of the bounding-box diagonal).
 """
+
 import logging
 import os
 from dataclasses import dataclass, field
@@ -49,9 +50,7 @@ SUPPORTED_EXTS = frozenset(
 #: against this *before* any processing, so a glb input with a defaulted
 #: output fails in milliseconds with an actionable error, not after a long
 #: op chain with a raw PyMeshLabException at save time.
-SAVE_EXTS = frozenset(
-    {".obj", ".ply", ".stl", ".off", ".dae", ".3ds", ".x3d", ".wrl"}
-)
+SAVE_EXTS = frozenset({".obj", ".ply", ".stl", ".off", ".dae", ".3ds", ".x3d", ".wrl"})
 
 
 @dataclass(frozen=True)
@@ -128,7 +127,14 @@ OPS: Dict[str, OpSpec] = {
     "remesh_isotropic": OpSpec(
         filter="meshing_isotropic_explicit_remeshing",
         allowed_params=frozenset(
-            {"iterations", "adaptive", "targetlen", "featuredeg", "checksurfdist", "maxsurfdist"}
+            {
+                "iterations",
+                "adaptive",
+                "targetlen",
+                "featuredeg",
+                "checksurfdist",
+                "maxsurfdist",
+            }
         ),
         percent_params=frozenset({"targetlen", "maxsurfdist"}),
         doc="Uniform-density remesh toward a target edge length (% of bbox diag).",

@@ -26,6 +26,7 @@ frame the rail) and :class:`PointCloud` in ``geo_utils``.
         pos[0], pos[1] - (1.0 - v) * drop, pos[2]     # a plain vertical drop
     ))
 """
+
 from __future__ import annotations
 
 from typing import Callable, List, Sequence, Tuple
@@ -33,7 +34,7 @@ from typing import Callable, List, Sequence, Tuple
 from pythontk.geo_utils.polyline import Polyline
 
 Vec = Tuple[float, float, float]
-Frame = Tuple[Vec, Vec, Vec]                      # (position, tangent, normal)
+Frame = Tuple[Vec, Vec, Vec]  # (position, tangent, normal)
 Displace = Callable[[float, float, Vec, Vec, Vec], Vec]
 
 

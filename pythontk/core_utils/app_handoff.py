@@ -943,7 +943,9 @@ class ScriptRunDeliverer(ScriptLaunchDeliverer):
 
     # Seam for tests: stub the headless run without patching pythontk internals.
     @staticmethod
-    def run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None):
+    def run(
+        app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None
+    ):
         from pythontk.core_utils import script_run
 
         return script_run.ScriptRunner.run_script_to_artifact(
@@ -1103,7 +1105,9 @@ class ScriptRoundTripDeliverer(ScriptRunDeliverer):
             # The payload is deliberately KEPT on failure: the rendered script and the
             # file it choked on are the only evidence of what went wrong, and the temp
             # namespace's age-gated sweep reclaims them either way.
-            bridge.logger.error(f"{self.spec.app.name} did not process {artifact}: {error}")
+            bridge.logger.error(
+                f"{self.spec.app.name} did not process {artifact}: {error}"
+            )
             return None
 
         bridge.logger.info(f"{self.spec.app.name} finished in {result.duration:.1f}s.")

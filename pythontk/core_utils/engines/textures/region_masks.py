@@ -154,7 +154,9 @@ class RegionMaskManifest:
         color_set: str = "emissiveGroups",
     ) -> "RegionMaskManifest":
         """Manifest for membership riding in a mesh color set."""
-        return cls(groups=list(groups), encoding=ENCODING_VERTEX_COLOR, color_set=color_set)
+        return cls(
+            groups=list(groups), encoding=ENCODING_VERTEX_COLOR, color_set=color_set
+        )
 
     @classmethod
     def channels(
@@ -423,9 +425,7 @@ class RegionGroupRegistry:
     # Output
     # ------------------------------------------------------------------
 
-    def manifest(
-        self, color_set: Optional[str] = None
-    ) -> Optional[RegionMaskManifest]:
+    def manifest(self, color_set: Optional[str] = None) -> Optional[RegionMaskManifest]:
         """The manifest for the current registry, or None when it has no groups."""
         registry = self.read()
         groups = self.groups(registry)
@@ -473,13 +473,7 @@ class _RegionMaskPackerInternal:
         warning on the 1px boundary line both rasterize onto.
         """
         p = np.pad(cover, 1, constant_values=False)
-        return (
-            cover
-            & p[:-2, 1:-1]
-            & p[2:, 1:-1]
-            & p[1:-1, :-2]
-            & p[1:-1, 2:]
-        )
+        return cover & p[:-2, 1:-1] & p[2:, 1:-1] & p[1:-1, :-2] & p[1:-1, 2:]
 
     @staticmethod
     def _uv_bounds_warning(name: str, triangles) -> Optional[str]:
@@ -555,9 +549,7 @@ class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal):
             raise ValueError(f"Group {name!r} already added.")
         used = {g.slot for g in self._groups}
         if slot is None:
-            slot = next(
-                (i for i in range(len(SLOT_CHANNELS)) if i not in used), None
-            )
+            slot = next((i for i in range(len(SLOT_CHANNELS)) if i not in used), None)
             if slot is None:
                 raise ValueError(
                     f"All {len(SLOT_CHANNELS)} slots used; channels encoding "

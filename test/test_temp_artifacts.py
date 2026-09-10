@@ -21,6 +21,7 @@ Run with:
     python -m pytest test_temp_artifacts.py -v
     python test_temp_artifacts.py
 """
+
 import os
 import time
 import shutil
@@ -214,7 +215,10 @@ class TestScopedPolicy(TempArtifactsBase):
     def test_on_cleanup_receives_removed_paths(self):
         seen = []
         ta = TempArtifacts(
-            "pfx", dir=self.dir, policy="scoped", on_cleanup=lambda paths: seen.extend(paths)
+            "pfx",
+            dir=self.dir,
+            policy="scoped",
+            on_cleanup=lambda paths: seen.extend(paths),
         )
         p = self.touch(ta.path())
         ta.path()  # never written -> not passed to the callback
@@ -244,7 +248,9 @@ class TestDetachedPolicy(TempArtifactsBase):
         ta = TempArtifacts("pfx", dir=self.dir, policy="detached")
         p = self.touch(ta.path())
         ta.cleanup()
-        self.assertTrue(os.path.exists(p), "detached payloads must outlive the producer")
+        self.assertTrue(
+            os.path.exists(p), "detached payloads must outlive the producer"
+        )
 
     def test_cleanup_force_removes(self):
         ta = TempArtifacts("pfx", dir=self.dir, policy="detached")
@@ -271,7 +277,9 @@ class TestDetachedPolicy(TempArtifactsBase):
     def test_sweep_ignores_other_prefixes(self):
         other = self.touch(os.path.join(self.dir, "otherpfx_old.fbx"))
         self.age(other, days=30)
-        TempArtifacts("pfx", dir=self.dir, policy="detached", max_age_days=7).sweep_stale()
+        TempArtifacts(
+            "pfx", dir=self.dir, policy="detached", max_age_days=7
+        ).sweep_stale()
         self.assertTrue(os.path.exists(other))
 
     def test_sweep_returns_removed_paths(self):
@@ -343,14 +351,18 @@ class TestCachedArtifactGet(CachedArtifactBase):
         self.assertFalse(got.hit)
         self.assertTrue(os.path.isfile(got.path))
         self.assertTrue(os.path.basename(got.path).startswith("ca_cache_"))
-        self.assertIsNotNone(got.scratch, "a miss hands back its scratch store to clean up")
+        self.assertIsNotNone(
+            got.scratch, "a miss hands back its scratch store to clean up"
+        )
 
     def test_hit_skips_production_entirely(self):
         first = self.cache.get("k1", self.produce)
         second = self.cache.get("k1", self.produce)
         self.assertTrue(second.hit)
         self.assertEqual(second.path, first.path)
-        self.assertIsNone(second.scratch, "a hit must never be cleaned up — it IS the cache")
+        self.assertIsNone(
+            second.scratch, "a hit must never be cleaned up — it IS the cache"
+        )
         self.assertEqual(len(self.produced), 1)
 
     def test_distinct_keys_get_distinct_slots(self):
@@ -360,7 +372,9 @@ class TestCachedArtifactGet(CachedArtifactBase):
         self.assertEqual(len(self.produced), 2)
 
     def test_sidecars_are_promoted_with_the_artifact(self):
-        got = self.cache.get("k1", self.produce_with_sidecar, sidecars=(".manifest.json",))
+        got = self.cache.get(
+            "k1", self.produce_with_sidecar, sidecars=(".manifest.json",)
+        )
         self.assertTrue(os.path.isfile(got.path + ".manifest.json"))
 
     def test_stale_sidecar_is_dropped_when_the_new_run_produced_none(self):
@@ -408,7 +422,6 @@ class TestRootExport(unittest.TestCase):
 
         self.assertTrue(hasattr(ptk, "TempArtifacts"))
         self.assertTrue(hasattr(ptk, "CachedArtifact"))
-
 
 
 class TempArtifactsDirectoryTest(unittest.TestCase):
@@ -502,7 +515,9 @@ class TempArtifactsDirectoryTest(unittest.TestCase):
         old = time.time() - 30 * 86400
         os.utime(d, (old, old))  # the dir looks abandoned; the file inside is fresh
 
-        self.assertEqual(self._store(policy="detached", max_age_days=7).sweep_stale(), [])
+        self.assertEqual(
+            self._store(policy="detached", max_age_days=7).sweep_stale(), []
+        )
         self.assertTrue(os.path.isfile(f))
 
     def test_sweep_stale_spares_a_FRESH_directory(self):
@@ -518,7 +533,9 @@ class TempArtifactsDirectoryTest(unittest.TestCase):
         d = other.dir_path()
         old = time.time() - 30 * 86400
         os.utime(d, (old, old))
-        self.assertEqual(self._store(policy="detached", max_age_days=7).sweep_stale(), [])
+        self.assertEqual(
+            self._store(policy="detached", max_age_days=7).sweep_stale(), []
+        )
         self.assertTrue(os.path.isdir(d))
 
     def test_files_and_dirs_coexist_in_one_store(self):
@@ -587,7 +604,9 @@ class TestScratchTwins(TempArtifactsBase):
         payload = self.touch(os.path.join(self.dir, "bake.blend"), b"bake")
         a = t.create(os.path.join(self.dir, "proj", "a.ma"), payload)
         b = t.create(os.path.join(self.dir, "proj", "b.ma"), payload)
-        removed = t.discard_except(a.upper() if os.name == "nt" else a)  # case-insensitive on Windows
+        removed = t.discard_except(
+            a.upper() if os.name == "nt" else a
+        )  # case-insensitive on Windows
         # Reported exactly as create() handed them out -- NOT the normcased internal
         # key, which on Windows is lowercased and compares unequal to path_for().
         self.assertEqual(removed, [b])

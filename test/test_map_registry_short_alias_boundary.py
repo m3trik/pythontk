@@ -14,6 +14,7 @@ Boundary rule: an alias matches only after a separator, after a lowercase
 letter (CamelCase, ``rockN``), or standing alone -- never glued to a digit or an
 uppercase letter.
 """
+
 import unittest
 
 from pythontk import ImgUtils, MapRegistry
@@ -32,9 +33,9 @@ class ShortAliasBoundaryTest(_RegistryTestCase):
     def test_model_numbers_do_not_resolve_as_map_types(self):
         """The exact filenames from the production scene must classify as None."""
         for name in (
-            "Agilent_E4419B.png",   # trailing B -> was Bump
-            "Agilent_PSG.png",      # trailing G -> was Glossiness
-            "Agilent_8757D.png",    # trailing D -> was Diffuse
+            "Agilent_E4419B.png",  # trailing B -> was Bump
+            "Agilent_PSG.png",  # trailing G -> was Glossiness
+            "Agilent_8757D.png",  # trailing D -> was Diffuse
             "Agilent_PNA.png",
             "keysight_5315A.png",
             "Rohde&Schwarz_FSU.png",
@@ -52,9 +53,7 @@ class ShortAliasBoundaryTest(_RegistryTestCase):
             ("rock_AO.png", "Ambient_Occlusion"),
             ("test_ORM.png", "ORM"),
         ):
-            self.assertEqual(
-                self.reg.resolve_type_from_path(name), expected, name
-            )
+            self.assertEqual(self.reg.resolve_type_from_path(name), expected, name)
 
     def test_lowercase_separator_delimited_short_aliases_resolve(self):
         """A separator is boundary enough — case must not also be required.
@@ -151,7 +150,6 @@ class ShortAliasBoundaryTest(_RegistryTestCase):
         )
 
 
-
 class SeparatorParityTest(_RegistryTestCase):
     """All four separators must mean the same thing to strip and to classify.
 
@@ -170,7 +168,10 @@ class SeparatorParityTest(_RegistryTestCase):
         import pythontk as ptk
 
         for sep in self.SEPARATORS:
-            for alias, expected in (("ao", "Ambient_Occlusion"), ("basecolor", "Base_Color")):
+            for alias, expected in (
+                ("ao", "Ambient_Occlusion"),
+                ("basecolor", "Base_Color"),
+            ):
                 name = f"rock{sep}{alias}.png"
                 self.assertEqual(
                     ptk.MapFactory.get_base_texture_name(name),
@@ -184,7 +185,12 @@ class SeparatorParityTest(_RegistryTestCase):
 
         bases = {
             ptk.MapFactory.get_base_texture_name(n)
-            for n in ("rock_BaseColor.png", "rock-ao.png", "rock.Normal.png", "rock Roughness.png")
+            for n in (
+                "rock_BaseColor.png",
+                "rock-ao.png",
+                "rock.Normal.png",
+                "rock Roughness.png",
+            )
         }
         self.assertEqual(bases, {"rock"})
 
@@ -234,7 +240,12 @@ class CompoundSuffixTest(_RegistryTestCase):
 
         bases = {
             ptk.MapFactory.get_base_texture_name(n)
-            for n in ("rock_DIFF.png", "rock_MTL.png", "rock_RUFF.png", "rock_NRML_OGL.png")
+            for n in (
+                "rock_DIFF.png",
+                "rock_MTL.png",
+                "rock_RUFF.png",
+                "rock_NRML_OGL.png",
+            )
         }
         self.assertEqual(bases, {"rock"})
 
@@ -272,7 +283,8 @@ class CompoundSuffixTest(_RegistryTestCase):
             ptk.MapFactory.get_base_texture_name("Gold_Metal_Diffuse.png"), "Gold_Metal"
         )
         self.assertEqual(
-            ptk.MapFactory.get_base_texture_name("Brick_Normal_Color.png"), "Brick_Normal"
+            ptk.MapFactory.get_base_texture_name("Brick_Normal_Color.png"),
+            "Brick_Normal",
         )
 
 
@@ -308,7 +320,11 @@ class BaseNameTwinTest(BaseTestCase):
 
         bases = {
             ptk.ImgUtils.get_base_texture_name(n)
-            for n in ("rock_Normal.1001.png", "rock_Normal.1002.png", "rock_BaseColor.1001.png")
+            for n in (
+                "rock_Normal.1001.png",
+                "rock_Normal.1002.png",
+                "rock_BaseColor.1001.png",
+            )
         }
         self.assertEqual(bases, {"rock"})
 
@@ -351,15 +367,15 @@ class LongAliasBoundaryTest(_RegistryTestCase):
     def test_ordinary_words_ending_in_a_long_alias_do_not_resolve(self):
         """A lowercase word that happens to end in an alias is not a suffix."""
         for name, was in (
-            ("wall_watercolor.png", "Base_Color"),   # ...water+COLOR
-            ("char_thigh.png", "Height"),            # ...t+HIGH
-            ("panel_gunmetal.png", "Metallic"),      # ...gun+METAL
-            ("prop_raincoat.png", "Clearcoat"),      # ...rain+COAT
-            ("bone_abnormal.png", "Normal"),         # ...ab+NORMAL
-            ("road_borough.png", "Roughness"),       # ...bo+ROUGH
-            ("cloth_lipgloss.png", "Glossiness"),    # ...lip+GLOSS
-            ("wall_damask.png", "Mask"),             # ...dam+ASK
-            ("wall_afterglow.png", "Emissive"),      # ...after+GLOW
+            ("wall_watercolor.png", "Base_Color"),  # ...water+COLOR
+            ("char_thigh.png", "Height"),  # ...t+HIGH
+            ("panel_gunmetal.png", "Metallic"),  # ...gun+METAL
+            ("prop_raincoat.png", "Clearcoat"),  # ...rain+COAT
+            ("bone_abnormal.png", "Normal"),  # ...ab+NORMAL
+            ("road_borough.png", "Roughness"),  # ...bo+ROUGH
+            ("cloth_lipgloss.png", "Glossiness"),  # ...lip+GLOSS
+            ("wall_damask.png", "Mask"),  # ...dam+ASK
+            ("wall_afterglow.png", "Emissive"),  # ...after+GLOW
         ):
             with self.subTest(name=name):
                 self.assertIsNone(
@@ -412,6 +428,7 @@ class LongAliasBoundaryTest(_RegistryTestCase):
             ImgUtils.get_base_texture_name("char_thigh_Normal.png"),
             "one material must not base to two different texture sets",
         )
+
     def test_a_bare_alias_filename_keeps_a_usable_base_name(self):
         """A file named only after its map type must not base to "".
 

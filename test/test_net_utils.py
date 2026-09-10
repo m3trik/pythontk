@@ -14,7 +14,6 @@ from pythontk.net_utils.credentials import Credentials
 
 
 class TestCredentials(unittest.TestCase):
-    
     def setUp(self):
         # Reset the import state for clean testing if needed
         pass
@@ -23,27 +22,31 @@ class TestCredentials(unittest.TestCase):
     def test_keyring_priority(self, mock_keyring):
         """Test that keyring is tried first if available."""
         mock_keyring.get_password.return_value = "keyring_pass"
-        
+
         # Act
         result = Credentials.get_credential("some_target")
-        
+
         # Assert
         self.assertEqual(result["password"], "keyring_pass")
-        self.assertEqual(result["username"], "keyring_user") # Default for now
+        self.assertEqual(result["username"], "keyring_user")  # Default for now
         mock_keyring.get_password.assert_called_with("pythontk", "some_target")
 
-    @patch("pythontk.net_utils.credentials.keyring", None) # Simulate keyring missing
+    @patch("pythontk.net_utils.credentials.keyring", None)  # Simulate keyring missing
     @patch("platform.system")
     @patch("pythontk.net_utils.credentials.win32cred")
     def test_windows_native_fallback(self, mock_win32, mock_platform):
         """Test fallback to Windows Credential Manager if keyring is missing."""
         mock_platform.return_value = "Windows"
-        
+
         # Setup mock return for win32cred
         mock_creds = MagicMock()
         # Mocking the PyWin32 CredentialBlob return logic
-        mock_creds.get.side_effect = lambda k, d=None: b"win_pass".decode("utf-8").encode("utf-16-le") if k == "CredentialBlob" else "win_user"
-        
+        mock_creds.get.side_effect = lambda k, d=None: (
+            b"win_pass".decode("utf-8").encode("utf-16-le")
+            if k == "CredentialBlob"
+            else "win_user"
+        )
+
         mock_win32.CredRead.return_value = mock_creds
         mock_win32.CRED_TYPE_GENERIC = 1
 
@@ -51,11 +54,11 @@ class TestCredentials(unittest.TestCase):
         # but the logic in the code reads 'CredentialBlob' from dict/object returned by CredRead.
         # The previous test mocked CredentialBlob as a key in a dict, but CredRead returns a dictionary-like object in PyWin32?
         # Let's inspect the code: `blob = creds.get("CredentialBlob", b"")`. So creds is a dict.
-        
+
         # Remock for exact dict match
         mock_creds_dict = {
             "CredentialBlob": b"win_pass".decode("utf-8").encode("utf-16-le"),
-            "UserName": "win_user"
+            "UserName": "win_user",
         }
         mock_win32.CredRead.return_value = mock_creds_dict
 
@@ -68,15 +71,17 @@ class TestCredentials(unittest.TestCase):
 
     @patch("pythontk.net_utils.credentials.keyring", None)
     @patch("platform.system")
-    @patch.dict(os.environ, {"MY_TARGET_PASSWORD": "env_pass", "MY_TARGET_USER": "env_user"})
+    @patch.dict(
+        os.environ, {"MY_TARGET_PASSWORD": "env_pass", "MY_TARGET_USER": "env_user"}
+    )
     def test_env_var_fallback(self, mock_platform):
         """Test fallback to Environment Variables on Linux (or when Windows fails/not present)."""
         mock_platform.return_value = "Linux"
-        
+
         # Act
         # Target name "my-target" should map to MY_TARGET_PASSWORD
         result = Credentials.get_credential("my-target")
-        
+
         # Assert
         self.assertIsNotNone(result)
         self.assertEqual(result["password"], "env_pass")
@@ -97,12 +102,15 @@ class TestCredentials(unittest.TestCase):
         for target, env_key in cases:
             with patch.dict(os.environ, {env_key: "secret_val"}, clear=True):
                 cred = Credentials.get_credential(target)
-                self.assertEqual(cred["password"], "secret_val", f"Failed to match {target} to {env_key}")
+                self.assertEqual(
+                    cred["password"],
+                    "secret_val",
+                    f"Failed to match {target} to {env_key}",
+                )
 
 
 @unittest.skipIf(paramiko is None, "paramiko not installed")
 class TestSSHClient(unittest.TestCase):
-
     @patch("pythontk.net_utils.ssh_client.paramiko.SSHClient")
     def test_connect_with_password_arg(self, mock_ssh_cls):
         """Test connection when password is explicitly provided."""
@@ -239,7 +247,6 @@ from pythontk.net_utils._net_utils import NetUtils
 
 
 class TestNetUtils(unittest.TestCase):
-
     def test_get_local_ip(self):
         """Test retrieving local IP."""
         ip = NetUtils.get_local_ip()
@@ -323,9 +330,7 @@ class TestNetUtils(unittest.TestCase):
         # The .rdp config is allocated through the age-swept TempArtifacts
         # primitive (repo temp-artifact rule), and actually written there.
         mock_temp_artifacts.assert_called_once_with("pythontk_rdp")
-        mock_temp_artifacts.return_value.path.assert_called_once_with(
-            extension=".rdp"
-        )
+        mock_temp_artifacts.return_value.path.assert_called_once_with(extension=".rdp")
         self.assertTrue(os.path.exists(rdp_path))
         # mstsc.exe is still launched with the generated .rdp config file.
         mock_popen.assert_called_once()

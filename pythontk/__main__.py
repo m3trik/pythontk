@@ -21,6 +21,7 @@ Examples:
     python -m pythontk pythontk.FileUtils get_file_contents --source
     python -m pythontk pythontk.CoreUtils --members methods --brief
 """
+
 import importlib
 import inspect
 import json
@@ -102,7 +103,9 @@ def _print_index(as_json: bool = False) -> int:
         row["kind"] = (
             "class"
             if isinstance(obj, type)
-            else "function" if callable(obj) else type(obj).__name__
+            else "function"
+            if callable(obj)
+            else type(obj).__name__
         )
         rows.append(row)
     if as_json:
@@ -133,7 +136,9 @@ def _main(argv=None) -> int:
     parser.add_argument("--json", action="store_true", help="structured JSON output")
     parser.add_argument("--source", action="store_true", help="print source code")
     parser.add_argument("--where", action="store_true", help="print file:line location")
-    parser.add_argument("--signature", action="store_true", help="print signature detail")
+    parser.add_argument(
+        "--signature", action="store_true", help="print signature detail"
+    )
     parser.add_argument("--brief", action="store_true", help="one-line summaries")
     parser.add_argument(
         "--members",

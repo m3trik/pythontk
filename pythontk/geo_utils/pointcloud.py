@@ -9,6 +9,7 @@ numpy/scipy when available); the adapters supply world-space points. For ordered
 point sequences see :class:`pythontk.geo_utils.polyline.Polyline`; for the scalar
 primitives these compose, :class:`pythontk.MathUtils`.
 """
+
 from __future__ import annotations
 
 from typing import Callable, List, Optional, Sequence, Tuple, TYPE_CHECKING
@@ -336,9 +337,7 @@ class PointCloud:
                     - 2 * np.dot(rotated[k], p_a_work.T)
                 )
                 nn_k = dists_sq.argmin(axis=1)
-                min_dists = np.sqrt(
-                    np.maximum(dists_sq[np.arange(len(nn_k)), nn_k], 0)
-                )
+                min_dists = np.sqrt(np.maximum(dists_sq[np.arange(len(nn_k)), nn_k], 0))
                 avg_dists[k] = min_dists.mean()
                 if use_normals:
                     rot_n_k = n_b_work @ r_stack[k].T
@@ -366,11 +365,7 @@ class PointCloud:
                 # noise cannot drive a ~1 dot below zero), so a single flipped
                 # normal (e.g. a small asymmetric feature on an otherwise
                 # symmetric part) rejects the candidate outright.
-                valid = (
-                    within
-                    & (agreements >= normal_threshold)
-                    & (flip_fracs <= 0.0)
-                )
+                valid = within & (agreements >= normal_threshold) & (flip_fracs <= 0.0)
                 if valid.any():
                     candidates_idx = np.flatnonzero(valid)
                     best_matrix = r_stack[
@@ -436,9 +431,7 @@ class PointCloud:
         chunk = max(1, int(4e6 // max(len(target), 1)))  # ~32MB per block
         for start in range(0, len(query), chunk):
             q = query[start : start + chunk]
-            d_sq = (
-                np.sum(q**2, axis=1)[:, None] + t_sq[None, :] - 2.0 * (q @ target.T)
-            )
+            d_sq = np.sum(q**2, axis=1)[:, None] + t_sq[None, :] - 2.0 * (q @ target.T)
             part = np.argpartition(d_sq, k - 1, axis=1)[:, :k]
             d_part = np.sqrt(np.maximum(np.take_along_axis(d_sq, part, axis=1), 0))
             order = np.argsort(d_part, axis=1)
@@ -531,9 +524,10 @@ class PointCloud:
         # rather than rejecting: the PCA path can still find a rotation
         # aligning both points AND normals (a flipped-authored plate matches
         # under a real 180° rotation).
-        if len(pts_a) == 0 or float(
-            np.max(np.linalg.norm(pts_a - pts_b, axis=1))
-        ) <= tolerance:
+        if (
+            len(pts_a) == 0
+            or float(np.max(np.linalg.norm(pts_a - pts_b, axis=1))) <= tolerance
+        ):
             if uvs_identical is not None and not uvs_identical():
                 return False, None
             if len(pts_a) == 0 or normals_agree():
@@ -653,8 +647,7 @@ class PointCloud:
             return [anchored(a) for a in axes]
 
         degenerate = [
-            abs(float(evals[i]) - float(evals[i + 1])) < 0.05 * span
-            for i in range(2)
+            abs(float(evals[i]) - float(evals[i + 1])) < 0.05 * span for i in range(2)
         ]
 
         if all(degenerate):

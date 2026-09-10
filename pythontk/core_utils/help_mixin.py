@@ -6,6 +6,7 @@ This module provides a mixin class that enhances class introspection by wrapping
 and extending Python's built-in help() functionality with filtering, sorting,
 and targeted output options.
 """
+
 import json
 import inspect
 import pydoc
@@ -742,9 +743,7 @@ class HelpMixin:
         # Return type
         if sig.return_annotation is not inspect.Signature.empty:
             lines.append("")
-            lines.append(
-                f"Returns: {cls._format_annotation(sig.return_annotation)}"
-            )
+            lines.append(f"Returns: {cls._format_annotation(sig.return_annotation)}")
 
         return "\n".join(lines)
 

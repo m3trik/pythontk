@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_hierarchy_diff.py -v
     python test_hierarchy_diff.py
 """
+
 import json
 import os
 import tempfile
@@ -226,9 +227,7 @@ class HierarchyDiffTest(BaseTestCase):
     def test_load_legacy_json_without_modified(self):
         """Files written before the modified field load cleanly."""
         legacy = {"missing": ["a"], "extra": [], "renamed": [], "reparented": []}
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(legacy, f)
             filepath = f.name
 

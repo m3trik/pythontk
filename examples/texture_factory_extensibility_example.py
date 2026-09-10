@@ -23,6 +23,7 @@ fallbacks), save through ``context.save_map`` (which owns naming, format,
 optimization, and dry-run handling), and report what they consumed via
 ``get_consumed_types`` so consumed sources aren't also passed through.
 """
+
 import os
 from typing import List, Optional
 

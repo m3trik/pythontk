@@ -21,6 +21,7 @@ small-baseline parallax SfM triangulates from, so destructive settings
 belong to the caller: ``5`` catches near-identical frames only,
 ``10–15`` aggressively culls redundant static photo sets.
 """
+
 import logging
 import os
 import shutil
@@ -246,8 +247,10 @@ class ImageCurator:
                     # asserts, aborting the whole scan.
                     img = cv2.resize(
                         img,
-                        (self.SCAN_WIDTH,
-                         max(1, int(h * (float(self.SCAN_WIDTH) / w)))),
+                        (
+                            self.SCAN_WIDTH,
+                            max(1, int(h * (float(self.SCAN_WIDTH) / w))),
+                        ),
                         interpolation=cv2.INTER_AREA,
                     )
                 scanned.append((src_dir, path, self.dhash(img), self.sharpness(img)))

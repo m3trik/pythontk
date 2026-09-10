@@ -7,6 +7,7 @@ These are entry points consumed by mayatk.MatUpdater's transfer logic, so
 their behavior under all flag combinations and error paths must be locked
 down.
 """
+
 import os
 import shutil
 import tempfile
@@ -83,16 +84,12 @@ class MoveFileTest(BaseTestCase):
 
     def test_move_nonexistent_raises(self):
         with self.assertRaises(FileNotFoundError):
-            FileUtils.move_file(
-                os.path.join(self.src_dir, "nope.txt"), self.dst_dir
-            )
+            FileUtils.move_file(os.path.join(self.src_dir, "nope.txt"), self.dst_dir)
 
     def test_move_tuple_form(self):
         """List entries can be (dir, filename) tuples."""
         self._src("c.txt")
-        out = FileUtils.move_file(
-            [(self.src_dir, "c.txt")], self.dst_dir
-        )
+        out = FileUtils.move_file([(self.src_dir, "c.txt")], self.dst_dir)
         self.assertIsInstance(out, list)
         self.assertTrue(os.path.isfile(out[0]))
 
@@ -156,9 +153,7 @@ class CopyFileTest(BaseTestCase):
 
     def test_copy_nonexistent_raises(self):
         with self.assertRaises(FileNotFoundError):
-            FileUtils.copy_file(
-                os.path.join(self.src_dir, "nope.txt"), self.dst_dir
-            )
+            FileUtils.copy_file(os.path.join(self.src_dir, "nope.txt"), self.dst_dir)
 
 
 if __name__ == "__main__":

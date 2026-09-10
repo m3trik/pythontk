@@ -125,9 +125,7 @@ class TestPcaTransform(unittest.TestCase):
 
         try:
             # Robust mode should handle different point counts
-            result = PointCloud.pca_transform(
-                pts_a, pts_b, tolerance=10.0, robust=True
-            )
+            result = PointCloud.pca_transform(pts_a, pts_b, tolerance=10.0, robust=True)
         except (ImportError, ValueError) as e:
             if "binary incompatibility" in str(e) or "numpy" in str(e).lower():
                 self.skipTest(f"scipy/numpy incompatibility: {e}")
@@ -225,8 +223,12 @@ class TestClusterByDistance(unittest.TestCase):
     def test_cluster_by_distance_edge_cases(self):
         """Empty -> []; single point -> one singleton cluster; 2D points supported."""
         self.assertEqual(PointCloud.cluster_by_distance([], threshold=5), [])
-        self.assertEqual(PointCloud.cluster_by_distance([(1, 2, 3)], threshold=5), [[0]])
-        clusters = PointCloud.cluster_by_distance([(0, 0), (1, 0), (40, 40)], threshold=5)
+        self.assertEqual(
+            PointCloud.cluster_by_distance([(1, 2, 3)], threshold=5), [[0]]
+        )
+        clusters = PointCloud.cluster_by_distance(
+            [(0, 0), (1, 0), (40, 40)], threshold=5
+        )
         self.assertEqual(
             self._normalize_clusters(clusters), {frozenset({0, 1}), frozenset({2})}
         )

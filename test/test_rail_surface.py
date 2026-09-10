@@ -5,6 +5,7 @@ rail-driven parametric-surface primitive. Covers grid shape/ordering, the
 displacement seam, and rail framing. The curtain generator that composes it is
 pinned separately in test_curtain.py.
 """
+
 import unittest
 
 from pythontk import RailSurface
@@ -66,8 +67,8 @@ class TestRailSurface(unittest.TestCase):
             lambda u, v, pos, tan, nrm: (pos[0], pos[1] - (1.0 - v), pos[2])
         )
         # hem row (v=0) drops a full unit; rail row (v=1) stays at rail height.
-        hem = pts[0]          # row 0, col 0
-        rail_row = pts[-1]    # last row, last col
+        hem = pts[0]  # row 0, col 0
+        rail_row = pts[-1]  # last row, last col
         self.assertAlmostEqual(hem[1], -1.0)
         self.assertAlmostEqual(rail_row[1], 0.0)
 

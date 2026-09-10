@@ -12,6 +12,7 @@ Run with:
     python -m pytest test_uv_unwrap.py -v
     python test_uv_unwrap.py
 """
+
 import os
 import shutil
 import subprocess
@@ -45,6 +46,7 @@ f 7 8 2 1
 f 2 8 6 4
 f 7 1 3 5
 """
+
 
 def _unwrapped(obj_text):
     """The cube as an engine returns it: face-varying UVs referenced as v/vt.
@@ -98,7 +100,9 @@ class _UvUnwrapTestCase(unittest.TestCase):
         def stub(app, args=None, timeout=None, hide_window=False, **kwargs):
             if record is not None:
                 record.update(
-                    exe=app, args=list(args or []), timeout=timeout,
+                    exe=app,
+                    args=list(args or []),
+                    timeout=timeout,
                     hide_window=hide_window,
                 )
             if payload is not None:
@@ -121,18 +125,22 @@ class TestResolveEngine(_UvUnwrapTestCase):
             self.assertEqual(UvUnwrap.resolve_engine("mof"), self.exe)
 
     def test_resolves_from_path(self):
-        with patch.dict(os.environ, {}, clear=False), patch.object(
-            _uv_unwrap.AppLauncher, "resolve_app_path", return_value=self.exe
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch.object(
+                _uv_unwrap.AppLauncher, "resolve_app_path", return_value=self.exe
+            ),
         ):
             os.environ.pop("PYTHONTK_BFF_EXE", None)
             self.assertEqual(UvUnwrap.resolve_engine("bff"), self.exe)
 
     def test_resolves_from_managed_catalog(self):
-        with patch.object(
-            _uv_unwrap.AppLauncher, "resolve_app_path", return_value=None
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=self.exe,
+        with (
+            patch.object(_uv_unwrap.AppLauncher, "resolve_app_path", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=self.exe,
+            ),
         ):
             self.assertEqual(UvUnwrap.resolve_engine("bff"), self.exe)
 
@@ -143,11 +151,12 @@ class TestResolveEngine(_UvUnwrapTestCase):
         self.assertIn("mof", str(ctx.exception))
 
     def test_not_required_returns_none(self):
-        with patch.object(
-            _uv_unwrap.AppLauncher, "resolve_app_path", return_value=None
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
+        with (
+            patch.object(_uv_unwrap.AppLauncher, "resolve_app_path", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
         ):
             self.assertIsNone(UvUnwrap.resolve_engine("mof", required=False))
 
@@ -163,25 +172,26 @@ class TestResolveEngine(_UvUnwrapTestCase):
 
     def test_mof_is_never_auto_installed(self):
         """Its license forbids redistribution — auto_install must not download."""
-        with patch.object(
-            _uv_unwrap.AppLauncher, "resolve_app_path", return_value=None
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.ensure"
-        ) as ensure:
+        with (
+            patch.object(_uv_unwrap.AppLauncher, "resolve_app_path", return_value=None),
+            patch("pythontk.core_utils.app_installer.AppInstaller.ensure") as ensure,
+        ):
             with self.assertRaises(FileNotFoundError):
                 UvUnwrap.resolve_engine("mof", auto_install=True, prompt=False)
         ensure.assert_not_called()
 
     def test_bff_installs_with_pinned_url_and_hash(self):
-        with patch.object(
-            _uv_unwrap.AppLauncher, "resolve_app_path", return_value=None
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.ensure",
-            return_value=self.exe,
-        ) as ensure:
+        with (
+            patch.object(_uv_unwrap.AppLauncher, "resolve_app_path", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.ensure",
+                return_value=self.exe,
+            ) as ensure,
+        ):
             self.assertEqual(
                 UvUnwrap.resolve_engine("bff", auto_install=True, prompt=False),
                 self.exe,
@@ -192,16 +202,15 @@ class TestResolveEngine(_UvUnwrapTestCase):
         self.assertEqual(kwargs["version"], _uv_unwrap.BFF_VERSION)
 
     def test_bff_refuses_silent_download_without_tty(self):
-        with patch.object(
-            _uv_unwrap.AppLauncher, "resolve_app_path", return_value=None
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.get_path",
-            return_value=None,
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.ensure"
-        ) as ensure, patch.object(
-            sys, "stdin"
-        ) as stdin:
+        with (
+            patch.object(_uv_unwrap.AppLauncher, "resolve_app_path", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
+            patch("pythontk.core_utils.app_installer.AppInstaller.ensure") as ensure,
+            patch.object(sys, "stdin") as stdin,
+        ):
             stdin.isatty.return_value = False
             with self.assertRaises(FileNotFoundError) as ctx:
                 UvUnwrap.resolve_engine("bff", auto_install=True, prompt=True)
@@ -217,11 +226,10 @@ class TestAvailableEngines(_UvUnwrapTestCase):
         self.assertTrue(all(v is None for v in found.values()))
 
     def test_never_raises_or_installs(self):
-        with patch.object(
-            UvUnwrap, "resolve_engine", side_effect=RuntimeError("boom")
-        ), patch(
-            "pythontk.core_utils.app_installer.AppInstaller.ensure"
-        ) as ensure:
+        with (
+            patch.object(UvUnwrap, "resolve_engine", side_effect=RuntimeError("boom")),
+            patch("pythontk.core_utils.app_installer.AppInstaller.ensure") as ensure,
+        ):
             found = UvUnwrap.available_engines()
         self.assertTrue(all(v is None for v in found.values()))
         ensure.assert_not_called()
@@ -298,7 +306,9 @@ class TestArgv(_UvUnwrapTestCase):
         rec = {}
         with self._patch_resolve(), self._patch_run(record=rec):
             UvUnwrap.unwrap(self.src, self.dst, engine="mof")
-        self.assertEqual(rec["args"], [os.path.abspath(self.src), os.path.abspath(self.dst)])
+        self.assertEqual(
+            rec["args"], [os.path.abspath(self.src), os.path.abspath(self.dst)]
+        )
 
     def test_bff_flags(self):
         rec = {}
