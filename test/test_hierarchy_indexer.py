@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_hierarchy_indexer.py -v
     python test_hierarchy_indexer.py
 """
+
 import unittest
 
 from pythontk.core_utils.hierarchy_utils.hierarchy_indexer import HierarchyIndexer

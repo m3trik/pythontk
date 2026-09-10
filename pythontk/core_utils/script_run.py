@@ -113,7 +113,9 @@ class ScriptRunner(_ScriptRunnerInternal):
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         if expect not in (CREATED, REWRITTEN):
-            raise ValueError(f"expect must be {CREATED!r} or {REWRITTEN!r}, got {expect!r}")
+            raise ValueError(
+                f"expect must be {CREATED!r} or {REWRITTEN!r}, got {expect!r}"
+            )
 
         if expect == CREATED:
             # A leftover artifact from a prior run would fake success — the existence

@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.38"
+__version__ = "0.9.39"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -80,6 +80,13 @@ DEFAULT_INCLUDE = {
     "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
     "img_utils.shadow_atlas": "ShadowAtlas",
     "geo_utils.uv_pack": ["UvPack", "PackIslandsResult"],
+    "geo_utils.uv_budget": [
+        "UvBudget",
+        "BudgetItem",
+        "BudgetPlan",
+        "BudgetRow",
+        "BudgetPage",
+    ],
     "geo_utils.uv_transfer": ["UvTransfer", "TransferTable"],
     # Declarative widget definitions -> run configuration (the two Scene
     # Exporter panels' export button, once).

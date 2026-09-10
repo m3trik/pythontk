@@ -324,9 +324,7 @@ class ProgressionCurves:
         curve_func = cls.get_curve_function(calculation_mode)
         if num_samples <= 1:
             return (
-                [curve_func(0.0, weight_curve, weight_bias)]
-                if num_samples == 1
-                else []
+                [curve_func(0.0, weight_curve, weight_bias)] if num_samples == 1 else []
             )
         return [
             curve_func(i / (num_samples - 1), weight_curve, weight_bias)

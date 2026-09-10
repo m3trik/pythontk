@@ -466,9 +466,7 @@ class TestRpcInstaller(unittest.TestCase):
         marker.write_text("untouched", encoding="utf-8")
 
         self._install_as_copy()
-        self.assertTrue(
-            marker.is_file(), "A matching install must not be torn down."
-        )
+        self.assertTrue(marker.is_file(), "A matching install must not be torn down.")
 
     def test_is_plugin_current_tracks_drift(self):
         self.assertFalse(

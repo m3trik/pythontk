@@ -29,6 +29,7 @@ a single committed byte. Runtime-only enrichments (async/abstract flags, the
 defining class, a resolved source location) are layered on by ``HelpMixin`` at
 the dict level, not added as fields here.
 """
+
 from __future__ import annotations
 
 import json

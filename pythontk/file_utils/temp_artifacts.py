@@ -22,6 +22,7 @@ Every policy runs that stale sweep on its first allocation: detached because
 nothing else deletes, scoped/session because keep-on-failure and hard-crash
 leftovers have no other reclamation path.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -310,7 +311,9 @@ class TempArtifacts(LoggingMixin):
             self.cleanup(force=True)
         else:  # keep everything for debugging; say where it is
             kept = [p for p in self._tracked if os.path.exists(p)]
-            if kept:  # warning: visible at the default log level — files were left behind
+            if (
+                kept
+            ):  # warning: visible at the default log level — files were left behind
                 self.logger.warning(f"Keeping temp artifacts after failure: {kept}")
 
 
@@ -438,7 +441,9 @@ class CachedArtifact(LoggingMixin):
             produce(out_path)
         except Exception:
             if os.path.isfile(out_path):
-                self.logger.warning(f"Keeping partial artifact for debugging: {out_path}")
+                self.logger.warning(
+                    f"Keeping partial artifact for debugging: {out_path}"
+                )
             raise
         if cache_path is None:
             return self.Result(out_path, False, scratch)

@@ -26,5 +26,3 @@ class ClassProperty:
 
     def __get__(self, instance, owner):
         return self.getter(owner)
-
-

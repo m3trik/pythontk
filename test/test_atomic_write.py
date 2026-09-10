@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Unit tests for FileUtils.atomic_write_text."""
+
 import os
 import tempfile
 import unittest
@@ -55,11 +56,7 @@ class AtomicWriteText(unittest.TestCase):
             self.assertEqual(f.read(), "untouched")
 
         # Temp files should be cleaned up after failure
-        leftover = [
-            n
-            for n in os.listdir(self.dir)
-            if n != os.path.basename(self.path)
-        ]
+        leftover = [n for n in os.listdir(self.dir) if n != os.path.basename(self.path)]
         self.assertEqual(leftover, [])
 
     def test_creates_target_when_absent(self):

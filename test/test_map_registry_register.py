@@ -10,6 +10,7 @@ custom type → filename resolution / suffix stripping / MapFactory live views
 pick it up → ``prepare_maps`` inventories the file → a custom conversion can
 consume it.
 """
+
 import os
 import tempfile
 import shutil
@@ -79,9 +80,7 @@ class TestMapRegistryRegister(RegistryStateGuard):
             registry.resolve_type_from_path("wall_Curvature.png"), "Curvature"
         )
         # Suffix-strip pattern rebuilt: the new suffix now strips.
-        self.assertEqual(
-            MapFactory.get_base_texture_name("wall_Curvature.png"), "wall"
-        )
+        self.assertEqual(MapFactory.get_base_texture_name("wall_Curvature.png"), "wall")
 
     def test_map_factory_views_are_live(self):
         registry = MapRegistry()
@@ -151,9 +150,7 @@ class TestRegisteredTypeThroughFactory(RegistryStateGuard):
         )
         self.assertEqual(results, [self.curvature_path])
 
-        MapRegistry().register(
-            MapType(name="Curvature", aliases=["Curv"], mode="L")
-        )
+        MapRegistry().register(MapType(name="Curvature", aliases=["Curv"], mode="L"))
 
         results = MapFactory.prepare_maps(
             [self.curvature_path], output_dir=self.output_dir, rename=True
@@ -169,9 +166,7 @@ class TestRegisteredTypeThroughFactory(RegistryStateGuard):
         )
 
     def test_custom_conversion_fires_from_registered_source(self):
-        MapRegistry().register(
-            MapType(name="Curvature", aliases=["Curv"], mode="L")
-        )
+        MapRegistry().register(MapType(name="Curvature", aliases=["Curv"], mode="L"))
 
         conversions = ConversionRegistry()
         conversions.register(
@@ -313,9 +308,7 @@ class TestPackedMapContract(RegistryStateGuard):
                 continue
             self.assertTrue(m.is_packed, f"'{name}' has replaces but not is_packed")
             self.assertTrue(m.replaces, f"packed map '{name}' declares no replaces")
-            self.assertTrue(
-                m.config_key, f"packed map '{name}' declares no config_key"
-            )
+            self.assertTrue(m.config_key, f"packed map '{name}' declares no config_key")
             self.assertTrue(
                 m.channels, f"packed map '{name}' declares no channels layout"
             )
@@ -347,9 +340,7 @@ class TestSharesWorkflow(unittest.TestCase):
         genuinely declares glTF — which is why it passes through the base-colour
         slot unchanged."""
         self.assertIs(self.registry.shares_workflow("ORM", "ORM"), True)
-        self.assertIs(
-            self.registry.shares_workflow("Albedo_Transparency", "ORM"), True
-        )
+        self.assertIs(self.registry.shares_workflow("Albedo_Transparency", "ORM"), True)
 
     def test_foreign_engine_packings_report_a_mismatch(self):
         """MSAO targets HDRP and Metallic_Smoothness targets URP; neither shares
@@ -442,7 +433,11 @@ class TestForeignPackings(unittest.TestCase):
             ["/t/a_MSAO.png", "/t/b_MetallicSmoothness.png"], target="ORM"
         )
         self.assertEqual(
-            found, {"/t/a_MSAO.png": "MSAO", "/t/b_MetallicSmoothness.png": "Metallic_Smoothness"}
+            found,
+            {
+                "/t/a_MSAO.png": "MSAO",
+                "/t/b_MetallicSmoothness.png": "Metallic_Smoothness",
+            },
         )
 
     def test_appropriate_and_undeclared_maps_are_not_reported(self):

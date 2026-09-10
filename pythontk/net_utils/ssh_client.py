@@ -166,9 +166,7 @@ class SSHClient:
         channel.exec_command(command)
 
         captured_stdout = []
-        captured_stderr = (
-            []
-        )  # PTY merges stderr into stdout usually, but we'll try capture separate if possible
+        captured_stderr = []  # PTY merges stderr into stdout usually, but we'll try capture separate if possible
 
         # Incremental decoders: a multi-byte character can straddle a 4096-byte
         # chunk boundary, and decoding each chunk independently would turn it

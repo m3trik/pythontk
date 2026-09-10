@@ -17,6 +17,7 @@ Covers:
 - DetailedTestResult: end-to-end module coverage over a real discovery of a
   short, purpose-built module set.
 """
+
 import importlib.util
 import sys
 import unittest
@@ -71,9 +72,7 @@ class TestModuleDiscovery(RunnerTestCase):
         )
 
     def test_empty_dir_yields_empty_set(self):
-        self.assertEqual(
-            StatusBadge.discover_module_names(self.probe_dir), set()
-        )
+        self.assertEqual(StatusBadge.discover_module_names(self.probe_dir), set())
 
     def test_real_test_dir_is_non_trivial(self):
         """The live test tree must resolve to a real module set, not nothing."""
@@ -142,8 +141,7 @@ class TestModuleCoverage(RunnerTestCase):
         ),
         # The other idiom: a guarded import that skips the module wholesale.
         "test_probe_module_skip.py": (
-            "import unittest\n"
-            "raise unittest.SkipTest('numpy unavailable')\n"
+            "import unittest\nraise unittest.SkipTest('numpy unavailable')\n"
         ),
         # Imported and run, but every case is environment-gated.
         "test_probe_all_skipped.py": (

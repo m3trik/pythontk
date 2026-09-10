@@ -12,6 +12,7 @@ Locks down:
 - alias normalization (output_type -> output_extension)
 - derived flags (resize from max_size, convert_format from output_extension)
 """
+
 import unittest
 
 from pythontk import MapRegistry

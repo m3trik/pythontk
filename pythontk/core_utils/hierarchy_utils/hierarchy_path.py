@@ -19,6 +19,7 @@ This module is the single home for these operations —
 :class:`HierarchyAnalyzer` all delegate here, as should downstream
 packages (mayatk's hierarchy-sync previously duplicated these).
 """
+
 from typing import List
 
 

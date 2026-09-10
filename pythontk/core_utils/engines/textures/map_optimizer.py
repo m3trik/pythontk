@@ -13,6 +13,7 @@ Architecture:
     optimize_map(path, ...) -> str     # orchestrator: load + plan + apply + save
     assess(path, ...) -> dict          # wraps plan() with image read + reporting
 """
+
 from __future__ import annotations
 
 import os
@@ -425,9 +426,7 @@ class MapOptimizer(HelpMixin):
         # --- 1. Depalettize before resize (preserves high-quality resampling)
         if will_resize and mode in ("P", "PA"):
             new_mode = (
-                "RGBA"
-                if (mode == "PA" or "transparency" in image.info)
-                else "RGB"
+                "RGBA" if (mode == "PA" or "transparency" in image.info) else "RGB"
             )
             ops.append(
                 Op(
@@ -463,8 +462,7 @@ class MapOptimizer(HelpMixin):
                     Op(
                         kind="mode_coerce",
                         description=(
-                            f"Mode (map_type={map_type_key}): "
-                            f"{mode} -> {coerce_to}"
+                            f"Mode (map_type={map_type_key}): {mode} -> {coerce_to}"
                         ),
                         params={"target_mode": coerce_to},
                     )
@@ -478,8 +476,7 @@ class MapOptimizer(HelpMixin):
                         Op(
                             kind="mode_coerce",
                             description=(
-                                f"Mode (legacy {map_type_key}): "
-                                f"{mode} -> {target}"
+                                f"Mode (legacy {map_type_key}): {mode} -> {target}"
                             ),
                             params={"target_mode": target},
                         )
@@ -492,8 +489,7 @@ class MapOptimizer(HelpMixin):
                         Op(
                             kind="mode_coerce",
                             description=(
-                                f"Mode (legacy grayscale {map_type_key}): "
-                                f"P -> L"
+                                f"Mode (legacy grayscale {map_type_key}): P -> L"
                             ),
                             params={"target_mode": "L"},
                         )
@@ -588,9 +584,7 @@ class MapOptimizer(HelpMixin):
                 ops.append(
                     Op(
                         kind="mode_coerce",
-                        description=(
-                            f"{sb_reason}: {mode} -> {sb_target_mode}"
-                        ),
+                        description=(f"{sb_reason}: {mode} -> {sb_target_mode}"),
                         params={"target_mode": sb_target_mode},
                     )
                 )
@@ -808,8 +802,10 @@ class MapOptimizer(HelpMixin):
             must stay lossless; ``skip_reason`` is a human-readable sentence
             when a request was *declined*, and None when none was made.
         """
-        requested = lossy_quality if lossy_quality is not None else (
-            spec.quality if spec else None
+        requested = (
+            lossy_quality
+            if lossy_quality is not None
+            else (spec.quality if spec else None)
         )
         ext = (output_type or "").lower().lstrip(".")
 
@@ -935,10 +931,14 @@ class MapOptimizer(HelpMixin):
                 f"'UASTC' (DDS block formats do not apply to this container)."
             )
         if codec == "ETC1S" and not lossy_safe:
-            return "UASTC", colorspace, (
-                f"ETC1S refused for map type '{map_type_key or 'unknown'}': "
-                f"palettised encoding bands on normals / packed / linear data — "
-                f"encoded UASTC instead"
+            return (
+                "UASTC",
+                colorspace,
+                (
+                    f"ETC1S refused for map type '{map_type_key or 'unknown'}': "
+                    f"palettised encoding bands on normals / packed / linear data — "
+                    f"encoded UASTC instead"
+                ),
             )
         return codec, colorspace, None
 
@@ -1018,9 +1018,7 @@ class MapOptimizer(HelpMixin):
         map_type_suffix = MapFactory.resolve_map_type(texture_path, key=False)
         if map_type_suffix is None:
             map_type_suffix = ""
-        map_type_key = map_type or MapFactory.resolve_map_type(
-            texture_path, key=True
-        )
+        map_type_key = map_type or MapFactory.resolve_map_type(texture_path, key=True)
 
         # An active profile drives the output format and, on opt-in, the size
         # budget — resolved by the same helper assess uses, so the two agree.
@@ -1141,9 +1139,7 @@ class MapOptimizer(HelpMixin):
             spec,
         )
         if quality_skipped:
-            print(
-                f"# {os.path.basename(final_output_path)}: {quality_skipped}"
-            )
+            print(f"# {os.path.basename(final_output_path)}: {quality_skipped}")
 
         # GPU compression (DDS block format / ktx2 Basis codec) resolves against
         # the container actually being written, for the same reason quality
@@ -1421,9 +1417,7 @@ class MapOptimizer(HelpMixin):
                 "target_mode": None,
             }
 
-        map_type_key = map_type or MapFactory.resolve_map_type(
-            texture_path, key=True
-        )
+        map_type_key = map_type or MapFactory.resolve_map_type(texture_path, key=True)
 
         # Resolved before planning (the budget can add ops), through the same
         # helper optimize_map uses — so the dry run plans what the real run would.

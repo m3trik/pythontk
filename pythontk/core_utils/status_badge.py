@@ -17,6 +17,7 @@ The generic half (:meth:`StatusBadge.render` / :meth:`StatusBadge.update`) draws
 any label/message/colour badge; :meth:`StatusBadge.test_status` and
 :meth:`StatusBadge.update_test_badge` layer the test-count convention on top.
 """
+
 import os
 import re
 from pathlib import Path
@@ -75,7 +76,6 @@ class _StatusBadgeInternal:
             lines.insert(last + 1, badge)
             return "\n".join(lines) + ("\n" if content.endswith("\n") else "")
         return badge + "\n\n" + content
-
 
     # ---- Run-completeness gate -------------------------------------------
     # Shared by every package runner: a badge must never be stamped by a run
@@ -155,9 +155,9 @@ class StatusBadge(_StatusBadgeInternal):
             # "setUpClass (pkg.test_mod.TestCase)" or "setUpModule (pkg.test_mod)",
             # so the trailing segment is a CLASS in the first form and the module
             # itself in the second -- strip it only for setUpClass.
-            description = getattr(test, "description", "") or getattr(
-                test, "id", lambda: ""
-            )()
+            description = (
+                getattr(test, "description", "") or getattr(test, "id", lambda: "")()
+            )
             inner = description[description.find("(") + 1 : description.rfind(")")]
             if inner and description.startswith("setUpClass"):
                 inner = inner.rsplit(".", 1)[0]
@@ -191,7 +191,6 @@ class StatusBadge(_StatusBadgeInternal):
         if not passed and not failed:
             return False, "no test cases ran"
         return True, ""
-
 
     LABEL = "Tests"
     COLOR_PASSED = "brightgreen"

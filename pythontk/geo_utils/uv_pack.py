@@ -50,6 +50,7 @@ Verified engine facts this wrapper relies on (xatlas 0.0.11):
   chart and break the input-index mapping. Both are pinned rather than
   inherited so an engine default change cannot silently alter results.
 """
+
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Sequence, Tuple
 

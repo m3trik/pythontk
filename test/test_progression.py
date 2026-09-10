@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_progression.py -v
     python test_progression.py
 """
+
 import unittest
 
 from pythontk.math_utils.progression import ProgressionCurves

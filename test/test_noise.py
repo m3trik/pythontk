@@ -6,6 +6,7 @@ Run with:
     python -m pytest test_noise.py -v
     python test_noise.py
 """
+
 import unittest
 
 from pythontk import BandLimitedNoise
@@ -36,8 +37,11 @@ class BandLimitedNoiseTest(BaseTestCase):
     def test_amplitude_roughly_bounded(self):
         # Normalized amplitudes -> magnitude stays ~[-1, 1] regardless of octaves.
         n = BandLimitedNoise(seed=3, octaves=6)
-        peak = max(abs(n.at(i / 200.0, j / 200.0))
-                   for i in range(201) for j in range(0, 201, 25))
+        peak = max(
+            abs(n.at(i / 200.0, j / 200.0))
+            for i in range(201)
+            for j in range(0, 201, 25)
+        )
         self.assertLessEqual(peak, 1.0 + 1e-9)
 
     def test_periodic_wraps_across_u_seam(self):

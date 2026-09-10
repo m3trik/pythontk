@@ -15,6 +15,7 @@ Scalar/vector primitives (``lerp``, ``cross_product``, ``distance_between_points
 ``remap``, ``point_segment_distance``, …) live in :class:`pythontk.MathUtils`;
 this class composes them into operations on point *sequences*.
 """
+
 from __future__ import annotations
 
 import bisect
@@ -107,8 +108,13 @@ class Polyline:
             cloud is degenerate (fewer than two non-empty slabs / zero extent
             along the axis).
         """
+
         def _xyz(p):
-            return (p.x, p.y, p.z) if hasattr(p, "x") else (float(p[0]), float(p[1]), float(p[2]))
+            return (
+                (p.x, p.y, p.z)
+                if hasattr(p, "x")
+                else (float(p[0]), float(p[1]), float(p[2]))
+            )
 
         pts = [_xyz(p) for p in points]
         if len(pts) < 2 or count < 2:
@@ -128,9 +134,7 @@ class Polyline:
         for p in pts:
             idx = min(slabs - 1, int((p[axis] - lo) / span * slabs))
             bins[idx].append(p)
-        centers = [
-            [sum(p[i] for p in b) / len(b) for i in range(3)] for b in bins if b
-        ]
+        centers = [[sum(p[i] for p in b) / len(b) for i in range(3)] for b in bins if b]
         if len(centers) < 2:
             return []
         return cls.resample(centers, count)
@@ -164,6 +168,7 @@ class Polyline:
         points = list(points)  # work on a copy; also accepts tuples
 
         if distance_metric is None:
+
             def distance_metric(p1, p2):
                 # Branchless dispatch: prefer .x/.y/.z (MPoint/MVector/dt.Point),
                 # fall back to subscripting (lists, tuples, numpy arrays).
@@ -225,9 +230,7 @@ class Polyline:
         into the distance. Every measurement in this class goes through here
         so the whole surface accepts the same inputs.
         """
-        return MathUtils.distance_between_points(
-            (a[0], a[1], a[2]), (b[0], b[1], b[2])
-        )
+        return MathUtils.distance_between_points((a[0], a[1], a[2]), (b[0], b[1], b[2]))
 
     @classmethod
     def cumulative_lengths(cls, points: Sequence[Vec]) -> List[float]:
@@ -334,9 +337,7 @@ class Polyline:
     # --------------------------------------------------------------- reshape
 
     @staticmethod
-    def smooth(
-        points: Sequence[Union[tuple, object]], window_size: int = 1
-    ) -> list:
+    def smooth(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list:
         """Moving-average smooth of a point sequence.
 
         Parameters:

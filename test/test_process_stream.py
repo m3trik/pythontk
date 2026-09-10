@@ -8,6 +8,7 @@ shells that compose these primitives (e.g. the Substance Painter
 ``SubstanceConnection`` in mayatk/blendertk) are tested with their
 consumers.
 """
+
 import io
 import os
 import re

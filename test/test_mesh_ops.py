@@ -12,6 +12,7 @@ Run with:
     python -m pytest test/test_mesh_ops.py -v
     python test/run_tests.py
 """
+
 import os
 import shutil
 import unittest
@@ -73,7 +74,9 @@ class TestResolveContract(unittest.TestCase):
         MeshOps.resolve(required=False)  # must not raise
 
     def test_available_matches_resolve(self):
-        self.assertEqual(MeshOps.available(), MeshOps.resolve(required=False) is not None)
+        self.assertEqual(
+            MeshOps.available(), MeshOps.resolve(required=False) is not None
+        )
 
     def test_install_note_names_the_extra(self):
         self.assertIn("pythontk[mesh]", MeshOps._install_note())
@@ -140,8 +143,15 @@ class TestMeasure(_TempDirTestCase):
     def test_measure_keys_and_types(self):
         m = MeshOps.measure(self._sphere())
         for key in (
-            "faces", "vertices", "edges", "components", "boundary_edges",
-            "non_two_manifold_edges", "holes", "surface_area", "bbox_diag",
+            "faces",
+            "vertices",
+            "edges",
+            "components",
+            "boundary_edges",
+            "non_two_manifold_edges",
+            "holes",
+            "surface_area",
+            "bbox_diag",
         ):
             self.assertIn(key, m)
         self.assertGreater(m["faces"], 0)

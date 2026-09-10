@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Tests for the ``python -m pythontk`` CLI shell (``pythontk/__main__.py``)."""
+
 import io
 import json
 import unittest

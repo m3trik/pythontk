@@ -6,6 +6,7 @@ Frame→weight mapping, evenly-spaced weight generation, and consistent rounding
 (3 dp — Maya's blendShape precision, and fine for Blender shape keys). Shared by
 mayatk's and blendertk's ``blendshape_animator`` (both call ``Weights`` directly).
 """
+
 from typing import List, Tuple
 
 

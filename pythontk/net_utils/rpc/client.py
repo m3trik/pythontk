@@ -22,6 +22,7 @@ Session-safety note: :meth:`shutdown` only acts on the process that
 :meth:`connect` launched. A host app the user opened manually is never
 touched -- that's the whole guarantee of the bridge.
 """
+
 import atexit
 import json
 import sys
@@ -65,9 +66,7 @@ class RpcClient:
     def ping(self, timeout: float = 1.0) -> bool:
         """Return True if the plugin's HTTP server is reachable."""
         try:
-            with urllib.request.urlopen(
-                f"{self.url}health", timeout=timeout
-            ) as resp:
+            with urllib.request.urlopen(f"{self.url}health", timeout=timeout) as resp:
                 return resp.status == 200
         except (urllib.error.URLError, ConnectionError, OSError):
             return False
@@ -229,6 +228,7 @@ class RpcClient:
             return
         try:
             from pythontk import AppLauncher
+
             AppLauncher.close_process(proc.pid, force=force)
         except Exception as exc:  # noqa: BLE001
             # Don't re-raise -- best-effort path. But warn so a leaked

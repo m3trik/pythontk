@@ -52,8 +52,13 @@ class BandLimitedNoise:
             fu = cycles * 2.0 * math.pi
             fv = (octave + 1) * math.pi * rng.uniform(*v_freq)
             comps.append(
-                (amp, fu, rng.uniform(0.0, 2.0 * math.pi),
-                 fv, rng.uniform(0.0, 2.0 * math.pi))
+                (
+                    amp,
+                    fu,
+                    rng.uniform(0.0, 2.0 * math.pi),
+                    fv,
+                    rng.uniform(0.0, 2.0 * math.pi),
+                )
             )
             total += amp
             amp *= falloff

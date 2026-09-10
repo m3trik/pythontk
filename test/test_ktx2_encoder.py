@@ -241,8 +241,11 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
             seen.append((source, os.path.isfile(source)))
             return mock.Mock(returncode=0, stderr="", stdout="")
 
-        with mock.patch.object(mod, "PIL_AVAILABLE", False), mock.patch(
-            "pythontk.img_utils.ktx2_encoder.subprocess.run", side_effect=fake_run
+        with (
+            mock.patch.object(mod, "PIL_AVAILABLE", False),
+            mock.patch(
+                "pythontk.img_utils.ktx2_encoder.subprocess.run", side_effect=fake_run
+            ),
         ):
             enc.encode(
                 Image.new("RGB", (8, 8)),

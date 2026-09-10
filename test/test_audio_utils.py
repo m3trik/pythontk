@@ -13,6 +13,7 @@ Run with:
     python -m pytest test_audio_utils.py -v
     python test_audio_utils.py
 """
+
 import array
 import logging
 import os
@@ -290,7 +291,6 @@ class TestBuildCompositeWav(BaseTestCase):
             logger=cap,
         )
         self.assertTrue(any("0.5s" in m for m in cap.msgs), cap.msgs)
-
 
     def test_negative_frame_no_broadcast_error(self):
         """Negative frame values must not cause a numpy broadcast error.

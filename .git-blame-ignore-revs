@@ -1,0 +1,6 @@
+# Revisions to skip in `git blame` -- whole-tree formatting only, no behaviour.
+# GitHub honours this file automatically. Locally:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# ruff format across the package (2026-09-09)
+91fb74a13f378e3e82b8de3289aef2aaf1b31417

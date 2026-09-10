@@ -75,9 +75,7 @@ class TestPlateEmitter(unittest.TestCase):
 
     def test_no_reference_falls_back_to_the_up_axis(self):
         mn, mx = self._troffer()
-        self.assertEqual(
-            self._cls().from_bounds(mn, mx).normal, (0.0, 0.0, -1.0)
-        )
+        self.assertEqual(self._cls().from_bounds(mn, mx).normal, (0.0, 0.0, -1.0))
 
 
 class TestPlateEmitterFromPoints(unittest.TestCase):

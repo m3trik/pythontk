@@ -7,6 +7,7 @@ Focus: the dry-run contract. ``assess`` is the read-only twin of
 path, byte count) has to match what a real run then produces — a projection
 that drifts is worse than no projection at all.
 """
+
 import os
 import shutil
 import struct
@@ -79,7 +80,9 @@ class TestFormatBytes(unittest.TestCase):
 
     def test_delta_omits_percent_when_undefined(self):
         """A missing side or a zero-byte source has no meaningful percentage."""
-        self.assertEqual(FileUtils.format_bytes_delta(None, 1024), "(unknown) -> 1.0 KB")
+        self.assertEqual(
+            FileUtils.format_bytes_delta(None, 1024), "(unknown) -> 1.0 KB"
+        )
         self.assertEqual(FileUtils.format_bytes_delta(0, 1024), "0 bytes -> 1.0 KB")
 
     def test_mat_report_delegates_here(self):
@@ -108,13 +111,13 @@ class TestProject(unittest.TestCase):
 
     def test_replays_a_non_square_resize(self):
         plan = [Op("resize", "", {"size": (512, 256)})]
-        self.assertEqual(MapOptimizer.project(plan, 2048, 1024, "RGB"), (512, 256, "RGB"))
+        self.assertEqual(
+            MapOptimizer.project(plan, 2048, 1024, "RGB"), (512, 256, "RGB")
+        )
 
     def test_replays_force_pot(self):
         plan = [Op("force_pot", "", {"size": (256, 128)})]
-        self.assertEqual(
-            MapOptimizer.project(plan, 300, 100, "RGB"), (256, 128, "RGB")
-        )
+        self.assertEqual(MapOptimizer.project(plan, 300, 100, "RGB"), (256, 128, "RGB"))
 
     def test_empty_plan_is_identity(self):
         self.assertEqual(MapOptimizer.project([], 64, 32, "L"), (64, 32, "L"))
@@ -206,12 +209,8 @@ class TestPotAspectRatio(_TextureFixture):
         """The reported repro: the long edge is already POT and already inside
         the ceiling, so the only correct snap is no snap at all."""
         image = ImgUtils.create_image("RGB", (1024, 768))
-        plan = MapOptimizer.plan(
-            image, max_size=2048, force_pot=True, pot_mode="down"
-        )
-        self.assertEqual(
-            MapOptimizer.project(plan, 1024, 768, "RGB")[:2], (1024, 768)
-        )
+        plan = MapOptimizer.plan(image, max_size=2048, force_pot=True, pot_mode="down")
+        self.assertEqual(MapOptimizer.project(plan, 1024, 768, "RGB")[:2], (1024, 768))
 
     def test_short_edge_is_derived_from_the_source_aspect(self):
         """When the long edge really does move, the other one follows it."""
@@ -303,9 +302,7 @@ class TestPotAspectRatio(_TextureFixture):
         """1024x768 is already legal on its long edge -- do not touch it."""
         for mode in ("nearest", "down"):
             with self.subTest(mode=mode):
-                self.assertEqual(
-                    MapOptimizer._snap_pot(1024, 768, mode), (1024, 768)
-                )
+                self.assertEqual(MapOptimizer._snap_pot(1024, 768, mode), (1024, 768))
 
     def test_short_edge_is_deliberately_left_non_pot(self):
         """The residual non-POT short edge is the aspect ratio not being paid for."""
@@ -1133,9 +1130,7 @@ class PackedMapIntegrityTest(_TextureFixture):
 
     def test_resize_preserves_every_channel(self):
         path = self._packed()
-        written = MapOptimizer.optimize_map(
-            path, output_dir=self.test_dir, max_size=32
-        )
+        written = MapOptimizer.optimize_map(path, output_dir=self.test_dir, max_size=32)
         with ImgUtils.ensure_image(written) as result:
             self.assertEqual(result.size, (32, 32))
             self.assertEqual(result.mode, "RGBA")
@@ -1210,7 +1205,9 @@ class _FakeKtx2Encoder:
     def __init__(self):
         self.calls = []
 
-    def encode(self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None):
+    def encode(
+        self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None
+    ):
         self.calls.append({"codec": codec, "srgb": srgb, "quality": quality})
         width, height = source.size
         with open(output, "wb") as fh:
@@ -1234,9 +1231,7 @@ class TestKtx2Compression(_TextureFixture):
     def test_derivation_follows_the_lossy_gate(self):
         # Perceptual sRGB color -> the low-bitrate codec; its safety condition
         # is literally MapRegistry.is_lossy_safe.
-        codec, colorspace, note = MapOptimizer.resolve_compression(
-            "Base_Color", "ktx2"
-        )
+        codec, colorspace, note = MapOptimizer.resolve_compression("Base_Color", "ktx2")
         self.assertEqual((codec, colorspace, note), ("ETC1S", "sRGB", None))
         # Normals, packed masks, and unknown types are all UASTC.
         for map_type in ("Normal_OpenGL", "ORM", None):

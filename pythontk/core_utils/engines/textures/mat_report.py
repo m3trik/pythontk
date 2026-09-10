@@ -17,6 +17,7 @@ Record schema (all keys optional unless noted):
 - **texture-info record** (``get_texture_info``): ``{"name", "path", "size", "width",
   "height", "mode", "format"}``
 """
+
 import html as _html
 import urllib.parse as _urlparse
 from typing import Any, Dict, List
@@ -49,9 +50,13 @@ class MatReport:
         if not path:
             return ""
         display = _html.escape(path)
-        href_path = path.replace("\\", "/")  # forward slashes are valid on Windows file:// URLs
+        href_path = path.replace(
+            "\\", "/"
+        )  # forward slashes are valid on Windows file:// URLs
         href = "file:///" + _urlparse.quote(href_path.lstrip("/"), safe="/:")
-        return f"<a href='{href}' style='color:#9cf; text-decoration:none;'>{display}</a>"
+        return (
+            f"<a href='{href}' style='color:#9cf; text-decoration:none;'>{display}</a>"
+        )
 
     # ---- texture info ------------------------------------------------------
     @classmethod
@@ -82,7 +87,9 @@ class MatReport:
             f"Found <b>{len(info_list)}</b> valid texture(s) in scene.</p>"
         )
         body = _html.escape(cls.format_texture_info_text(info_list))
-        return head + "<pre style='font-family:monospace; color:#ddd;'>" + body + "</pre>"
+        return (
+            head + "<pre style='font-family:monospace; color:#ddd;'>" + body + "</pre>"
+        )
 
     # ---- material info -----------------------------------------------------
     @classmethod
@@ -193,7 +200,9 @@ class MatReport:
                     )
                     continue
                 if opt.get("recommended"):
-                    body_lines.append("    <span style='color:#ec5;'>Optimize:  YES</span>")
+                    body_lines.append(
+                        "    <span style='color:#ec5;'>Optimize:  YES</span>"
+                    )
                     for r in opt.get("reasons", []):
                         body_lines.append(
                             f"               <span style='color:#ec5;'>- {esc(str(r))}</span>"

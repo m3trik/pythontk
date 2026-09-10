@@ -38,9 +38,7 @@ class TestPolyline(unittest.TestCase):
         self.assertAlmostEqual(Polyline.length(pts, False), 6.0, places=6)
         res = Polyline.resample(pts, 10)
         self.assertEqual(len(res), 10)
-        gaps = [
-            math.dist(res[i - 1], res[i]) for i in range(1, len(res))
-        ]
+        gaps = [math.dist(res[i - 1], res[i]) for i in range(1, len(res))]
         self.assertTrue(all(abs(g - gaps[0]) < 1e-6 for g in gaps))
 
     def test_frames_tangent_and_normal_are_unit_and_perpendicular(self):
@@ -224,9 +222,10 @@ class TestOrderPoints(unittest.TestCase):
                 self.x, self.y, self.z = x, y, z
 
             def __eq__(self, other):
-                return (
-                    isinstance(other, P)
-                    and (self.x, self.y, self.z) == (other.x, other.y, other.z)
+                return isinstance(other, P) and (self.x, self.y, self.z) == (
+                    other.x,
+                    other.y,
+                    other.z,
                 )
 
             def __hash__(self):
@@ -349,6 +348,7 @@ class TestFromPointCloud(unittest.TestCase):
 
     def test_from_point_cloud_accepts_xyz_objects(self):
         """Accepts .x/.y/.z objects (like Maya MPoint / bpy Vector), not just sequences."""
+
         class P:
             def __init__(self, x, y, z):
                 self.x, self.y, self.z = x, y, z

@@ -5,6 +5,7 @@
 ``rembg`` is an optional native dependency and is not installed here, so
 these cover the capability gate rather than a real matting run.
 """
+
 import unittest
 from unittest import mock
 
@@ -50,8 +51,9 @@ class MaskGeneratorAvailabilityTest(BaseTestCase):
     def test_generate_masks_reports_the_live_pil_state(self):
         """The unavailable log must not quote the stale bool either -- it is
         the line an operator reads to decide whether to install anything."""
-        with mock.patch.object(mod, "REMBG_AVAILABLE", False), mock.patch.object(
-            mod, "PIL_AVAILABLE", False
+        with (
+            mock.patch.object(mod, "REMBG_AVAILABLE", False),
+            mock.patch.object(mod, "PIL_AVAILABLE", False),
         ):
             gen = mod.MaskGenerator()
             with self.assertLogs(mod.logger, level="ERROR") as caught:

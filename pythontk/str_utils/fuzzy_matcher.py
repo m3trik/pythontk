@@ -127,7 +127,6 @@ class FuzzyMatcher:
                     missing_base_name == extra_base_name
                     and missing_node_name != extra_node_name
                 ):
-
                     # Check if they have the same parent
                     missing_parent = path_separator.join(
                         missing_path.split(path_separator)[:-1]
@@ -402,9 +401,7 @@ class FuzzyMatcher:
             if isinstance(strat, str):
                 strat_name = strat
                 matcher = FuzzyMatcher._builtin_strategy(strat)
-                result = matcher(
-                    target, candidates, score_threshold, ambiguity_delta
-                )
+                result = matcher(target, candidates, score_threshold, ambiguity_delta)
             elif callable(strat):
                 strat_name = getattr(strat, "__name__", "custom")
                 result = strat(target, candidates)

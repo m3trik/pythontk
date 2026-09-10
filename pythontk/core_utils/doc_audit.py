@@ -25,6 +25,7 @@ callables whose signature is not introspectable. The audit is a tripwire
 for API drift, not an executor; literal *outputs* a document claims should
 be pinned by an ordinary test beside it (see ``test/test_doc_audit.py``).
 """
+
 import ast
 import importlib
 import inspect
@@ -113,9 +114,7 @@ class DocAudit(help_mixin.HelpMixin):
                         module = importlib.import_module(alias.name)
                         # `import a.b` binds `a`; `import a.b as c` binds a.b.
                         ns[bound] = (
-                            module
-                            if alias.asname
-                            else importlib.import_module(bound)
+                            module if alias.asname else importlib.import_module(bound)
                         )
                     except Exception:
                         shadowed.add(bound)

@@ -18,6 +18,7 @@ Run with:
     python -m pytest test_iter.py -v
     python test_iter.py
 """
+
 import unittest
 
 from pythontk import IterUtils
@@ -641,9 +642,7 @@ class IterTest(BaseTestCase):
         """negate_prefix moves a prefixed include pattern to the exclude set."""
         items = ["keep_one", "keep_drop", "other"]
         # Include anything with 'keep', but drop anything with 'drop'.
-        result = IterUtils.filter_list(
-            items, inc="*keep*, !*drop*", negate_prefix="!"
-        )
+        result = IterUtils.filter_list(items, inc="*keep*, !*drop*", negate_prefix="!")
         self.assertEqual(result, ["keep_one"])
 
     def test_filter_list_negate_prefix_only_negated(self):
@@ -668,9 +667,7 @@ class IterTest(BaseTestCase):
     def test_filter_list_negate_prefix_strips_whitespace_after_marker(self):
         """A space after the marker ("! *drop*") still excludes, not a dead pattern."""
         items = ["keep_one", "keep_drop", "other"]
-        result = IterUtils.filter_list(
-            items, inc="*keep*, ! *drop*", negate_prefix="!"
-        )
+        result = IterUtils.filter_list(items, inc="*keep*, ! *drop*", negate_prefix="!")
         self.assertEqual(result, ["keep_one"])
         # A prefix followed by only whitespace is a bare marker → dropped.
         self.assertEqual(

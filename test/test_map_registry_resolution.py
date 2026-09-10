@@ -1,6 +1,7 @@
 #!/usr/bin/python
 # coding=utf-8
 """Tests for MapRegistry.is_resolution_critical / get_resolution_critical_types."""
+
 import unittest
 
 from pythontk import MapRegistry

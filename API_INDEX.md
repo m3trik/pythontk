@@ -508,6 +508,18 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: horizontal_axes, far_point, model, project, to_frame, fractions
 - `class ShadowRaster(NamedTuple)`
 
+### `geo_utils/uv_budget.py` — UV texture-budget planning: how many maps, at what texel density (numbers in -> plan out).
+- `class BudgetItem`
+  - methods: demand
+- `class BudgetPage`
+  - methods: fill
+- `class BudgetRow`
+  - methods: assignment, utilization, worst_fill, underfilled, texels
+- `class BudgetPlan`
+  - methods: rows, density_ratio
+- `class UvBudget(HelpMixin)`
+  - methods: padding_for, first_fit_decreasing, partition_lpt, pages_at_density, density_at_pages, plan
+
 ### `geo_utils/uv_pack.py` — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 - `class PackIslandsResult`
 - `class UvPack(HelpMixin)`

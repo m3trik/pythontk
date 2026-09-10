@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_hotkey_utils.py -v
     python test_hotkey_utils.py
 """
+
 import unittest
 
 from pythontk.str_utils.hotkey_utils import HotkeyUtils
@@ -48,7 +49,9 @@ class HotkeyUtilsTest(BaseTestCase):
         self.assertEqual(HotkeyUtils.key_to_qt_sequence("F3"), "F3")
 
     def test_humanize_label_basic(self):
-        self.assertEqual(HotkeyUtils.humanize_label("back_face_culling"), "Back Face Culling")
+        self.assertEqual(
+            HotkeyUtils.humanize_label("back_face_culling"), "Back Face Culling"
+        )
 
     def test_humanize_label_with_prefix(self):
         self.assertEqual(
@@ -59,7 +62,9 @@ class HotkeyUtilsTest(BaseTestCase):
     def test_humanize_label_acronyms(self):
         acronyms = {"uv": "UV", "id": "ID"}
         self.assertEqual(
-            HotkeyUtils.humanize_label("m_toggle_uv_select_type", prefix="m_", acronyms=acronyms),
+            HotkeyUtils.humanize_label(
+                "m_toggle_uv_select_type", prefix="m_", acronyms=acronyms
+            ),
             "Toggle UV Select Type",
         )
         self.assertEqual(

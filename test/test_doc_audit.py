@@ -11,6 +11,7 @@ Two layers, deliberately in one file:
    document. Editing an example or renaming an API without updating the
    docs fails here, not in a user's session.
 """
+
 import types
 import unittest
 from pathlib import Path
@@ -132,8 +133,7 @@ class TestDocAuditPrimitive(unittest.TestCase):
             side_effect=_boom,
         ):
             problems = DocAudit.audit_code(
-                "from definitely_not_a_real_module_boom import Thing\n"
-                "Thing.member"
+                "from definitely_not_a_real_module_boom import Thing\nThing.member"
             )
         self.assertEqual(problems, [])
 
@@ -176,9 +176,7 @@ class TestDocAuditPrimitive(unittest.TestCase):
             "pythontk.core_utils.doc_audit.importlib.import_module", side_effect=_fake
         ):
             problems = DocAudit.audit_code(
-                "from fake_star_all_mod import *\n"
-                "Exported.bogus\n"
-                "NotExported.bogus\n",
+                "from fake_star_all_mod import *\nExported.bogus\nNotExported.bogus\n",
                 roots={},
             )
         self.assertEqual(len(problems), 1)
@@ -205,9 +203,7 @@ class TestDocAuditPrimitive(unittest.TestCase):
             "pythontk.core_utils.doc_audit.importlib.import_module", side_effect=_fake
         ):
             problems = DocAudit.audit_code(
-                "from fake_star_dir_mod import *\n"
-                "Public.bogus\n"
-                "_private.bogus\n",
+                "from fake_star_dir_mod import *\nPublic.bogus\n_private.bogus\n",
                 roots={},
             )
         self.assertEqual(len(problems), 1)
@@ -318,7 +314,9 @@ class TestReadmeClaimedOutputs(unittest.TestCase):
         self.check(actual, ["mesh_main", "mesh_LOD0"], "['mesh_main', 'mesh_LOD0']")
 
     def test_find_str_and_format_example(self):
-        actual = ptk.find_str_and_format(["mesh_old", "cube_old"], to="*_new", fltr="*_old")
+        actual = ptk.find_str_and_format(
+            ["mesh_old", "cube_old"], to="*_new", fltr="*_old"
+        )
         self.check(actual, ["mesh_new", "cube_new"], "['mesh_new', 'cube_new']")
 
     def test_remap_example(self):

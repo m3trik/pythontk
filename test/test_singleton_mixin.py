@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_singleton_mixin.py -v
     python test_singleton_mixin.py
 """
+
 import unittest
 
 from pythontk.core_utils.singleton_mixin import SingletonMixin

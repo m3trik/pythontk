@@ -13,6 +13,7 @@ twice. Each package's ``MacroManager`` still owns its own DCC-specific pieces
 own class-hierarchy introspection (macro discovery/category/conflict methods
 that walk ``cls.__mro__``); only the DCC-agnostic conversion logic lives here.
 """
+
 from typing import Dict, Optional, Tuple
 
 
@@ -98,12 +99,14 @@ class HotkeyUtils:
         return "+".join(seq)
 
     @staticmethod
-    def humanize_label(name: str, prefix: str = "", acronyms: Optional[Dict[str, str]] = None) -> str:
+    def humanize_label(
+        name: str, prefix: str = "", acronyms: Optional[Dict[str, str]] = None
+    ) -> str:
         """Humanize a ``snake_case`` name for display, e.g. ``back_face_culling`` ->
         "Back Face Culling". *acronyms* maps a lowercased word to its preferred
         display casing (e.g. ``{"uv": "UV"}``); a word already upper-case in the
         source (len > 1) is preserved as-is regardless of *acronyms*."""
-        base = name[len(prefix):] if prefix and name.startswith(prefix) else name
+        base = name[len(prefix) :] if prefix and name.startswith(prefix) else name
         acronyms = acronyms or {}
         words = []
         for word in base.split("_"):

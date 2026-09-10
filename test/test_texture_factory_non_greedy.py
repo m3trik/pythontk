@@ -3,12 +3,15 @@
 """
 Test non-greedy map generation in TextureMapFactory.
 """
+
 import os
 import tempfile
 import shutil
 import unittest
 from pythontk import ImgUtils
-from pythontk.core_utils.engines.textures.map_factory import MapFactory as TextureMapFactory
+from pythontk.core_utils.engines.textures.map_factory import (
+    MapFactory as TextureMapFactory,
+)
 
 
 class TestTextureFactoryNonGreedy(unittest.TestCase):

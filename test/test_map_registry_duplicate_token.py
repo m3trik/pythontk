@@ -7,6 +7,7 @@ leaves the name ending in no registry alias, so the map classifies as nothing
 and every consumer -- packed-map unpacking, shader wiring, grouping -- silently
 skips it.  Added: 2026-08-18
 """
+
 import unittest
 
 from pythontk import MapRegistry, MapFactory

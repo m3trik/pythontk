@@ -88,9 +88,7 @@ class PluginInstaller(_PluginInstallerInternal):
     """
 
     @staticmethod
-    def is_plugin_current(
-        plugin_src: Union[str, Path], dest: Union[str, Path]
-    ) -> bool:
+    def is_plugin_current(plugin_src: Union[str, Path], dest: Union[str, Path]) -> bool:
         """True when *dest* already serves the current *plugin_src*.
 
         A symlink install is current when it still points at *plugin_src*.

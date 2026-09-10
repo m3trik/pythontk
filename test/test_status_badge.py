@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_status_badge.py -v
     python test_status_badge.py
 """
+
 import unittest
 from pathlib import Path
 
@@ -160,9 +161,7 @@ class StatusBadgeTest(BaseTestCase):
         readme.write_text("# pkg\n", encoding="utf-8")
         try:
             StatusBadge.update_test_badge(readme, 5, 0, test_dir=TEMP_DIR / "test")
-            self.assertIn(
-                "](../test/)", readme.read_text(encoding="utf-8")
-            )
+            self.assertIn("](../test/)", readme.read_text(encoding="utf-8"))
         finally:
             readme.unlink()
             docs.rmdir()
@@ -235,12 +234,12 @@ class TestGated(unittest.TestCase):
         import types
 
         module = types.ModuleType(name)
-        exec(compile(source, name + '.py', 'exec'), module.__dict__)
+        exec(compile(source, name + ".py", "exec"), module.__dict__)
         sys.modules[name] = module
         self.addCleanup(sys.modules.pop, name, None)
 
         suite = unittest.TestLoader().loadTestsFromModule(module)
-        with open(os.devnull, 'w') as sink:
+        with open(os.devnull, "w") as sink:
             result = unittest.TextTestRunner(stream=sink, verbosity=0).run(suite)
 
         cases = list(result.skipped) + list(result.errors) + list(result.failures)
@@ -251,33 +250,34 @@ class TestGated(unittest.TestCase):
         }
 
     def test_setupclass_skip_credits_its_module(self):
-        seen = self._modules_seen('test_gate_probe_setupclass', self.SETUPCLASS_PROBE)
-        self.assertEqual(seen, {'test_gate_probe_setupclass'})
+        seen = self._modules_seen("test_gate_probe_setupclass", self.SETUPCLASS_PROBE)
+        self.assertEqual(seen, {"test_gate_probe_setupclass"})
 
     def test_setupmodule_skip_credits_its_module(self):
-        seen = self._modules_seen('test_gate_probe_setupmodule', self.SETUPMODULE_PROBE)
-        self.assertEqual(seen, {'test_gate_probe_setupmodule'})
+        seen = self._modules_seen("test_gate_probe_setupmodule", self.SETUPMODULE_PROBE)
+        self.assertEqual(seen, {"test_gate_probe_setupmodule"})
 
     def test_an_environment_gated_module_does_not_block_the_badge(self):
         """The whole point: a green run carrying such skips still stamps."""
-        seen = self._modules_seen('test_gate_probe_allowed', self.SETUPCLASS_PROBE)
+        seen = self._modules_seen("test_gate_probe_allowed", self.SETUPCLASS_PROBE)
         allowed, reason = StatusBadge.gate(
-            {'test_gate_probe_allowed'}, seen, passed=12, failed=0
+            {"test_gate_probe_allowed"}, seen, passed=12, failed=0
         )
         self.assertTrue(allowed, reason)
 
     def test_a_module_that_never_imported_still_blocks_the_badge(self):
         """The case the gate exists for must keep working."""
         allowed, reason = StatusBadge.gate(
-            {'test_a', 'test_b'}, {'test_a'}, passed=9, failed=0
+            {"test_a", "test_b"}, {"test_a"}, passed=9, failed=0
         )
         self.assertFalse(allowed)
-        self.assertIn('test_b', reason)
+        self.assertIn("test_b", reason)
 
     def test_a_run_with_no_cases_at_all_blocks_the_badge(self):
         allowed, reason = StatusBadge.gate(set(), set(), passed=0, failed=0)
         self.assertFalse(allowed)
-        self.assertIn('no test cases ran', reason)
+        self.assertIn("no test cases ran", reason)
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

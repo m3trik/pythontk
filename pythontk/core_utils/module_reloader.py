@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 """Helpers for hot-reloading packages and their submodules."""
+
 from __future__ import annotations
 
 import fnmatch
@@ -164,9 +165,7 @@ class ModuleReloader:
             if self._canonical_module_name(m) not in dependency_names
         ]
         last_block = [
-            m
-            for m in last_block
-            if self._canonical_module_name(m) not in first_names
+            m for m in last_block if self._canonical_module_name(m) not in first_names
         ]
 
         ordered_modules: List[ModuleType] = []

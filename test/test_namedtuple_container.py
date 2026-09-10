@@ -7,6 +7,7 @@ Run with:
     python -m pytest test_namedtuple_container.py -v
     python test_namedtuple_container.py
 """
+
 import os
 import tempfile
 import unittest
@@ -307,7 +308,9 @@ class NamedTupleContainerContractTest(BaseTestCase):
         )
         self.assertEqual(container.filename, ["a.txt", "b.txt"])
         self.assertTrue(hasattr(container[0], "_fields"))
-        self.assertEqual(container.get(filename="b.txt", return_field="filepath"), "/p/b.txt")
+        self.assertEqual(
+            container.get(filename="b.txt", return_field="filepath"), "/p/b.txt"
+        )
 
     def test_get_single_no_match_returns_none(self):
         """conditions + return_field with no match returns None (as documented)."""
@@ -318,7 +321,9 @@ class NamedTupleContainerContractTest(BaseTestCase):
         """List-returning paths stay lists even when empty."""
         container = NamedTupleContainer(named_tuples=self.people)
         self.assertEqual(container.get(age=99), [])
-        self.assertEqual(container.get(return_field="name"), ["Alice", "Bob", "Charlie"])
+        self.assertEqual(
+            container.get(return_field="name"), ["Alice", "Bob", "Charlie"]
+        )
 
     def test_modify_rejects_namedtuple_method_names(self):
         """Field validation must check _fields, not hasattr (count/index are methods)."""

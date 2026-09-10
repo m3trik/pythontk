@@ -3,6 +3,7 @@
 """
 Tests for MapRegistry ambiguity resolution and alias handling.
 """
+
 import unittest
 from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
@@ -181,9 +182,7 @@ class UtilityBakeMapTest(unittest.TestCase):
 
     def test_vector_displacement_keeps_its_three_channels(self):
         """The point of the separate type: ``L`` would discard Y and Z."""
-        self.assertEqual(
-            MapRegistry().get_map_modes()["Vector_Displacement"], "RGB"
-        )
+        self.assertEqual(MapRegistry().get_map_modes()["Vector_Displacement"], "RGB")
 
     def test_utility_normals_are_not_offered_as_the_shader_normal(self):
         """``select_normal_type`` wires tangent-space maps only."""
@@ -290,13 +289,17 @@ class CounterpartSpellingTest(unittest.TestCase):
 
     def test_a_non_normal_destination_is_refused(self):
         self.assertEqual(
-            MapRegistry.counterpart_normal_spelling("NormalDX", "Roughness"), "Roughness"
+            MapRegistry.counterpart_normal_spelling("NormalDX", "Roughness"),
+            "Roughness",
         )
 
     def test_every_counterpart_resolves_to_the_destination_type(self):
         """The swapped spelling must be a name the classifier actually accepts."""
         registry = MapRegistry()
-        pairs = (("Normal_DirectX", "Normal_OpenGL"), ("Normal_OpenGL", "Normal_DirectX"))
+        pairs = (
+            ("Normal_DirectX", "Normal_OpenGL"),
+            ("Normal_OpenGL", "Normal_DirectX"),
+        )
         for src, dst in pairs:
             for spelling in registry.get_map_types()[src]:
                 counterpart = MapRegistry.counterpart_normal_spelling(spelling, dst)

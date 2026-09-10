@@ -11,6 +11,7 @@ the pattern used by ``FrameExtractor`` for cv2.
 Output filenames default to ``{basename}_mask.png`` so they pair with
 Metashape's ``importMasks(template="{filename}_mask.png")``.
 """
+
 import io
 import logging
 import os

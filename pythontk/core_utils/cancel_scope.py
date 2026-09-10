@@ -41,6 +41,7 @@ thread starts with an empty context: :meth:`current` returns ``None`` off the
 activating thread, by design — pull sources must never be polled from a
 non-owner thread (a DCC API call from a worker thread crashes the host).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -236,7 +237,9 @@ class CancelScope:
                     self._listeners.append(listener)
         return self
 
-    def remove_listener(self, listener: Callable[["CancelScope"], None]) -> "CancelScope":
+    def remove_listener(
+        self, listener: Callable[["CancelScope"], None]
+    ) -> "CancelScope":
         """Unregister a cancel listener (no-op when absent)."""
         with self._lock:
             with contextlib.suppress(ValueError):
