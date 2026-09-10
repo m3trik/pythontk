@@ -502,21 +502,32 @@ class ShotPlanner(_ShotPlannerInternal):
         return [g for g in groups if len(g[1]) + len(g[2]) > 1 and g[1]]
 
     @staticmethod
-    def plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan:
+    def plan_respace(
+        store: ShotStore,
+        gap: float,
+        start_frame: float,
+        respect_locks: bool = True,
+    ) -> MovePlan:
         """Build a plan that lays shots out sequentially with uniform gaps.
 
-        Locked gaps preserve their current width.  Durations are preserved;
+        Locked gaps preserve their current width unless *respect_locks* is
+        False, which spends *gap* on every gap alike -- the caller has said
+        to re-space the whole sequence and mean it.  Durations are preserved;
         only start frames change.  All new positions are snapped through
         ``store.snap`` so the in-memory model stays integer-clean.
+
+        The locks themselves are untouched either way: an override is one
+        operation ignoring them, not a way to quietly unlock a gap.
         """
         shots = store.sorted_shots()
         if not shots:
             return MovePlan()
 
         locked_widths: dict = {}
-        for i in range(len(shots) - 1):
-            if store.is_gap_locked(shots[i].shot_id, shots[i + 1].shot_id):
-                locked_widths[i] = max(0.0, shots[i + 1].start - shots[i].end)
+        if respect_locks:
+            for i in range(len(shots) - 1):
+                if store.is_gap_locked(shots[i].shot_id, shots[i + 1].shot_id):
+                    locked_widths[i] = max(0.0, shots[i + 1].start - shots[i].end)
 
         moves: Dict[int, ShotMove] = {}
         cursor = start_frame

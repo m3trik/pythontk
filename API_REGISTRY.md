@@ -91,6 +91,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
 - [`geo_utils/shadow_horizon.py`](#geo_utils--shadow_horizon) — Height-field shadow maps: a ground shadow that follows the light at runtime.
 - [`geo_utils/shadow_projection.py`](#geo_utils--shadow_projection) — Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC.
+- [`geo_utils/uv_budget.py`](#geo_utils--uv_budget) — UV texture-budget planning: how many maps, at what texel density (numbers in -> plan out).
 - [`geo_utils/uv_pack.py`](#geo_utils--uv_pack) — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 - [`geo_utils/uv_transfer.py`](#geo_utils--uv_transfer) — Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
 - [`img_utils/_img_utils.py`](#img_utils--_img_utils)
@@ -193,9 +194,9 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 - **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L889)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1039)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1041)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1120)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1124)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -242,8 +243,8 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
 Cooperative cancellation — one scope shared by every cancel affordance.
 
-- **[`class OperationCancelled(BaseException)`](pythontk/pythontk/core_utils/cancel_scope.py#L55)** — Raised at a checkpoint when the governing scope has been cancelled.
-- **[`class CancelScope`](pythontk/pythontk/core_utils/cancel_scope.py#L71)** — A cancellation flag with pull sources, ambient activation, and metrics.
+- **[`class OperationCancelled(BaseException)`](pythontk/pythontk/core_utils/cancel_scope.py#L56)** — Raised at a checkpoint when the governing scope has been cancelled.
+- **[`class CancelScope`](pythontk/pythontk/core_utils/cancel_scope.py#L72)** — A cancellation flag with pull sources, ambient activation, and metrics.
   - `CancelScope.cancelled(self) -> bool` *(property)* — True when this scope (or an enclosing one) has been cancelled.
   - `CancelScope.reason(self) -> Optional[str]` *(property)* — Why the scope was cancelled (``None`` while it is still live).
   - `CancelScope.tick_count(self) -> int` *(property)* — Number of cooperative checkpoints reached so far.
@@ -319,7 +320,7 @@ Lightweight, DCC-agnostic color primitives.
 
 Audit markdown code examples against the live package surface.
 
-- **[`class DocAudit(help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/doc_audit.py#L41)** — Validate markdown code examples against live objects.
+- **[`class DocAudit(help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/doc_audit.py#L42)** — Validate markdown code examples against live objects.
   - `DocAudit.default_roots(cls) -> dict` *(class)*
   - `DocAudit.extract_code_blocks(cls, markdown: str, lang: str = 'python') -> List[str]` *(class)* — Return the contents of every fenced ``lang`` code block.
   - `DocAudit.audit_markdown(cls, markdown: str, roots: Optional[Mapping[str, Any]] = None, lang: str = 'python') -> List[str]` *(class)* — Audit every fenced ``lang`` block;
@@ -330,7 +331,7 @@ Audit markdown code examples against the live package surface.
 
 Sort separated mesh parts into repeated-assembly copies.
 
-- **[`class AssemblySorter`](pythontk/pythontk/core_utils/engines/instancing/assembly_sorter.py#L37)** — Cluster separated parts into copies of repeated assemblies.
+- **[`class AssemblySorter`](pythontk/pythontk/core_utils/engines/instancing/assembly_sorter.py#L38)** — Cluster separated parts into copies of repeated assemblies.
   - `AssemblySorter.sort(self, parts: List[Dict[str, Any]]) -> List[List[int]]` — Sort *parts* into assembly groups;
 
 <a id="core_utils--engines--key_stash--key_stash_model"></a>
@@ -602,16 +603,16 @@ Pure planning layer for multi-shot topology transformations.
   - `ShotPlanner.plan_pivot_move(store: ShotStore, shot_id: int, new_start: float) -> MovePlan` *(static)* — A plan that moves one shot to ``new_start``, rippling nothing.
   - `ShotPlanner.boundary_splits(store: ShotStore, plan: MovePlan, eps: float = _EPS) -> List[Tuple[int, int, float, float]]` *(static)* — Shared samples this plan pulls apart.
   - `ShotPlanner.key_collisions(windows: Sequence[Tuple[float, float, bool, bool, float]], times: Iterable[float], eps: float = 0.001) -> List[Tuple[float, List[float], List[float]]]` *(static)* — Samples of one curve that a plan would land on the same frame.
-  - `ShotPlanner.plan_respace(store: ShotStore, gap: float, start_frame: float) -> MovePlan` *(static)* — Build a plan that lays shots out sequentially with uniform gaps.
+  - `ShotPlanner.plan_respace(store: ShotStore, gap: float, start_frame: float, respect_locks: bool = True) -> MovePlan` *(static)* — Build a plan that lays shots out sequentially with uniform gaps.
   - `ShotPlanner.plan_gap_retimes(store: ShotStore, plan: MovePlan) -> List[GapRetime]` *(static)* — Every gap in *plan* whose width changes, as a :class:`GapRetime`.
   - `ShotPlanner.plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float, carry_gap: bool = False) -> MovePlan` *(static)* — Build a plan that shifts every shot starting at or after
   - `ShotPlanner.plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan` *(static)* — Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.
   - `ShotPlanner.plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float, carry_gap: bool = False) -> MovePlan` *(static)* — Build a plan that shifts every shot ending at or before
-- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L799)** — A single shot's source and destination ranges.
+- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L810)** — A single shot's source and destination ranges.
   - `ShotMove.delta(self) -> float` *(property)*
   - `ShotMove.moves(self) -> bool` *(property)*
-- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L834)** — Resolved multi-shot timeline mutation.
-- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L857)** — One inter-shot gap whose WIDTH changes, and where its content must land.
+- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L845)** — Resolved multi-shot timeline mutation.
+- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L868)** — One inter-shot gap whose WIDTH changes, and where its content must land.
   - `GapRetime.width(self) -> float` *(property)*
   - `GapRetime.scale(self) -> float` *(property)* — Time factor about the gap's left edge (0.0 collapses the gap).
   - `GapRetime.shrinks(self) -> bool` *(property)*
@@ -798,8 +799,8 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 Plan, assess, and apply map (texture) optimizations.
 
-- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L134)** — One operation in an optimization plan.
-- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L147)** — Plan, assess, and apply map (texture) optimizations.
+- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L135)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L148)** — Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.resolve_size_clamp(cls, max_size: Any, template: Optional[str] = None, logger: Optional[Any] = None) -> Dict[str, Any]` *(class)* — Turn a user-facing "max size" mode into :meth:`assess` / :meth:`optimize_map` kwargs.
   - `MapOptimizer.describe_size_clamp(cls, max_size: Any, template: Optional[str] = None, logger: Optional[Any] = None) -> str` *(class)* — Human-readable form of :meth:`resolve_size_clamp`, for log lines.
   - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest', output_profile: Optional[str] = None, output_type: Optional[str] = None) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
@@ -855,7 +856,7 @@ Plan, assess, and apply map (texture) optimizations.
 
 DCC-agnostic formatters for material / texture info reports.
 
-- **[`class MatReport`](pythontk/pythontk/core_utils/engines/textures/mat_report.py#L28)** — Pure record→text/HTML formatters for material & texture info reports.
+- **[`class MatReport`](pythontk/pythontk/core_utils/engines/textures/mat_report.py#L29)** — Pure record→text/HTML formatters for material & texture info reports.
   - `MatReport.format_texture_info_text(cls, info_list: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_texture_info`` output as a plain-text report.
   - `MatReport.format_texture_info_html(cls, info_list: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_texture_info`` output as styled HTML.
   - `MatReport.format_mat_info_text(cls, records: List[Dict[str, Any]]) -> str` *(class)* — Render ``get_mat_info`` output as a plain-text report.
@@ -904,7 +905,7 @@ Region-mask engine — named face-group masks that gate texture regions at runti
   - `RegionMaskManifest.from_json(cls, text: str) -> 'RegionMaskManifest'` *(class)*
   - `RegionMaskManifest.save(self, path: str) -> str`
   - `RegionMaskManifest.load(cls, path: str) -> 'RegionMaskManifest'` *(class)*
-- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L226)** — Slot-assignment model for region groups — persistence injected.
+- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L228)** — Slot-assignment model for region groups — persistence injected.
   - `RegionGroupRegistry.empty(self) -> dict`
   - `RegionGroupRegistry.read(self) -> dict` — The stored registry, or a fresh empty one (never raises).
   - `RegionGroupRegistry.write(self, registry: dict) -> None` — Persist *registry*, or clear the channel when it holds nothing.
@@ -918,7 +919,7 @@ Region-mask engine — named face-group masks that gate texture regions at runti
   - `RegionGroupRegistry.compact(self) -> List[int]` — Reclaim retired slots.
   - `RegionGroupRegistry.set_encoding(self, encoding: str, **info) -> None` — Record the encoding the last bake produced (plus mask info).
   - `RegionGroupRegistry.manifest(self, color_set: Optional[str] = None) -> Optional[RegionMaskManifest]` — The manifest for the current registry, or None when it has no groups.
-- **[`class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L495)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
+- **[`class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L489)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
   - `RegionMaskPacker.groups(self) -> List[RegionGroup]` *(property)*
   - `RegionMaskPacker.add_group(self, name: str, uv_triangles, *, slot: Optional[int] = None, default: float = 1.0, attr: Optional[str] = None) -> RegionGroup` — Register a group and its UV coverage.
   - `RegionMaskPacker.validate(self) -> List[str]` — Non-fatal authoring warnings (hard errors raise in ``add_group``).
@@ -985,7 +986,7 @@ The Scene Exporter panels' export-button contract, written once.
 
 HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
 
-- **[`class HelpMixin`](pythontk/pythontk/core_utils/help_mixin.py#L17)** — A mixin providing enhanced help() functionality with filtering and sorting.
+- **[`class HelpMixin`](pythontk/pythontk/core_utils/help_mixin.py#L18)** — A mixin providing enhanced help() functionality with filtering and sorting.
   - `HelpMixin.help(cls, name: Optional[str] = None, *, members: Optional[str] = None, inherited: bool = True, brief: bool = False, sort: bool = False, private: bool = False, returns: bool = False, as_dict: bool = False, as_json: bool = False) -> Any` *(class)* — Display or return help information for this class or a specific member.
   - `HelpMixin.source(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]` *(class)* — Get source code for the class or a specific member.
   - `HelpMixin.where(cls, name: Optional[str] = None, *, returns: bool = False) -> Optional[str]` *(class)* — Get the file and line number where the class or member is defined.
@@ -1051,7 +1052,7 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
 
 Pure string primitives for delimited hierarchy paths.
 
-- **[`class HierarchyPath`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_path.py#L25)** — Namespace for pure hierarchy-path string operations.
+- **[`class HierarchyPath`](pythontk/pythontk/core_utils/hierarchy_utils/hierarchy_path.py#L26)** — Namespace for pure hierarchy-path string operations.
   - `HierarchyPath.clean_namespace(name: str, namespace_separator: str = ':') -> str` *(static)* — Remove any namespace prefix from a single component name.
   - `HierarchyPath.split(path: str, path_separator: str = '|') -> List[str]` *(static)* — Split a hierarchy path into its components.
   - `HierarchyPath.join(components: List[str], path_separator: str = '|') -> str` *(static)* — Join components into a hierarchy path.
@@ -1109,10 +1110,10 @@ Class-scoped logging toolkit.
 
 Helpers for hot-reloading packages and their submodules.
 
-- [`reload_package(package: ModuleRef, **kwargs) -> ReloadReport`](pythontk/pythontk/core_utils/module_reloader.py#L451) — Convenience wrapper around :class:`ModuleReloader`.
-- **[`class ReloadReport(List[ModuleType])`](pythontk/pythontk/core_utils/module_reloader.py#L19)** — List of successfully reloaded modules, with failure/skip details attached.
+- [`reload_package(package: ModuleRef, **kwargs) -> ReloadReport`](pythontk/pythontk/core_utils/module_reloader.py#L450) — Convenience wrapper around :class:`ModuleReloader`.
+- **[`class ReloadReport(List[ModuleType])`](pythontk/pythontk/core_utils/module_reloader.py#L20)** — List of successfully reloaded modules, with failure/skip details attached.
   - `ReloadReport.ok(self) -> bool` *(property)* — True when no reload attempt raised.
-- **[`class ModuleReloader`](pythontk/pythontk/core_utils/module_reloader.py#L44)** — Flexible controller for reloading packages and related modules.
+- **[`class ModuleReloader`](pythontk/pythontk/core_utils/module_reloader.py#L45)** — Flexible controller for reloading packages and related modules.
   - `ModuleReloader.reload(self, package: ModuleRef, *, include_submodules: Optional[bool] = None, dependencies_first: Optional[Iterable[ModuleRef]] = None, dependencies_last: Optional[Iterable[ModuleRef]] = None, predicate: Optional[Callable[[ModuleType], bool]] = None, before_reload: Optional[Callable[[ModuleType], None]] = None, after_reload: Optional[Callable[[ModuleType], None]] = None, import_missing: Optional[bool] = None, verbose: Optional[Union[bool, int]] = None, max_passes: Optional[int] = None, exclude_modules: Optional[Iterable[str]] = None) -> ReloadReport` — Reload a package and return the modules processed.
 
 <a id="core_utils--module_resolver"></a>
@@ -1256,11 +1257,11 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
 
 App-agnostic line-stream primitives for launched processes and log files.
 
-- **[`class TeeStream`](pythontk/pythontk/core_utils/process_stream.py#L40)** — Write text to several streams at once;
+- **[`class TeeStream`](pythontk/pythontk/core_utils/process_stream.py#L41)** — Write text to several streams at once;
   - `TeeStream.write(self, text: str) -> int`
   - `TeeStream.writelines(self, lines) -> None`
   - `TeeStream.flush(self) -> None`
-- **[`class OutputStream`](pythontk/pythontk/core_utils/process_stream.py#L96)** — Thread-safe, multi-consumer text stream with bounded history.
+- **[`class OutputStream`](pythontk/pythontk/core_utils/process_stream.py#L97)** — Thread-safe, multi-consumer text stream with bounded history.
   - `OutputStream.push(self, line: str, source: str = '') -> None` — Append a line.
   - `OutputStream.subscribe(self, callback: Callable[[str, str], None], replay_history: bool = False) -> Callable[[], None]` — Register ``callback(source, line)``.
   - `OutputStream.history(self) -> List[Tuple[str, str]]` — Snapshot the current history buffer.
@@ -1268,9 +1269,9 @@ App-agnostic line-stream primitives for launched processes and log files.
   - `OutputStream.wait_for(self, pattern: Union[str, Pattern], timeout: Optional[float] = None, source: Optional[str] = None, include_history: bool = True) -> Optional[Tuple[str, str]]` — Block until a line matches *pattern*, or *timeout* expires.
   - `OutputStream.close(self) -> None` — Mark the stream closed.
   - `OutputStream.closed(self) -> bool` *(property)*
-- **[`class ProcessReader(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L259)** — Reads a subprocess pipe line-by-line into an :class:`OutputStream`.
+- **[`class ProcessReader(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L260)** — Reads a subprocess pipe line-by-line into an :class:`OutputStream`.
   - `ProcessReader.run(self) -> None`
-- **[`class LogTailer(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L287)** — Tails a log file from its current size forward.
+- **[`class LogTailer(threading.Thread)`](pythontk/pythontk/core_utils/process_stream.py#L288)** — Tails a log file from its current size forward.
   - `LogTailer.stop(self) -> None`
   - `LogTailer.run(self) -> None`
 
@@ -1316,7 +1317,7 @@ Run a script in an external app, block until it exits, and collect an artifact.
 
 - **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L59)** — Run a script in an external app, block, and collect its artifact.
   - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
-- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L191)** — What a successful :func:`run_script_to_artifact` returns.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L193)** — What a successful :func:`run_script_to_artifact` returns.
 
 <a id="core_utils--script_template"></a>
 ### `core_utils/script_template.py`
@@ -1361,7 +1362,7 @@ Shields.io status badges embedded in a markdown file.
 
 Timed multi-step press toggles.
 
-- **[`class StepToggle`](pythontk/pythontk/core_utils/step_toggle.py#L33)** — A press stepper: ``0`` (home) -> ``1`` -> ...
+- **[`class StepToggle`](pythontk/pythontk/core_utils/step_toggle.py#L34)** — A press stepper: ``0`` (home) -> ``1`` -> ...
   - `StepToggle.get(cls, name: str, **kwargs) -> 'StepToggle'` *(class)* — The shared toggle registered under *name*, created on first call.
   - `StepToggle.clear(cls, name: Optional[str] = None) -> None` *(class)* — Drop the shared toggle *name* (or every one when ``None``).
   - `StepToggle.state(self) -> int` *(property)* — The current step: ``0`` at home, else ``1..steps``.
@@ -1376,7 +1377,7 @@ Timed multi-step press toggles.
 
 SymbolRecord - the shared public-API symbol shape.
 
-- **[`class SymbolRecord`](pythontk/pythontk/core_utils/symbol_record.py#L40)** — One public symbol: a top-level function or a class member.
+- **[`class SymbolRecord`](pythontk/pythontk/core_utils/symbol_record.py#L41)** — One public symbol: a top-level function or a class member.
   - `SymbolRecord.as_dict(self) -> Dict[str, Any]` — Plain ``dict`` of the fields (matches the ``hierarchy_diff`` convention).
   - `SymbolRecord.as_json(self, indent: int = 2) -> str` — JSON string of :meth:`as_dict`.
   - `SymbolRecord.to_registry_row(self) -> str` — Render the full-registry class-member bullet.
@@ -1398,7 +1399,7 @@ Generic task/check pipeline primitive -- host- and Qt-free.
 
 A discoverable, user-extensible collection of schema-validated template files.
 
-- **[`class TemplateSet`](pythontk/pythontk/core_utils/template_set.py#L40)** — Schema-aware, two-tier collection of template files.
+- **[`class TemplateSet`](pythontk/pythontk/core_utils/template_set.py#L41)** — Schema-aware, two-tier collection of template files.
   - `TemplateSet.names(self, tier: Optional[str] = None) -> List[str]` — Sorted template names (``tier`` = ``None`` | ``"user"`` | ``"builtin"``).
   - `TemplateSet.source(self, name: str) -> Optional[str]` — Which tier *name* resolves from: ``"user"``, ``"builtin"``, or ``None``.
   - `TemplateSet.exists(self, name: str) -> bool`
@@ -1660,8 +1661,8 @@ Read-only structured access to a GLB: accessors, animation sampling, worlds.
 
 File-level mesh processing via PyMeshLab (optional dependency).
 
-- **[`class OpSpec`](pythontk/pythontk/file_utils/mesh_ops.py#L58)** — One curated PyMeshLab filter: name, legal params, wrapped types.
-- **[`class MeshOps(HelpMixin, _MeshOpsInternal)`](pythontk/pythontk/file_utils/mesh_ops.py#L325)** — File-level mesh processing via PyMeshLab (path in → path out).
+- **[`class OpSpec`](pythontk/pythontk/file_utils/mesh_ops.py#L57)** — One curated PyMeshLab filter: name, legal params, wrapped types.
+- **[`class MeshOps(HelpMixin, _MeshOpsInternal)`](pythontk/pythontk/file_utils/mesh_ops.py#L331)** — File-level mesh processing via PyMeshLab (path in → path out).
   - `MeshOps.resolve(cls, required: bool = True)` *(class)* — Return the ``pymeshlab`` module, or explain how to install it.
   - `MeshOps.available(cls) -> bool` *(class)* — True when the pymeshlab engine can be imported.
   - `MeshOps.session(cls, input_path: str) -> _MeshSession` *(class)* — Open a :class:`_MeshSession` on ``input_path`` (context manager).
@@ -1686,17 +1687,17 @@ File-level mesh processing via PyMeshLab (optional dependency).
 
 Prefix-scoped temp artifacts with an explicit lifetime policy.
 
-- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L39)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
+- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L40)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
   - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
   - `TempArtifacts.dir_path(self, name: Optional[str] = None, create: bool = True) -> str` — Return a tracked ``<prefix>_<tag>/`` DIRECTORY path in :attr:`dir`.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
   - `TempArtifacts.release(self, path: str) -> bool` — Delete ONE tracked *path* now, whatever the policy;
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
-- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L317)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L320)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
   - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
   - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
-- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L455)** — Per-source scratch twins of foreign files, discarded only while untouched.
+- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L460)** — Per-source scratch twins of foreign files, discarded only while untouched.
   - `ScratchTwins.path_for(self, source: str) -> str` — The deterministic twin path for *source* (nothing is created).
   - `ScratchTwins.create(self, source: str, payload: str) -> str` — Copy *payload* to *source*'s twin path, stamp it, and return the path.
   - `ScratchTwins.is_twin(self, path: str) -> bool` — True if *path* is a twin this store created and still tracks.
@@ -1726,8 +1727,8 @@ Zero-dependency USD (OpenUSD) file utilities.
 <a id="file_utils--uv_unwrap--_uv_unwrap"></a>
 ### `file_utils/uv_unwrap/_uv_unwrap.py`
 
-- **[`class EngineSpec`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L115)** — Everything :class:`UvUnwrap` needs to drive one external unwrapper.
-- **[`class UvUnwrap(HelpMixin, _UvUnwrapInternal)`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L197)** — Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
+- **[`class EngineSpec`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L111)** — Everything :class:`UvUnwrap` needs to drive one external unwrapper.
+- **[`class UvUnwrap(HelpMixin, _UvUnwrapInternal)`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L193)** — Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
   - `UvUnwrap.resolve_method(cls, method: str) -> str` *(class)* — Map ``"hard"`` / ``"organic"`` to an engine key (keys pass through).
   - `UvUnwrap.available_engines(cls) -> Dict[str, Optional[str]]` *(class)* — Map each engine name to its resolved executable path, or None.
   - `UvUnwrap.resolve_engine(cls, engine: str, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve one engine's executable.
@@ -1777,7 +1778,7 @@ Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 
 Point-cloud geometry — analyze and group unordered sets of points.
 
-- **[`class PointCloud`](pythontk/pythontk/geo_utils/pointcloud.py#L23)** — Stateless point-cloud geometry (alignment / clustering / hashing).
+- **[`class PointCloud`](pythontk/pythontk/geo_utils/pointcloud.py#L24)** — Stateless point-cloud geometry (alignment / clustering / hashing).
   - `PointCloud.pca_transform(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1, normals_a: Optional['np.ndarray'] = None, normals_b: Optional['np.ndarray'] = None, normal_threshold: float = 0.8) -> Optional[List[float]]` *(static)* — Transform that aligns ``points_b`` onto ``points_a`` via PCA axis alignment.
   - `PointCloud.nn_query(target: 'np.ndarray', query: 'np.ndarray', k: int = 1)` *(static)* — Nearest-neighbor distances/indices of *query* points against *target*.
   - `PointCloud.match_clouds(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, scale_tolerance: float = 0.0, normals_a: Optional['np.ndarray'] = None, normals_b: Optional['np.ndarray'] = None, normal_threshold: float = 0.8, uvs_identical: Optional[Callable[[], bool]] = None, sample_size: int = 500, symmetry_threshold: float = 0.1) -> Tuple[bool, Optional[List[float]]]` *(static)* — Three-stage identity test between two equal-count point clouds.
@@ -1791,7 +1792,7 @@ Point-cloud geometry — analyze and group unordered sets of points.
 
 Pure polyline / curve geometry — generate, measure, sample, reshape.
 
-- **[`class Polyline`](pythontk/pythontk/geo_utils/polyline.py#L29)** — Stateless polyline/curve geometry (the line other tools follow).
+- **[`class Polyline`](pythontk/pythontk/geo_utils/polyline.py#L30)** — Stateless polyline/curve geometry (the line other tools follow).
   - `Polyline.make(width: float = 6.0, curvature: float = 0.0, segments: int = 24, closed: bool = False, center: Vec = (0.0, 0.0, 0.0)) -> Tuple[List[Vec], bool]` *(static)* — Build a default polyline: a straight line of ``width`` (``curvature == 0``).
   - `Polyline.from_point_cloud(cls, points: Sequence, count: int, axis: Optional[int] = None, precision: Optional[int] = None) -> List[List[float]]` *(class)* — Extract an ordered centerline polyline from a tube-shaped **point cloud**.
   - `Polyline.order_points(points: List[List[float]], closed_path: bool = False, distance_metric: Optional[Callable[[List[float], List[float]], float]] = None) -> List[List[float]]` *(static)* — Order scattered points into a continuous path (greedy nearest-neighbour).
@@ -1809,7 +1810,7 @@ Pure polyline / curve geometry — generate, measure, sample, reshape.
 
 Rail-driven parametric surface — a general geometry primitive.
 
-- **[`class RailSurface`](pythontk/pythontk/geo_utils/rail_surface.py#L40)** — A parametric grid spanning from a rail, displaced by a caller field.
+- **[`class RailSurface`](pythontk/pythontk/geo_utils/rail_surface.py#L41)** — A parametric grid spanning from a rail, displaced by a caller field.
   - `RailSurface.grid_points(self, displace: Displace) -> Tuple[int, int, List[Vec]]` — Return ``(u_segs, v_segs, points)`` — the displaced grid, row-major.
 
 <a id="geo_utils--shadow_horizon"></a>
@@ -1854,13 +1855,39 @@ Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC
   - `ShadowProjection.fractions(rect: Rect, model: ShadowModel) -> Tuple[float, float, float, float]` *(static)* — Express a ``(u, w)`` canvas *rect* as the stamp a plane carries so a
 - **[`class ShadowRaster(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L372)** — What a rasterized shadow texture was drawn into (``ImgUtils.rasterize_shadow``).
 
+<a id="geo_utils--uv_budget"></a>
+### `geo_utils/uv_budget.py`
+
+UV texture-budget planning: how many maps, at what texel density (numbers in -> plan out).
+
+- **[`class BudgetItem`](pythontk/pythontk/geo_utils/uv_budget.py#L97)** — One indivisible group of surfaces competing for map space.
+  - `BudgetItem.demand(self, tpu: float, pad: float) -> float` — Pixel-squared footprint at *tpu* (scaling :attr:`density`) and *pad* px gutter.
+- **[`class BudgetPage`](pythontk/pythontk/geo_utils/uv_budget.py#L155)** — One map in a plan, and what landed on it.
+  - `BudgetPage.fill(self) -> float` *(property)* — Fraction of usable page area this page's items occupy (0-1).
+- **[`class BudgetRow`](pythontk/pythontk/geo_utils/uv_budget.py#L170)** — One candidate answer: a map size and count, and the density it buys.
+  - `BudgetRow.assignment(self) -> Dict[str, int]` *(property)* — Item key -> page index.
+  - `BudgetRow.utilization(self) -> float` *(property)* — Mean fill across pages — how much of the paid-for map area is used.
+  - `BudgetRow.worst_fill(self) -> float` *(property)* — Fill of the emptiest page.
+  - `BudgetRow.underfilled(self, threshold: float = 0.5) -> List[int]` — Indices of pages filled below *threshold*.
+  - `BudgetRow.texels(self) -> int` *(property)* — Total texels the row spends, across every page.
+- **[`class BudgetPlan`](pythontk/pythontk/geo_utils/uv_budget.py#L250)** — A chosen row plus the alternates around it, ready to show before committing.
+  - `BudgetPlan.rows(self) -> List[BudgetRow]` *(property)* — Chosen + alternates, ordered by total texels spent.
+  - `BudgetPlan.density_ratio(self) -> Optional[float]` *(property)* — Achieved over asked;
+- **[`class UvBudget(HelpMixin)`](pythontk/pythontk/geo_utils/uv_budget.py#L284)** — Plan a UV texture budget: maps needed, density achieved, and the alternates.
+  - `UvBudget.padding_for(map_size: int, factor: int = 256, mip_levels: int = 0) -> Tuple[float, bool]` *(static)* — Island gutter in pixels for *map_size*, floored by the mip requirement.
+  - `UvBudget.first_fit_decreasing(sizes: Sequence[Tuple[str, float]], capacity: float) -> Optional[List[List[str]]]` *(static)* — Fewest pages holding every item, by First Fit Decreasing.
+  - `UvBudget.partition_lpt(sizes: Sequence[Tuple[str, float]], pages: int) -> List[List[str]]` *(static)* — Spread items across exactly *pages* pages, by Longest Processing Time.
+  - `UvBudget.pages_at_density(cls, items: Sequence[BudgetItem], density: float, map_size: int, *, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = False) -> BudgetRow` *(class)* — Fewest maps that hold *items* at *density* texels per world unit.
+  - `UvBudget.density_at_pages(cls, items: Sequence[BudgetItem], pages: int, map_size: int, *, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = True) -> BudgetRow` *(class)* — Highest density at which *items* fit in *pages* maps of *map_size*.
+  - `UvBudget.plan(cls, items: Sequence[BudgetItem], *, map_size: int = 4096, density: Optional[float] = None, pages: Optional[int] = None, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = False, alternates: bool = True, map_sizes: Optional[Iterable[int]] = None) -> BudgetPlan` *(class)* — Solve in whichever direction the caller pinned, and table the neighbours.
+
 <a id="geo_utils--uv_pack"></a>
 ### `geo_utils/uv_pack.py`
 
 UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 
-- **[`class PackIslandsResult`](pythontk/pythontk/geo_utils/uv_pack.py#L96)** — Outcome of one :meth:`UvPack.pack_islands` run.
-- **[`class UvPack(HelpMixin)`](pythontk/pythontk/geo_utils/uv_pack.py#L123)** — Pack existing UV islands with the optional ``xatlas`` engine.
+- **[`class PackIslandsResult`](pythontk/pythontk/geo_utils/uv_pack.py#L97)** — Outcome of one :meth:`UvPack.pack_islands` run.
+- **[`class UvPack(HelpMixin)`](pythontk/pythontk/geo_utils/uv_pack.py#L124)** — Pack existing UV islands with the optional ``xatlas`` engine.
   - `UvPack.resolve(cls, required: bool = True)` *(class)* — Return the ``xatlas`` module, or explain how to install it.
   - `UvPack.available(cls) -> bool` *(class)* — True when the xatlas engine can be imported.
   - `UvPack.pack_islands(cls, meshes: Sequence[Tuple[Any, Any]], padding: int = 4, rotate: bool = True, brute_force: bool = False, resolution: int = 0, pages: int = 1, align_to_axis: Optional[bool] = None) -> PackIslandsResult` *(class)* — Pack every mesh's UV islands together.
@@ -1964,7 +1991,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
 
 Cross-set exposure / white-balance equalization.
 
-- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L36)** — Equalize exposure / WB across a list of source directories.
+- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L37)** — Equalize exposure / WB across a list of source directories.
   - `ExposureEqualizer.is_available(self) -> bool`
   - `ExposureEqualizer.equalize_directories(self, source_dirs: Sequence[str], output_root: str, reference_dir: Optional[str] = None, suffix: str = '_eq', sample_count: int = 20, strength: float = 1.0, reference_strategy: str = 'first', quality: int = 100, preserve_exif: bool = True, per_image: bool = False, overwrite_output: bool = True) -> List[str]` — Equalize every image in ``source_dirs`` against the reference set.
 
@@ -1973,7 +2000,7 @@ Cross-set exposure / white-balance equalization.
 
 Perceptual-hash + sharpness curation for large image sets.
 
-- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L45)** — Pre-SfM content-dedup + sharpness culling.
+- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L46)** — Pre-SfM content-dedup + sharpness culling.
   - `ImageCurator.is_available(self) -> bool`
   - `ImageCurator.dhash(image, size: int = 8) -> int` *(static)* — Difference hash.
   - `ImageCurator.hamming(a: int, b: int) -> int` *(static)*
@@ -2000,7 +2027,7 @@ KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 
 Background mask generation via rembg (optional dependency).
 
-- **[`class MaskGenerator`](pythontk/pythontk/img_utils/mask_generator.py#L42)** — Run rembg over a directory of images and write binary masks.
+- **[`class MaskGenerator`](pythontk/pythontk/img_utils/mask_generator.py#L43)** — Run rembg over a directory of images and write binary masks.
   - `MaskGenerator.is_available(self) -> bool`
   - `MaskGenerator.generate_masks(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]` — Generate alpha-channel masks for every image in ``input_dir``.
 
@@ -2124,7 +2151,7 @@ One atlas per shadow-rig type: equal cells, a tile rewritten in place.
 
 Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
-- **[`class Weights`](pythontk/pythontk/math_utils/weights.py#L12)** — Blend-weight calculations with consistent rounding precision.
+- **[`class Weights`](pythontk/pythontk/math_utils/weights.py#L13)** — Blend-weight calculations with consistent rounding precision.
   - `Weights.round_weight(cls, weight: float) -> float` *(class)* — Round a weight to the shared precision (:data:`PRECISION` decimal places).
   - `Weights.frame_to_weight(cls, frame: int, start_frame: int, end_frame: int) -> float` *(class)* — Convert frame number to blendShape weight.
   - `Weights.generate_weights(cls, count: int, weight_range: Tuple[float, float] = (0.0, 1.0), include_endpoints: bool = False) -> List[float]` *(class)* — Generate ``count`` evenly spaced weights within ``weight_range``.
@@ -2229,7 +2256,7 @@ Read a file by ``http(s)`` URL with the same surface as a local read.
 
 Generic HTTP JSON-RPC client for plugin-hosted RPC servers.
 
-- **[`class RpcClient`](pythontk/pythontk/net_utils/rpc/client.py#L36)** — Generic HTTP JSON-RPC client for a DCC plugin server.
+- **[`class RpcClient`](pythontk/pythontk/net_utils/rpc/client.py#L37)** — Generic HTTP JSON-RPC client for a DCC plugin server.
   - `RpcClient.url(self) -> str` *(property)*
   - `RpcClient.ping(self, timeout: float = 1.0) -> bool` — Return True if the plugin's HTTP server is reachable.
   - `RpcClient.invoke(self, op: str, timeout: float = 60.0, **kwargs: Any) -> Any` — Call *op* with *kwargs* and return its value.
@@ -2347,7 +2374,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
 
 Portable hotkey-token helpers shared by the ecosystem's macro managers.
 
-- **[`class HotkeyUtils`](pythontk/pythontk/str_utils/hotkey_utils.py#L19)** — Maya-style hotkey-token <-> Qt-key-sequence conversion + label humanizing.
+- **[`class HotkeyUtils`](pythontk/pythontk/str_utils/hotkey_utils.py#L20)** — Maya-style hotkey-token <-> Qt-key-sequence conversion + label humanizing.
   - `HotkeyUtils.parse_key(cls, key: str) -> Tuple[bool, bool, bool, str]` *(class)* — Split a hotkey token into ``(ctl, alt, sht, key)``.
   - `HotkeyUtils.qt_sequence_to_key(cls, sequence: str) -> str` *(class)* — Convert a Qt key-sequence string (``"Ctrl+Shift+I"``) to this
   - `HotkeyUtils.key_to_qt_sequence(cls, key: str) -> str` *(class)* — Convert this convention's token (``"ctl+sht+i"``) to a Qt

@@ -1,33 +1,32 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ dcd93fe)._
+_Diff vs the last release (origin/main @ 42710a1)._
 
-## Added (27)
+## Added (20)
 
-- `net_utils/preview/playblast.py::PreviewPlayblast(class)`
-- `net_utils/preview/playblast.py::PreviewPlayblast.active(self) -> List[Dict[str, Any]]`
-- `net_utils/preview/playblast.py::PreviewPlayblast.add_frame(self, token: str, index: int, data: bytes) -> Dict[str, Any]`
-- `net_utils/preview/playblast.py::PreviewPlayblast.begin(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png') -> Dict[str, Any]`
-- `net_utils/preview/playblast.py::PreviewPlayblast.cancel(self, token: str) -> bool`
-- `net_utils/preview/playblast.py::PreviewPlayblast.clip_name(self, token: str) -> str`
-- `net_utils/preview/playblast.py::PreviewPlayblast.finish(self, token: str, output_dir: str, target: Optional[str] = None, stem: Optional[str] = None) -> Dict[str, Any]`
-- `net_utils/preview/playblast.py::PreviewPlayblast.resolve_output_dir(source: Optional[Path], fallback: Path) -> Path`
-- `net_utils/preview/server.py::PreviewServer.begin_playblast(self, **kwargs: Any) -> Dict[str, Any]`
-- `net_utils/preview/server.py::PreviewServer.finish_playblast(self, token: str, target: Optional[str] = None) -> Dict[str, Any]`
-- `net_utils/preview/server.py::PreviewServer.playblast(self) -> 'PreviewPlayblast'`
-- `net_utils/preview/server.py::PreviewServer.recording_path(self, token: str) -> Optional[Path]`
-- `vid_utils/sequence_exporter.py::CaptureResult(class)`
-- `vid_utils/sequence_exporter.py::CaptureResult.pattern(self) -> str`
-- `vid_utils/sequence_exporter.py::ExportResult(class)`
-- `vid_utils/sequence_exporter.py::ExportResult.ok(self) -> bool`
-- `vid_utils/sequence_exporter.py::ExportTarget(class)`
-- `vid_utils/sequence_exporter.py::SequenceEncoder(class)`
-- `vid_utils/sequence_exporter.py::SequenceEncoder.encode_sequence(self, capture: Union[CaptureResult, str], output_filepath: str, fps: Optional[float] = None, audio: Optional[Union[bool, str]] = None, quality: Optional[int] = None, **ffmpeg_options: Any) -> str`
-- `vid_utils/sequence_exporter.py::SequenceEncoder.sequence_fps(self) -> float`
-- `vid_utils/sequence_exporter.py::SequenceEncoder.sequence_name(self) -> str`
-- `vid_utils/sequence_exporter.py::SequenceExporter(class)`
-- `vid_utils/sequence_exporter.py::SequenceExporter.available_targets(cls) -> List[Tuple[str, str]]`
-- `vid_utils/sequence_exporter.py::SequenceExporter.capture_sequence(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> CaptureResult`
-- `vid_utils/sequence_exporter.py::SequenceExporter.capture_still(self, filepath: str, frame: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> str`
-- `vid_utils/sequence_exporter.py::SequenceExporter.export(self, output_dir: str, name: Optional[str] = None, targets: Union[str, Sequence[str]] = ('mp4',), range_mode: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, keep_frames: bool = False, progress_callback: Optional[Callable[[int, int, str], None]] = None, **overrides: Any) -> List[ExportResult]`
-- `vid_utils/sequence_exporter.py::SequenceExporter.resolve_frame_range(cls, mode: str = 'custom', start: Optional[int] = None, end: Optional[int] = None) -> Tuple[int, int]`
+- `geo_utils/uv_budget.py::BudgetItem(class)`
+- `geo_utils/uv_budget.py::BudgetItem.demand(self, tpu: float, pad: float) -> float`
+- `geo_utils/uv_budget.py::BudgetPage(class)`
+- `geo_utils/uv_budget.py::BudgetPage.fill(self) -> float`
+- `geo_utils/uv_budget.py::BudgetPlan(class)`
+- `geo_utils/uv_budget.py::BudgetPlan.density_ratio(self) -> Optional[float]`
+- `geo_utils/uv_budget.py::BudgetPlan.rows(self) -> List[BudgetRow]`
+- `geo_utils/uv_budget.py::BudgetRow(class)`
+- `geo_utils/uv_budget.py::BudgetRow.assignment(self) -> Dict[str, int]`
+- `geo_utils/uv_budget.py::BudgetRow.texels(self) -> int`
+- `geo_utils/uv_budget.py::BudgetRow.underfilled(self, threshold: float = 0.5) -> List[int]`
+- `geo_utils/uv_budget.py::BudgetRow.utilization(self) -> float`
+- `geo_utils/uv_budget.py::BudgetRow.worst_fill(self) -> float`
+- `geo_utils/uv_budget.py::UvBudget(class)`
+- `geo_utils/uv_budget.py::UvBudget.density_at_pages(cls, items: Sequence[BudgetItem], pages: int, map_size: int, *, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = True) -> BudgetRow`
+- `geo_utils/uv_budget.py::UvBudget.first_fit_decreasing(sizes: Sequence[Tuple[str, float]], capacity: float) -> Optional[List[List[str]]]`
+- `geo_utils/uv_budget.py::UvBudget.padding_for(map_size: int, factor: int = 256, mip_levels: int = 0) -> Tuple[float, bool]`
+- `geo_utils/uv_budget.py::UvBudget.pages_at_density(cls, items: Sequence[BudgetItem], density: float, map_size: int, *, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = False) -> BudgetRow`
+- `geo_utils/uv_budget.py::UvBudget.partition_lpt(sizes: Sequence[Tuple[str, float]], pages: int) -> List[List[str]]`
+- `geo_utils/uv_budget.py::UvBudget.plan(cls, items: Sequence[BudgetItem], *, map_size: int = 4096, density: Optional[float] = None, pages: Optional[int] = None, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = False, alternates: bool = True, map_sizes: Optional[Iterable[int]] = None) -> BudgetPlan`
+
+## Signature changed (1)
+
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.plan_respace`
+  - was: `(store: ShotStore, gap: float, start_frame: float) -> MovePlan`
+  - now: `(store: ShotStore, gap: float, start_frame: float, respect_locks: bool = True) -> MovePlan`

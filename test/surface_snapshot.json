@@ -1604,6 +1604,34 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.geo_utils.uv_budget",
+    "name": "BudgetItem",
+    "qualname": "BudgetItem",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv_budget",
+    "name": "BudgetPage",
+    "qualname": "BudgetPage",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv_budget",
+    "name": "BudgetPlan",
+    "qualname": "BudgetPlan",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv_budget",
+    "name": "BudgetRow",
+    "qualname": "BudgetRow",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
     "name": "BuilderObject",
     "qualname": "BuilderObject",
@@ -2853,6 +2881,13 @@
     "module": "pythontk.core_utils.user_config",
     "name": "UserConfig",
     "qualname": "UserConfig",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv_budget",
+    "name": "UvBudget",
+    "qualname": "UvBudget",
     "tier": "root"
   },
   {

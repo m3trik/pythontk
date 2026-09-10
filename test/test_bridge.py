@@ -108,9 +108,7 @@ class TemplatesTest(unittest.TestCase):
         )
         # ...and it survives the filtered read too, rather than being dropped.
         self.assertEqual(
-            script_template.ScriptTemplate.template_modes(
-                path, (SEND_TO, ROUND_TRIP)
-            ),
+            script_template.ScriptTemplate.template_modes(path, (SEND_TO, ROUND_TRIP)),
             (SEND_TO, ROUND_TRIP),
         )
 
@@ -155,7 +153,9 @@ class TemplatesTest(unittest.TestCase):
         """``None`` (not ``()``) marks "declares nothing" -- what makes the lenient
         fallback safe to apply only where it belongs."""
         self.assertIsNone(
-            script_template.ScriptTemplate.declared_modes(self._write("a.py", "x = 1\n"))
+            script_template.ScriptTemplate.declared_modes(
+                self._write("a.py", "x = 1\n")
+            )
         )
         self.assertIsNone(
             script_template.ScriptTemplate.declared_modes(self.tmp / "nope.py")
@@ -314,9 +314,7 @@ class AppScanTest(unittest.TestCase):
 
     def test_app_spec_available_is_false_when_missing(self):
         """A spec that resolves to nothing reads as unavailable (and caches that)."""
-        spec = AppSpec(
-            name="Ghost", scan_globs=(str(self.tmp / "nope" / "*.exe"),)
-        )
+        spec = AppSpec(name="Ghost", scan_globs=(str(self.tmp / "nope" / "*.exe"),))
         self.assertFalse(spec.available)
         self.assertIsNone(spec.path)
 
@@ -425,7 +423,9 @@ class HandoffSendTest(unittest.TestCase):
         app_handoff.AppLauncher.launch = staticmethod(_capturing_launch)
         br = self._bridge()
         # The deliverer holds the spec (wired at __init__) -- swap it there.
-        br.deliverer.spec = replace(br.deliverer.spec, launch_env=lambda: {"CLEAN": "1"})
+        br.deliverer.spec = replace(
+            br.deliverer.spec, launch_env=lambda: {"CLEAN": "1"}
+        )
         self.assertIsNotNone(br.send(template="import", mode=SEND_TO))
         self.assertEqual(seen["env"], {"CLEAN": "1"})
         # ...and a RAISING hook degrades to the inherited env instead of
@@ -498,7 +498,6 @@ class HandoffSendTest(unittest.TestCase):
         self.assertEqual(self.launched, [])
 
 
-
 class HandoffCarrierTest(HandoffSendTest):
     """The payload's interchange format is a per-request choice on one shared seam."""
 
@@ -517,7 +516,7 @@ class HandoffCarrierTest(HandoffSendTest):
         self.assertIsNotNone(result)
         self.assertTrue(result["payload"].lower().endswith(".usd"))
         # The producer saw the carrier it was asked for, nothing else changed.
-        (_objs, path, params), = br.exported
+        ((_objs, path, params),) = br.exported
         self.assertEqual(path, result["payload"])
         self.assertEqual(params[CARRIER_PARAM], "usd")
 
@@ -560,8 +559,8 @@ class HandoffCarrierTest(HandoffSendTest):
 
     def test_templates_see_the_payload_under_both_token_names(self):
         (self.tmp / "import.py").write_text(
-            "BRIDGE_MODES = (\'send_to\',)\n"
-            'FBX = r\"__FBX_PATH__\"\nPAYLOAD = r\"__PAYLOAD_PATH__\"\nSCALE = __SCALE__\n',
+            "BRIDGE_MODES = ('send_to',)\n"
+            'FBX = r"__FBX_PATH__"\nPAYLOAD = r"__PAYLOAD_PATH__"\nSCALE = __SCALE__\n',
             encoding="utf-8",
         )
         br = self._bridge()
@@ -780,7 +779,9 @@ class HandoffSaveAsTest(unittest.TestCase):
         # Stub the blocking runner: record the call, create the artifact it promised.
         self._orig_run = app_handoff.ScriptRunDeliverer.run
 
-        def _fake_run(app_exe, script_text, *, artifact, launch_args, timeout, env=None):
+        def _fake_run(
+            app_exe, script_text, *, artifact, launch_args, timeout, env=None
+        ):
             self.runs.append(
                 {
                     "app": app_exe,
@@ -840,7 +841,7 @@ class HandoffSaveAsTest(unittest.TestCase):
         self.assertFalse(re.findall(r"__[A-Z][A-Z0-9_]*__", body))  # all substituted
 
     def test_defaults_to_the_whole_scene_not_the_selection(self):
-        """"Save the scene as ..." is about the scene; ``send`` stays selection-first."""
+        """ "Save the scene as ..." is about the scene; ``send`` stays selection-first."""
         br = self._bridge()
         br.save_as(str(self.tmp / "asset.stub"))
         self.assertEqual(br.exported[-1][0], ("sceneA", "sceneB", "sceneC"))
@@ -936,7 +937,9 @@ class HandoffSaveAsTest(unittest.TestCase):
         out = self.tmp / "asset.stub"
         self.assertIsNotNone(br.save_as(str(out)))
         # The child wrote the sibling; the caller sees only the promoted final file.
-        self.assertEqual(self.runs[0]["artifact"], br.deliverers[SAVE_AS]._staging_path(str(out)))
+        self.assertEqual(
+            self.runs[0]["artifact"], br.deliverers[SAVE_AS]._staging_path(str(out))
+        )
         self.assertTrue(out.is_file())
         self.assertFalse(Path(self.runs[0]["artifact"]).exists())
 
@@ -947,14 +950,10 @@ class HandoffSaveAsTest(unittest.TestCase):
 
     def test_modes_dispatch_to_distinct_deliverers(self):
         br = self._bridge()
-        self.assertIsInstance(
-            br.deliverers[SEND_TO], app_handoff.ScriptLaunchDeliverer
-        )
+        self.assertIsInstance(br.deliverers[SEND_TO], app_handoff.ScriptLaunchDeliverer)
         self.assertIsInstance(br.deliverers[SAVE_AS], app_handoff.ScriptRunDeliverer)
         # An unregistered mode falls back to the default strategy (back-compat).
-        self.assertIs(
-            br._deliverer_for(HandoffRequest(mode="other")), br.deliverer
-        )
+        self.assertIs(br._deliverer_for(HandoffRequest(mode="other")), br.deliverer)
 
     def test_registry_is_instance_owned(self):
         """A class-level dict would leak one bridge's strategies into every other."""
@@ -1034,16 +1033,32 @@ class HandoffRoundTripTest(unittest.TestCase):
         self.launched, self.runs = [], []
         self._orig_run = app_handoff.ScriptRunDeliverer.run
 
-        def _fake_run(app_exe, script_text, *, artifact, launch_args, timeout,
-                     env=None, expect=None):
+        def _fake_run(
+            app_exe,
+            script_text,
+            *,
+            artifact,
+            launch_args,
+            timeout,
+            env=None,
+            expect=None,
+        ):
             self.runs.append(
-                {"artifact": artifact, "timeout": timeout, "expect": expect,
-                 "args": list(launch_args("S.py")), "script": script_text}
+                {
+                    "artifact": artifact,
+                    "timeout": timeout,
+                    "expect": expect,
+                    "args": list(launch_args("S.py")),
+                    "script": script_text,
+                }
             )
             # The target app edits the payload in place.
             Path(artifact).write_text("unwrapped", encoding="utf-8")
             return ScriptRunResult(
-                artifact=artifact, returncode=0, output="", duration=0.5,
+                artifact=artifact,
+                returncode=0,
+                output="",
+                duration=0.5,
                 script_path="S.py",
             )
 
@@ -1215,12 +1230,23 @@ class RoundTripArtifactShapeTest(unittest.TestCase):
         self.launched, self.runs = [], []
         self._orig_run = app_handoff.ScriptRunDeliverer.run
 
-        def _fake_run(app_exe, script_text, *, artifact, launch_args, timeout,
-                      env=None, expect=None):
+        def _fake_run(
+            app_exe,
+            script_text,
+            *,
+            artifact,
+            launch_args,
+            timeout,
+            env=None,
+            expect=None,
+        ):
             self.runs.append({"artifact": artifact, "expect": expect})
             Path(artifact).write_text("{}", encoding="utf-8")
             return ScriptRunResult(
-                artifact=artifact, returncode=0, output="", duration=0.5,
+                artifact=artifact,
+                returncode=0,
+                output="",
+                duration=0.5,
                 script_path="S.py",
             )
 
